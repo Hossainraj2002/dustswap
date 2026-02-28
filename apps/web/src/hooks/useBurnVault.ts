@@ -1,99 +1,58 @@
 'use client';
 
-import { useCallback } from 'react';
-import { useAccount, useChainId } from 'wagmi';
-import { useWriteContracts } from 'wagmi'
-import { maxUint256 } from 'viem';
+import { useCallback, useEffect, useState } from 'react';
+import { useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
+import { parseUnits, type Address } from 'viem';
+import burnVaultAbi from '@/abi/BurnVault.json'; // make sure file exists
 
-import { CONTRACT_ADDRESSES, BURN_VAULT_ABI, ERC20_ABI } from '@/lib/contracts';
-import { PAYMASTER_URL } from '@/app/providers';
+// put your burn vault address in .env
+const BURN_VAULT_ADDRESS = process.env
+  .NEXT_PUBLIC_BURN_VAULT_ADDRESS as Address;
+
+export type BurnToken = {
+  tokenAddress: Address;
+  amount: string; // user input
+  decimals: number;
+};
 
 export function useBurnVault() {
-  const { address } = useAccount();
-  const chainId = useChainId();
-
   const {
-    writeContractsAsync,
-    data: batchResult,
-    error,
+    writeContractAsync,
+    data: hash,
     isPending,
-    isConfirming,
-    isSuccess,
-  } = useWriteContracts();
+    error,
+  } = useWriteContract();
 
-  const batchId =
-    typeof batchResult === 'string'
-      ? batchResult
-      : batchResult?.id;
+  const { isSuccess: txSuccess } = useWaitForTransactionReceipt({ hash });
+  const [isSuccess, setSuccess] = useState(false);
 
-  const { data: callsStatus } = useCallsStatus({
-    id: batchId ?? '',
-    query: {
-      enabled: !!batchId,
-      refetchInterval: 2_000,
-    },
-  });
+  useEffect(() => {
+    if (txSuccess) setSuccess(true);
+  }, [txSuccess]);
 
   const burn = useCallback(
-    async (token: `0x${string}`, amount: bigint) => {
-      if (!address || !chainId) return;
+    async (token: BurnToken) => {
+      if (!BURN_VAULT_ADDRESS) {
+        throw new Error('Missing BURN_VAULT_ADDRESS in .env');
+      }
 
-      const addrs = CONTRACT_ADDRESSES[chainId];
+      const amount = parseUnits(token.amount, token.decimals);
 
-      return writeContractsAsync({
-        contracts: [
-          {
-            address: token,
-            abi: ERC20_ABI,
-            functionName: 'approve',
-            args: [addrs.burnVault, maxUint256],
-          },
-          {
-            address: addrs.burnVault,
-            abi: BURN_VAULT_ABI,
-            functionName: 'burn',
-            args: [token, amount],
-          },
-        ],
-        capabilities: PAYMASTER_URL
-          ? { paymasterService: { url: PAYMASTER_URL } }
-          : undefined,
+      return writeContractAsync({
+        address: BURN_VAULT_ADDRESS,
+        abi: burnVaultAbi,
+        functionName: 'burn', // change if your contract method name differs
+        args: [token.tokenAddress, amount],
       });
     },
-    [address, chainId, writeContractsAsync]
-  );
-
-  const reclaim = useCallback(
-    async (burnId: bigint) => {
-      if (!address || !chainId) return;
-
-      const addrs = CONTRACT_ADDRESSES[chainId as keyof typeof CONTRACT_ADDRESSES];
-
-      return writeContractsAsync({
-        contracts: [
-          {
-            address: addrs.burnVault,
-            abi: BURN_VAULT_ABI,
-            functionName: 'reclaimTokens',
-            args: [burnId],
-          },
-        ],
-        capabilities: PAYMASTER_URL
-          ? { paymasterService: { url: PAYMASTER_URL } }
-          : undefined,
-      });
-    },
-    [address, chainId, writeContractsAsync]
+    [writeContractAsync],
   );
 
   return {
     burn,
-    reclaim,
-    batchId,
-    callsStatus,
-    error,
+    hash,
     isPending,
-    isConfirming,
     isSuccess,
+    error,
   };
 }
