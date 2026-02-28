@@ -5,26 +5,25 @@ import { useAccount } from 'wagmi';
 import { useDustSweep, type SweepToken } from '@/hooks/useDustSweep';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
-
 interface DustToken {
-  tokenAddress:     string;
-  symbol:           string;
-  name:             string;
+  tokenAddress: string;
+  symbol: string;
+  name: string;
   formattedBalance: string;
   estimatedValueUsd: number;
-  hasLiquidity:     boolean;
-  selected:         boolean;
-  logoUrl?:         string;
+  hasLiquidity: boolean;
+  selected: boolean;
+  logoUrl?: string;
+  decimals?: number; // ✅ add decimals
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
-
 export default function DustSweepPage() {
   const { address, isConnected } = useAccount();
   const { sweep, isPending, isConfirming, isSuccess, txHash, error } = useDustSweep();
 
-  const [tokens,      setTokens]      = useState<DustToken[]>([]);
-  const [loading,     setLoading]     = useState(false);
+  const [tokens, setTokens] = useState<DustToken[]>([]);
+  const [loading, setLoading] = useState(false);
   const [outputToken, setOutputToken] = useState<'USDC' | 'ETH' | 'WETH'>('USDC');
 
   // Fetch dust tokens from backend
@@ -32,10 +31,16 @@ export default function DustSweepPage() {
     if (!address) return;
     setLoading(true);
     try {
-      const r    = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/tokens/dust/84532/${address}`);
+      const r = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/tokens/dust/84532/${address}`);
       const data = await r.json();
       if (data.success) {
-        setTokens(data.dustTokens.map((t: Omit<DustToken, 'selected'>) => ({ ...t, selected: false })));
+        setTokens(
+          data.dustTokens.map((t: Omit<DustToken, 'selected'>) => ({
+            ...t,
+            decimals: t.decimals ?? 18,
+            selected: false,
+          }))
+        );
       }
     } catch (e) {
       console.error('Failed to fetch dust:', e);
@@ -44,7 +49,9 @@ export default function DustSweepPage() {
     }
   }, [address]);
 
-  useEffect(() => { if (address) fetchDust(); }, [address, fetchDust]);
+  useEffect(() => {
+    if (address) fetchDust();
+  }, [address, fetchDust]);
 
   // Record points after successful sweep
   useEffect(() => {
@@ -57,51 +64,53 @@ export default function DustSweepPage() {
           address,
           txHash,
           tokenCount: selected.length,
-          volumeUsd:  selected.reduce((s, t) => s + t.estimatedValueUsd, 0),
+          volumeUsd: selected.reduce((s, t) => s + t.estimatedValueUsd, 0),
         }),
       });
     }
   }, [isSuccess, txHash, address, tokens]);
 
   // Selection helpers
-  const toggle    = (i: number) => setTokens(p => { const n = [...p]; n[i] = { ...n[i], selected: !n[i].selected }; return n; });
-  const autoSelect = (n: number) => setTokens(p => p.map((t, i) => ({ ...t, selected: t.hasLiquidity && i < n })));
-  const clearAll   = () => setTokens(p => p.map(t => ({ ...t, selected: false })));
+  const toggle = (i: number) =>
+    setTokens(p => {
+      const n = [...p];
+      n[i] = { ...n[i], selected: !n[i].selected };
+      return n;
+    });
+
+  const autoSelect = (n: number) =>
+    setTokens(p => p.map((t, i) => ({ ...t, selected: t.hasLiquidity && i < n })));
+
+  const clearAll = () =>
+    setTokens(p => p.map(t => ({ ...t, selected: false })));
 
   // Computed
-  const selected      = tokens.filter(t => t.selected);
-  const totalValue    = selected.reduce((s, t) => s + t.estimatedValueUsd, 0);
-  const estimatedFee  = totalValue * 0.01;
-  const estimatedOut  = totalValue - estimatedFee;
+  const selected = tokens.filter(t => t.selected);
+  const totalValue = selected.reduce((s, t) => s + t.estimatedValueUsd, 0);
+  const estimatedFee = totalValue * 0.01;
+  const estimatedOut = totalValue - estimatedFee;
   const pointsPreview = selected.length * 50 * 5;
 
   // Execute sweep
   async function handleSweep() {
     if (selected.length === 0) return;
 
-    // Build SweepToken array — swapCalldata would come from backend in production
-    // For now we pass empty bytes; the real implementation fetches Uniswap routes first
+    // Build SweepToken array
     const sweepTokens: SweepToken[] = selected.map(t => ({
-  tokenAddress: t.tokenAddress as `0x${string}`,
-  amount: t.formattedBalance,        // string
-  decimals: t.decimals ?? 18,         // add decimals
-}));
-
-    const outputAddresses: Record<string, `0x${string}`> = {
-      USDC: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', // Base USDC
-      ETH:  '0x4200000000000000000000000000000000000006', // WETH on Base
-      WETH: '0x4200000000000000000000000000000000000006',
-    };
+      tokenAddress: t.tokenAddress as `0x${string}`,
+      amount: t.formattedBalance,        // string
+      decimals: t.decimals ?? 18,         // ✅ now available
+    }));
 
     try {
-      await sweep(sweepTokens, outputAddresses[outputToken], 0n);
+      // ✅ hook currently accepts ONLY tokens
+      await sweep(sweepTokens);
     } catch (e) {
       console.error('Sweep failed:', e);
     }
   }
 
   // ─── Render ───────────────────────────────────────────────────────────────
-
   if (!isConnected) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[60vh] text-center">
@@ -152,7 +161,6 @@ export default function DustSweepPage() {
           </div>
         ) : (
           <div>
-            {/* Header row */}
             <div className="grid grid-cols-6 gap-3 px-4 py-2 text-xs font-medium text-gray-500 border-b border-gray-800">
               <div>✓</div>
               <div className="col-span-2">Token</div>
@@ -160,7 +168,6 @@ export default function DustSweepPage() {
               <div>Value</div>
               <div>Liq.</div>
             </div>
-            {/* Token rows */}
             {tokens.map((tok, i) => (
               <div
                 key={tok.tokenAddress}
@@ -199,10 +206,10 @@ export default function DustSweepPage() {
       {selected.length > 0 && (
         <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 mb-5 space-y-2 text-sm">
           {[
-            { label: 'Selected tokens',   value: `${selected.length}` },
-            { label: 'Est. total value',  value: `$${totalValue.toFixed(2)}` },
+            { label: 'Selected tokens', value: `${selected.length}` },
+            { label: 'Est. total value', value: `$${totalValue.toFixed(2)}` },
             { label: 'Protocol fee (1%)', value: `-$${estimatedFee.toFixed(2)}`, red: true },
-            { label: 'Gas cost',          value: '~$0 (sponsored)', green: true },
+            { label: 'Gas cost', value: '~$0 (sponsored)', green: true },
           ].map(row => (
             <div key={row.label} className="flex justify-between">
               <span className="text-gray-400">{row.label}</span>
@@ -248,10 +255,10 @@ export default function DustSweepPage() {
         disabled={selected.length === 0 || isPending || isConfirming}
         className="w-full h-14 rounded-xl bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold text-lg transition-colors"
       >
-        {isPending    ? '⏳ Confirm in wallet…'
-         : isConfirming ? '⏳ Processing…'
-         : selected.length === 0 ? '🧹 Select tokens to sweep'
-         : `🧹 Sweep ${selected.length} tokens → ${outputToken}`}
+        {isPending ? '⏳ Confirm in wallet…'
+          : isConfirming ? '⏳ Processing…'
+          : selected.length === 0 ? '🧹 Select tokens to sweep'
+          : `🧹 Sweep ${selected.length} tokens → ${outputToken}`}
       </button>
 
       {process.env.NEXT_PUBLIC_PAYMASTER_URL && (
