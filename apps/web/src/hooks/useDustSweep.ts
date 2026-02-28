@@ -1,8 +1,8 @@
 'use client';
 
 import { useCallback } from 'react';
+import { useAccount } from 'wagmi'; // ✅ correct import
 import {
-  useAccount,
   useWriteContracts,
   useCallsStatus,
 } from 'wagmi/experimental';
@@ -12,7 +12,7 @@ import routerAbi from '@/abi/Router.json';
 
 const ROUTER = process.env.NEXT_PUBLIC_ROUTER_ADDRESS as Address;
 
-export type DustToken = {
+export type SweepToken = {
   tokenAddress: Address;
   amount: string;
   decimals: number;
@@ -38,7 +38,7 @@ export function useDustSweep() {
   const isSuccess = callsStatus?.status === 'success';
 
   const sweep = useCallback(
-    async (tokens: DustToken[]) => {
+    async (tokens: SweepToken[]) => {
       if (!address) throw new Error('Wallet not connected');
       if (!ROUTER) throw new Error('Missing NEXT_PUBLIC_ROUTER_ADDRESS');
 
