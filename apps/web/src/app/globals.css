@@ -2,7 +2,16 @@
 @tailwind components;
 @tailwind utilities;
 
-body {
-  background-color: #030712;
-  color: #ffffff;
+@layer base {
+  :root {
+    --border: 220 13% 91%;
+    --background: 0 0% 100%;
+    --foreground: 222.2 84% 4.9%;
+  }
+}
+
+@layer utilities {
+  .border-border {
+    border-color: hsl(var(--border));
+  }
 }
