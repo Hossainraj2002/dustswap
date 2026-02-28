@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback } from 'react';
-import { useAccount } from 'wagmi'; // ✅ correct import
+import { useAccount } from 'wagmi';
 import {
   useWriteContracts,
   useCallsStatus,
@@ -36,6 +36,8 @@ export function useDustSweep() {
   });
 
   const isSuccess = callsStatus?.status === 'success';
+  const isConfirming = !!batchId && !isSuccess;
+  const txHash = batchId;
 
   const sweep = useCallback(
     async (tokens: SweepToken[]) => {
@@ -57,7 +59,9 @@ export function useDustSweep() {
   return {
     sweep,
     batchId,
+    txHash,
     isPending,
+    isConfirming,
     isSuccess,
     error,
   };
