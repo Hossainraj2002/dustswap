@@ -82,10 +82,10 @@ export default function DustSweepPage() {
     // Build SweepToken array — swapCalldata would come from backend in production
     // For now we pass empty bytes; the real implementation fetches Uniswap routes first
     const sweepTokens: SweepToken[] = selected.map(t => ({
-      tokenAddress: t.tokenAddress as `0x${string}`,
-      amount:       BigInt(Math.floor(parseFloat(t.formattedBalance) * 10 ** 18)),
-      swapCalldata: '0x' as `0x${string}`, // TODO: fetch from /api/routes
-    }));
+  tokenAddress: t.tokenAddress as `0x${string}`,
+  amount: t.formattedBalance,        // string
+  decimals: t.decimals ?? 18,         // add decimals
+}));
 
     const outputAddresses: Record<string, `0x${string}`> = {
       USDC: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', // Base USDC
