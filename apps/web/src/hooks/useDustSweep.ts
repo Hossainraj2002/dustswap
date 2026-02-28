@@ -6,11 +6,14 @@ import {
   useWriteContracts,
   useCallsStatus,
 } from 'wagmi/experimental';
-import { parseUnits, type Address, type Hex } from 'viem';
+import { parseUnits, type Address, type Hex, type Abi } from 'viem';
 
-import routerAbi from '@/abi/Router.json';
+import routerAbiJson from '@/abi/Router.json';
 
 const ROUTER = process.env.NEXT_PUBLIC_ROUTER_ADDRESS as Address;
+
+// ✅ cast JSON ABI to Abi
+const routerAbi = routerAbiJson as Abi;
 
 export type SweepToken = {
   tokenAddress: Address;
@@ -46,7 +49,7 @@ export function useDustSweep() {
 
       const calls = tokens.map((t) => ({
         address: ROUTER,
-        abi: routerAbi,
+        abi: routerAbi, // ✅ now typed correctly
         functionName: 'sweep',
         args: [t.tokenAddress, parseUnits(t.amount, t.decimals)],
       }));
