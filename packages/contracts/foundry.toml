@@ -30,7 +30,3 @@ base_mainnet = "${BASE_MAINNET_RPC_URL}"
 
 [etherscan]
 base_mainnet = { key = "${BASESCAN_API_KEY}", url = "https://api.basescan.org/api" }
-
-[profile.test]
-fork_url = "${BASE_MAINNET_RPC_URL}"
-fork_block_number = 25_000_000

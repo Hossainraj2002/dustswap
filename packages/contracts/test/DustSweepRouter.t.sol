@@ -7,10 +7,10 @@ import {FeeCollector} from "../src/FeeCollector.sol";
 import {BurnVault} from "../src/BurnVault.sol";
 import {DustSweepRouter} from "../src/DustSweepRouter.sol";
 
-/// @title DustSweepRouter Tests — Base Mainnet Fork
-/// @dev   Run:  forge test --match-contract DustSweepRouterTest --fork-url $BASE_MAINNET_RPC_URL -vvv
+/// @title DustSweepRouter Tests - Base Mainnet Fork
+/// @dev   Run: forge test --match-contract DustSweepRouterTest --fork-url https://mainnet.base.org -vvv
 contract DustSweepRouterTest is Test {
-    // ── Base Mainnet addresses ──
+    // Base Mainnet addresses
     address constant UNISWAP_ROUTER = 0x2626664c2603336E57B271c5C0b26F421741e481;
     address constant WETH = 0x4200000000000000000000000000000000000006;
     address constant USDC = 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913;
@@ -29,9 +29,6 @@ contract DustSweepRouterTest is Test {
     address public nonOwner;
 
     function setUp() public {
-        // Fork Base mainnet
-        vm.createSelectFork(vm.envString("BASE_MAINNET_RPC_URL"), 25_000_000);
-
         owner = makeAddr("owner");
         treasury = makeAddr("treasury");
         user = makeAddr("user");
@@ -46,37 +43,38 @@ contract DustSweepRouterTest is Test {
         vm.stopPrank();
 
         // Fund user with ETH for gas and swaps
+       vm.deal(address(this), 1 ether);
         vm.deal(user, 100 ether);
     }
 
-    // ═══════════════════════ HELPERS ═══════════════════════
+    // ======================= HELPERS =======================
 
-    /// @dev Get WETH by depositing ETH, then swap WETH→token via Uniswap to get dust tokens.
+    /// @dev Get WETH by depositing ETH, then swap WETH to target token via Uniswap.
     function _getToken(address token, address to, uint256 ethAmount) internal {
         vm.startPrank(to);
 
-        // Wrap ETH → WETH
+        // Wrap ETH to WETH
         (bool success,) = WETH.call{value: ethAmount}("");
         require(success, "WETH deposit failed");
 
-        // If requested token is WETH, we're done
+        // If requested token is WETH, we are done
         if (token == WETH) {
             vm.stopPrank();
             return;
         }
 
-        // Swap WETH → token via Uniswap
+        // Swap WETH to token via Uniswap
         IERC20(WETH).approve(UNISWAP_ROUTER, ethAmount);
 
         bytes memory data = abi.encodeWithSignature(
             "exactInputSingle((address,address,uint24,address,uint256,uint256,uint160))",
-            WETH, // tokenIn
-            token, // tokenOut
-            uint24(3000), // fee
-            to, // recipient
-            ethAmount, // amountIn
-            uint256(0), // amountOutMinimum (fork test, we accept any)
-            uint160(0) // sqrtPriceLimitX96
+            WETH,
+            token,
+            uint24(3000),
+            to,
+            ethAmount,
+            uint256(0),
+            uint160(0)
         );
 
         (success,) = UNISWAP_ROUTER.call(data);
@@ -90,7 +88,7 @@ contract DustSweepRouterTest is Test {
         IERC20(token).approve(address(router), amount);
     }
 
-    // ═══════════════════════ sweepDust — 1 TOKEN ══════════
+    // ======================= sweepDust - 1 TOKEN ===========
 
     function test_sweepDust_singleToken() public {
         // Get USDC dust for user
@@ -101,12 +99,12 @@ contract DustSweepRouterTest is Test {
         // Approve router
         _approveRouter(USDC, user, usdcBalance);
 
-        // Build order: swap USDC → WETH
+        // Build order: swap USDC to WETH
         DustSweepRouter.SwapOrder[] memory orders = new DustSweepRouter.SwapOrder[](1);
         orders[0] = DustSweepRouter.SwapOrder({
             tokenIn: USDC,
             amountIn: usdcBalance,
-            poolFee: 500, // 0.05% pool for USDC/WETH
+            poolFee: 500,
             minAmountOut: 0
         });
 
@@ -122,16 +120,16 @@ contract DustSweepRouterTest is Test {
         assertGt(wethReceived, 0, "User should receive WETH");
         assertGt(feeReceived, 0, "FeeCollector should receive fee");
 
-        // Verify 2% fee: feeReceived / (wethReceived + feeReceived) ≈ 0.02
+        // Verify 2% fee: feeReceived / (wethReceived + feeReceived) approx 0.02
         uint256 totalOutput = wethReceived + feeReceived;
         uint256 expectedFee = (totalOutput * 200) / 10_000;
         assertApproxEqAbs(feeReceived, expectedFee, 1, "Fee should be ~2%");
     }
 
-    // ═══════════════════════ sweepDust — MAX BATCH ═════════
+    // ======================= sweepDust - MAX BATCH =========
 
     function test_sweepDust_maxBatch() public {
-        // We'll create 10 orders all swapping USDC → WETH (same token, different amounts)
+        // Create 10 orders all swapping USDC to WETH
         _getToken(USDC, user, 1 ether);
         uint256 totalUsdc = IERC20(USDC).balanceOf(user);
         assertGt(totalUsdc, 0, "User should have USDC");
@@ -157,7 +155,7 @@ contract DustSweepRouterTest is Test {
         assertGt(wethBalance, 0, "User should receive WETH from max batch");
     }
 
-    // ═══════════════════════ sweepDust — EXCEEDS MAX ═══════
+    // ======================= sweepDust - EXCEEDS MAX =======
 
     function test_sweepDust_revertsOnBatchTooLarge() public {
         DustSweepRouter.SwapOrder[] memory orders = new DustSweepRouter.SwapOrder[](11);
@@ -175,7 +173,7 @@ contract DustSweepRouterTest is Test {
         router.sweepDust(orders, WETH, user);
     }
 
-    // ═══════════════════════ sweepDust — EMPTY ═════════════
+    // ======================= sweepDust - EMPTY =============
 
     function test_sweepDust_revertsOnEmptyOrders() public {
         DustSweepRouter.SwapOrder[] memory orders = new DustSweepRouter.SwapOrder[](0);
@@ -185,7 +183,7 @@ contract DustSweepRouterTest is Test {
         router.sweepDust(orders, WETH, user);
     }
 
-    // ═══════════════════════ sweepDustToETH ════════════════
+    // ======================= sweepDustToETH ================
 
     function test_sweepDustToETH() public {
         _getToken(USDC, user, 0.05 ether);
@@ -209,7 +207,7 @@ contract DustSweepRouterTest is Test {
         assertGt(ethReceived, 0, "User should receive ETH");
     }
 
-    // ═══════════════════════ singleSwap ════════════════════
+    // ======================= singleSwap ====================
 
     function test_singleSwap() public {
         _getToken(USDC, user, 0.1 ether);
@@ -234,10 +232,10 @@ contract DustSweepRouterTest is Test {
         assertApproxEqAbs(feeReceived, expectedFee, 1, "Fee should be ~0.1%");
     }
 
-    // ═══════════════════════ FEE CALCULATIONS ══════════════
+    // ======================= FEE CALCULATIONS ==============
 
-    function test_feeCalculation_dustSweep() public {
-        // dustSweepFeeBps = 200 → 2%
+    function test_feeCalculation_dustSweep() public view {
+        // dustSweepFeeBps = 200 means 2%
         assertEq(router.dustSweepFeeBps(), 200);
 
         // Verify math: 2% of 10000 = 200
@@ -246,8 +244,8 @@ contract DustSweepRouterTest is Test {
         assertEq(fee, 200, "2% of 10000 should be 200");
     }
 
-    function test_feeCalculation_singleSwap() public {
-        // swapFeeBps = 10 → 0.1%
+    function test_feeCalculation_singleSwap() public view {
+        // swapFeeBps = 10 means 0.1%
         assertEq(router.swapFeeBps(), 10);
 
         // Verify math: 0.1% of 10000 = 10
@@ -256,7 +254,7 @@ contract DustSweepRouterTest is Test {
         assertEq(fee, 10, "0.1% of 10000 should be 10");
     }
 
-    // ═══════════════════════ ADMIN ═════════════════════════
+    // ======================= ADMIN =========================
 
     function test_setDustSweepFeeBps_onlyOwner() public {
         vm.prank(nonOwner);
@@ -309,6 +307,9 @@ contract DustSweepRouterTest is Test {
     }
 
     function test_rescueTokens_onlyOwner() public {
+        // Fund the router with ETH so _getToken can wrap ETH -> WETH -> USDC
+        vm.deal(address(router), 1 ether);
+
         // Send some USDC to router accidentally
         _getToken(USDC, address(router), 0.01 ether);
         uint256 stuckBalance = IERC20(USDC).balanceOf(address(router));

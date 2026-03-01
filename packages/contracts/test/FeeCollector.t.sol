@@ -5,10 +5,11 @@ import {Test, console2} from "forge-std/Test.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {FeeCollector} from "../src/FeeCollector.sol";
 
-/// @title FeeCollector Tests — Base Mainnet Fork
+/// @title FeeCollector Tests - Base Mainnet Fork
 contract FeeCollectorTest is Test {
     address constant USDC = 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913;
     address constant WETH = 0x4200000000000000000000000000000000000006;
+    address constant UNISWAP_ROUTER = 0x2626664c2603336E57B271c5C0b26F421741e481;
 
     FeeCollector public feeCollector;
 
@@ -17,8 +18,6 @@ contract FeeCollectorTest is Test {
     address public nonOwner;
 
     function setUp() public {
-        vm.createSelectFork(vm.envString("BASE_MAINNET_RPC_URL"), 25_000_000);
-
         owner = makeAddr("owner");
         treasury = makeAddr("treasury");
         nonOwner = makeAddr("nonOwner");
@@ -29,7 +28,7 @@ contract FeeCollectorTest is Test {
         feeCollector = new FeeCollector(treasury, owner);
     }
 
-    // ═══════════════════════ Constructor ═══════════════════
+    // ======================= Constructor ===================
 
     function test_constructor_setsTreasury() public view {
         assertEq(feeCollector.treasury(), treasury);
@@ -41,7 +40,7 @@ contract FeeCollectorTest is Test {
         new FeeCollector(address(0), owner);
     }
 
-    // ═══════════════════════ Receive ETH ═══════════════════
+    // ======================= Receive ETH ===================
 
     function test_receiveETH() public {
         vm.deal(address(this), 1 ether);
@@ -50,9 +49,13 @@ contract FeeCollectorTest is Test {
         assertEq(address(feeCollector).balance, 1 ether);
     }
 
-    // ═══════════════════════ withdrawETH ═══════════════════
+    // ======================= withdrawETH ===================
 
-    function test_withdrawETH() public {
+   function test_withdrawETH() public {
+        // Etch minimal code onto treasury so it can receive ETH on the fork
+        // This is a single STOP opcode (0x00) — accepts ETH, does nothing
+        vm.etch(treasury, hex"00");
+        
         vm.deal(address(feeCollector), 5 ether);
         uint256 treasuryBefore = treasury.balance;
 
@@ -62,7 +65,6 @@ contract FeeCollectorTest is Test {
         assertEq(address(feeCollector).balance, 0);
         assertEq(treasury.balance, treasuryBefore + 5 ether);
     }
-
     function test_withdrawETH_revertsIfEmpty() public {
         vm.prank(owner);
         vm.expectRevert(FeeCollector.ZeroAmount.selector);
@@ -77,10 +79,9 @@ contract FeeCollectorTest is Test {
         feeCollector.withdrawETH();
     }
 
-    // ═══════════════════════ withdrawToken ═════════════════
+    // ======================= withdrawToken =================
 
     function test_withdrawToken() public {
-        // Send USDC directly to fee collector (simulating fee receipt)
         _sendUSDCToFeeCollector(0.1 ether);
         uint256 balance = IERC20(USDC).balanceOf(address(feeCollector));
         assertGt(balance, 0);
@@ -101,7 +102,7 @@ contract FeeCollectorTest is Test {
         feeCollector.withdrawToken(USDC, balance);
     }
 
-    // ═══════════════════════ sweepToTreasury ═══════════════
+    // ======================= sweepToTreasury ===============
 
     function test_sweepToTreasury() public {
         _sendUSDCToFeeCollector(0.1 ether);
@@ -135,7 +136,7 @@ contract FeeCollectorTest is Test {
         feeCollector.sweepToTreasury(tokens);
     }
 
-    // ═══════════════════════ setTreasury ═══════════════════
+    // ======================= setTreasury ===================
 
     function test_setTreasury() public {
         address newTreasury = makeAddr("newTreasury");
@@ -157,7 +158,7 @@ contract FeeCollectorTest is Test {
         feeCollector.setTreasury(makeAddr("newTreasury"));
     }
 
-    // ═══════════════════════ HELPERS ═══════════════════════
+    // ======================= HELPERS =======================
 
     function _sendUSDCToFeeCollector(uint256 ethAmount) internal {
         address temp = makeAddr("temp");
@@ -167,7 +168,7 @@ contract FeeCollectorTest is Test {
         (bool success,) = WETH.call{value: ethAmount}("");
         require(success);
 
-        IERC20(WETH).approve(0x2626664c2603336E57B271c5C0b26F421741e481, ethAmount);
+        IERC20(WETH).approve(UNISWAP_ROUTER, ethAmount);
 
         bytes memory data = abi.encodeWithSignature(
             "exactInputSingle((address,address,uint24,address,uint256,uint256,uint160))",
@@ -179,7 +180,7 @@ contract FeeCollectorTest is Test {
             uint256(0),
             uint160(0)
         );
-        (success,) = 0x2626664c2603336E57B271c5C0b26F421741e481.call(data);
+        (success,) = UNISWAP_ROUTER.call(data);
         require(success, "Swap to USDC failed");
         vm.stopPrank();
     }

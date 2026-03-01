@@ -6,8 +6,8 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {FeeCollector} from "../src/FeeCollector.sol";
 import {BurnVault} from "../src/BurnVault.sol";
 
-/// @title BurnVault Tests — Base Mainnet Fork
-/// @dev   Run:  forge test --match-contract BurnVaultTest --fork-url $BASE_MAINNET_RPC_URL -vvv
+/// @title BurnVault Tests - Base Mainnet Fork
+/// @dev   Run: forge test --match-contract BurnVaultTest --fork-url https://mainnet.base.org -vvv
 contract BurnVaultTest is Test {
     address constant USDC = 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913;
     address constant WETH = 0x4200000000000000000000000000000000000006;
@@ -22,8 +22,6 @@ contract BurnVaultTest is Test {
     address public attacker;
 
     function setUp() public {
-        vm.createSelectFork(vm.envString("BASE_MAINNET_RPC_URL"), 25_000_000);
-
         owner = makeAddr("owner");
         treasury = makeAddr("treasury");
         user = makeAddr("user");
@@ -38,7 +36,7 @@ contract BurnVaultTest is Test {
         vm.stopPrank();
     }
 
-    // ═══════════════════════ HELPERS ═══════════════════════
+    // ======================= HELPERS =======================
 
     function _getUSDC(address to, uint256 ethAmount) internal {
         vm.startPrank(to);
@@ -62,7 +60,7 @@ contract BurnVaultTest is Test {
         vm.stopPrank();
     }
 
-    // ═══════════════════════ burnTokens ════════════════════
+    // ======================= burnTokens ====================
 
     function test_burnTokens_single() public {
         _getUSDC(user, 0.1 ether);
@@ -152,7 +150,7 @@ contract BurnVaultTest is Test {
         burnVault.burnTokens(tokens, amounts);
     }
 
-    // ═══════════════════════ reclaimToken ══════════════════
+    // ======================= reclaimToken ===================
 
     function test_reclaimToken_success() public {
         _getUSDC(user, 0.1 ether);
@@ -171,8 +169,8 @@ contract BurnVaultTest is Test {
         burnVault.reclaimToken(0);
         vm.stopPrank();
 
-        // 10% tax → feeCollector, 90% → user
-        uint256 expectedTax = (usdcBalance * 1_000) / 10_000; // 10%
+        // 10% tax to feeCollector, 90% to user
+        uint256 expectedTax = (usdcBalance * 1_000) / 10_000;
         uint256 expectedReturn = usdcBalance - expectedTax;
 
         assertEq(
@@ -218,7 +216,7 @@ contract BurnVaultTest is Test {
         assertApproxEqAbs(collectorReceived, expectedTax, 1, "Tax should be 10%");
     }
 
-    // ═══════════════════════ reclaimToken — access control ═
+    // ======================= reclaimToken - access control ==
 
     function test_reclaimToken_revertsIfNotBurner() public {
         _getUSDC(user, 0.1 ether);
@@ -234,7 +232,7 @@ contract BurnVaultTest is Test {
         burnVault.burnTokens(tokens, amounts);
         vm.stopPrank();
 
-        // Attacker tries to reclaim user's burn
+        // Attacker tries to reclaim user burn
         vm.prank(attacker);
         vm.expectRevert(BurnVault.NotBurner.selector);
         burnVault.reclaimToken(0);
@@ -268,7 +266,7 @@ contract BurnVaultTest is Test {
         burnVault.reclaimToken(999);
     }
 
-    // ═══════════════════════ ADMIN ═════════════════════════
+    // ======================= ADMIN =========================
 
     function test_setReclaimTaxBps_onlyOwner() public {
         vm.prank(attacker);
@@ -304,7 +302,7 @@ contract BurnVaultTest is Test {
         burnVault.setFeeCollector(address(0));
     }
 
-    // ═══════════════════════ VIEW FUNCTIONS ════════════════
+    // ======================= VIEW FUNCTIONS ================
 
     function test_getUserBurnRecords_empty() public view {
         BurnVault.BurnRecord[] memory records = burnVault.getUserBurnRecords(user);
