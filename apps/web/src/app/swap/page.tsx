@@ -12,12 +12,20 @@ import type { Token } from '@coinbase/onchainkit/token';
 
 // Well-known Base tokens
 const ETH: Token = {
-  name:     'Ethereum',
-  address:  '',
+  name: 'Ethereum',
+  address: '', // OnchainKit uses empty string for native ETH
+  symbol: 'ETH',
+  decimals: 18,
+  image: 'https://wallet-api-production.s3.amazonaws.com/uploads/tokens/eth_288.png',
+  chainId: 84532, // or 8453 if you are on Base mainnet
 };
 const USDC: Token = {
-  name:     'USDC',
-  address:  '0xFF970A61A04b1cA14834A43f5dE4533eBDDB5CC8',
+  name: 'USDC',
+  address: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+  symbol: 'USDC',
+  decimals: 6,
+  image: 'https://d3r81g40ycuhqg.cloudfront.net/wallet/wusdc.png',
+  chainId: 84532, 
 };
 
 export default function SwapPage() {
