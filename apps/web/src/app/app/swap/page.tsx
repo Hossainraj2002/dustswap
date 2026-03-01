@@ -14,65 +14,34 @@ import type { Token } from '@coinbase/onchainkit/token';
 const ETH: Token = {
   name:     'Ethereum',
   address:  '',
-  symbol:   'ETH',
-  decimals: 18,
-  image:    'https://token-icons.s3.amazonaws.com/eth.png',
-  chainId:  8453,
 };
-
 const USDC: Token = {
   name:     'USDC',
-  address:  '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
-  symbol:   'USDC',
-  decimals: 6,
-  image:    'https://token-icons.s3.amazonaws.com/usdc.png',
-  chainId:  8453,
+  address:  '0xFF970A61A04b1cA14834A43f5dE4533eBDDB5CC8',
 };
 
 export default function SwapPage() {
-  const { address, isConnected } = useAccount();
-
-  if (!isConnected) {
-    return (
-      <div className="flex flex-col items-center justify-center min-h-[60vh]">
-        <div className="text-5xl mb-4">🔄</div>
-        <h1 className="text-3xl font-bold mb-3">Swap</h1>
-        <p className="text-gray-400">Connect your wallet to swap tokens</p>
-      </div>
-    );
-  }
+  const { isConnected } = useAccount();
 
   return (
-    <div className="max-w-md mx-auto">
-      <h1 className="text-3xl font-bold mb-6">🔄 Swap</h1>
-
-      {/* OnchainKit Swap component handles everything */}
-      <div className="bg-gray-900 border border-gray-800 rounded-xl p-6">
-        <Swap
-          onSuccess={(txReceipt) => {
-            // Record swap points after successful transaction
-            if (address) {
-              fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/points/record-swap`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ address, txHash: txReceipt.transactionHash }),
-              });
-            }
-          }}
-          onError={(error) => console.error('Swap error:', error)}
-        >
-          <SwapAmountInput label="From" swappableTokens={[ETH, USDC]} token={ETH}  type="from" />
-          <SwapAmountInput label="To"   swappableTokens={[ETH, USDC]} token={USDC} type="to"   />
-          <SwapButton />
-          <SwapMessage />
-        </Swap>
-      </div>
-
-      <p className="text-xs text-gray-500 text-center mt-4">
-        Each swap earns +50 Dust Particles ✨
-      </p>
-
-      <SwapToast />
+    <div className="min-h-screen bg-gray-950 text-white">
+      <h1 className="text-3xl font-bold mb-4">Swap Tokens</h1>
+      {isConnected ? (
+        <div className="max-w-md mx-auto p-6 bg-gray-900 border border-gray-800 rounded-xl">
+          <Swap chain={base}>
+            <SwapAmountInput label="From" swappableTokens={[ETH, USDC]} token={ETH} type="from" />
+            <SwapAmountInput label="To"   swappableTokens={[ETH, USDC]} token={USDC} type="to"   />
+            <SwapButton />
+            <SwapMessage />
+          </Swap>
+          <p className="text-xs text-gray-500 text-center mt-4">
+            Each swap earns +50 Dust Particles ✨
+          </p>
+          <SwapToast />
+        </div>
+      ) : (
+        <p className="text-center text-gray-400">Connect your wallet to use the swap.</p>
+      )}
     </div>
   );
 }

@@ -1,4 +1,6 @@
+'use client';
 import Link from 'next/link';
+import { ConnectWallet } from '@coinbase/onchainkit/wallet';
 
 const features = [
   {
@@ -35,7 +37,7 @@ export default function HomePage() {
     <div className="min-h-screen bg-gray-950 text-white">
       {/* Hero */}
       <div className="max-w-6xl mx-auto px-4 pt-24 pb-16 text-center">
-        <div className="inline-flex items-center gap-2 bg-blue-900/40 border border-blue-700/50 rounded-full px-4 py-1.5 text-sm text-blue-300 mb-8">
+        <div className="inline-flex items-center gap-2 bg-blue-700/50 rounded-full px-4 py-1.5 text-sm text-blue-300 mb-8">
           <span>⚡</span>
           <span>Built on Base · Gas sponsored · One signature</span>
         </div>
@@ -46,20 +48,22 @@ export default function HomePage() {
         </h1>
 
         <p className="text-xl text-gray-400 max-w-2xl mx-auto mb-10">
-          Batch-sweep worthless micro-balances from your wallet. Convert 25 dust tokens
-          into ETH or USDC with a single click — gas sponsored, no approvals pop-up storm.
+          Batch-sweep worthless micro-balances from your wallet. Convert 25 dust tokens into ETH or USDC with a single click — gas sponsored, no approvals pop-up storm.
         </p>
 
         <div className="flex flex-wrap gap-4 justify-center">
+          <ConnectWallet className="bg-blue-600 hover:bg-blue-700 text-white px-8 py-4 rounded-xl text-lg font-semibold transition-colors">
+            Connect Wallet
+          </ConnectWallet>
           <Link
-            href="/app/dust-sweep"
+            href="/dust-sweep"
             className="bg-blue-600 hover:bg-blue-700 text-white px-8 py-4 rounded-xl text-lg font-semibold transition-colors"
           >
             🧹 Start Sweeping
           </Link>
           <Link
-            href="/app/particles"
-            className="border border-gray-700 hover:border-gray-500 text-white px-8 py-4 rounded-xl text-lg font-semibold transition-colors"
+            href="/particles"
+            className="border border-gray-700 hover:border-gray-600 text-gray-200 px-8 py-4 rounded-xl text-lg font-semibold transition-colors"
           >
             ✨ Earn Points
           </Link>
@@ -70,7 +74,7 @@ export default function HomePage() {
       <div className="max-w-6xl mx-auto px-4 py-16">
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
           {features.map((f) => (
-            <div key={f.title} className="bg-gray-900 border border-gray-800 rounded-xl p-6">
+            <div key={f.title} className="bg-gray-900 border border-gray-800 rounded-xl p-6 shadow-lg transition-all hover:bg-gray-800 hover:shadow-2xl">
               <div className="text-3xl mb-3">{f.icon}</div>
               <h3 className="font-semibold text-lg mb-2">{f.title}</h3>
               <p className="text-gray-400 text-sm">{f.description}</p>

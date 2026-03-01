@@ -12,11 +12,11 @@ import {
 import { Address, Avatar, Name, Identity } from '@coinbase/onchainkit/identity';
 
 const NAV_LINKS = [
-  { href: '/app/swap',        label: '🔄 Swap'        },
-  { href: '/app/dust-sweep',  label: '🧹 Dust Sweep'  },
-  { href: '/app/dust-bridge', label: '🌉 Bridge'      },
-  { href: '/app/burn',        label: '🔥 Burn'        },
-  { href: '/app/particles',   label: '✨ Particles'   },
+  { href: '/swap',        label: '🔄 Swap'        },
+  { href: '/dust-sweep',  label: '🧹 Dust Sweep'  },
+  { href: '/dust-bridge', label: '🌉 Bridge'      },
+  { href: '/burn',        label: '🔥 Burn'        },
+  { href: '/particles',   label: '✨ Particles'   },
 ];
 
 export function Navbar() {
@@ -32,7 +32,7 @@ export function Navbar() {
         </Link>
 
         {/* Links */}
-        <div className="hidden md:flex items-center gap-1">
+        <div className="flex items-center space-x-4">
           {NAV_LINKS.map((l) => (
             <Link
               key={l.href}
@@ -49,23 +49,25 @@ export function Navbar() {
         </div>
 
         {/* Wallet */}
-        <Wallet>
-          <ConnectWallet className="bg-blue-600 hover:bg-blue-700 text-white rounded-lg px-4 py-2 text-sm font-medium">
-            <Avatar className="h-5 w-5" />
-            <Name />
-          </ConnectWallet>
-          <WalletDropdown>
-            <Identity className="px-4 pt-3 pb-2" hasCopyAddressOnClick>
-              <Avatar />
+        <div>
+          <Wallet>
+            <ConnectWallet className="bg-blue-600 hover:bg-blue-700 text-white rounded-lg px-4 py-2 text-sm font-medium">
+              <Avatar className="h-5 w-5" />
               <Name />
-              <Address />
-            </Identity>
-            <WalletDropdownLink icon="wallet" href="https://wallet.coinbase.com">
-              Go to Wallet
-            </WalletDropdownLink>
-            <WalletDropdownDisconnect />
-          </WalletDropdown>
-        </Wallet>
+            </ConnectWallet>
+            <WalletDropdown>
+              <Identity className="px-4 pt-3 pb-2" hasCopyAddressOnClick>
+                <Avatar />
+                <Name />
+                <Address />
+              </Identity>
+              <WalletDropdownLink icon="wallet" href="https://wallet.coinbase.com">
+                Go to Wallet
+              </WalletDropdownLink>
+              <WalletDropdownDisconnect />
+            </WalletDropdown>
+          </Wallet>
+        </div>
       </div>
     </nav>
   );
