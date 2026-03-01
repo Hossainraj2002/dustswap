@@ -36,7 +36,7 @@ export default function SwapPage() {
       <h1 className="text-3xl font-bold mb-4">Swap Tokens</h1>
       {isConnected ? (
         <div className="max-w-md mx-auto p-6 bg-gray-900 border border-gray-800 rounded-xl">
-          <Swap chain={base}>
+          <Swap>
             <SwapAmountInput label="From" swappableTokens={[ETH, USDC]} token={ETH} type="from" />
             <SwapAmountInput label="To"   swappableTokens={[ETH, USDC]} token={USDC} type="to"   />
             <SwapButton />
