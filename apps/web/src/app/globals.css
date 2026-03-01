@@ -2,16 +2,42 @@
 @tailwind components;
 @tailwind utilities;
 
-@layer base {
-  :root {
-    --border: 220 13% 91%;
-    --background: 0 0% 100%;
-    --foreground: 222.2 84% 4.9%;
-  }
+:root {
+  --background: #0a0a0f;
+  --foreground: #e5e7eb;
+  --card: #111118;
+  --card-border: #1e1e2e;
+  --accent: #3b82f6;
+  --accent-hover: #2563eb;
+  --muted: #6b7280;
+  --success: #22c55e;
+  --warning: #eab308;
+  --danger: #ef4444;
 }
 
-@layer utilities {
-  .border-border {
-    border-color: hsl(var(--border));
-  }
+html {
+  color-scheme: dark;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: var(--background);
+}
+::-webkit-scrollbar-thumb {
+  background: #333;
+  border-radius: 3px;
+}
+
+/* OnchainKit overrides for dark theme */
+.ock-font-family {
+  font-family: 'Inter', system-ui, sans-serif !important;
 }

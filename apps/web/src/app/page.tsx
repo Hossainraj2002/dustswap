@@ -1,105 +1,153 @@
 'use client';
-import Link from 'next/link';
-import { ConnectWallet } from '@coinbase/onchainkit/wallet';
 
-const features = [
+import Link from 'next/link';
+import { useAccount } from 'wagmi';
+
+const FEATURES = [
   {
     icon: '🧹',
     title: 'Dust Sweep',
-    description: 'Select up to 25 dust tokens and convert them all to ETH or USDC in one Smart Wallet signature. No repetitive approvals.',
+    description:
+      'Select up to 25 dust tokens and convert them all to ETH or USDC in one Smart Wallet signature. No repetitive approvals.',
+    href: '/dust-sweep',
+    color: 'blue',
   },
   {
     icon: '🌉',
     title: 'Dust Bridge',
-    description: 'Bridge dust from Ethereum, Arbitrum, Polygon, Optimism and more directly to Base — still in one flow.',
+    description:
+      'Bridge dust from Ethereum, Arbitrum, Polygon, Optimism and more directly to Base — still in one flow.',
+    href: '/dust-bridge',
+    color: 'purple',
   },
   {
     icon: '🔥',
     title: 'Burn & Reclaim',
-    description: 'Remove worthless scam tokens from your wallet. Reclaim later for 90% back if you change your mind.',
+    description:
+      'Remove worthless scam tokens from your wallet. Reclaim later for 90% back if you change your mind.',
+    href: '/burn',
+    color: 'red',
   },
   {
     icon: '✨',
-    title: 'Earn $DUST',
-    description: 'Every sweep, bridge, and burn earns Dust Particles. Gas is sponsored — sweeping costs you $0.',
+    title: 'Dust Particles',
+    description:
+      'Earn points for every action. Daily check-ins, quests, referrals. Points convert to $DUST at TGE.',
+    href: '/particles',
+    color: 'yellow',
+  },
+  {
+    icon: '🔄',
+    title: 'Swap',
+    description:
+      'Standard DEX swap powered by Uniswap. Trade any token on Base with 0.3% fees.',
+    href: '/swap',
+    color: 'green',
   },
 ];
 
-const stats = [
-  { stat: '67%', label: 'of token positions are < $5' },
-  { stat: '$2-5B', label: 'in aggregate dust across wallets' },
-  { stat: '15-30', label: 'dust tokens per average wallet' },
-  { stat: '~$0', label: 'gas cost (sponsored by DustSweep)' },
+const STATS = [
+  { label: 'Tokens Swept', value: '0' },
+  { label: 'Total Value Recovered', value: '$0' },
+  { label: 'Wallets Connected', value: '0' },
+  { label: 'Dust Particles Distributed', value: '0' },
 ];
 
+const colorMap: Record<string, string> = {
+  blue: 'border-blue-500/20 hover:border-blue-500/50 hover:bg-blue-500/5',
+  purple: 'border-purple-500/20 hover:border-purple-500/50 hover:bg-purple-500/5',
+  red: 'border-red-500/20 hover:border-red-500/50 hover:bg-red-500/5',
+  yellow: 'border-yellow-500/20 hover:border-yellow-500/50 hover:bg-yellow-500/5',
+  green: 'border-green-500/20 hover:border-green-500/50 hover:bg-green-500/5',
+};
+
 export default function HomePage() {
+  const { isConnected } = useAccount();
+
   return (
-    <div className="min-h-screen bg-gray-950 text-white">
+    <div className="space-y-16">
       {/* Hero */}
-      <div className="max-w-6xl mx-auto px-4 pt-24 pb-16 text-center">
-        <div className="inline-flex items-center gap-2 bg-blue-700/50 rounded-full px-4 py-1.5 text-sm text-blue-300 mb-8">
-          <span>⚡</span>
-          <span>Built on Base · Gas sponsored · One signature</span>
-        </div>
-
-        <h1 className="text-5xl md:text-7xl font-bold mb-6 leading-tight">
-          Turn Wallet Dust<br />
-          Into <span className="text-yellow-400">Gold</span>
+      <section className="text-center pt-12 pb-4">
+        <div className="text-5xl mb-4">⚡</div>
+        <h1 className="text-4xl sm:text-5xl font-bold mb-4 bg-gradient-to-r from-blue-400 via-purple-400 to-blue-400 bg-clip-text text-transparent">
+          Turn Wallet Dust
+          <br />
+          Into Gold
         </h1>
-
-        <p className="text-xl text-gray-400 max-w-2xl mx-auto mb-10">
-          Batch-sweep worthless micro-balances from your wallet. Convert 25 dust tokens into ETH or USDC with a single click — gas sponsored, no approvals pop-up storm.
+        <p className="text-gray-400 text-lg max-w-2xl mx-auto mb-8">
+          Batch-sweep worthless micro-balances from your wallet. Convert 25 dust
+          tokens into ETH or USDC with a single click ��� gas sponsored, no
+          approvals pop-up storm.
         </p>
-
-        <div className="flex flex-wrap gap-4 justify-center">
-          <ConnectWallet className="bg-blue-600 hover:bg-blue-700 text-white px-8 py-4 rounded-xl text-lg font-semibold transition-colors">
-            Connect Wallet
-          </ConnectWallet>
-          <Link
-            href="/dust-sweep"
-            className="bg-blue-600 hover:bg-blue-700 text-white px-8 py-4 rounded-xl text-lg font-semibold transition-colors"
-          >
-            🧹 Start Sweeping
-          </Link>
-          <Link
-            href="/particles"
-            className="border border-gray-700 hover:border-gray-600 text-gray-200 px-8 py-4 rounded-xl text-lg font-semibold transition-colors"
-          >
-            ✨ Earn Points
-          </Link>
+        <div className="flex flex-wrap items-center justify-center gap-3">
+          {isConnected ? (
+            <>
+              <Link
+                href="/dust-sweep"
+                className="px-6 py-3 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-semibold transition-colors"
+              >
+                🧹 Start Sweeping
+              </Link>
+              <Link
+                href="/particles"
+                className="px-6 py-3 rounded-xl border border-gray-700 hover:border-gray-500 text-gray-300 hover:text-white font-semibold transition-colors"
+              >
+                ✨ Earn Points
+              </Link>
+            </>
+          ) : (
+            <p className="text-gray-500 text-sm">
+              Connect your wallet to get started ↗
+            </p>
+          )}
         </div>
-      </div>
-
-      {/* Features */}
-      <div className="max-w-6xl mx-auto px-4 py-16">
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-          {features.map((f) => (
-            <div key={f.title} className="bg-gray-900 border border-gray-800 rounded-xl p-6 shadow-lg transition-all hover:bg-gray-800 hover:shadow-2xl">
-              <div className="text-3xl mb-3">{f.icon}</div>
-              <h3 className="font-semibold text-lg mb-2">{f.title}</h3>
-              <p className="text-gray-400 text-sm">{f.description}</p>
-            </div>
-          ))}
-        </div>
-      </div>
+      </section>
 
       {/* Stats */}
-      <div className="max-w-4xl mx-auto px-4 py-16 text-center">
-        <h2 className="text-3xl font-bold mb-12">The Dust Problem Is Real</h2>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-8">
-          {stats.map((s) => (
-            <div key={s.stat}>
-              <div className="text-4xl font-bold text-yellow-400">{s.stat}</div>
-              <div className="text-sm text-gray-400 mt-2">{s.label}</div>
-            </div>
+      <section className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+        {STATS.map((stat) => (
+          <div
+            key={stat.label}
+            className="bg-gray-900/50 border border-gray-800 rounded-xl p-4 text-center"
+          >
+            <div className="text-2xl font-bold text-white">{stat.value}</div>
+            <div className="text-xs text-gray-500 mt-1">{stat.label}</div>
+          </div>
+        ))}
+      </section>
+
+      {/* Features */}
+      <section>
+        <h2 className="text-2xl font-bold text-center mb-8">
+          Everything You Need
+        </h2>
+        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          {FEATURES.map((feature) => (
+            <Link
+              key={feature.title}
+              href={feature.href}
+              className={`group block p-6 rounded-xl border transition-all duration-200 ${
+                colorMap[feature.color]
+              }`}
+            >
+              <div className="text-3xl mb-3">{feature.icon}</div>
+              <h3 className="text-lg font-semibold text-white mb-2">
+                {feature.title}
+              </h3>
+              <p className="text-sm text-gray-400 leading-relaxed">
+                {feature.description}
+              </p>
+            </Link>
           ))}
         </div>
-      </div>
+      </section>
 
-      {/* Footer */}
-      <footer className="border-t border-gray-800 py-8 text-center text-gray-500 text-sm">
-        DustSweep · Built on Base · Not financial advice
-      </footer>
+      {/* Powered by */}
+      <section className="text-center pb-8">
+        <p className="text-xs text-gray-600">
+          Built on Base ⬡ · Powered by Uniswap · Smart Wallet by Coinbase
+        </p>
+      </section>
     </div>
   );
 }
