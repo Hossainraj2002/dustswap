@@ -1,135 +1,182 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.24;
+pragma solidity ^0.8.20;
 
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
-/// @title BurnVault — Store "burned" tokens with optional reclaim (10% tax)
-/// @notice Users burn dust/scam tokens here. Optionally reclaim later at a cost.
+/// @title BurnVault
+/// @notice Users deposit (burn) valueless / zero-liquidity tokens.
+///         They may later reclaim them with a configurable tax that flows
+///         to the FeeCollector.
 contract BurnVault is Ownable, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
-    // ─── Configuration ───────────────────────────────────────────────────────
-    uint256 public reclaimTaxBps = 1000;           // 10 % (bps out of 10 000)
-    uint256 public constant MAX_TAX          = 2000; // 20 % ceiling
-    uint256 public constant MAX_TOKENS_PER_BURN = 50;
+    // ──────────────────────── Types ────────────────────────
 
-    uint256 private _burnCounter;
-
-    // ─── Data ─────────────────────────────────────────────────────────────────
     struct BurnRecord {
-        address   user;
-        address[] tokens;
-        uint256[] amounts;
-        bool      reclaimed;
-        uint256   timestamp;
+        address burner;
+        address token;
+        uint256 amount;
+        uint256 timestamp;
+        bool reclaimed;
     }
 
-    mapping(bytes32 => BurnRecord)   private _burns;
-    mapping(address => bytes32[])    private _userBurns;
+    // ──────────────────────── Constants ────────────────────
+    uint256 public constant BPS_DENOMINATOR = 10_000;
+    uint256 public constant MAX_RECLAIM_TAX_BPS = 5_000; // 50 %
 
-    // ─── Events ──────────────────────────────────────────────────────────────
+    // ──────────────────────── State ────────────────────────
+    address public feeCollector;
+    uint256 public reclaimTaxBps = 1_000; // 10 %
+
+    uint256 public nextRecordId;
+    mapping(uint256 => BurnRecord) public burnRecords;
+    mapping(address => uint256[]) private _userBurnIds;
+
+    // ──────────────────────── Events ───────────────────────
     event TokensBurned(
-        address indexed user,
-        bytes32 indexed burnId,
-        address[] tokens,
-        uint256[] amounts
+        address indexed burner, uint256[] recordIds, address[] tokens, uint256[] amounts
     );
-    event TokensReclaimed(address indexed user, bytes32 indexed burnId);
-    event ReclaimTaxUpdated(uint256 oldTax, uint256 newTax);
+    event TokenReclaimed(
+        uint256 indexed recordId,
+        address indexed burner,
+        address indexed token,
+        uint256 amountReturned,
+        uint256 taxAmount
+    );
+    event ReclaimTaxBpsUpdated(uint256 oldBps, uint256 newBps);
+    event FeeCollectorUpdated(address indexed oldCollector, address indexed newCollector);
 
-    constructor() Ownable(msg.sender) {}
+    // ──────────────────────── Errors ───────────────────────
+    error ZeroAddress();
+    error ArrayLengthMismatch();
+    error EmptyArray();
+    error ZeroAmount();
+    error NotBurner();
+    error AlreadyReclaimed();
+    error TaxTooHigh();
+    error RecordDoesNotExist();
 
-    // ─── Burn ────────────────────────────────────────────────────────────────
-
-    /// @notice Burn multiple tokens in one call. Returns a burnId for potential reclaim.
-    function burnTokens(
-        address[] calldata tokens,
-        uint256[] calldata amounts
-    ) external nonReentrant returns (bytes32 burnId) {
-        require(tokens.length > 0,                          "BurnVault: empty");
-        require(tokens.length == amounts.length,            "BurnVault: length mismatch");
-        require(tokens.length <= MAX_TOKENS_PER_BURN,       "BurnVault: too many tokens");
-
-        burnId = keccak256(abi.encodePacked(msg.sender, block.timestamp, _burnCounter++));
-
-        for (uint256 i; i < tokens.length; i++) {
-            require(amounts[i] > 0,             "BurnVault: zero amount");
-            require(tokens[i] != address(0),    "BurnVault: zero token");
-            IERC20(tokens[i]).safeTransferFrom(msg.sender, address(this), amounts[i]);
-        }
-
-        _burns[burnId] = BurnRecord({
-            user:      msg.sender,
-            tokens:    tokens,
-            amounts:   amounts,
-            reclaimed: false,
-            timestamp: block.timestamp
-        });
-        _userBurns[msg.sender].push(burnId);
-
-        emit TokensBurned(msg.sender, burnId, tokens, amounts);
+    // ──────────────────────── Constructor ──────────────────
+    /// @param _feeCollector Address of the FeeCollector contract.
+    /// @param _owner        Contract owner.
+    constructor(address _feeCollector, address _owner) Ownable(_owner) {
+        if (_feeCollector == address(0)) revert ZeroAddress();
+        feeCollector = _feeCollector;
     }
 
-    // ─── Reclaim ─────────────────────────────────────────────────────────────
+    // ──────────────────────── Core ─────────────────────────
 
-    /// @notice Reclaim previously burned tokens minus the reclaim tax
-    function reclaimTokens(bytes32 burnId) external nonReentrant {
-        BurnRecord storage r = _burns[burnId];
-        require(r.user == msg.sender,   "BurnVault: not owner");
-        require(!r.reclaimed,           "BurnVault: already reclaimed");
-        require(r.user != address(0),   "BurnVault: not found");
-
-        r.reclaimed = true;
-
-        for (uint256 i; i < r.tokens.length; i++) {
-            uint256 available = IERC20(r.tokens[i]).balanceOf(address(this));
-            uint256 toReturn  = r.amounts[i] > available ? available : r.amounts[i];
-            if (toReturn == 0) continue;
-
-            uint256 tax        = (toReturn * reclaimTaxBps) / 10_000;
-            uint256 userAmount = toReturn - tax;
-
-            if (userAmount > 0) IERC20(r.tokens[i]).safeTransfer(msg.sender, userAmount);
-            // tax stays in vault
-        }
-
-        emit TokensReclaimed(msg.sender, burnId);
-    }
-
-    // ─── Views ───────────────────────────────────────────────────────────────
-
-    function getUserBurns(address user) external view returns (bytes32[] memory) {
-        return _userBurns[user];
-    }
-
-    function getBurnRecord(bytes32 burnId)
-        external view
-        returns (
-            address user,
-            address[] memory tokens,
-            uint256[] memory amounts,
-            bool    reclaimed,
-            uint256 timestamp
-        )
+    /// @notice Burn (deposit) one or more tokens into the vault.
+    /// @param tokens  Token addresses to burn.
+    /// @param amounts Corresponding amounts (must match length).
+    function burnTokens(address[] calldata tokens, uint256[] calldata amounts)
+        external
+        nonReentrant
     {
-        BurnRecord storage r = _burns[burnId];
-        return (r.user, r.tokens, r.amounts, r.reclaimed, r.timestamp);
+        uint256 length = tokens.length;
+        if (length == 0) revert EmptyArray();
+        if (length != amounts.length) revert ArrayLengthMismatch();
+
+        uint256[] memory recordIds = new uint256[](length);
+
+        for (uint256 i; i < length;) {
+            address token = tokens[i];
+            uint256 amount = amounts[i];
+            if (token == address(0)) revert ZeroAddress();
+            if (amount == 0) revert ZeroAmount();
+
+            IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
+
+            uint256 recordId = nextRecordId;
+            burnRecords[recordId] = BurnRecord({
+                burner: msg.sender,
+                token: token,
+                amount: amount,
+                timestamp: block.timestamp,
+                reclaimed: false
+            });
+            _userBurnIds[msg.sender].push(recordId);
+            recordIds[i] = recordId;
+
+            unchecked {
+                ++nextRecordId;
+                ++i;
+            }
+        }
+
+        emit TokensBurned(msg.sender, recordIds, tokens, amounts);
     }
 
-    // ─── Admin ───────────────────────────────────────────────────────────────
+    /// @notice Reclaim a previously burned token. 10 % tax goes to FeeCollector.
+    /// @param recordId The burn record ID to reclaim.
+    function reclaimToken(uint256 recordId) external nonReentrant {
+        if (recordId >= nextRecordId) revert RecordDoesNotExist();
 
-    function setReclaimTax(uint256 _taxBps) external onlyOwner {
-        require(_taxBps <= MAX_TAX, "BurnVault: tax too high");
+        BurnRecord storage record = burnRecords[recordId];
+        if (record.burner != msg.sender) revert NotBurner();
+        if (record.reclaimed) revert AlreadyReclaimed();
+
+        record.reclaimed = true;
+
+        uint256 taxAmount = (record.amount * reclaimTaxBps) / BPS_DENOMINATOR;
+        uint256 returnAmount = record.amount - taxAmount;
+
+        if (taxAmount > 0) {
+            IERC20(record.token).safeTransfer(feeCollector, taxAmount);
+        }
+        if (returnAmount > 0) {
+            IERC20(record.token).safeTransfer(msg.sender, returnAmount);
+        }
+
+        emit TokenReclaimed(recordId, msg.sender, record.token, returnAmount, taxAmount);
+    }
+
+    // ──────────────────────── Views ────────────────────────
+
+    /// @notice Return all burn record IDs for a given user.
+    function getUserBurnIds(address user) external view returns (uint256[] memory) {
+        return _userBurnIds[user];
+    }
+
+    /// @notice Return a single burn record by ID.
+    function getBurnRecord(uint256 recordId) external view returns (BurnRecord memory) {
+        if (recordId >= nextRecordId) revert RecordDoesNotExist();
+        return burnRecords[recordId];
+    }
+
+    /// @notice Return all burn records for a user (convenience view).
+    /// @dev    May be expensive for users with many records — use off-chain indexing in production.
+    function getUserBurnRecords(address user) external view returns (BurnRecord[] memory) {
+        uint256[] storage ids = _userBurnIds[user];
+        uint256 length = ids.length;
+        BurnRecord[] memory records = new BurnRecord[](length);
+        for (uint256 i; i < length;) {
+            records[i] = burnRecords[ids[i]];
+            unchecked {
+                ++i;
+            }
+        }
+        return records;
+    }
+
+    // ──────────────────────── Admin ────────────────────────
+
+    /// @notice Update the reclaim tax in basis points.
+    function setReclaimTaxBps(uint256 _bps) external onlyOwner {
+        if (_bps > MAX_RECLAIM_TAX_BPS) revert TaxTooHigh();
         uint256 old = reclaimTaxBps;
-        reclaimTaxBps = _taxBps;
-        emit ReclaimTaxUpdated(old, _taxBps);
+        reclaimTaxBps = _bps;
+        emit ReclaimTaxBpsUpdated(old, _bps);
     }
 
-    /// @notice Owner withdraws accumulated tax tokens
-    function withdrawTax(address token, uint256 amount) external onlyOwner {
-        IERC20(token).safeTransfer(msg.sender, amount);
+    /// @notice Update the FeeCollector address.
+    function setFeeCollector(address _feeCollector) external onlyOwner {
+        if (_feeCollector == address(0)) revert ZeroAddress();
+        address old = feeCollector;
+        feeCollector = _feeCollector;
+        emit FeeCollectorUpdated(old, _feeCollector);
     }
 }

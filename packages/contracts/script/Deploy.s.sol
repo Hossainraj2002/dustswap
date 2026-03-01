@@ -1,53 +1,61 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.24;
+pragma solidity ^0.8.20;
 
-import {Script, console} from "forge-std/Script.sol";
-import {FeeCollector}    from "../src/FeeCollector.sol";
-import {BurnVault}       from "../src/BurnVault.sol";
+import {Script, console2} from "forge-std/Script.sol";
+import {FeeCollector} from "../src/FeeCollector.sol";
+import {BurnVault} from "../src/BurnVault.sol";
 import {DustSweepRouter} from "../src/DustSweepRouter.sol";
 
-/// @notice Deploy script for Base Sepolia testnet (and Base mainnet later)
-/// Usage:
-///   forge script script/Deploy.s.sol:Deploy \
-///     --rpc-url $BASE_SEPOLIA_RPC_URL \
-///     --broadcast --verify -vvv
-contract Deploy is Script {
-    // Uniswap Universal Router addresses
-    address constant UNIV3_BASE_SEPOLIA = 0xd4a1D777e2882487d47c96bc23A47CeaB4f4f18A;
-    address constant UNIV3_BASE_MAINNET = 0x3fC91A3afd70395Cd496C647d5a6CC9D4B2b7FAD;
+/// @title DustSwap Deployment Script — Base Mainnet
+/// @dev   Usage:
+///        forge script script/Deploy.s.sol:DeployDustSwap \
+///          --rpc-url base_mainnet \
+///          --broadcast \
+///          --verify \
+///          -vvvv
+contract DeployDustSwap is Script {
+    // ── Base Mainnet addresses ──
+    address constant UNISWAP_SWAP_ROUTER_02 = 0x2626664c2603336E57B271c5C0b26F421741e481;
+    address constant WETH = 0x4200000000000000000000000000000000000006;
 
     function run() external {
-        uint256 pk       = vm.envUint("DEPLOYER_PRIVATE_KEY");
-        address deployer = vm.addr(pk);
-        uint256 chainId  = block.chainid;
+        // Read deployer private key and treasury from environment
+        uint256 deployerPrivateKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
+        address treasury = vm.envAddress("TREASURY_ADDRESS");
+        address deployer = vm.addr(deployerPrivateKey);
 
-        console.log("Chain ID :", chainId);
-        console.log("Deployer :", deployer);
+        console2.log("===========================================");
+        console2.log("  DustSwap — Base Mainnet Deployment");
+        console2.log("===========================================");
+        console2.log("Deployer:          ", deployer);
+        console2.log("Treasury:          ", treasury);
+        console2.log("Uniswap Router:    ", UNISWAP_SWAP_ROUTER_02);
+        console2.log("WETH:              ", WETH);
+        console2.log("-------------------------------------------");
 
-        address uniRouter = (chainId == 8453)
-            ? UNIV3_BASE_MAINNET
-            : UNIV3_BASE_SEPOLIA;
+        vm.startBroadcast(deployerPrivateKey);
 
-        vm.startBroadcast(pk);
+        // 1. Deploy FeeCollector
+        FeeCollector feeCollector = new FeeCollector(treasury, deployer);
+        console2.log("FeeCollector:      ", address(feeCollector));
 
-        // 1. FeeCollector — treasury = deployer until multi-sig is ready
-        FeeCollector feeCollector = new FeeCollector(deployer);
-        console.log("FeeCollector  :", address(feeCollector));
+        // 2. Deploy BurnVault
+        BurnVault burnVault = new BurnVault(address(feeCollector), deployer);
+        console2.log("BurnVault:         ", address(burnVault));
 
-        // 2. BurnVault
-        BurnVault burnVault = new BurnVault();
-        console.log("BurnVault     :", address(burnVault));
-
-        // 3. DustSweepRouter
-        DustSweepRouter router = new DustSweepRouter(uniRouter, address(feeCollector));
-        console.log("DustSweepRouter:", address(router));
+        // 3. Deploy DustSweepRouter
+        DustSweepRouter router = new DustSweepRouter(
+            UNISWAP_SWAP_ROUTER_02,
+            WETH,
+            address(feeCollector),
+            deployer
+        );
+        console2.log("DustSweepRouter:   ", address(router));
 
         vm.stopBroadcast();
 
-        console.log("");
-        console.log("=== Copy these addresses into apps/web/.env.local ===");
-        console.log("NEXT_PUBLIC_ROUTER_ADDRESS=", address(router));
-        console.log("NEXT_PUBLIC_BURN_VAULT_ADDRESS=", address(burnVault));
-        console.log("NEXT_PUBLIC_FEE_COLLECTOR_ADDRESS=", address(feeCollector));
+        console2.log("-------------------------------------------");
+        console2.log("  Deployment complete!");
+        console2.log("===========================================");
     }
 }

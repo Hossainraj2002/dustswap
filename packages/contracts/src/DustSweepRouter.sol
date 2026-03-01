@@ -1,177 +1,283 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.24;
+pragma solidity ^0.8.20;
 
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {ISwapRouter02} from "./interfaces/ISwapRouter02.sol";
+import {IWETH} from "./interfaces/IWETH.sol";
 
-/// @title DustSweepRouter — Batch-swap multiple dust tokens to a single output
-/// @notice Tokens must be approved (or batch-approved via Smart Wallet) before calling.
-///         All swaps route through Uniswap Universal Router calldata built off-chain.
+/// @title DustSweepRouter
+/// @notice Batch-swap small "dust" ERC-20 balances into a single output token
+///         via Uniswap V3 on Base, with a protocol fee sent to FeeCollector.
 contract DustSweepRouter is Ownable, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
-    // ─── Constants ───────────────────────────────────────────────────────────
-    uint256 public constant MAX_BATCH         = 25;
-    uint256 public constant MAX_FEE_BPS       = 500;   // 5 % ceiling
-    uint256 public constant BPS_DENOMINATOR   = 10_000;
+    // ──────────────────────── Types ────────────────────────
 
-    // ─── State ───────────────────────────────────────────────────────────────
-    address public immutable uniswapRouter;
-    address public           feeCollector;
-    uint256 public           sweepFeeBps = 100;   // 1 %
-    uint256 public           swapFeeBps  = 30;    // 0.3 %
-    bool    public           paused;
+    struct SwapOrder {
+        address tokenIn;
+        uint256 amountIn;
+        uint24 poolFee;
+        uint256 minAmountOut;
+    }
 
-    // ─── Events ──────────────────────────────────────────────────────────────
+    // ──────────────────────── Constants ────────────────────
+    uint256 public constant BPS_DENOMINATOR = 10_000;
+    uint256 public constant MAX_BATCH_SIZE = 10;
+    uint256 public constant MAX_DUST_SWEEP_FEE_BPS = 500; // 5 %
+    uint256 public constant MAX_SWAP_FEE_BPS = 100; // 1 %
+
+    // ──────────────────────── Immutables ───────────────────
+    ISwapRouter02 public immutable swapRouter;
+    IWETH public immutable weth;
+
+    // ──────────────────────── State ────────────────────────
+    address public feeCollector;
+    uint256 public dustSweepFeeBps = 200; // 2 %
+    uint256 public swapFeeBps = 10; // 0.1 %
+
+    // ──────────────────────── Events ───────────────────────
     event DustSwept(
-        address indexed user,
-        uint256 tokenCount,
-        address outputToken,
+        address indexed sender,
+        address indexed recipient,
+        address indexed tokenOut,
         uint256 totalOutput,
-        uint256 fee,
-        uint256 userReceived
+        uint256 feeAmount,
+        uint256 orderCount
     );
     event SingleSwap(
-        address indexed user,
+        address indexed sender,
+        address indexed recipient,
+        address indexed tokenOut,
         address tokenIn,
-        address tokenOut,
         uint256 amountIn,
         uint256 amountOut,
-        uint256 fee
+        uint256 feeAmount
     );
-    event Paused(bool state);
-    event FeeUpdated(string feeType, uint256 oldFee, uint256 newFee);
-    event FeeCollectorUpdated(address oldCollector, address newCollector);
+    event DustSweepFeeBpsUpdated(uint256 oldBps, uint256 newBps);
+    event SwapFeeBpsUpdated(uint256 oldBps, uint256 newBps);
+    event FeeCollectorUpdated(address indexed oldCollector, address indexed newCollector);
+    event TokensRescued(address indexed token, uint256 amount, address indexed to);
 
-    // ─── Modifiers ───────────────────────────────────────────────────────────
-    modifier whenNotPaused() {
-        require(!paused, "DustSweepRouter: paused");
-        _;
-    }
+    // ──────────────────────── Errors ───────────────────────
+    error ZeroAddress();
+    error ZeroAmount();
+    error EmptyOrders();
+    error BatchTooLarge();
+    error FeeTooHigh();
+    error SwapFailed();
+    error ETHTransferFailed();
+    error InsufficientOutput();
+    error InvalidTokenOut();
 
-    // ─── Constructor ─────────────────────────────────────────────────────────
-    constructor(address _uniswapRouter, address _feeCollector) Ownable(msg.sender) {
-        require(_uniswapRouter != address(0), "DustSweepRouter: zero router");
-        require(_feeCollector  != address(0), "DustSweepRouter: zero feeCollector");
-        uniswapRouter = _uniswapRouter;
-        feeCollector  = _feeCollector;
-    }
+    // ──────────────────────── Constructor ──────────────────
+    /// @param _swapRouter   Uniswap V3 SwapRouter02 on Base.
+    /// @param _weth         WETH address on Base (0x4200…0006).
+    /// @param _feeCollector FeeCollector contract.
+    /// @param _owner        Contract owner.
+    constructor(
+        address _swapRouter,
+        address _weth,
+        address _feeCollector,
+        address _owner
+    ) Ownable(_owner) {
+        if (_swapRouter == address(0)) revert ZeroAddress();
+        if (_weth == address(0)) revert ZeroAddress();
+        if (_feeCollector == address(0)) revert ZeroAddress();
 
-    // ─── Structs ─────────────────────────────────────────────────────────────
-
-    struct SweepParams {
-        address[] inputTokens;
-        uint256[] inputAmounts;
-        address   outputToken;
-        uint256   minOutputAmount;  // slippage protection
-        bytes[]   swapCalldata;     // pre-built Uniswap calldata per token
-    }
-
-    // ─── Core: Sweep ─────────────────────────────────────────────────────────
-
-    /// @notice Batch-sweep multiple dust tokens into a single output token.
-    /// @dev    Compatible with Base Smart Wallet batch transaction flow:
-    ///         the frontend sends all approval calls + this sweep call in one
-    ///         `wallet_sendCalls` bundle so users sign once.
-    /// @param params See SweepParams struct above.
-    /// @return userReceived Amount of outputToken sent to caller.
-    function sweepDust(SweepParams calldata params)
-        external
-        nonReentrant
-        whenNotPaused
-        returns (uint256 userReceived)
-    {
-        // ── Validate ────────────────────────────────────────────────────────
-        require(params.inputTokens.length > 0,           "DustSweepRouter: empty");
-        require(params.inputTokens.length <= MAX_BATCH,  "DustSweepRouter: too many tokens");
-        require(
-            params.inputTokens.length == params.inputAmounts.length &&
-            params.inputTokens.length == params.swapCalldata.length,
-            "DustSweepRouter: length mismatch"
-        );
-
-        // ── Snapshot output balance before swaps ────────────────────────────
-        uint256 outputBefore = IERC20(params.outputToken).balanceOf(address(this));
-
-        // ── Pull tokens & swap ──────────────────────────────────────────────
-        for (uint256 i; i < params.inputTokens.length; i++) {
-            if (params.inputAmounts[i] == 0) continue;
-
-            IERC20(params.inputTokens[i]).safeTransferFrom(
-                msg.sender, address(this), params.inputAmounts[i]
-            );
-            IERC20(params.inputTokens[i]).safeIncreaseAllowance(
-                uniswapRouter, params.inputAmounts[i]
-            );
-
-            // Graceful failure: one bad swap doesn't revert the whole batch
-            (bool ok,) = uniswapRouter.call(params.swapCalldata[i]);
-            if (!ok) {
-                // Return the specific token to user so nothing is lost
-                uint256 remaining = IERC20(params.inputTokens[i]).balanceOf(address(this));
-                if (remaining > 0) IERC20(params.inputTokens[i]).safeTransfer(msg.sender, remaining);
-            }
-        }
-
-        // ── Calculate output & fee ───────────────────────────────────────────
-        uint256 totalOutput = IERC20(params.outputToken).balanceOf(address(this)) - outputBefore;
-        require(totalOutput > 0, "DustSweepRouter: no output");
-
-        uint256 fee = (totalOutput * sweepFeeBps) / BPS_DENOMINATOR;
-        userReceived = totalOutput - fee;
-
-        require(userReceived >= params.minOutputAmount, "DustSweepRouter: slippage");
-
-        // ── Distribute ──────────────────────────────────────────────────────
-        if (fee > 0) IERC20(params.outputToken).safeTransfer(feeCollector, fee);
-        IERC20(params.outputToken).safeTransfer(msg.sender, userReceived);
-
-        emit DustSwept(
-            msg.sender,
-            params.inputTokens.length,
-            params.outputToken,
-            totalOutput,
-            fee,
-            userReceived
-        );
-    }
-
-    // ─── Admin ───────────────────────────────────────────────────────────────
-
-    function setPause(bool _paused) external onlyOwner {
-        paused = _paused;
-        emit Paused(_paused);
-    }
-
-    function setSweepFee(uint256 _bps) external onlyOwner {
-        require(_bps <= MAX_FEE_BPS, "DustSweepRouter: fee too high");
-        emit FeeUpdated("sweep", sweepFeeBps, _bps);
-        sweepFeeBps = _bps;
-    }
-
-    function setSwapFee(uint256 _bps) external onlyOwner {
-        require(_bps <= MAX_FEE_BPS, "DustSweepRouter: fee too high");
-        emit FeeUpdated("swap", swapFeeBps, _bps);
-        swapFeeBps = _bps;
-    }
-
-    function setFeeCollector(address _feeCollector) external onlyOwner {
-        require(_feeCollector != address(0), "DustSweepRouter: zero address");
-        emit FeeCollectorUpdated(feeCollector, _feeCollector);
+        swapRouter = ISwapRouter02(_swapRouter);
+        weth = IWETH(_weth);
         feeCollector = _feeCollector;
     }
 
-    /// @notice Emergency token rescue
-    function rescueTokens(address token, uint256 amount) external onlyOwner {
-        IERC20(token).safeTransfer(msg.sender, amount);
-    }
-
-    function rescueETH() external onlyOwner {
-        (bool ok,) = payable(msg.sender).call{value: address(this).balance}("");
-        require(ok, "DustSweepRouter: ETH rescue failed");
-    }
-
+    // ──────────────────────── Receive (for WETH unwrap) ───
     receive() external payable {}
+
+    // ──────────────────────── Core: Dust Sweep ─────────────
+
+    /// @notice Batch-swap multiple dust tokens into a single ERC-20 tokenOut.
+    /// @param orders    Array of SwapOrder structs (max 10).
+    /// @param tokenOut  The desired output token.
+    /// @param recipient Address that receives the net output.
+    function sweepDust(
+        SwapOrder[] calldata orders,
+        address tokenOut,
+        address recipient
+    ) external nonReentrant {
+        if (orders.length == 0) revert EmptyOrders();
+        if (orders.length > MAX_BATCH_SIZE) revert BatchTooLarge();
+        if (tokenOut == address(0)) revert InvalidTokenOut();
+        if (recipient == address(0)) revert ZeroAddress();
+
+        uint256 totalOutput = _executeBatchSwaps(orders, tokenOut);
+        if (totalOutput == 0) revert InsufficientOutput();
+
+        uint256 feeAmount = (totalOutput * dustSweepFeeBps) / BPS_DENOMINATOR;
+        uint256 netOutput = totalOutput - feeAmount;
+
+        IERC20 outputToken = IERC20(tokenOut);
+        if (feeAmount > 0) {
+            outputToken.safeTransfer(feeCollector, feeAmount);
+        }
+        outputToken.safeTransfer(recipient, netOutput);
+
+        emit DustSwept(msg.sender, recipient, tokenOut, totalOutput, feeAmount, orders.length);
+    }
+
+    /// @notice Batch-swap multiple dust tokens into ETH (via WETH).
+    /// @param orders    Array of SwapOrder structs (max 10).
+    /// @param recipient Address that receives the net ETH output.
+    function sweepDustToETH(
+        SwapOrder[] calldata orders,
+        address recipient
+    ) external nonReentrant {
+        if (orders.length == 0) revert EmptyOrders();
+        if (orders.length > MAX_BATCH_SIZE) revert BatchTooLarge();
+        if (recipient == address(0)) revert ZeroAddress();
+
+        address wethAddr = address(weth);
+        uint256 totalOutput = _executeBatchSwaps(orders, wethAddr);
+        if (totalOutput == 0) revert InsufficientOutput();
+
+        uint256 feeAmount = (totalOutput * dustSweepFeeBps) / BPS_DENOMINATOR;
+        uint256 netOutput = totalOutput - feeAmount;
+
+        // Send fee as WETH to feeCollector
+        if (feeAmount > 0) {
+            IERC20(wethAddr).safeTransfer(feeCollector, feeAmount);
+        }
+
+        // Unwrap net WETH → ETH and send to recipient
+        weth.withdraw(netOutput);
+        (bool success,) = recipient.call{value: netOutput}("");
+        if (!success) revert ETHTransferFailed();
+
+        emit DustSwept(msg.sender, recipient, address(0), totalOutput, feeAmount, orders.length);
+    }
+
+    // ──────────────────────── Core: Single Swap ────────────
+
+    /// @notice Swap a single token through Uniswap V3 with a 0.1 % fee.
+    /// @param tokenIn   Input token.
+    /// @param amountIn  Amount of input token.
+    /// @param tokenOut  Desired output token.
+    /// @param poolFee   Uniswap V3 pool fee tier (e.g. 500, 3000, 10000).
+    /// @param minOut    Minimum acceptable output (slippage protection).
+    /// @param recipient Address that receives the net output.
+    function singleSwap(
+        address tokenIn,
+        uint256 amountIn,
+        address tokenOut,
+        uint24 poolFee,
+        uint256 minOut,
+        address recipient
+    ) external nonReentrant {
+        if (tokenIn == address(0) || tokenOut == address(0)) revert ZeroAddress();
+        if (amountIn == 0) revert ZeroAmount();
+        if (recipient == address(0)) revert ZeroAddress();
+
+        IERC20(tokenIn).safeTransferFrom(msg.sender, address(this), amountIn);
+        IERC20(tokenIn).forceApprove(address(swapRouter), amountIn);
+
+        uint256 amountOut = swapRouter.exactInputSingle(
+            ISwapRouter02.ExactInputSingleParams({
+                tokenIn: tokenIn,
+                tokenOut: tokenOut,
+                fee: poolFee,
+                recipient: address(this),
+                amountIn: amountIn,
+                amountOutMinimum: minOut,
+                sqrtPriceLimitX96: 0
+            })
+        );
+
+        uint256 feeAmount = (amountOut * swapFeeBps) / BPS_DENOMINATOR;
+        uint256 netOutput = amountOut - feeAmount;
+
+        IERC20 outputToken = IERC20(tokenOut);
+        if (feeAmount > 0) {
+            outputToken.safeTransfer(feeCollector, feeAmount);
+        }
+        outputToken.safeTransfer(recipient, netOutput);
+
+        emit SingleSwap(msg.sender, recipient, tokenOut, tokenIn, amountIn, amountOut, feeAmount);
+    }
+
+    // ──────────────────────── Internal ─────────────────────
+
+    /// @dev Execute all swaps and return total output (held by this contract).
+    function _executeBatchSwaps(
+        SwapOrder[] calldata orders,
+        address tokenOut
+    ) internal returns (uint256 totalOutput) {
+        uint256 length = orders.length;
+
+        for (uint256 i; i < length;) {
+            SwapOrder calldata order = orders[i];
+
+            if (order.tokenIn == address(0)) revert ZeroAddress();
+            if (order.amountIn == 0) revert ZeroAmount();
+
+            // Pull token from sender
+            IERC20(order.tokenIn).safeTransferFrom(msg.sender, address(this), order.amountIn);
+
+            // Approve Uniswap Router
+            IERC20(order.tokenIn).forceApprove(address(swapRouter), order.amountIn);
+
+            // Execute swap — output sent to this contract
+            uint256 amountOut = swapRouter.exactInputSingle(
+                ISwapRouter02.ExactInputSingleParams({
+                    tokenIn: order.tokenIn,
+                    tokenOut: tokenOut,
+                    fee: order.poolFee,
+                    recipient: address(this),
+                    amountIn: order.amountIn,
+                    amountOutMinimum: order.minAmountOut,
+                    sqrtPriceLimitX96: 0
+                })
+            );
+
+            totalOutput += amountOut;
+
+            unchecked {
+                ++i;
+            }
+        }
+    }
+
+    // ──────────────────────── Admin ────────────────────────
+
+    /// @notice Set the dust sweep fee in basis points.
+    function setDustSweepFeeBps(uint256 _bps) external onlyOwner {
+        if (_bps > MAX_DUST_SWEEP_FEE_BPS) revert FeeTooHigh();
+        uint256 old = dustSweepFeeBps;
+        dustSweepFeeBps = _bps;
+        emit DustSweepFeeBpsUpdated(old, _bps);
+    }
+
+    /// @notice Set the single-swap fee in basis points.
+    function setSwapFeeBps(uint256 _bps) external onlyOwner {
+        if (_bps > MAX_SWAP_FEE_BPS) revert FeeTooHigh();
+        uint256 old = swapFeeBps;
+        swapFeeBps = _bps;
+        emit SwapFeeBpsUpdated(old, _bps);
+    }
+
+    /// @notice Update the fee collector address.
+    function setFeeCollector(address _feeCollector) external onlyOwner {
+        if (_feeCollector == address(0)) revert ZeroAddress();
+        address old = feeCollector;
+        feeCollector = _feeCollector;
+        emit FeeCollectorUpdated(old, _feeCollector);
+    }
+
+    /// @notice Rescue tokens accidentally sent to this contract.
+    function rescueTokens(address token, uint256 amount) external onlyOwner {
+        if (token == address(0)) revert ZeroAddress();
+        if (amount == 0) revert ZeroAmount();
+        IERC20(token).safeTransfer(owner(), amount);
+        emit TokensRescued(token, amount, owner());
+    }
 }
