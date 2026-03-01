@@ -47,6 +47,7 @@ const isTestnet = process.env.NEXT_PUBLIC_NETWORK !== 'mainnet';
 
 const wagmiConfig = createConfig({
   chains: isTestnet ? [baseSepolia] : [base],
+  ssr: true, // ✅ THIS IS THE FIX! Prevents Next.js build crash during static generation
   connectors: [
     coinbaseWallet({
       appName:    'DustSweep',
