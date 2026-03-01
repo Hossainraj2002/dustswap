@@ -8,52 +8,75 @@ export default function BurnPage() {
   const { address } = useAccount();
   const { burn, isPending, isSuccess, error } = useBurnVault();
 
-  const [tokenAddress, setTokenAddress] = useState<string>('');
+  const [tokenAddress, setTokenAddress] = useState('');
   const [amount, setAmount] = useState('');
   const [decimals, setDecimals] = useState(18);
 
   const handleBurn = async () => {
     if (!address) return alert('Connect wallet');
-    const token: BurnToken = { tokenAddress, decimals };
-    burn({ token, amount: BigInt(amount) });
+    if (!tokenAddress.startsWith('0x')) return alert('Invalid token address');
+
+    // ✅ Construct exactly what the hook expects
+    const token: BurnToken = {
+      tokenAddress: tokenAddress as `0x${string}`, // Cast to strict hex string
+      amount: amount, // String (parseUnits in the hook will convert this correctly)
+      decimals: decimals,
+    };
+
+    try {
+      await burn(token);
+    } catch (e) {
+      console.error(e);
+    }
   };
 
   return (
-    <div className="min-h-screen bg-gray-950 text-white">
-      <h1 className="text-3xl font-bold mb-4">Burn Tokens</h1>
-      <div className="max-w-md mx-auto p-6 bg-gray-900 border border-gray-800 rounded-xl">
+    <div className="max-w-xl mx-auto p-6">
+      <h1 className="text-3xl font-bold mb-6">🔥 Burn Tokens</h1>
+
+      <div className="flex flex-col gap-4">
         <input
-          type="text"
-          placeholder="Token address"
+          className="border border-gray-700 bg-gray-900 text-white p-3 rounded-lg"
+          placeholder="Token Address (0x...)"
           value={tokenAddress}
           onChange={(e) => setTokenAddress(e.target.value)}
-          className="w-full mb-4 px-4 py-2 bg-gray-800 border border-gray-700 rounded"
         />
+
         <input
-          type="number"
-          placeholder="Amount"
+          className="border border-gray-700 bg-gray-900 text-white p-3 rounded-lg"
+          placeholder="Amount (e.g. 10.5)"
           value={amount}
           onChange={(e) => setAmount(e.target.value)}
-          className="w-full mb-4 px-4 py-2 bg-gray-800 border border-gray-700 rounded"
         />
+
         <input
+          className="border border-gray-700 bg-gray-900 text-white p-3 rounded-lg"
           type="number"
-          placeholder="Decimals"
+          placeholder="Decimals (default 18)"
           value={decimals}
           onChange={(e) => setDecimals(Number(e.target.value))}
-          className="w-full mb-4 px-4 py-2 bg-gray-800 border border-gray-700 rounded"
         />
+
         <button
           onClick={handleBurn}
-          className="bg-black text-white px-4 py-2 rounded"
-          disabled={isPending}
+          disabled={isPending || !tokenAddress || !amount}
+          className="bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white font-semibold py-3 rounded-lg transition-colors mt-2"
         >
-          {isPending ? 'Burning...' : 'Burn'}
+          {isPending ? '⏳ Confirming...' : '🔥 Burn Tokens'}
         </button>
-
-        {isSuccess && <p className="text-green-500 mt-2">Burn successful!</p>}
-        {error && <p className="text-red-500 mt-2">{error.message}</p>}
       </div>
+
+      {isSuccess && (
+        <div className="bg-green-900/30 border border-green-700 rounded-lg p-4 mt-6 text-green-300">
+          ✅ Burn successful!
+        </div>
+      )}
+      
+      {error && (
+        <div className="bg-red-900/30 border border-red-700 rounded-lg p-4 mt-6 text-red-300">
+          ❌ {(error as Error).message}
+        </div>
+      )}
     </div>
   );
 }
