@@ -13,14 +13,20 @@ interface DustToken {
   hasLiquidity: boolean;
   selected: boolean;
   logoUrl?: string;
+  decimals?: number; // ✅ Added decimals to prevent type errors
 }
 
 export default function DustSweepPage() {
   const { address } = useAccount();
-  const { sweep, isPending, isConfirming, outputToken } = useDustSweep();
+  
+  // ✅ Removed outputToken from here
+  const { sweep, isPending, isConfirming } = useDustSweep();
 
   const [tokens, setTokens] = useState<DustToken[]>([]);
   const [selected, setSelected] = useState<DustToken[]>([]);
+  
+  // ✅ Added outputToken as local state
+  const [outputToken, setOutputToken] = useState<'USDC' | 'ETH' | 'WETH'>('USDC');
 
   const fetchDust = useCallback(async () => {
     if (!address) return;
@@ -56,7 +62,16 @@ export default function DustSweepPage() {
 
   const handleSweep = () => {
     if (!address) return alert('Connect wallet');
-    sweep({ tokens: selected.map((t) => ({ address: t.tokenAddress } as SweepToken)) });
+    
+    // ✅ Properly format the payload for the hook
+    const sweepTokens: SweepToken[] = selected.map((t) => ({
+      tokenAddress: t.tokenAddress as `0x${string}`,
+      amount: t.formattedBalance,
+      decimals: t.decimals ?? 18,
+    }));
+
+    // ✅ Call sweep with the correct array
+    sweep(sweepTokens);
   };
 
   return (
@@ -78,6 +93,23 @@ export default function DustSweepPage() {
             </div>
           </div>
         ))}
+        
+        {/* Output Token Selector (Optional UI) */}
+        {selected.length > 0 && (
+          <div className="flex gap-2 mb-4 justify-center">
+             <span className="text-gray-400 self-center text-sm">Receive as:</span>
+             {(['USDC', 'ETH', 'WETH'] as const).map(t => (
+               <button 
+                 key={t} 
+                 onClick={() => setOutputToken(t)}
+                 className={`px-3 py-1 text-sm rounded ${outputToken === t ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-400'}`}
+               >
+                 {t}
+               </button>
+             ))}
+          </div>
+        )}
+
         <button
           onClick={handleSweep}
           disabled={selected.length === 0 || isPending || isConfirming}
