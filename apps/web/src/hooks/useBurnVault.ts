@@ -1,58 +1,42 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
-import { useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
-import { parseUnits, type Address } from 'viem';
-import burnVaultAbi from '@/abi/BurnVault.json'; // make sure file exists
+import { useAccount, useWriteContract } from 'wagmi';
+import { parseUnits } from 'viem';
+import { useState } from 'react';
 
-// put your burn vault address in .env
-const BURN_VAULT_ADDRESS = process.env
-  .NEXT_PUBLIC_BURN_VAULT_ADDRESS as Address;
-
-export type BurnToken = {
-  tokenAddress: Address;
-  amount: string; // user input
+type BurnToken = {
+  tokenAddress: `0x${string}`;
   decimals: number;
 };
 
 export function useBurnVault() {
-  const {
-    writeContractAsync,
-    data: hash,
-    isPending,
-    error,
-  } = useWriteContract();
+  const { address } = useAccount();
+  const { writeContractAsync } = useWriteContract();
+  const [loading, setLoading] = useState(false);
 
-  const { isSuccess: txSuccess } = useWaitForTransactionReceipt({ hash });
-  const [isSuccess, setSuccess] = useState(false);
+  async function burn(params: { token: BurnToken; amount: bigint }) {
+    if (!address) throw new Error('Wallet not connected');
 
-  useEffect(() => {
-    if (txSuccess) setSuccess(true);
-  }, [txSuccess]);
-
-  const burn = useCallback(
-    async (token: BurnToken) => {
-      if (!BURN_VAULT_ADDRESS) {
-        throw new Error('Missing BURN_VAULT_ADDRESS in .env');
-      }
-
-      const amount = parseUnits(token.amount, token.decimals);
-
-      return writeContractAsync({
-        address: BURN_VAULT_ADDRESS,
-        abi: burnVaultAbi,
-        functionName: 'burn', // change if your contract method name differs
-        args: [token.tokenAddress, amount],
+    setLoading(true);
+    try {
+      await writeContractAsync({
+        address: params.token.tokenAddress,
+        abi: [
+          {
+            name: 'burn',
+            type: 'function',
+            stateMutability: 'nonpayable',
+            inputs: [{ name: 'amount', type: 'uint256' }],
+            outputs: [],
+          },
+        ],
+        functionName: 'burn',
+        args: [params.amount],
       });
-    },
-    [writeContractAsync],
-  );
+    } finally {
+      setLoading(false);
+    }
+  }
 
-  return {
-    burn,
-    hash,
-    isPending,
-    isSuccess,
-    error,
-  };
+  return { burn, loading };
 }
