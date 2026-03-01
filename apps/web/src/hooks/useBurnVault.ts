@@ -1,42 +1,61 @@
 'use client';
 
-import { useAccount, useWriteContract } from 'wagmi';
-import { parseUnits } from 'viem';
-import { useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
+import { useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
+import { parseUnits, type Address, type Abi } from 'viem';
 
-type BurnToken = {
-  tokenAddress: `0x${string}`;
+import burnVaultAbiJson from '@/abi/BurnVault.json';
+
+const BURN_VAULT_ADDRESS = process.env.NEXT_PUBLIC_BURN_VAULT_ADDRESS as Address;
+
+// ✅ cast JSON ABI to Abi (prevents wagmi type errors)
+const burnVaultAbi = burnVaultAbiJson as Abi;
+
+// ✅ MUST BE EXPORTED
+export type BurnToken = {
+  tokenAddress: Address;
+  amount: string;
   decimals: number;
 };
 
 export function useBurnVault() {
-  const { address } = useAccount();
-  const { writeContractAsync } = useWriteContract();
-  const [loading, setLoading] = useState(false);
+  const {
+    writeContractAsync,
+    data: hash,
+    isPending,
+    error,
+  } = useWriteContract();
 
-  async function burn(params: { token: BurnToken; amount: bigint }) {
-    if (!address) throw new Error('Wallet not connected');
+  const { isSuccess: txSuccess } = useWaitForTransactionReceipt({ hash });
+  const [isSuccess, setSuccess] = useState(false);
 
-    setLoading(true);
-    try {
-      await writeContractAsync({
-        address: params.token.tokenAddress,
-        abi: [
-          {
-            name: 'burn',
-            type: 'function',
-            stateMutability: 'nonpayable',
-            inputs: [{ name: 'amount', type: 'uint256' }],
-            outputs: [],
-          },
-        ],
+  useEffect(() => {
+    if (txSuccess) setSuccess(true);
+  }, [txSuccess]);
+
+  const burn = useCallback(
+    async (token: BurnToken) => {
+      if (!BURN_VAULT_ADDRESS) {
+        throw new Error('Missing BURN_VAULT_ADDRESS in .env');
+      }
+
+      const amount = parseUnits(token.amount, token.decimals);
+
+      return writeContractAsync({
+        address: BURN_VAULT_ADDRESS,
+        abi: burnVaultAbi,
         functionName: 'burn',
-        args: [params.amount],
+        args: [token.tokenAddress, amount],
       });
-    } finally {
-      setLoading(false);
-    }
-  }
+    },
+    [writeContractAsync],
+  );
 
-  return { burn, loading };
+  return {
+    burn,
+    hash,
+    isPending,
+    isSuccess,
+    error,
+  };
 }
