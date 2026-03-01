@@ -1,30 +1,85 @@
-import type { Metadata } from 'next';
-import { Inter } from 'next/font/google';
-import './globals.css';
-import { Providers } from './providers';
-import Navbar from '@/components/Navbar';
+import type { Metadata, Viewport } from "next";
+import { Inter } from "next/font/google";
+import { Providers } from "./providers";
+import "./globals.css";
 
-const inter = Inter({ subsets: ['latin'] });
+const inter = Inter({
+  subsets: ["latin"],
+  display: "swap",
+  variable: "--font-inter",
+});
 
 export const metadata: Metadata = {
-  title: 'DustSweep — Turn Wallet Dust Into Gold',
-  description:
-    'Batch-sweep worthless micro-balances from your wallet. Convert 25 dust tokens into ETH or USDC with a single click.',
+  title: {
+    default: "DustSwap",
+    template: "%s | DustSwap",
+  },
+  description: "Sweep your dust tokens into value",
+  applicationName: "DustSwap",
+  keywords: [
+    "DustSwap",
+    "dust tokens",
+    "DEX aggregator",
+    "Base",
+    "swap",
+    "batch swap",
+    "MiniApp",
+  ],
+  authors: [{ name: "DustSwap Team" }],
+  creator: "DustSwap",
+  openGraph: {
+    type: "website",
+    locale: "en_US",
+    title: "DustSwap",
+    description: "Sweep your dust tokens into value",
+    siteName: "DustSwap",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "DustSwap",
+    description: "Sweep your dust tokens into value",
+  },
+  other: {
+    "fc:frame": "vNext",
+  },
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 1,
+  userScalable: false,
+  themeColor: "#030305",
+  colorScheme: "dark",
 };
 
 export default function RootLayout({
   children,
-}: {
+}: Readonly<{
   children: React.ReactNode;
-}) {
+}>) {
   return (
-    <html lang="en" className="dark">
-      <body className={`${inter.className} bg-[#0a0a0f] text-gray-100 min-h-screen`}>
+    <html lang="en" className={`${inter.variable} dark`} suppressHydrationWarning>
+      <body className="min-h-screen bg-[#030305] text-white font-sans antialiased">
         <Providers>
-          <Navbar />
-          <main className="max-w-7xl mx-auto px-4 sm:px-6 py-8">
-            {children}
-          </main>
+          {/* Ambient background glow effects */}
+          <div className="ambient-glow ambient-glow--purple" aria-hidden="true" />
+          <div className="ambient-glow ambient-glow--blue" aria-hidden="true" />
+
+          {/* Floating dust particles */}
+          <div className="dust-particles" aria-hidden="true">
+            <div className="dust-particle dust-particle--1" />
+            <div className="dust-particle dust-particle--2" />
+            <div className="dust-particle dust-particle--3" />
+            <div className="dust-particle dust-particle--4" />
+            <div className="dust-particle dust-particle--5" />
+            <div className="dust-particle dust-particle--6" />
+            <div className="dust-particle dust-particle--7" />
+            <div className="dust-particle dust-particle--8" />
+          </div>
+
+          {/* App content */}
+          <div className="relative z-10">{children}</div>
         </Providers>
       </body>
     </html>

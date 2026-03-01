@@ -1,0 +1,18 @@
+{
+  "accountAssociation": {
+    "header": "",
+    "payload": "",
+    "signature": ""
+  },
+  "frame": {
+    "version": "1",
+    "name": "DustSwap",
+    "iconUrl": "https://dustswap.xyz/icon.png",
+    "homeUrl": "https://dustswap.xyz",
+    "imageUrl": "https://dustswap.xyz/og.png",
+    "buttonTitle": "Open DustSwap",
+    "splashImageUrl": "https://dustswap.xyz/splash.png",
+    "splashBackgroundColor": "#030305",
+    "webhookUrl": "https://dustswap.xyz/api/webhook"
+  }
+}

@@ -1,79 +1,47 @@
-'use client';
+"use client";
 
-import { OnchainKitProvider }              from '@coinbase/onchainkit';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { createConfig, http, WagmiProvider } from 'wagmi';
-import { base, baseSepolia }                from 'wagmi/chains';
-import { coinbaseWallet }                   from 'wagmi/connectors';
-import { type ReactNode, useState, useEffect } from 'react';
+import { type ReactNode, useState } from "react";
+import { WagmiProvider } from "wagmi";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { OnchainKitProvider } from "@coinbase/onchainkit";
+import { base } from "wagmi/chains";
+import { wagmiConfig } from "@/wagmi";
 
-import '@coinbase/onchainkit/styles.css';
-
-// ─── Builder Code RPC helper ──────────────────────────────────────────────
-function rpcWithBuilderCode(baseUrl: string): string {
-  const code = process.env.NEXT_PUBLIC_BASE_BUILDER_CODE;
-  if (!code) return baseUrl;
-  return `${baseUrl}${baseUrl.includes('?') ? '&' : '?'}builderCode=${code}`;
+interface ProvidersProps {
+  children: ReactNode;
 }
 
-// ─── Wagmi config ─────────────────────────────────────────────────────────
-const isTestnet = process.env.NEXT_PUBLIC_NETWORK !== 'mainnet';
-
-const wagmiConfig = createConfig({
-  chains: isTestnet ? [baseSepolia] : [base],
-  ssr: true,
-  connectors: [
-    coinbaseWallet({
-      appName: 'DustSweep',
-      appLogoUrl: 'https://dustsweep.xyz/logo.png',
-      preference: 'smartWalletOnly',
-    }),
-  ],
-  transports: {
-    [baseSepolia.id]: http(
-      rpcWithBuilderCode(
-        `https://base-sepolia.g.alchemy.com/v2/${process.env.NEXT_PUBLIC_ALCHEMY_API_KEY}`
-      )
-    ),
-    [base.id]: http(
-      rpcWithBuilderCode(
-        `https://base-mainnet.g.alchemy.com/v2/${process.env.NEXT_PUBLIC_ALCHEMY_API_KEY}`
-      )
-    ),
-  },
-});
-
-// ─── Provider tree ────────────────────────────────────────────────────────
-export function Providers({ children }: { children: ReactNode }) {
-  const [mounted, setMounted] = useState(false);
-  const [queryClient] = useState(() =>
-    new QueryClient({
-      defaultOptions: { queries: { staleTime: 30_000 } },
-    })
+export function Providers({ children }: ProvidersProps) {
+  const [queryClient] = useState(
+    () =>
+      new QueryClient({
+        defaultOptions: {
+          queries: {
+            staleTime: 30 * 1000,
+            gcTime: 5 * 60 * 1000,
+            retry: 2,
+            refetchOnWindowFocus: false,
+          },
+        },
+      })
   );
-
-  useEffect(() => {
-    setMounted(true);
-  }, []);
 
   return (
     <WagmiProvider config={wagmiConfig}>
       <QueryClientProvider client={queryClient}>
         <OnchainKitProvider
           apiKey={process.env.NEXT_PUBLIC_ONCHAINKIT_API_KEY}
-          chain={isTestnet ? baseSepolia : base}
+          chain={base}
+          config={{
+            appearance: {
+              mode: "dark",
+              theme: "cyberpunk",
+            },
+          }}
         >
-          {mounted ? (
-            children
-          ) : (
-            <div className="min-h-screen flex items-center justify-center bg-gray-950 text-white">
-              Loading…
-            </div>
-          )}
+          {children}
         </OnchainKitProvider>
       </QueryClientProvider>
     </WagmiProvider>
   );
 }
-
-export const PAYMASTER_URL = process.env.NEXT_PUBLIC_PAYMASTER_URL ?? null;
