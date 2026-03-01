@@ -1,10 +1,27 @@
-import { Navbar } from '@/components/Navbar';
+import type { Metadata } from 'next';
+import { Inter } from 'next/font/google';
+import './globals.css';
+import { Providers } from './providers';
 
-export default function AppLayout({ children }: { children: React.ReactNode }) {
+const inter = Inter({ subsets: ['latin'] });
+
+export const metadata: Metadata = {
+  title: 'DustSweep — Sweep Dust Tokens on Base',
+  description: 'Convert small token balances into useful assets with one click.',
+};
+
+export default function RootLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
   return (
-    <div className="min-h-screen bg-gray-950 text-white">
-      <Navbar />
-      <main className="max-w-7xl mx-auto px-4 py-8">{children}</main>
-    </div>
+    <html lang="en">
+      <body className={inter.className}>
+        <Providers>
+          {children}
+        </Providers>
+      </body>
+    </html>
   );
 }

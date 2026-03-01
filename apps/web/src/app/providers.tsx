@@ -5,26 +5,26 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createConfig, http, WagmiProvider } from 'wagmi';
 import { base, baseSepolia }                from 'wagmi/chains';
 import { coinbaseWallet }                   from 'wagmi/connectors';
-import { ReactNode, useState, useEffect }   from 'react';
+import { type ReactNode, useState, useEffect } from 'react';
 
 import '@coinbase/onchainkit/styles.css';
 
-// ─── Builder Code RPC helper ───────────────────────────────────────────────────
+// ─── Builder Code RPC helper ──────────────────────────────────────────────
 function rpcWithBuilderCode(baseUrl: string): string {
   const code = process.env.NEXT_PUBLIC_BASE_BUILDER_CODE;
   if (!code) return baseUrl;
   return `${baseUrl}${baseUrl.includes('?') ? '&' : '?'}builderCode=${code}`;
 }
 
-// ─── Wagmi config ─────────────────────────────────────────────────────────────
+// ─── Wagmi config ─────────────────────────────────────────────────────────
 const isTestnet = process.env.NEXT_PUBLIC_NETWORK !== 'mainnet';
 
 const wagmiConfig = createConfig({
   chains: isTestnet ? [baseSepolia] : [base],
-  ssr: true, 
+  ssr: true,
   connectors: [
     coinbaseWallet({
-      appName:    'DustSweep',
+      appName: 'DustSweep',
       appLogoUrl: 'https://dustsweep.xyz/logo.png',
       preference: 'smartWalletOnly',
     }),
@@ -43,27 +43,18 @@ const wagmiConfig = createConfig({
   },
 });
 
-// ─── Provider tree ────────────────────────────────────────────────────────────
+// ─── Provider tree ────────────────────────────────────────────────────────
 export function Providers({ children }: { children: ReactNode }) {
   const [mounted, setMounted] = useState(false);
-  const [queryClient] = useState(() => new QueryClient({
-    defaultOptions: { queries: { staleTime: 30_000 } },
-  }));
+  const [queryClient] = useState(() =>
+    new QueryClient({
+      defaultOptions: { queries: { staleTime: 30_000 } },
+    })
+  );
 
-  // ✅ Wait until the app is mounted in the browser
   useEffect(() => {
     setMounted(true);
   }, []);
-
-  // ✅ Return a loading state during server-side prerendering (build time).
-  // This completely prevents the `WagmiProviderNotFoundError`!
-  if (!mounted) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-950 text-white">
-        Loading...
-      </div>
-    );
-  }
 
   return (
     <WagmiProvider config={wagmiConfig}>
@@ -72,7 +63,13 @@ export function Providers({ children }: { children: ReactNode }) {
           apiKey={process.env.NEXT_PUBLIC_ONCHAINKIT_API_KEY}
           chain={isTestnet ? baseSepolia : base}
         >
-          {children}
+          {mounted ? (
+            children
+          ) : (
+            <div className="min-h-screen flex items-center justify-center bg-gray-950 text-white">
+              Loading…
+            </div>
+          )}
         </OnchainKitProvider>
       </QueryClientProvider>
     </WagmiProvider>
