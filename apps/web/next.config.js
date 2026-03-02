@@ -4,50 +4,24 @@ const nextConfig = {
 
   images: {
     remotePatterns: [
-      {
-        protocol: "https",
-        hostname: "assets.coingecko.com",
-        pathname: "/coins/images/**",
-      },
-      {
-        protocol: "https",
-        hostname: "raw.githubusercontent.com",
-        pathname: "/**",
-      },
-      {
-        protocol: "https",
-        hostname: "ethereum-optimism.github.io",
-        pathname: "/**",
-      },
-      {
-        protocol: "https",
-        hostname: "basescan.org",
-        pathname: "/token/images/**",
-      },
-      {
-        protocol: "https",
-        hostname: "tokens.coingecko.com",
-        pathname: "/**",
-      },
-      {
-        protocol: "https",
-        hostname: "s2.coinmarketcap.com",
-        pathname: "/**",
-      },
-      {
-        protocol: "https",
-        hostname: "coin-images.coingecko.com",
-        pathname: "/**",
-      },
+      { protocol: "https", hostname: "assets.coingecko.com", pathname: "/coins/images/**" },
+      { protocol: "https", hostname: "raw.githubusercontent.com", pathname: "/**" },
+      { protocol: "https", hostname: "ethereum-optimism.github.io", pathname: "/**" },
+      { protocol: "https", hostname: "basescan.org", pathname: "/token/images/**" },
+      { protocol: "https", hostname: "tokens.coingecko.com", pathname: "/**" },
+      { protocol: "https", hostname: "s2.coinmarketcap.com", pathname: "/**" },
+      { protocol: "https", hostname: "coin-images.coingecko.com", pathname: "/**" },
     ],
   },
 
   async rewrites() {
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
+    const apiUrl =
+      process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
+
     return [
       {
         source: "/api/:path*",
-        destination: `${apiUrl}/:path*`,
+        destination: `${apiUrl}/api/:path*`, // ✅ FIX: add /api
       },
     ];
   },
@@ -57,18 +31,9 @@ const nextConfig = {
       {
         source: "/.well-known/farcaster.json",
         headers: [
-          {
-            key: "Access-Control-Allow-Origin",
-            value: "*",
-          },
-          {
-            key: "Access-Control-Allow-Methods",
-            value: "GET",
-          },
-          {
-            key: "Content-Type",
-            value: "application/json",
-          },
+          { key: "Access-Control-Allow-Origin", value: "*" },
+          { key: "Access-Control-Allow-Methods", value: "GET" },
+          { key: "Content-Type", value: "application/json" },
         ],
       },
     ];
