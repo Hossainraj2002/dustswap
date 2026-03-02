@@ -398,9 +398,9 @@ export default function DustSweepPage() {
     [handleSuccess]
   );
 
-  const onTransactionError = useCallback((e: TransactionError) => {
-    console.error('Transaction failed:', e);
-  }, []);
+  const onTransactionError = useCallback((e: { code: string; error: string; message: string }) => {
+  console.error('Transaction failed:', e.message);
+}, []);
 
   const allTokens = [...dustTokens, ...noLiquidityTokens];
   const selectedCount = selectedTokens.length;
@@ -742,7 +742,7 @@ export default function DustSweepPage() {
                 },
               }}
               onSuccess={onTransactionSuccess}
-              onError={onTransactionError}
+              onError={(e) => console.error('Transaction failed:', e)}
             >
               <TransactionButton
                 text={`🧹 Sweep ${selectedCount} Token${selectedCount !== 1 ? 's' : ''}`}
