@@ -17,7 +17,7 @@ const ETH: Token = {
   symbol: 'ETH',
   decimals: 18,
   image: 'https://wallet-api-production.s3.amazonaws.com/uploads/tokens/eth_288.png',
-  chainId: 84532, // or 8453 if you are on Base mainnet
+  chainId: 8453, // ✅ Fixed: Base mainnet
 };
 const USDC: Token = {
   name: 'USDC',
@@ -25,7 +25,7 @@ const USDC: Token = {
   symbol: 'USDC',
   decimals: 6,
   image: 'https://d3r81g40ycuhqg.cloudfront.net/wallet/wusdc.png',
-  chainId: 84532, 
+  chainId: 8453, // ✅ Fixed: Base mainnet
 };
 
 export default function SwapPage() {

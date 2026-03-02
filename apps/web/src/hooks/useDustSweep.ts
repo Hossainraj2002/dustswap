@@ -8,17 +8,26 @@ import {
 } from 'wagmi/experimental';
 import { parseUnits, type Address, type Hex, type Abi } from 'viem';
 
-import routerAbiJson from '@/abi/Router.json';
+// ✅ Fixed: use the correct ABI file name
+import routerAbiJson from '@/abi/DustSweepRouter.json';
 
-const ROUTER = process.env.NEXT_PUBLIC_ROUTER_ADDRESS as Address;
+// ✅ Fixed: use the correct env variable (matches contracts.ts)
+const ROUTER = process.env.NEXT_PUBLIC_DUST_SWEEP_ROUTER_ADDRESS as Address;
 
-// ✅ cast JSON ABI to Abi
 const routerAbi = routerAbiJson as Abi;
+
+// Token addresses on Base mainnet
+const TOKEN_ADDRESSES: Record<string, Address> = {
+  USDC: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+  WETH: '0x4200000000000000000000000000000000000006',
+  ETH:  '0x4200000000000000000000000000000000000006',
+};
 
 export type SweepToken = {
   tokenAddress: Address;
   amount: string;
   decimals: number;
+  poolFee?: number; // optional; defaults to 3000 (0.3%)
 };
 
 export function useDustSweep() {
@@ -42,19 +51,41 @@ export function useDustSweep() {
   const isConfirming = !!batchId && !isSuccess;
   const txHash = batchId;
 
+  // ✅ Fixed: sweep now accepts outputToken param to match the page UI
   const sweep = useCallback(
-    async (tokens: SweepToken[]) => {
+    async (tokens: SweepToken[], outputToken: 'USDC' | 'ETH' | 'WETH' = 'USDC') => {
       if (!address) throw new Error('Wallet not connected');
-      if (!ROUTER) throw new Error('Missing NEXT_PUBLIC_ROUTER_ADDRESS');
+      if (!ROUTER) throw new Error('Missing NEXT_PUBLIC_DUST_SWEEP_ROUTER_ADDRESS');
 
-      const calls = tokens.map((t) => ({
-        address: ROUTER,
-        abi: routerAbi, // ✅ now typed correctly
-        functionName: 'sweep',
-        args: [t.tokenAddress, parseUnits(t.amount, t.decimals)],
+      // ✅ Fixed: build SwapOrder[] matching the contract struct
+      const orders = tokens.map((t) => ({
+        tokenIn:      t.tokenAddress,
+        amountIn:     parseUnits(t.amount, t.decimals),
+        poolFee:      t.poolFee ?? 3000,
+        minAmountOut: 0n,
       }));
 
-      return writeContractsAsync({ contracts: calls });
+      // ✅ Fixed: call sweepDustToETH for ETH, sweepDust for ERC-20 output
+      if (outputToken === 'ETH') {
+        return writeContractsAsync({
+          contracts: [{
+            address: ROUTER,
+            abi: routerAbi,
+            functionName: 'sweepDustToETH',
+            args: [orders, address],
+          }],
+        });
+      }
+
+      const tokenOut = TOKEN_ADDRESSES[outputToken];
+      return writeContractsAsync({
+        contracts: [{
+          address: ROUTER,
+          abi: routerAbi,
+          functionName: 'sweepDust',
+          args: [orders, tokenOut, address],
+        }],
+      });
     },
     [address, writeContractsAsync],
   );

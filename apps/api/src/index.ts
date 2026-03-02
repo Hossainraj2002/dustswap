@@ -4,7 +4,10 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { logger } from "hono/logger";
 import { prettyJSON } from "hono/pretty-json";
+import { serve } from "@hono/node-server";
 import tokens from "./routes/tokens";
+// ✅ Fixed: import and register points routes
+import { pointsRoutes } from "./routes/points";
 
 const app = new Hono();
 
@@ -30,6 +33,8 @@ app.use(
 // ─── Routes ────────────────────────────────────────────────────────────────────
 
 app.route("/api/tokens", tokens);
+// ✅ Fixed: mount points routes
+app.route("/api/points", pointsRoutes);
 
 // Root health check
 app.get("/", (c) => {
@@ -45,6 +50,9 @@ app.get("/", (c) => {
       "GET /api/tokens/quote?tokenIn=&tokenOut=&amountIn=": "Get swap quote",
       "POST /api/tokens/batch-quote": "Get batch swap quotes",
       "GET /api/tokens/health": "Service health check",
+      "GET /api/points/:address": "Get points balance",
+      "POST /api/points/check-in": "Daily check-in",
+      "POST /api/points/record-sweep": "Record sweep for points",
     },
   });
 });
@@ -72,6 +80,13 @@ app.onError((err, c) => {
     },
     500
   );
+});
+
+// ─── Start server ──────────────────────────────────────────────────────────────
+
+const port = parseInt(process.env.PORT ?? "3001", 10);
+serve({ fetch: app.fetch, port }, () => {
+  console.log(`[DustSwap API] Listening on port ${port}`);
 });
 
 export default app;

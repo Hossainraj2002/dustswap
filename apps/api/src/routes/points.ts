@@ -1,101 +1,149 @@
-import { Router, Request, Response } from 'express';
-import { pointsEngine } from '../services/pointsEngine';
+// apps/api/src/routes/points.ts
+// ✅ Fixed: rewritten from Express to Hono (matches the rest of the API)
 
-const router = Router();
+import { Hono } from "hono";
+import { pointsEngine } from "../services/pointsEngine";
 
-// GET /api/points/balance/:address
-router.get('/balance/:address', async (req: Request, res: Response) => {
+const pointsRoutes = new Hono();
+
+// GET /api/points/:address
+pointsRoutes.get("/:address", async (c) => {
   try {
-    const data = await pointsEngine.getBalance(req.params.address);
-    res.json({ success: true, ...data });
+    const data = await pointsEngine.getBalance(c.req.param("address"));
+    return c.json({ success: true, ...data });
   } catch (e: unknown) {
-    res.status(500).json({ success: false, error: (e as Error).message });
+    return c.json({ success: false, error: (e as Error).message }, 500);
   }
 });
 
 // POST /api/points/check-in
-router.post('/check-in', async (req: Request, res: Response) => {
-  const { address } = req.body;
-  if (!address) return res.status(400).json({ error: 'address required' });
+pointsRoutes.post("/check-in", async (c) => {
+  const body = await c.req.json<{ address?: string }>();
+  if (!body.address) {
+    return c.json({ error: "address required" }, 400);
+  }
   try {
-    const result = await pointsEngine.dailyCheckIn(address);
-    res.json({ success: true, ...result });
+    const result = await pointsEngine.dailyCheckIn(body.address);
+    return c.json({ success: true, ...result });
   } catch (e: unknown) {
     const msg = (e as Error).message;
-    res.status(msg === 'Already checked in today' ? 400 : 500).json({ success: false, error: msg });
+    return c.json(
+      { success: false, error: msg },
+      msg === "Already checked in today" ? 400 : 500
+    );
   }
 });
 
 // POST /api/points/record-sweep
-router.post('/record-sweep', async (req: Request, res: Response) => {
-  const { address, txHash, tokenCount, volumeUsd } = req.body;
-  if (!address || !txHash || tokenCount == null) return res.status(400).json({ error: 'Missing fields' });
+pointsRoutes.post("/record-sweep", async (c) => {
+  const body = await c.req.json<{
+    address?: string;
+    txHash?: string;
+    tokenCount?: number;
+    volumeUsd?: number;
+  }>();
+  if (!body.address || !body.txHash || body.tokenCount == null) {
+    return c.json({ error: "Missing fields" }, 400);
+  }
   try {
-    const pts = await pointsEngine.recordSweep(address, txHash, tokenCount, volumeUsd ?? 0);
-    res.json({ success: true, pointsAwarded: pts });
+    const pts = await pointsEngine.recordSweep(
+      body.address,
+      body.txHash,
+      body.tokenCount,
+      body.volumeUsd ?? 0
+    );
+    return c.json({ success: true, pointsAwarded: pts });
   } catch (e: unknown) {
-    res.status(500).json({ success: false, error: (e as Error).message });
+    return c.json({ success: false, error: (e as Error).message }, 500);
   }
 });
 
 // POST /api/points/record-bridge
-router.post('/record-bridge', async (req: Request, res: Response) => {
-  const { address, txHash, tokenCount, sourceChain, volumeUsd } = req.body;
-  if (!address || !txHash) return res.status(400).json({ error: 'Missing fields' });
+pointsRoutes.post("/record-bridge", async (c) => {
+  const body = await c.req.json<{
+    address?: string;
+    txHash?: string;
+    tokenCount?: number;
+    sourceChain?: number;
+    volumeUsd?: number;
+  }>();
+  if (!body.address || !body.txHash) {
+    return c.json({ error: "Missing fields" }, 400);
+  }
   try {
-    const pts = await pointsEngine.recordBridge(address, txHash, tokenCount ?? 1, sourceChain ?? 0, volumeUsd ?? 0);
-    res.json({ success: true, pointsAwarded: pts });
+    const pts = await pointsEngine.recordBridge(
+      body.address,
+      body.txHash,
+      body.tokenCount ?? 1,
+      body.sourceChain ?? 0,
+      body.volumeUsd ?? 0
+    );
+    return c.json({ success: true, pointsAwarded: pts });
   } catch (e: unknown) {
-    res.status(500).json({ success: false, error: (e as Error).message });
+    return c.json({ success: false, error: (e as Error).message }, 500);
   }
 });
 
 // POST /api/points/record-burn
-router.post('/record-burn', async (req: Request, res: Response) => {
-  const { address, txHash, tokenCount } = req.body;
-  if (!address || !txHash) return res.status(400).json({ error: 'Missing fields' });
+pointsRoutes.post("/record-burn", async (c) => {
+  const body = await c.req.json<{
+    address?: string;
+    txHash?: string;
+    tokenCount?: number;
+  }>();
+  if (!body.address || !body.txHash) {
+    return c.json({ error: "Missing fields" }, 400);
+  }
   try {
-    const pts = await pointsEngine.recordBurn(address, txHash, tokenCount ?? 1);
-    res.json({ success: true, pointsAwarded: pts });
+    const pts = await pointsEngine.recordBurn(
+      body.address,
+      body.txHash,
+      body.tokenCount ?? 1
+    );
+    return c.json({ success: true, pointsAwarded: pts });
   } catch (e: unknown) {
-    res.status(500).json({ success: false, error: (e as Error).message });
+    return c.json({ success: false, error: (e as Error).message }, 500);
   }
 });
 
 // POST /api/points/record-swap
-router.post('/record-swap', async (req: Request, res: Response) => {
-  const { address, txHash } = req.body;
-  if (!address || !txHash) return res.status(400).json({ error: 'Missing fields' });
+pointsRoutes.post("/record-swap", async (c) => {
+  const body = await c.req.json<{ address?: string; txHash?: string }>();
+  if (!body.address || !body.txHash) {
+    return c.json({ error: "Missing fields" }, 400);
+  }
   try {
-    const pts = await pointsEngine.recordSwap(address, txHash);
-    res.json({ success: true, pointsAwarded: pts });
+    const pts = await pointsEngine.recordSwap(body.address, body.txHash);
+    return c.json({ success: true, pointsAwarded: pts });
   } catch (e: unknown) {
-    res.status(500).json({ success: false, error: (e as Error).message });
+    return c.json({ success: false, error: (e as Error).message }, 500);
   }
 });
 
 // GET /api/points/leaderboard
-router.get('/leaderboard', async (req: Request, res: Response) => {
-  const page  = Math.max(1,   parseInt(req.query.page  as string) || 1);
-  const limit = Math.min(100, parseInt(req.query.limit as string) || 50);
+pointsRoutes.get("/leaderboard", async (c) => {
+  const page  = Math.max(1,   parseInt(c.req.query("page")  ?? "1", 10));
+  const limit = Math.min(100, parseInt(c.req.query("limit") ?? "50", 10));
   try {
     const data = await pointsEngine.getLeaderboard(page, limit);
-    res.json({ success: true, page, limit, data });
+    return c.json({ success: true, page, limit, data });
   } catch (e: unknown) {
-    res.status(500).json({ success: false, error: (e as Error).message });
+    return c.json({ success: false, error: (e as Error).message }, 500);
   }
 });
 
 // POST /api/points/referral/apply
-router.post('/referral/apply', async (req: Request, res: Response) => {
-  const { address, referralCode } = req.body;
-  if (!address || !referralCode) return res.status(400).json({ error: 'address and referralCode required' });
+pointsRoutes.post("/referral/apply", async (c) => {
+  const body = await c.req.json<{ address?: string; referralCode?: string }>();
+  if (!body.address || !body.referralCode) {
+    return c.json({ error: "address and referralCode required" }, 400);
+  }
   try {
-    await pointsEngine.applyReferral(address, referralCode);
-    res.json({ success: true, message: 'Referral applied!' });
+    await pointsEngine.applyReferral(body.address, body.referralCode);
+    return c.json({ success: true, message: "Referral applied!" });
   } catch (e: unknown) {
-    res.status(400).json({ success: false, error: (e as Error).message });
+    return c.json({ success: false, error: (e as Error).message }, 400);
   }
 });
 
-export { router as pointsRoutes };
+export { pointsRoutes };

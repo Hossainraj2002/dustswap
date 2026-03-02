@@ -13,28 +13,28 @@ interface DustToken {
   hasLiquidity: boolean;
   selected: boolean;
   logoUrl?: string;
-  decimals?: number; // ✅ Added decimals to prevent type errors
+  decimals?: number;
 }
 
 export default function DustSweepPage() {
   const { address } = useAccount();
-  
-  // ✅ Removed outputToken from here
   const { sweep, isPending, isConfirming } = useDustSweep();
 
   const [tokens, setTokens] = useState<DustToken[]>([]);
   const [selected, setSelected] = useState<DustToken[]>([]);
-  
-  // ✅ Added outputToken as local state
   const [outputToken, setOutputToken] = useState<'USDC' | 'ETH' | 'WETH'>('USDC');
 
   const fetchDust = useCallback(async () => {
     if (!address) return;
     try {
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/tokens/dust/84532/${address}`);
+      // ✅ Fixed: correct REST query param format (not path param)
+      const res = await fetch(
+        `${process.env.NEXT_PUBLIC_API_URL}/api/tokens/dust?address=${address}`
+      );
       const data = await res.json();
+      // ✅ Fixed: API wraps response in { success, data: { dustTokens } }
       if (data.success) {
-        setTokens(data.dustTokens.map((t: any) => ({ ...t, selected: false })));
+        setTokens(data.data.dustTokens.map((t: any) => ({ ...t, selected: false })));
       }
     } catch {
       // handle error
@@ -62,16 +62,15 @@ export default function DustSweepPage() {
 
   const handleSweep = () => {
     if (!address) return alert('Connect wallet');
-    
-    // ✅ Properly format the payload for the hook
+
     const sweepTokens: SweepToken[] = selected.map((t) => ({
       tokenAddress: t.tokenAddress as `0x${string}`,
       amount: t.formattedBalance,
       decimals: t.decimals ?? 18,
     }));
 
-    // ✅ Call sweep with the correct array
-    sweep(sweepTokens);
+    // ✅ Fixed: pass outputToken to sweep so the contract gets the right tokenOut
+    sweep(sweepTokens, outputToken);
   };
 
   return (
@@ -93,20 +92,19 @@ export default function DustSweepPage() {
             </div>
           </div>
         ))}
-        
-        {/* Output Token Selector (Optional UI) */}
+
         {selected.length > 0 && (
           <div className="flex gap-2 mb-4 justify-center">
-             <span className="text-gray-400 self-center text-sm">Receive as:</span>
-             {(['USDC', 'ETH', 'WETH'] as const).map(t => (
-               <button 
-                 key={t} 
-                 onClick={() => setOutputToken(t)}
-                 className={`px-3 py-1 text-sm rounded ${outputToken === t ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-400'}`}
-               >
-                 {t}
-               </button>
-             ))}
+            <span className="text-gray-400 self-center text-sm">Receive as:</span>
+            {(['USDC', 'ETH', 'WETH'] as const).map((t) => (
+              <button
+                key={t}
+                onClick={() => setOutputToken(t)}
+                className={`px-3 py-1 text-sm rounded ${outputToken === t ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-400'}`}
+              >
+                {t}
+              </button>
+            ))}
           </div>
         )}
 

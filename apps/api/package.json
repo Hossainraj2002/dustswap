@@ -11,6 +11,9 @@
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.39.0",
+     "@hono/node-server": "^1.13.7",
+    "hono": "^4.6.20",
+    "viem": "^2.23.2",
     "alchemy-sdk": "^3.1.2",
     "bullmq": "^5.1.5",
     "cors": "^2.8.5",
