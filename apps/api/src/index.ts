@@ -1,47 +1,77 @@
-import express from 'express';
-import cors    from 'cors';
-import helmet  from 'helmet';
-import dotenv  from 'dotenv';
+// apps/api/src/index.ts
 
-dotenv.config();
+import { Hono } from "hono";
+import { cors } from "hono/cors";
+import { logger } from "hono/logger";
+import { prettyJSON } from "hono/pretty-json";
+import tokens from "./routes/tokens";
 
-import { tokenRoutes  } from './routes/tokens';
-import { pointsRoutes } from './routes/points';
-import { healthRoutes } from './routes/health';
+const app = new Hono();
 
-const app  = express();
-const PORT = process.env.PORT || 3001;
+// ─── Middleware ─────────────────────────────────────────────────────────────────
 
-// ─── Middleware ───────────────────────────────────────────────────────────────
-app.use(helmet());
-app.use(cors({
-  origin: [
-    'http://localhost:3000',
-    'https://dustsweep.xyz',
-    'https://www.dustsweep.xyz',
-  ],
-  credentials: true,
-}));
-app.use(express.json({ limit: '1mb' }));
+app.use("*", logger());
+app.use("*", prettyJSON());
+app.use(
+  "*",
+  cors({
+    origin: [
+      "http://localhost:3000",
+      "http://localhost:5173",
+      "https://dustswap.xyz",
+      "https://www.dustswap.xyz",
+    ],
+    allowMethods: ["GET", "POST", "OPTIONS"],
+    allowHeaders: ["Content-Type", "Authorization"],
+    maxAge: 86400,
+  })
+);
 
-// Request logger
-app.use((req, _res, next) => {
-  console.log(`${new Date().toISOString()} ${req.method} ${req.path}`);
-  next();
+// ─── Routes ────────────────────────────────────────────────────────────────────
+
+app.route("/api/tokens", tokens);
+
+// Root health check
+app.get("/", (c) => {
+  return c.json({
+    name: "DustSwap API",
+    version: "1.0.0",
+    chain: "base",
+    chainId: 8453,
+    endpoints: {
+      "GET /api/tokens/balances?address=": "Get all ERC-20 balances",
+      "GET /api/tokens/prices?tokens=": "Get USD prices for tokens",
+      "GET /api/tokens/dust?address=&threshold=": "Analyze dust tokens",
+      "GET /api/tokens/quote?tokenIn=&tokenOut=&amountIn=": "Get swap quote",
+      "POST /api/tokens/batch-quote": "Get batch swap quotes",
+      "GET /api/tokens/health": "Service health check",
+    },
+  });
 });
 
-// ─── Routes ──────────────────────────────────────────────────────────────────
-app.use('/api/health', healthRoutes);
-app.use('/api/tokens', tokenRoutes);
-app.use('/api/points', pointsRoutes);
+// 404 handler
+app.notFound((c) => {
+  return c.json(
+    {
+      success: false,
+      error: "Not Found",
+      data: null,
+    },
+    404
+  );
+});
 
-// 404 catch-all
-app.use((_req, res) => res.status(404).json({ error: 'Not found' }));
-
-// ─── Start ───────────────────────────────────────────────────────────────────
-app.listen(PORT, () => {
-  console.log(`\n🧹 DustSweep API  →  http://localhost:${PORT}`);
-  console.log(`   Health check  →  http://localhost:${PORT}/api/health\n`);
+// Error handler
+app.onError((err, c) => {
+  console.error("[Unhandled Error]", err);
+  return c.json(
+    {
+      success: false,
+      error: "Internal Server Error",
+      data: null,
+    },
+    500
+  );
 });
 
 export default app;
