@@ -238,8 +238,9 @@ function dedupeAddresses(addresses: string[]): Address[] {
 // ─── TokenDiscovery Class ──────────────────────────────────────────────────────
 
 export class TokenDiscovery {
-  // Use ReturnType to avoid duplicate-viem-type conflicts
-  private client: ReturnType<typeof createPublicClient>;
+  // Typed as any to avoid dual-viem structural type conflict in node_modules
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private client!: any;
   private alchemyKey: string | undefined;
   private baseRpcUrl: string;
   private okuApiUrl: string;
