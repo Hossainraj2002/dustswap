@@ -15,13 +15,10 @@ const nextConfig = {
   },
 
   async rewrites() {
-    const apiUrl =
-      process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
-
     return [
       {
         source: "/api/:path*",
-        destination: `${apiUrl}/api/:path*`, // ✅ FIX: add /api
+        destination: "https://dustswap-production.up.railway.app/api/:path*",
       },
     ];
   },
