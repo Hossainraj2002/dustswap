@@ -8,7 +8,6 @@ import {
   parseAbi,
   encodeFunctionData,
   decodeFunctionResult,
-  type PublicClient,
   type Address,
   type Hex,
 } from "viem";
@@ -239,7 +238,8 @@ function dedupeAddresses(addresses: string[]): Address[] {
 // ─── TokenDiscovery Class ──────────────────────────────────────────────────────
 
 export class TokenDiscovery {
-  private client: PublicClient;
+  // Use ReturnType to avoid duplicate-viem-type conflicts
+  private client: ReturnType<typeof createPublicClient>;
   private alchemyKey: string | undefined;
   private baseRpcUrl: string;
   private okuApiUrl: string;
