@@ -56,6 +56,20 @@ export interface ApprovalStatus {
   currentAllowance: bigint;
 }
 
+export interface SuccessData {
+  txHash: string;
+  tokensSwept: number;
+  amountReceived: string;
+  outputSymbol: string;
+  particlesEarned: number;
+}
+
+export interface TransactionCall {
+  to: Address;
+  data: `0x${string}`;
+  value?: bigint;
+}
+
 export interface UseDustSweepReturn {
   dustTokens: DustToken[];
   noLiquidityTokens: DustToken[];
@@ -81,20 +95,6 @@ export interface UseDustSweepReturn {
   clearSuccess: () => void;
 }
 
-export interface SuccessData {
-  txHash: string;
-  tokensSwept: number;
-  amountReceived: string;
-  outputSymbol: string;
-  particlesEarned: number;
-}
-
-export interface TransactionCall {
-  to: Address;
-  data: `0x${string}`;
-  value?: bigint;
-}
-
 // ─── Constants ───────────────────────────────────────────────────────────────
 
 const ROUTER_ADDRESS = (process.env.NEXT_PUBLIC_ROUTER_ADDRESS ||
@@ -103,14 +103,16 @@ const ROUTER_ADDRESS = (process.env.NEXT_PUBLIC_ROUTER_ADDRESS ||
 const USDC_ADDRESS: Address = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
 const WETH_ADDRESS: Address = '0x4200000000000000000000000000000000000006';
 
-const OUTPUT_TOKEN_MAP: Record<OutputTokenOption, { address: Address | null; symbol: string; decimals: number }> = {
-  ETH: { address: null, symbol: 'ETH', decimals: 18 },
+const OUTPUT_TOKEN_MAP: Record<
+  OutputTokenOption,
+  { address: Address; symbol: string; decimals: number }
+> = {
+  ETH: { address: WETH_ADDRESS, symbol: 'ETH', decimals: 18 },
   USDC: { address: USDC_ADDRESS, symbol: 'USDC', decimals: 6 },
   WETH: { address: WETH_ADDRESS, symbol: 'WETH', decimals: 18 },
 };
 
 const MAX_SELECTED_TOKENS = 10;
-const SLIPPAGE_TOLERANCE = 0.03; // 3%
 const BASE_PARTICLES = 50;
 const PER_TOKEN_PARTICLES = 5;
 
@@ -120,10 +122,11 @@ export function useDustSweep(): UseDustSweepReturn {
   const { address, isConnected } = useAccount();
   const publicClient = usePublicClient();
 
-  // ── State ────────────────────────────────────────────────────────────────
+  // ── State ──────────────────────────────────────────────────────────────
 
   const [threshold, setThreshold] = useState<ThresholdValue>(5);
   const [allDustTokens, setAllDustTokens] = useState<DustToken[]>([]);
+  const [allNoLiquidityTokens, setAllNoLiquidityTokens] = useState<DustToken[]>([]);
   const [selectedAddresses, setSelectedAddresses] = useState<Set<Address>>(new Set());
   const [outputToken, setOutputToken] = useState<OutputTokenOption>('ETH');
   const [quote, setQuote] = useState<BatchQuote | null>(null);
@@ -138,28 +141,23 @@ export function useDustSweep(): UseDustSweepReturn {
   const [particlesEarned, setParticlesEarned] = useState<number | null>(null);
   const [successData, setSuccessData] = useState<SuccessData | null>(null);
 
-  // ── Derived State ────────────────────────────────────────────────────────
+  // ── Derived State ──────────────────────────────────────────────────────
 
-  const dustTokens = useMemo(
-    () => allDustTokens.filter((t) => t.hasLiquidity),
-    [allDustTokens]
-  );
+  const dustTokens = allDustTokens;
 
-  const noLiquidityTokens = useMemo(
-    () => allDustTokens.filter((t) => !t.hasLiquidity),
-    [allDustTokens]
-  );
+  const noLiquidityTokens = allNoLiquidityTokens;
 
   const selectedTokens = useMemo(
     () => dustTokens.filter((t) => selectedAddresses.has(t.address)),
     [dustTokens, selectedAddresses]
   );
 
-  // ── 1. Fetch Dust Tokens ────────────────────────────────────────────────
+  // ── 1. Fetch Dust Tokens from Railway API ─────────────────────────────
 
   const fetchDustTokens = useCallback(async () => {
     if (!address || !isConnected) {
       setAllDustTokens([]);
+      setAllNoLiquidityTokens([]);
       return;
     }
 
@@ -167,43 +165,76 @@ export function useDustSweep(): UseDustSweepReturn {
     setError(null);
 
     try {
+      // Call through Next.js rewrite → Railway API
       const response = await fetch(
         `/api/tokens/dust?address=${address}&threshold=${threshold}`
       );
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.message || `Failed to fetch dust tokens: ${response.status}`);
+        throw new Error(
+          errorData.error || `Failed to fetch dust tokens: ${response.status}`
+        );
       }
 
-      const data = await response.json();
+      const json = await response.json();
 
-      const tokens: DustToken[] = (data.tokens || []).map((t: Record<string, unknown>) => ({
-        address: t.address as Address,
-        name: t.name as string,
-        symbol: t.symbol as string,
-        decimals: t.decimals as number,
-        balance: t.balance as string,
-        balanceFormatted: t.balanceFormatted as string,
-        usdValue: Number(t.usdValue),
-        logoURI: (t.logoURI as string) || undefined,
-        hasLiquidity: t.hasLiquidity !== false,
-      }));
+      // Railway API returns: { success, error, data: { dustTokens, noLiquidityTokens, ... } }
+      const data = json.data || json;
 
-      setAllDustTokens(tokens);
+      // Parse dust tokens from the API response
+      const rawDustTokens = data.dustTokens || data.tokens || [];
+      const rawNoLiquidityTokens = data.noLiquidityTokens || [];
 
-      // Auto-select all tokens with liquidity below threshold
+      const parsedDustTokens: DustToken[] = rawDustTokens.map(
+        (t: Record<string, unknown>) => ({
+          address: (t.address || t.tokenAddress) as Address,
+          name: (t.name || t.tokenName || 'Unknown') as string,
+          symbol: (t.symbol || t.tokenSymbol || '???') as string,
+          decimals: Number(t.decimals || 18),
+          balance: String(t.balance || t.rawBalance || '0'),
+          balanceFormatted: String(
+            t.balanceFormatted || t.formattedBalance || t.balance || '0'
+          ),
+          usdValue: Number(t.usdValue || t.valueUsd || 0),
+          logoURI: (t.logoURI || t.logo || undefined) as string | undefined,
+          hasLiquidity: t.hasLiquidity !== false,
+        })
+      );
+
+      const parsedNoLiquidity: DustToken[] = rawNoLiquidityTokens.map(
+        (t: Record<string, unknown>) => ({
+          address: (t.address || t.tokenAddress) as Address,
+          name: (t.name || t.tokenName || 'Unknown') as string,
+          symbol: (t.symbol || t.tokenSymbol || '???') as string,
+          decimals: Number(t.decimals || 18),
+          balance: String(t.balance || t.rawBalance || '0'),
+          balanceFormatted: String(
+            t.balanceFormatted || t.formattedBalance || t.balance || '0'
+          ),
+          usdValue: Number(t.usdValue || t.valueUsd || 0),
+          logoURI: (t.logoURI || t.logo || undefined) as string | undefined,
+          hasLiquidity: false,
+        })
+      );
+
+      setAllDustTokens(parsedDustTokens);
+      setAllNoLiquidityTokens(parsedNoLiquidity);
+
+      // Auto-select dust tokens (up to max)
       const autoSelected = new Set<Address>(
-        tokens
-          .filter((t: DustToken) => t.hasLiquidity && t.usdValue <= threshold)
+        parsedDustTokens
+          .filter((t: DustToken) => t.usdValue <= threshold)
           .slice(0, MAX_SELECTED_TOKENS)
           .map((t: DustToken) => t.address)
       );
       setSelectedAddresses(autoSelected);
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to fetch dust tokens';
+      const message =
+        err instanceof Error ? err.message : 'Failed to fetch dust tokens';
       setError(message);
       setAllDustTokens([]);
+      setAllNoLiquidityTokens([]);
     } finally {
       setIsLoading(false);
     }
@@ -220,7 +251,7 @@ export function useDustSweep(): UseDustSweepReturn {
     setQuoteError(null);
   }, [selectedAddresses, outputToken]);
 
-  // ── 2. Toggle / Select Tokens ────────────────────────────────────────────
+  // ── 2. Toggle / Select Tokens ─────────────────────────────────────────
 
   const toggleToken = useCallback((tokenAddress: Address) => {
     setSelectedAddresses((prev) => {
@@ -228,9 +259,7 @@ export function useDustSweep(): UseDustSweepReturn {
       if (next.has(tokenAddress)) {
         next.delete(tokenAddress);
       } else {
-        if (next.size >= MAX_SELECTED_TOKENS) {
-          return prev; // Don't add beyond max
-        }
+        if (next.size >= MAX_SELECTED_TOKENS) return prev;
         next.add(tokenAddress);
       }
       return next;
@@ -249,7 +278,7 @@ export function useDustSweep(): UseDustSweepReturn {
     setSelectedAddresses(new Set());
   }, []);
 
-  // ── 3. Get Batch Quote ───────────────────────────────────────────────────
+  // ── 3. Get Batch Quote from Railway API ───────────────────────────────
 
   const getQuote = useCallback(async () => {
     if (selectedTokens.length === 0) {
@@ -262,56 +291,99 @@ export function useDustSweep(): UseDustSweepReturn {
     setQuote(null);
 
     try {
+      const tokenOutAddress = OUTPUT_TOKEN_MAP[outputToken].address;
+
+      // Railway API expects: { orders: [{ tokenIn, amountIn }], tokenOut }
       const response = await fetch('/api/tokens/batch-quote', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          tokens: selectedTokens.map((t) => ({
-            address: t.address,
-            balance: t.balance,
-            decimals: t.decimals,
+          orders: selectedTokens.map((t) => ({
+            tokenIn: t.address,
+            amountIn: t.balance,
           })),
-          outputToken,
-          outputTokenAddress: OUTPUT_TOKEN_MAP[outputToken].address,
+          tokenOut: tokenOutAddress,
         }),
       });
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.message || `Quote failed: ${response.status}`);
+        throw new Error(
+          errorData.error || `Quote failed: ${response.status}`
+        );
       }
 
-      const data = await response.json();
+      const json = await response.json();
+      // Railway returns: { success, data: { quotes, summary, ... } }
+      const data = json.data || json;
+      const summary = data.summary || data;
+      const quotes = data.quotes || data.perTokenQuotes || [];
+
+      // Parse per-token quotes
+      const perTokenQuotes: PerTokenQuote[] = quotes.map(
+        (q: Record<string, unknown>) => ({
+          tokenIn: (q.tokenIn || q.token) as Address,
+          amountIn: String(q.amountIn || '0'),
+          poolFee: Number(q.poolFee || q.fee || 3000),
+          estimatedAmountOut: String(q.amountOut || q.estimatedAmountOut || '0'),
+          minAmountOut: String(q.minAmountOut || q.amountOut || '0'),
+        })
+      );
+
+      // Calculate totals from summary or from quotes
+      const totalOutputRaw = summary.totalAmountOut || summary.estimatedOutput;
+      const netOutputRaw = summary.netOutput || totalOutputRaw;
+      const feeAmountRaw = summary.feeAmount || '0';
+
+      const outputDecimals = OUTPUT_TOKEN_MAP[outputToken].decimals;
+
+      // Calculate USD values
+      let totalDustUsd = 0;
+      for (const t of selectedTokens) {
+        totalDustUsd += t.usdValue;
+      }
+
+      const feePercent = summary.dustSweepFeeBps
+        ? Number(summary.dustSweepFeeBps) / 100
+        : 2;
+      const swapFeeUsd = (totalDustUsd * feePercent) / 100;
+
+      // Format output amount
+      let estimatedOutputFormatted = '0';
+      try {
+        const { formatUnits } = await import('viem');
+        estimatedOutputFormatted = formatUnits(
+          BigInt(netOutputRaw || '0'),
+          outputDecimals
+        );
+      } catch {
+        estimatedOutputFormatted = '0';
+      }
 
       const batchQuote: BatchQuote = {
-        selectedCount: data.selectedCount || selectedTokens.length,
-        totalDustValueUsd: Number(data.totalDustValueUsd),
-        swapFeeUsd: Number(data.swapFeeUsd),
-        swapFeePercent: data.swapFeePercent || 2,
-        estimatedOutput: data.estimatedOutput as string,
-        estimatedOutputFormatted: data.estimatedOutputFormatted as string,
+        selectedCount: perTokenQuotes.length || selectedTokens.length,
+        totalDustValueUsd: Math.round(totalDustUsd * 100) / 100,
+        swapFeeUsd: Math.round(swapFeeUsd * 100) / 100,
+        swapFeePercent: feePercent,
+        estimatedOutput: String(netOutputRaw || '0'),
+        estimatedOutputFormatted,
         outputToken,
         outputTokenSymbol: OUTPUT_TOKEN_MAP[outputToken].symbol,
-        outputTokenDecimals: OUTPUT_TOKEN_MAP[outputToken].decimals,
-        perTokenQuotes: (data.perTokenQuotes || []).map((q: Record<string, unknown>) => ({
-          tokenIn: q.tokenIn as Address,
-          amountIn: q.amountIn as string,
-          poolFee: Number(q.poolFee),
-          estimatedAmountOut: q.estimatedAmountOut as string,
-          minAmountOut: q.minAmountOut as string,
-        })),
+        outputTokenDecimals: outputDecimals,
+        perTokenQuotes,
       };
 
       setQuote(batchQuote);
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to get quote';
+      const message =
+        err instanceof Error ? err.message : 'Failed to get quote';
       setQuoteError(message);
     } finally {
       setIsQuoting(false);
     }
   }, [selectedTokens, outputToken]);
 
-  // Auto-quote when selection changes and has tokens
+  // Auto-quote when selection changes
   useEffect(() => {
     if (selectedTokens.length > 0) {
       const debounce = setTimeout(() => {
@@ -321,7 +393,7 @@ export function useDustSweep(): UseDustSweepReturn {
     }
   }, [selectedTokens.length, outputToken]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── 4. Check Approvals ──────────────────────────────────────────────────
+  // ── 4. Check Approvals ────────────────────────────────────────────────
 
   const checkApprovals = useCallback(async (): Promise<ApprovalStatus[]> => {
     if (!publicClient || !address || selectedTokens.length === 0) {
@@ -347,7 +419,6 @@ export function useDustSweep(): UseDustSweepReturn {
               currentAllowance: allowance,
             };
           } catch {
-            // If read fails, assume approval needed
             return {
               token: token.address,
               needsApproval: true,
@@ -375,17 +446,24 @@ export function useDustSweep(): UseDustSweepReturn {
     }
   }, [quote, checkApprovals, selectedTokens.length]);
 
-  // ── 5. Build Transaction Calls ──────────────────────────────────────────
+  // ── 5. Build Transaction Calls ────────────────────────────────────────
 
   const sweepCalls = useMemo((): TransactionCall[] => {
-    if (!quote || !address || selectedTokens.length === 0 || !quote.perTokenQuotes.length) {
+    if (
+      !quote ||
+      !address ||
+      selectedTokens.length === 0 ||
+      !quote.perTokenQuotes.length
+    ) {
       return [];
     }
 
     const calls: TransactionCall[] = [];
 
-    // Step 1: Approval calls for tokens that need approval
-    const tokensNeedingApproval = approvalStatuses.filter((s) => s.needsApproval);
+    // Approval calls
+    const tokensNeedingApproval = approvalStatuses.filter(
+      (s) => s.needsApproval
+    );
 
     for (const status of tokensNeedingApproval) {
       const approveData = encodeFunctionData({
@@ -400,10 +478,9 @@ export function useDustSweep(): UseDustSweepReturn {
       });
     }
 
-    // Step 2: Build SwapOrder structs from quote data
-    const orders: SwapOrder[] = quote.perTokenQuotes.map((pq) => {
+    // Build SwapOrder structs
+    const orderTuples = quote.perTokenQuotes.map((pq) => {
       const estimatedOut = BigInt(pq.estimatedAmountOut);
-      // Apply 3% slippage tolerance: minAmountOut = estimatedOut * 0.97
       const minOut = pq.minAmountOut
         ? BigInt(pq.minAmountOut)
         : (estimatedOut * 97n) / 100n;
@@ -416,15 +493,7 @@ export function useDustSweep(): UseDustSweepReturn {
       };
     });
 
-    // Convert orders to tuple format for ABI encoding
-    const orderTuples = orders.map((o) => ({
-      tokenIn: o.tokenIn,
-      amountIn: o.amountIn,
-      poolFee: o.poolFee,
-      minAmountOut: o.minAmountOut,
-    }));
-
-    // Step 3: Sweep call
+    // Sweep call
     if (outputToken === 'ETH') {
       const sweepData = encodeFunctionData({
         abi: DustSweepRouterABI,
@@ -437,7 +506,7 @@ export function useDustSweep(): UseDustSweepReturn {
         data: sweepData,
       });
     } else {
-      const tokenOutAddress = OUTPUT_TOKEN_MAP[outputToken].address!;
+      const tokenOutAddress = OUTPUT_TOKEN_MAP[outputToken].address;
 
       const sweepData = encodeFunctionData({
         abi: DustSweepRouterABI,
@@ -454,7 +523,7 @@ export function useDustSweep(): UseDustSweepReturn {
     return calls;
   }, [quote, address, selectedTokens, approvalStatuses, outputToken]);
 
-  // ── 6. Handle Success & Award Particles ─────────────────────────────────
+  // ── 6. Handle Success & Award Particles ───────────────────────────────
 
   const handleSuccess = useCallback(
     async (txHash: string) => {
@@ -463,27 +532,22 @@ export function useDustSweep(): UseDustSweepReturn {
       const tokensSwept = selectedTokens.length;
       const earned = BASE_PARTICLES + PER_TOKEN_PARTICLES * tokensSwept;
 
-      // Award particles
+      // Award particles via Railway API
       try {
         if (address) {
-          await fetch('/api/points/award', {
+          await fetch('/api/points/record-sweep', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               address,
-              action: 'sweep',
-              particles: earned,
-              metadata: {
-                txHash,
-                tokensSwept,
-                outputToken,
-                threshold,
-              },
+              txHash,
+              tokensSwept,
+              outputToken,
+              threshold,
             }),
           });
         }
       } catch {
-        // Don't block success on points failure
         console.error('Failed to award particles');
       }
 
@@ -496,7 +560,7 @@ export function useDustSweep(): UseDustSweepReturn {
         particlesEarned: earned,
       });
 
-      // Refresh dust tokens after successful sweep
+      // Refresh after sweep
       setTimeout(() => {
         fetchDustTokens();
       }, 3000);
@@ -509,7 +573,7 @@ export function useDustSweep(): UseDustSweepReturn {
     setParticlesEarned(null);
   }, []);
 
-  // ── Return ──────────────────────────────────────────────────────────────
+  // ── Return ────────────────────────────────────────────────────────────
 
   return {
     dustTokens,

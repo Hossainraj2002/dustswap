@@ -23,6 +23,8 @@ app.use(
       "http://localhost:5173",
       "https://dustswap.xyz",
       "https://www.dustswap.xyz",
+      "https://dustswap.vercel.app",
+      "https://dustswap-web.vercel.app",
     ],
     allowMethods: ["GET", "POST", "OPTIONS"],
     allowHeaders: ["Content-Type", "Authorization"],
