@@ -10,6 +10,7 @@ import {
   TransactionStatusAction,
   TransactionStatusLabel,
 } from '@coinbase/onchainkit/transaction';
+import type { TransactionError } from '@coinbase/onchainkit/transaction';
 import {
   ConnectWallet,
   Wallet,
@@ -163,8 +164,10 @@ function TokenCard({
             alt={token.symbol}
             className="w-10 h-10 rounded-full bg-gray-800 flex-shrink-0"
             onError={(e) => {
-              (e.target as HTMLImageElement).style.display = 'none';
-              (e.target as HTMLImageElement).nextElementSibling?.classList.remove('hidden');
+              const img = e.target as HTMLImageElement;
+              img.style.display = 'none';
+              const sibling = img.nextElementSibling as HTMLElement | null;
+              if (sibling) sibling.classList.remove('hidden');
             }}
           />
         ) : null}
@@ -260,7 +263,7 @@ function SuccessModal({
       <ConfettiParticles />
 
       <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-40 p-4">
-        <div className="bg-gray-900 border border-gray-700 rounded-2xl p-8 max-w-md w-full shadow-2xl shadow-purple-500/20 animate-in fade-in zoom-in duration-300">
+        <div className="bg-gray-900 border border-gray-700 rounded-2xl p-8 max-w-md w-full shadow-2xl shadow-purple-500/20">
           {/* Header */}
           <div className="text-center mb-6">
             <div className="text-6xl mb-3">🧹✨</div>
@@ -294,7 +297,7 @@ function SuccessModal({
               href={`${BASE_SCAN_URL}${data.txHash}`}
               target="_blank"
               rel="noopener noreferrer"
-              className="block w-full text-center py-3 px-4 rounded-xl bg-gray-800 hover:bg-gray-750 border border-gray-700 text-gray-300 hover:text-white transition-colors text-sm"
+              className="block w-full text-center py-3 px-4 rounded-xl bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 hover:text-white transition-colors text-sm"
             >
               View on BaseScan ↗
             </a>
@@ -384,6 +387,8 @@ export default function DustSweepPage() {
     return () => document.removeEventListener('click', handleClickOutside);
   }, []);
 
+  // ── OnchainKit Transaction callbacks with correct types ──────────────────
+
   const onTransactionSuccess = useCallback(
     (response: { transactionReceipts: Array<{ transactionHash: string }> }) => {
       const txHash =
@@ -393,8 +398,8 @@ export default function DustSweepPage() {
     [handleSuccess]
   );
 
-  const onTransactionError = useCallback((err: Error) => {
-    console.error('Transaction failed:', err);
+  const onTransactionError = useCallback((e: TransactionError) => {
+    console.error('Transaction failed:', e);
   }, []);
 
   const allTokens = [...dustTokens, ...noLiquidityTokens];
@@ -414,7 +419,7 @@ export default function DustSweepPage() {
             Connect your wallet to find and sweep dust tokens into one useful asset.
           </p>
           <Wallet>
-            <ConnectWallet className="mx-auto">
+            <ConnectWallet>
               <span className="px-8 py-3 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-semibold rounded-xl transition-all">
                 Connect Wallet
               </span>
@@ -776,4 +781,4 @@ export default function DustSweepPage() {
       </div>
     </div>
   );
-} 
+}
