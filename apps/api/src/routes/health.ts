@@ -1,13 +1,12 @@
-import { Router } from 'express';
-const router = Router();
+import { Router, Request, Response } from 'express';
 
-router.get('/', (_req, res) => {
+const router: Router = Router();
+
+router.get('/', (req: Request, res: Response) => {
   res.json({
-    status:    'ok',
-    service:   'dustsweep-api',
-    version:   '1.0.0',
-    timestamp: new Date().toISOString(),
+    status: 'ok',
+    timestamp: new Date().toISOString()
   });
 });
 
-export { router as healthRoutes };
+export default router;

@@ -1,0 +1,5 @@
+{
+	"dependencies": {
+		"@types/express-serve-static-core": "^5.1.1"
+	}
+}
