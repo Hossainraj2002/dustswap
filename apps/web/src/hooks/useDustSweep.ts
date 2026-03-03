@@ -446,7 +446,7 @@ export function useDustSweep(): UseDustSweepReturn {
     }
   }, [quote, checkApprovals, selectedTokens.length]);
 
-  // ── 5. Build Transaction Calls ────────────────────────────────────────
+  // ── 5. Build Transaction Calls (FIXED: correct ABI parameter counts) ──
 
   const sweepCalls = useMemo((): TransactionCall[] => {
     if (
@@ -493,12 +493,13 @@ export function useDustSweep(): UseDustSweepReturn {
       };
     });
 
-    // Sweep call
+    // Sweep call - FIXED to match actual ABI parameter counts
     if (outputToken === 'ETH') {
+      // ABI: sweepDustToETH(SwapOrder[] orders) → only 1 parameter
       const sweepData = encodeFunctionData({
         abi: DustSweepRouterABI,
         functionName: 'sweepDustToETH',
-        args: [orderTuples, address],
+        args: [orderTuples],
       });
 
       calls.push({
@@ -506,12 +507,13 @@ export function useDustSweep(): UseDustSweepReturn {
         data: sweepData,
       });
     } else {
+      // ABI: sweepDust(SwapOrder[] orders, address targetToken) → only 2 parameters
       const tokenOutAddress = OUTPUT_TOKEN_MAP[outputToken].address;
 
       const sweepData = encodeFunctionData({
         abi: DustSweepRouterABI,
         functionName: 'sweepDust',
-        args: [orderTuples, tokenOutAddress, address],
+        args: [orderTuples, tokenOutAddress],
       });
 
       calls.push({
