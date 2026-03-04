@@ -1,5 +1,6 @@
 // apps/api/src/routes/tokens.ts
-// Uses OnchainKit APIs: getPortfolios + buildSwapTransaction
+// Uses Coinbase Developer Platform (CDP) JSON-RPC API
+// Same internal endpoints that @coinbase/onchainkit uses
 
 import { Hono } from "hono";
 import { getAddress, formatUnits } from "viem";
@@ -8,22 +9,26 @@ const tokens = new Hono();
 
 // ─── Config ────────────────────────────────────────────────────────────────────
 
-const ONCHAINKIT_BASE = "https://api.developer.coinbase.com/onchainkit/v1";
 const BASE_CHAIN_ID = 8453;
 
-// API key – loaded from env (same key used by the frontend OnchainKitProvider)
-function getApiKey(): string {
-  return (
+// CDP JSON-RPC endpoint — same one OnchainKit uses internally
+function getCdpRpcUrl(): string {
+  const apiKey =
     process.env.ONCHAINKIT_API_KEY ||
     process.env.NEXT_PUBLIC_ONCHAINKIT_API_KEY ||
-    ""
-  );
+    "";
+  if (!apiKey) throw new Error("ONCHAINKIT_API_KEY not configured");
+  return `https://api.developer.coinbase.com/rpc/v1/base/${apiKey}`;
 }
+
+// CDP JSON-RPC method names (from OnchainKit source)
+const CDP_GET_TOKEN_BALANCES = "cdp_getTokensForAddresses";
+const CDP_GET_SWAP_QUOTE = "cdp_getSwapQuote";
+const CDP_GET_SWAP_TRADE = "cdp_getSwapTrade";
 
 const WETH_ADDRESS = "0x4200000000000000000000000000000000000006";
 const USDC_ADDRESS = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
 
-// Well-known stable tokens (always $1)
 const STABLECOINS = new Set([
   "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913", // USDC
   "0xd9aaec86b65d86f6a7b5b1b0c42ffa531710b6ca", // USDbC
@@ -49,9 +54,41 @@ function okJson<T>(data: T) {
   return { success: true, error: null, data };
 }
 
-// ─── OnchainKit API wrappers ──────────────────────────────────────────────────
+/**
+ * Send a JSON-RPC request to the Coinbase Developer Platform API.
+ * This is the same transport that @coinbase/onchainkit uses internally.
+ */
+async function cdpRpc(method: string, params: unknown[]): Promise<{
+  result?: unknown;
+  error?: { code: number; message: string };
+}> {
+  const url = getCdpRpcUrl();
 
-interface PortfolioTokenBalance {
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      id: 1,
+      jsonrpc: "2.0",
+      method,
+      params,
+    }),
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`CDP RPC failed (${res.status}): ${text}`);
+  }
+
+  return (await res.json()) as {
+    result?: unknown;
+    error?: { code: number; message: string };
+  };
+}
+
+// ─── Token balance types (from CDP response) ─────────────────────────────────
+
+interface CdpTokenBalance {
   address: string;
   chainId: number;
   decimals: number;
@@ -62,202 +99,10 @@ interface PortfolioTokenBalance {
   fiatBalance: number;
 }
 
-interface Portfolio {
+interface CdpPortfolio {
   address: string;
-  tokenBalances: PortfolioTokenBalance[];
+  tokenBalances: CdpTokenBalance[];
   portfolioBalanceInUsd: number;
-}
-
-/**
- * Calls OnchainKit getPortfolios to get ALL tokens a wallet holds,
- * with fiat values already included.
- */
-async function getPortfolios(
-  walletAddress: string
-): Promise<Portfolio | null> {
-  const apiKey = getApiKey();
-  if (!apiKey) throw new Error("ONCHAINKIT_API_KEY not configured");
-
-  const res = await fetch(`${ONCHAINKIT_BASE}/getPortfolios`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...(apiKey ? { "x-api-key": apiKey } : {}),
-    },
-    body: JSON.stringify({
-      addresses: [walletAddress],
-      chains: [BASE_CHAIN_ID],
-    }),
-  });
-
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`getPortfolios failed (${res.status}): ${text}`);
-  }
-
-  const json = (await res.json()) as {
-    portfolios?: Portfolio[];
-  };
-
-  return json.portfolios?.[0] ?? null;
-}
-
-/**
- * Calls OnchainKit getSwapQuote for a single token pair.
- * Returns the quote with USD values and amounts.
- */
-async function getSwapQuote(
-  fromToken: { address: string; chainId: number; decimals: number; symbol: string; name: string; image?: string },
-  toToken: { address: string; chainId: number; decimals: number; symbol: string; name: string; image?: string },
-  amount: string
-): Promise<{
-  fromAmount: string;
-  toAmount: string;
-  fromAmountUSD: string;
-  toAmountUSD: string;
-  priceImpact: string;
-  highPriceImpact: boolean;
-  slippage: string;
-  error?: string;
-}> {
-  const apiKey = getApiKey();
-
-  const res = await fetch(`${ONCHAINKIT_BASE}/getSwapQuote`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...(apiKey ? { "x-api-key": apiKey } : {}),
-    },
-    body: JSON.stringify({
-      from: { ...fromToken, chainId: BASE_CHAIN_ID },
-      to: { ...toToken, chainId: BASE_CHAIN_ID },
-      amount,
-      useAggregator: true,
-    }),
-  });
-
-  if (!res.ok) {
-    const text = await res.text();
-    let errorMsg: string;
-    try {
-      const parsed = JSON.parse(text);
-      errorMsg = parsed.error || parsed.message || `Quote failed: ${res.status}`;
-    } catch {
-      errorMsg = text || `Quote failed: ${res.status}`;
-    }
-    return {
-      fromAmount: amount,
-      toAmount: "0",
-      fromAmountUSD: "0",
-      toAmountUSD: "0",
-      priceImpact: "0",
-      highPriceImpact: false,
-      slippage: "3",
-      error: errorMsg,
-    };
-  }
-
-  return (await res.json()) as {
-    fromAmount: string;
-    toAmount: string;
-    fromAmountUSD: string;
-    toAmountUSD: string;
-    priceImpact: string;
-    highPriceImpact: boolean;
-    slippage: string;
-  };
-}
-
-interface BuildSwapResponse {
-  approveTransaction?: {
-    to: string;
-    data: string;
-    gas: number;
-    value: number;
-    chainId: number;
-  };
-  transaction: {
-    to: string;
-    data: string;
-    gas: number;
-    value: number;
-    chainId: number;
-  };
-  quote: {
-    from: { address: string; symbol: string; decimals: number };
-    to: { address: string; symbol: string; decimals: number };
-    fromAmount: string;
-    toAmount: string;
-    fromAmountUSD?: string;
-    toAmountUSD?: string;
-    priceImpact: string;
-    highPriceImpact: boolean;
-    slippage: string;
-  };
-  fee?: {
-    percentage: string;
-    amount: string;
-  };
-  warning?: {
-    type: string;
-    message: string;
-    description: string;
-  };
-  error?: string;
-}
-
-/**
- * Calls OnchainKit buildSwapTransaction to get a ready-to-sign swap tx.
- * This produces real tx data that works with the <Transaction> component.
- */
-async function buildSwapTx(
-  fromAddress: string,
-  fromToken: { address: string; decimals: number; symbol: string; name: string; image?: string },
-  toToken: { address: string; decimals: number; symbol: string; name: string; image?: string },
-  amount: string
-): Promise<BuildSwapResponse> {
-  const apiKey = getApiKey();
-
-  const res = await fetch(`${ONCHAINKIT_BASE}/buildSwapTransaction`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...(apiKey ? { "x-api-key": apiKey } : {}),
-    },
-    body: JSON.stringify({
-      fromAddress,
-      from: { ...fromToken, chainId: BASE_CHAIN_ID },
-      to: { ...toToken, chainId: BASE_CHAIN_ID },
-      amount,
-      useAggregator: true,
-    }),
-  });
-
-  if (!res.ok) {
-    const text = await res.text();
-    let errorMsg: string;
-    try {
-      const parsed = JSON.parse(text);
-      errorMsg = parsed.error || parsed.message || `Build failed: ${res.status}`;
-    } catch {
-      errorMsg = text || `Build failed: ${res.status}`;
-    }
-    return {
-      transaction: { to: "", data: "", gas: 0, value: 0, chainId: BASE_CHAIN_ID },
-      quote: {
-        from: { address: fromToken.address, symbol: fromToken.symbol, decimals: fromToken.decimals },
-        to: { address: toToken.address, symbol: toToken.symbol, decimals: toToken.decimals },
-        fromAmount: amount,
-        toAmount: "0",
-        priceImpact: "0",
-        highPriceImpact: false,
-        slippage: "3",
-      },
-      error: errorMsg,
-    };
-  }
-
-  return (await res.json()) as BuildSwapResponse;
 }
 
 // Sleep helper
@@ -266,7 +111,7 @@ function sleep(ms: number): Promise<void> {
 }
 
 // ─── GET /api/tokens/dust?address=0x...&threshold=5 ──────────────────────────
-// Uses getPortfolios to show ALL tokens with correct USD values
+// Uses cdp_getTokensForAddresses to show ALL tokens with correct USD values
 
 tokens.get("/dust", async (c) => {
   const address = c.req.query("address");
@@ -282,7 +127,21 @@ tokens.get("/dust", async (c) => {
   }
 
   try {
-    const portfolio = await getPortfolios(address);
+    const rpcResponse = await cdpRpc(CDP_GET_TOKEN_BALANCES, [
+      { addresses: [address] },
+    ]);
+
+    if (rpcResponse.error) {
+      throw new Error(
+        `CDP API error: ${rpcResponse.error.message} (code: ${rpcResponse.error.code})`
+      );
+    }
+
+    const result = rpcResponse.result as {
+      portfolios?: CdpPortfolio[];
+    };
+
+    const portfolio = result?.portfolios?.[0];
 
     if (!portfolio || !portfolio.tokenBalances) {
       return c.json(
@@ -290,7 +149,7 @@ tokens.get("/dust", async (c) => {
       );
     }
 
-    // Filter out zero balances and native ETH (address "")
+    // Filter out zero balances
     const nonZero = portfolio.tokenBalances.filter(
       (tb) => tb.cryptoBalance > 0
     );
@@ -328,9 +187,12 @@ tokens.get("/dust", async (c) => {
         balance: rawBalance,
         balanceFormatted: tb.cryptoBalance.toString(),
         usdValue: Math.round(usdValue * 10000) / 10000,
-        priceUsd: priceUsd,
+        priceUsd,
         logoURI: tb.image,
-        hasLiquidity: usdValue > 0 || priceUsd > 0 || STABLECOINS.has(tb.address?.toLowerCase()),
+        hasLiquidity:
+          usdValue > 0 ||
+          priceUsd > 0 ||
+          STABLECOINS.has(tb.address?.toLowerCase()),
       };
 
       // Skip tokens above threshold (they're not dust)
@@ -371,7 +233,7 @@ tokens.get("/dust", async (c) => {
 });
 
 // ─── POST /api/tokens/batch-quote ────────────────────────────────────────────
-// For each selected dust token, calls buildSwapTransaction to get
+// For each selected dust token, calls cdp_getSwapTrade to get
 // ready-to-sign swap data (approval + swap tx).
 
 tokens.post("/batch-quote", async (c) => {
@@ -405,27 +267,16 @@ tokens.post("/batch-quote", async (c) => {
   let toTokenAddress = tokenOut || USDC_ADDRESS;
   let toTokenSymbol = "USDC";
   let toTokenDecimals = 6;
-  let toTokenName = "USD Coin";
 
   if (toTokenAddress.toLowerCase() === WETH_ADDRESS.toLowerCase()) {
     toTokenSymbol = "WETH";
     toTokenDecimals = 18;
-    toTokenName = "Wrapped Ether";
   } else if (toTokenAddress.toLowerCase() === USDC_ADDRESS.toLowerCase()) {
     toTokenSymbol = "USDC";
     toTokenDecimals = 6;
-    toTokenName = "USD Coin";
   }
 
-  const toToken = {
-    address: toTokenAddress,
-    decimals: toTokenDecimals,
-    symbol: toTokenSymbol,
-    name: toTokenName,
-  };
-
   // We need a wallet address to build transactions
-  // The frontend should send it, or we use a placeholder for quote-only mode
   const fromAddress =
     walletAddress || "0x0000000000000000000000000000000000000001";
 
@@ -434,7 +285,6 @@ tokens.post("/batch-quote", async (c) => {
     amountIn: string;
     success: boolean;
     error?: string;
-    // Quote data
     amountOut?: string;
     estimatedAmountOut?: string;
     minAmountOut?: string;
@@ -443,7 +293,6 @@ tokens.post("/batch-quote", async (c) => {
     priceImpact?: string;
     poolFee?: number;
     maxSwappablePercent?: number;
-    // Transaction data (ready to sign)
     approveTransaction?: {
       to: string;
       data: string;
@@ -469,63 +318,89 @@ tokens.post("/batch-quote", async (c) => {
     const batch = orders.slice(i, i + BATCH_SIZE);
 
     const batchPromises = batch.map(async (order) => {
-      const fromToken = {
-        address: order.tokenIn,
-        decimals: order.decimals ?? 18,
-        symbol: order.symbol ?? "TOKEN",
-        name: order.name ?? "Unknown Token",
-      };
+      const fromTokenDecimals = order.decimals ?? 18;
+
+      // Convert raw amount to human-readable for OnchainKit API
+      // The API expects a decimal string like "0.001", not raw units
+      let humanAmount: string;
+      try {
+        humanAmount = formatUnits(BigInt(order.amountIn), fromTokenDecimals);
+      } catch {
+        humanAmount = order.amountIn;
+      }
 
       try {
-        // Use buildSwapTransaction — this gives us both the quote AND tx data
-        const result = await buildSwapTx(
-          fromAddress,
-          fromToken,
-          toToken,
-          order.amountIn
-        );
+        // cdp_getSwapTrade params match what buildSwapTransaction sends internally:
+        // { fromAddress, from: tokenAddress, to: tokenAddress, amount, amountReference }
+        const rpcResponse = await cdpRpc(CDP_GET_SWAP_TRADE, [
+          {
+            fromAddress,
+            from: order.tokenIn,
+            to: toTokenAddress,
+            amount: humanAmount,
+            amountReference: "from",
+          },
+        ]);
 
-        if (result.error) {
+        if (rpcResponse.error) {
           return {
             tokenIn: order.tokenIn,
             amountIn: order.amountIn,
             success: false,
-            error: result.error,
+            error: rpcResponse.error.message,
           };
         }
 
-        const fromUSD = parseFloat(result.quote.fromAmountUSD || "0");
-        const toUSD = parseFloat(result.quote.toAmountUSD || "0");
+        const trade = rpcResponse.result as {
+          approveTx?: { to: string; data: string; gas: string; value: string };
+          tx: { to: string; data: string; gas: string; value: string };
+          fee?: { percentage: string; amount: string };
+          quote: {
+            from: { address: string; symbol: string; decimals: number };
+            to: { address: string; symbol: string; decimals: number };
+            fromAmount: string;
+            toAmount: string;
+            fromAmountUSD?: string;
+            toAmountUSD?: string;
+            priceImpact: string;
+            highPriceImpact: boolean;
+            slippage: string;
+          };
+          chainId: number;
+        };
+
+        const fromUSD = parseFloat(trade.quote.fromAmountUSD || "0");
+        const toUSD = parseFloat(trade.quote.toAmountUSD || "0");
 
         // Apply 5% slippage for minAmountOut
-        const amountOut = BigInt(result.quote.toAmount || "0");
+        const amountOut = BigInt(trade.quote.toAmount || "0");
         const minAmountOut = (amountOut * 95n) / 100n;
 
         return {
           tokenIn: order.tokenIn,
           amountIn: order.amountIn,
           success: true,
-          amountOut: result.quote.toAmount,
-          estimatedAmountOut: result.quote.toAmount,
+          amountOut: trade.quote.toAmount,
+          estimatedAmountOut: trade.quote.toAmount,
           minAmountOut: minAmountOut.toString(),
           fromAmountUSD: fromUSD.toFixed(4),
           toAmountUSD: toUSD.toFixed(4),
-          priceImpact: result.quote.priceImpact,
+          priceImpact: trade.quote.priceImpact,
           poolFee: 3000,
           maxSwappablePercent: 100,
-          approveTransaction: result.approveTransaction
+          approveTransaction: trade.approveTx
             ? {
-                to: result.approveTransaction.to,
-                data: result.approveTransaction.data,
-                gas: result.approveTransaction.gas,
-                value: result.approveTransaction.value,
+                to: trade.approveTx.to,
+                data: trade.approveTx.data,
+                gas: parseInt(trade.approveTx.gas || "0"),
+                value: parseInt(trade.approveTx.value || "0"),
               }
             : undefined,
           swapTransaction: {
-            to: result.transaction.to,
-            data: result.transaction.data,
-            gas: result.transaction.gas,
-            value: result.transaction.value,
+            to: trade.tx.to,
+            data: trade.tx.data,
+            gas: parseInt(trade.tx.gas || "0"),
+            value: parseInt(trade.tx.value || "0"),
           },
           _fromUSD: fromUSD,
           _toUSD: toUSD,
@@ -550,7 +425,7 @@ tokens.post("/batch-quote", async (c) => {
       } else {
         failCount++;
       }
-      // Remove internal fields before adding to results
+      // Remove internal fields
       const { _fromUSD, _toUSD, ...cleanResult } = r as typeof r & {
         _fromUSD?: number;
         _toUSD?: number;
@@ -558,7 +433,7 @@ tokens.post("/batch-quote", async (c) => {
       results.push(cleanResult);
     }
 
-    // Small delay between batches to avoid rate limiting
+    // Small delay between batches
     if (i + BATCH_SIZE < orders.length) {
       await sleep(200);
     }
@@ -566,7 +441,6 @@ tokens.post("/batch-quote", async (c) => {
 
   const successfulQuotes = results.filter((r) => r.success);
 
-  // Compute totals
   let totalAmountOut = 0n;
   for (const q of successfulQuotes) {
     totalAmountOut += BigInt(q.amountOut || "0");
@@ -586,28 +460,21 @@ tokens.post("/batch-quote", async (c) => {
 
   return c.json(
     okJson({
-      // Per-token quotes with tx data
       quotes: results,
       perTokenQuotes: successfulQuotes,
-
-      // Totals
       totalAmountOut: totalAmountOut.toString(),
       netOutput: netOutput.toString(),
       estimatedOutput: netOutput.toString(),
       estimatedOutputFormatted,
       feeAmount: feeAmount.toString(),
       dustSweepFeeBps: DUST_SWEEP_FEE_BPS,
-
       totalDustValueUsd: Math.round(totalFromUSD * 100) / 100,
       swapFeeUsd: Math.round(totalFromUSD * 0.02 * 100) / 100,
       swapFeePercent: 2,
-
       outputToken: toTokenSymbol,
       outputTokenSymbol: toTokenSymbol,
       outputTokenDecimals: toTokenDecimals,
-
       selectedCount: successCount,
-
       summary: {
         orderCount: orders.length,
         successCount,
@@ -623,7 +490,6 @@ tokens.post("/batch-quote", async (c) => {
 });
 
 // ─── GET /api/tokens/balances?address=0x... ──────────────────────────────────
-// Also uses getPortfolios
 
 tokens.get("/balances", async (c) => {
   const address = c.req.query("address");
@@ -633,10 +499,21 @@ tokens.get("/balances", async (c) => {
   }
 
   try {
-    const portfolio = await getPortfolios(address);
+    const rpcResponse = await cdpRpc(CDP_GET_TOKEN_BALANCES, [
+      { addresses: [address] },
+    ]);
+
+    if (rpcResponse.error) {
+      throw new Error(`CDP API error: ${rpcResponse.error.message}`);
+    }
+
+    const result = rpcResponse.result as { portfolios?: CdpPortfolio[] };
+    const portfolio = result?.portfolios?.[0];
 
     if (!portfolio || !portfolio.tokenBalances) {
-      return c.json(okJson({ address: getAddress(address), tokenCount: 0, tokens: [] }));
+      return c.json(
+        okJson({ address: getAddress(address), tokenCount: 0, tokens: [] })
+      );
     }
 
     const balances = portfolio.tokenBalances
@@ -672,7 +549,6 @@ tokens.get("/balances", async (c) => {
 });
 
 // ─── GET /api/tokens/prices?tokens=0x...,0x... ──────────────────────────────
-// Uses getSwapQuote to derive on-chain prices
 
 tokens.get("/prices", async (c) => {
   const tokensParam = c.req.query("tokens");
@@ -696,26 +572,37 @@ tokens.get("/prices", async (c) => {
   try {
     const prices: Record<string, { priceUsd: number; liquidity: number }> = {};
 
-    // Quote each token against USDC to get a price
     for (const tokenAddr of tokenList) {
       if (!isValidAddress(tokenAddr)) continue;
 
-      // Stablecoins
       if (STABLECOINS.has(tokenAddr.toLowerCase())) {
         prices[tokenAddr] = { priceUsd: 1.0, liquidity: 1 };
         continue;
       }
 
       try {
-        const quote = await getSwapQuote(
-          { address: tokenAddr, chainId: BASE_CHAIN_ID, decimals: 18, symbol: "TOKEN", name: "Token" },
-          { address: USDC_ADDRESS, chainId: BASE_CHAIN_ID, decimals: 6, symbol: "USDC", name: "USD Coin" },
-          "1000000000000000000" // 1 token (18 decimals)
-        );
+        // Use cdp_getSwapQuote to derive a price
+        const rpcResponse = await cdpRpc(CDP_GET_SWAP_QUOTE, [
+          {
+            from: tokenAddr,
+            to: USDC_ADDRESS,
+            amount: "1",
+            amountReference: "from",
+          },
+        ]);
 
-        if (!quote.error && quote.toAmount && quote.toAmount !== "0") {
-          const priceUsd = Number(quote.toAmount) / 1e6;
-          prices[tokenAddr] = { priceUsd, liquidity: priceUsd > 0 ? 1 : 0 };
+        if (
+          !rpcResponse.error &&
+          rpcResponse.result &&
+          typeof rpcResponse.result === "object"
+        ) {
+          const quote = rpcResponse.result as { toAmount?: string };
+          const toAmount = parseFloat(quote.toAmount || "0");
+          const priceUsd = toAmount / 1e6; // USDC has 6 decimals
+          prices[tokenAddr] = {
+            priceUsd,
+            liquidity: priceUsd > 0 ? 1 : 0,
+          };
         } else {
           prices[tokenAddr] = { priceUsd: 0, liquidity: 0 };
         }
@@ -723,7 +610,6 @@ tokens.get("/prices", async (c) => {
         prices[tokenAddr] = { priceUsd: 0, liquidity: 0 };
       }
 
-      // Small delay to avoid rate limits
       await sleep(100);
     }
 
@@ -743,7 +629,6 @@ tokens.get("/prices", async (c) => {
 });
 
 // ─── GET /api/tokens/quote ──────────────────────────────────────────────────
-// Single swap quote using getSwapQuote
 
 tokens.get("/quote", async (c) => {
   const tokenIn = c.req.query("tokenIn");
@@ -761,13 +646,23 @@ tokens.get("/quote", async (c) => {
   }
 
   try {
-    const quote = await getSwapQuote(
-      { address: tokenIn, chainId: BASE_CHAIN_ID, decimals: 18, symbol: "TOKEN", name: "Token" },
-      { address: tokenOut, chainId: BASE_CHAIN_ID, decimals: 18, symbol: "TOKEN", name: "Token" },
-      amountIn
-    );
+    const rpcResponse = await cdpRpc(CDP_GET_SWAP_QUOTE, [
+      {
+        from: tokenIn,
+        to: tokenOut,
+        amount: amountIn,
+        amountReference: "from",
+      },
+    ]);
 
-    return c.json(okJson(quote));
+    if (rpcResponse.error) {
+      return c.json(
+        errorJson(`Quote error: ${rpcResponse.error.message}`),
+        404
+      );
+    }
+
+    return c.json(okJson(rpcResponse.result));
   } catch (err) {
     console.error("[/api/tokens/quote] Error:", err);
     return c.json(
@@ -782,10 +677,10 @@ tokens.get("/quote", async (c) => {
 tokens.get("/health", (c) => {
   return c.json({
     status: "ok",
-    service: "token-discovery-onchainkit",
+    service: "token-discovery-cdp-rpc",
     chain: "base",
     chainId: 8453,
-    apiKeyConfigured: !!getApiKey(),
+    apiKeyConfigured: !!process.env.ONCHAINKIT_API_KEY,
     timestamp: new Date().toISOString(),
   });
 });
