@@ -92,6 +92,9 @@ app.onError((err, c) => {
 const port = parseInt(process.env.PORT ?? "3001", 10);
 serve({ fetch: app.fetch, port }, () => {
   console.log(`[DustSwap API] Listening on port ${port}`);
+  // Startup diagnostics — helps debug deployment env issues
+  const apiKey = process.env.ONCHAINKIT_API_KEY || process.env.NEXT_PUBLIC_ONCHAINKIT_API_KEY || "";
+  console.log(`[DustSwap API] ONCHAINKIT_API_KEY: ${apiKey ? `${apiKey.slice(0, 8)}...${apiKey.slice(-4)} (loaded)` : "⚠️  NOT SET — token routes will fail!"}`);
 });
 
 export default app;

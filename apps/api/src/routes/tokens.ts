@@ -12,12 +12,36 @@ const tokens = new Hono();
 const BASE_CHAIN_ID = 8453;
 
 // CDP JSON-RPC endpoint — same one OnchainKit uses internally
+// The ONCHAINKIT_API_KEY is a Client API Key (UUID) — only works from browsers.
+// The PAYMASTER_URL contains a server-compatible CDP RPC key.
 function getCdpRpcUrl(): string {
+  // 1. Try dedicated server RPC key first
+  const cdpKey = process.env.CDP_API_KEY || "";
+  if (cdpKey) {
+    return `https://api.developer.coinbase.com/rpc/v1/base/${cdpKey}`;
+  }
+
+  // 2. Extract key from paymaster URL (format: .../rpc/v1/base/{key})
+  const paymasterUrl =
+    process.env.NEXT_PUBLIC_PAYMASTER_URL ||
+    process.env.PAYMASTER_URL ||
+    "";
+  if (paymasterUrl) {
+    const match = paymasterUrl.match(/\/rpc\/v1\/[^/]+\/([^/?]+)/);
+    if (match?.[1]) {
+      return `https://api.developer.coinbase.com/rpc/v1/base/${match[1]}`;
+    }
+  }
+
+  // 3. Fallback to OnchainKit client key (may fail from servers)
   const apiKey =
     process.env.ONCHAINKIT_API_KEY ||
     process.env.NEXT_PUBLIC_ONCHAINKIT_API_KEY ||
     "";
-  if (!apiKey) throw new Error("ONCHAINKIT_API_KEY not configured");
+  if (!apiKey)
+    throw new Error(
+      "No CDP API key configured. Set CDP_API_KEY, PAYMASTER_URL, or ONCHAINKIT_API_KEY."
+    );
   return `https://api.developer.coinbase.com/rpc/v1/base/${apiKey}`;
 }
 
