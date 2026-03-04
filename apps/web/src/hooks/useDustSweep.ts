@@ -1,9 +1,8 @@
 'use client';
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { useAccount, usePublicClient } from 'wagmi';
-import { type Address, erc20Abi, maxUint256, encodeFunctionData } from 'viem';
-import DustSweepRouterABI from '@/abi/DustSweepRouter.json';
+import { useAccount } from 'wagmi';
+import { type Address, formatUnits } from 'viem';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -15,8 +14,37 @@ export interface DustToken {
   balance: string;
   balanceFormatted: string;
   usdValue: number;
+  priceUsd: number;
   logoURI?: string;
   hasLiquidity: boolean;
+}
+
+export interface PerTokenQuote {
+  tokenIn: string;
+  amountIn: string;
+  amountOut: string;
+  estimatedAmountOut: string;
+  minAmountOut: string;
+  fromAmountUSD: string;
+  toAmountUSD: string;
+  priceImpact: string;
+  poolFee: number;
+  maxSwappablePercent?: number;
+  success: boolean;
+  error?: string;
+  // Transaction data from buildSwapTransaction
+  approveTransaction?: {
+    to: string;
+    data: string;
+    gas: number;
+    value: number;
+  };
+  swapTransaction?: {
+    to: string;
+    data: string;
+    gas: number;
+    value: number;
+  };
 }
 
 export interface BatchQuote {
@@ -32,29 +60,10 @@ export interface BatchQuote {
   perTokenQuotes: PerTokenQuote[];
 }
 
-export interface PerTokenQuote {
-  tokenIn: Address;
-  amountIn: string;           // actual amount to send (may be < full balance for partial swaps)
-  poolFee: number;
-  estimatedAmountOut: string;
-  minAmountOut: string;
-  maxSwappablePercent?: number; // 100, 50, 25, or 10 — indicates partial liquidity
-}
-
-export interface SwapOrder {
-  tokenIn: Address;
-  amountIn: bigint;
-  poolFee: number;
-  minAmountOut: bigint;
-}
-
-export type ThresholdValue = 1 | 2 | 5 | 10;
-export type OutputTokenOption = 'ETH' | 'USDC' | 'WETH';
-
-export interface ApprovalStatus {
-  token: Address;
-  needsApproval: boolean;
-  currentAllowance: bigint;
+export interface TransactionCall {
+  to: Address;
+  data: `0x${string}`;
+  value?: bigint;
 }
 
 export interface SuccessData {
@@ -65,11 +74,8 @@ export interface SuccessData {
   particlesEarned: number;
 }
 
-export interface TransactionCall {
-  to: Address;
-  data: `0x${string}`;
-  value?: bigint;
-}
+export type ThresholdValue = 1 | 2 | 5 | 10;
+export type OutputTokenOption = 'ETH' | 'USDC' | 'WETH';
 
 export interface UseDustSweepReturn {
   dustTokens: DustToken[];
@@ -98,22 +104,6 @@ export interface UseDustSweepReturn {
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const ROUTER_ADDRESS = (process.env.NEXT_PUBLIC_ROUTER_ADDRESS ||
-  '0x0000000000000000000000000000000000000000') as Address;
-
-// FIX 3: Warn in development if router address is not configured
-if (
-  typeof window !== 'undefined' &&
-  process.env.NODE_ENV !== 'production' &&
-  ROUTER_ADDRESS === '0x0000000000000000000000000000000000000000'
-) {
-  console.warn(
-    '[DustSweep] ⚠️  NEXT_PUBLIC_ROUTER_ADDRESS is not set. ' +
-    'All sweep calls will target the zero address and revert. ' +
-    'Set this to your deployed DustSweepRouter contract address.'
-  );
-}
-
 const USDC_ADDRESS: Address = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
 const WETH_ADDRESS: Address = '0x4200000000000000000000000000000000000006';
 
@@ -134,7 +124,6 @@ const PER_TOKEN_PARTICLES = 5;
 
 export function useDustSweep(): UseDustSweepReturn {
   const { address, isConnected } = useAccount();
-  const publicClient = usePublicClient();
 
   // ── State ──────────────────────────────────────────────────────────────────
 
@@ -144,7 +133,6 @@ export function useDustSweep(): UseDustSweepReturn {
   const [selectedAddresses, setSelectedAddresses] = useState<Set<Address>>(new Set());
   const [outputToken, setOutputToken] = useState<OutputTokenOption>('ETH');
   const [quote, setQuote] = useState<BatchQuote | null>(null);
-  const [approvalStatuses, setApprovalStatuses] = useState<ApprovalStatus[]>([]);
 
   const [isLoading, setIsLoading] = useState(false);
   const [isQuoting, setIsQuoting] = useState(false);
@@ -187,48 +175,42 @@ export function useDustSweep(): UseDustSweepReturn {
         throw new Error(errorData.error || `Failed to fetch dust tokens: ${response.status}`);
       }
 
-      const json = await response.json() as {
-        data?: unknown;
-        dustTokens?: unknown[];
-        noLiquidityTokens?: unknown[];
-        tokens?: unknown[];
-      };
+      const json = await response.json() as { data?: Record<string, unknown> } & Record<string, unknown>;
 
       // Handle both wrapped { data: {...} } and flat response formats
       const data = (json.data || json) as {
-        dustTokens?: unknown[];
-        noLiquidityTokens?: unknown[];
-        tokens?: unknown[];
+        dustTokens?: Record<string, unknown>[];
+        noLiquidityTokens?: Record<string, unknown>[];
       };
 
-      // FIX: new dust/route.ts returns { dustTokens, noLiquidityTokens }
-      // Old format returned { tokens } — support both
-      const rawDustTokens = data.dustTokens || data.tokens || [];
+      const rawDustTokens = data.dustTokens || [];
       const rawNoLiquidityTokens = data.noLiquidityTokens || [];
 
       const parseToken = (t: Record<string, unknown>): DustToken => ({
-        address:         (t.address || t.tokenAddress) as Address,
-        name:            (t.name || t.tokenName || 'Unknown') as string,
-        symbol:          (t.symbol || t.tokenSymbol || '???') as string,
-        decimals:        Number(t.decimals ?? 18),
-        balance:         String(t.balance || t.rawBalance || '0'),
-        balanceFormatted: String(t.balanceFormatted || t.formattedBalance || t.balance || '0'),
-        usdValue:        Number(t.usdValue || t.valueUsd || 0),
-        logoURI:         (t.logoURI || t.logo || undefined) as string | undefined,
-        hasLiquidity:    t.hasLiquidity !== false, // defaults to true if field is missing
+        address:          (t.address || t.tokenAddress) as Address,
+        name:             (t.name || 'Unknown') as string,
+        symbol:           (t.symbol || '???') as string,
+        decimals:         Number(t.decimals ?? 18),
+        balance:          String(t.balance || '0'),
+        balanceFormatted: String(t.balanceFormatted || t.balance || '0'),
+        usdValue:         Number(t.usdValue || t.valueUsd || t.fiatBalance || 0),
+        priceUsd:         Number(t.priceUsd || 0),
+        logoURI:          (t.logoURI || t.image || undefined) as string | undefined,
+        hasLiquidity:     t.hasLiquidity !== false,
       });
 
-      const parsedDustTokens = (rawDustTokens as Record<string, unknown>[]).map(parseToken);
-      const parsedNoLiquidity = (rawNoLiquidityTokens as Record<string, unknown>[]).map(
-        (t) => ({ ...parseToken(t), hasLiquidity: false })
-      );
+      const parsedDust = rawDustTokens.map(parseToken);
+      const parsedNoLiq = rawNoLiquidityTokens.map((t) => ({
+        ...parseToken(t),
+        hasLiquidity: false,
+      }));
 
-      setAllDustTokens(parsedDustTokens);
-      setAllNoLiquidityTokens(parsedNoLiquidity);
+      setAllDustTokens(parsedDust);
+      setAllNoLiquidityTokens(parsedNoLiq);
 
-      // Auto-select all dust tokens (up to max)
+      // Auto-select up to max
       const autoSelected = new Set<Address>(
-        parsedDustTokens.slice(0, MAX_SELECTED_TOKENS).map((t) => t.address)
+        parsedDust.slice(0, MAX_SELECTED_TOKENS).map((t) => t.address)
       );
       setSelectedAddresses(autoSelected);
     } catch (err) {
@@ -268,11 +250,11 @@ export function useDustSweep(): UseDustSweepReturn {
 
   const selectAll = useCallback(() => {
     const selectable = dustTokens
-      .filter((t) => t.usdValue <= threshold)
+      .filter((t) => t.hasLiquidity)
       .slice(0, MAX_SELECTED_TOKENS)
       .map((t) => t.address);
     setSelectedAddresses(new Set(selectable));
-  }, [dustTokens, threshold]);
+  }, [dustTokens]);
 
   const deselectAll = useCallback(() => {
     setSelectedAddresses(new Set());
@@ -286,14 +268,18 @@ export function useDustSweep(): UseDustSweepReturn {
       return;
     }
 
+    if (!address) {
+      setQuoteError('Wallet not connected');
+      return;
+    }
+
     setIsQuoting(true);
     setQuoteError(null);
     setQuote(null);
 
     try {
-      const tokenOutAddress = OUTPUT_TOKEN_MAP[outputToken].address;
+      const tokenOutInfo = OUTPUT_TOKEN_MAP[outputToken];
 
-      // Send { orders, tokenOut } format — matches the fixed batch-quote/route.ts
       const response = await fetch('/api/tokens/batch-quote', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -302,8 +288,11 @@ export function useDustSweep(): UseDustSweepReturn {
             tokenIn: t.address,
             amountIn: t.balance,
             decimals: t.decimals,
+            symbol: t.symbol,
+            name: t.name,
           })),
-          tokenOut: tokenOutAddress,
+          tokenOut: tokenOutInfo.address,
+          walletAddress: address,
         }),
       });
 
@@ -313,60 +302,46 @@ export function useDustSweep(): UseDustSweepReturn {
       }
 
       const json = await response.json() as Record<string, unknown>;
-
-      // Parse flexible response — handles both flat and wrapped formats
       const data = (json.data || json) as Record<string, unknown>;
       const summary = (data.summary || data) as Record<string, unknown>;
-      const quotesRaw = (data.quotes || data.perTokenQuotes || []) as Record<string, unknown>[];
+      const quotesRaw = (data.perTokenQuotes || data.quotes || []) as PerTokenQuote[];
 
-      // FIX 3: Filter out failed quotes (amountOut = 0 or poolFee = 0)
-      const validQuotes = quotesRaw.filter((q) => {
-        const amountOut = String(q.amountOut || q.estimatedAmountOut || '0');
-        return BigInt(amountOut) > 0n;
-      });
+      // Filter only successful quotes
+      const validQuotes = quotesRaw.filter((q) => q.success && q.amountOut && q.amountOut !== '0');
 
-      const perTokenQuotes: PerTokenQuote[] = validQuotes.map((q) => ({
-        tokenIn:           (q.tokenIn || q.token) as Address,
-        amountIn:          String(q.amountIn || '0'),
-        poolFee:           Number(q.poolFee || q.fee || 3000),
-        estimatedAmountOut: String(q.amountOut || q.estimatedAmountOut || '0'),
-        minAmountOut:      String(q.minAmountOut || q.amountOut || '0'),
-        maxSwappablePercent: q.maxSwappablePercent as number | undefined,
-      }));
-
-      if (perTokenQuotes.length === 0) {
-        throw new Error('No tokens could be quoted — they may have no Uniswap liquidity');
+      if (validQuotes.length === 0) {
+        throw new Error('No tokens could be quoted — they may have no swap liquidity');
       }
 
-      const totalOutputRaw = String(summary.totalAmountOut || summary.estimatedOutput || '0');
-      const netOutputRaw   = String(summary.netOutput || summary.estimatedOutput || totalOutputRaw);
-      const outputDecimals = OUTPUT_TOKEN_MAP[outputToken].decimals;
+      const outputDecimals = tokenOutInfo.decimals;
+      const netOutputRaw = String(summary.netOutput || summary.estimatedOutput || '0');
 
       let totalDustUsd = 0;
-      for (const t of selectedTokens) totalDustUsd += t.usdValue;
-
-      const feePercent = Number(summary.dustSweepFeeBps ?? 200) / 100;
-      const swapFeeUsd = (totalDustUsd * feePercent) / 100;
+      for (const q of validQuotes) {
+        totalDustUsd += parseFloat(q.fromAmountUSD || '0');
+      }
 
       let estimatedOutputFormatted = '0';
       try {
-        const { formatUnits } = await import('viem');
         estimatedOutputFormatted = formatUnits(BigInt(netOutputRaw || '0'), outputDecimals);
       } catch {
         estimatedOutputFormatted = '0';
       }
 
+      const feePercent = Number(summary.dustSweepFeeBps ?? 200) / 100;
+      const swapFeeUsd = Number(data.swapFeeUsd || (totalDustUsd * feePercent) / 100);
+
       const batchQuote: BatchQuote = {
-        selectedCount:          perTokenQuotes.length,
-        totalDustValueUsd:      Math.round(totalDustUsd * 100) / 100,
-        swapFeeUsd:             Math.round(swapFeeUsd * 100) / 100,
-        swapFeePercent:         feePercent,
-        estimatedOutput:        netOutputRaw,
+        selectedCount: validQuotes.length,
+        totalDustValueUsd: Math.round(totalDustUsd * 100) / 100,
+        swapFeeUsd: Math.round(swapFeeUsd * 100) / 100,
+        swapFeePercent: feePercent,
+        estimatedOutput: netOutputRaw,
         estimatedOutputFormatted,
         outputToken,
-        outputTokenSymbol:      OUTPUT_TOKEN_MAP[outputToken].symbol,
-        outputTokenDecimals:    outputDecimals,
-        perTokenQuotes,
+        outputTokenSymbol: tokenOutInfo.symbol,
+        outputTokenDecimals: outputDecimals,
+        perTokenQuotes: validQuotes,
       };
 
       setQuote(batchQuote);
@@ -376,139 +351,52 @@ export function useDustSweep(): UseDustSweepReturn {
     } finally {
       setIsQuoting(false);
     }
-  }, [selectedTokens, outputToken]);
+  }, [selectedTokens, outputToken, address]);
 
   // Auto-quote when selection changes (debounced)
   useEffect(() => {
-    if (selectedTokens.length > 0) {
+    if (selectedTokens.length > 0 && address) {
       const timer = setTimeout(() => { getQuote(); }, 500);
       return () => clearTimeout(timer);
     }
   }, [selectedTokens.length, outputToken]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── 4. Check Approvals ─────────────────────────────────────────────────────
-
-  const checkApprovals = useCallback(async (): Promise<ApprovalStatus[]> => {
-    if (!publicClient || !address || selectedTokens.length === 0) return [];
-
-    try {
-      const results = await Promise.all(
-        selectedTokens.map(async (token) => {
-          try {
-            const allowance = await publicClient.readContract({
-              address: token.address,
-              abi: erc20Abi,
-              functionName: 'allowance',
-              args: [address, ROUTER_ADDRESS],
-            });
-            // FIX 3: Use the quote's amountIn (may be partial), not full balance
-            const quoteForToken = quote?.perTokenQuotes.find(
-              (pq) => pq.tokenIn.toLowerCase() === token.address.toLowerCase()
-            );
-            const amountNeeded = quoteForToken
-              ? BigInt(quoteForToken.amountIn)
-              : BigInt(token.balance);
-
-            return {
-              token: token.address,
-              needsApproval: allowance < amountNeeded,
-              currentAllowance: allowance,
-            };
-          } catch {
-            return { token: token.address, needsApproval: true, currentAllowance: 0n };
-          }
-        })
-      );
-      setApprovalStatuses(results);
-      return results;
-    } catch {
-      return selectedTokens.map((t) => ({ token: t.address, needsApproval: true, currentAllowance: 0n }));
-    }
-  }, [publicClient, address, selectedTokens, quote]);
-
-  useEffect(() => {
-    if (quote && selectedTokens.length > 0) {
-      checkApprovals();
-    }
-  }, [quote, checkApprovals, selectedTokens.length]);
-
-  // ── 5. Build Sweep Transaction Calls ──────────────────────────────────────
+  // ── 4. Build Sweep Transaction Calls ──────────────────────────────────────
+  // Uses the pre-built transaction data from buildSwapTransaction API
 
   const sweepCalls = useMemo((): TransactionCall[] => {
     if (!quote || !address || selectedTokens.length === 0 || !quote.perTokenQuotes.length) {
       return [];
     }
 
-    // FIX 3: Warn if router is zero address — swaps will fail
-    if (ROUTER_ADDRESS === '0x0000000000000000000000000000000000000000') {
-      console.error(
-        '[DustSweep] Cannot build sweep calls: NEXT_PUBLIC_ROUTER_ADDRESS is not set.'
-      );
-      return [];
-    }
-
     const calls: TransactionCall[] = [];
 
-    // ── Approval calls ────────────────────────────────────────────────────
-    for (const status of approvalStatuses.filter((s) => s.needsApproval)) {
-      calls.push({
-        to: status.token,
-        data: encodeFunctionData({
-          abi: erc20Abi,
-          functionName: 'approve',
-          args: [ROUTER_ADDRESS, maxUint256],
-        }),
-      });
-    }
+    for (const pq of quote.perTokenQuotes) {
+      if (!pq.success) continue;
 
-    // ── Build SwapOrder tuples ────────────────────────────────────────────
-    // FIX 3: Only include quotes that have a valid poolFee (> 0) and amountOut (> 0)
-    const validOrders = quote.perTokenQuotes.filter((pq) => {
-      return pq.poolFee > 0 && BigInt(pq.estimatedAmountOut) > 0n;
-    });
+      // Add approval transaction if needed
+      if (pq.approveTransaction && pq.approveTransaction.to && pq.approveTransaction.data) {
+        calls.push({
+          to: pq.approveTransaction.to as Address,
+          data: pq.approveTransaction.data as `0x${string}`,
+          value: BigInt(pq.approveTransaction.value || 0),
+        });
+      }
 
-    if (validOrders.length === 0) return calls; // only approvals if no valid swaps
-
-    const orderTuples = validOrders.map((pq) => {
-      const estimatedOut = BigInt(pq.estimatedAmountOut);
-      // Use the minAmountOut from the quote (already has 5% slippage applied)
-      const minOut = pq.minAmountOut && BigInt(pq.minAmountOut) > 0n
-        ? BigInt(pq.minAmountOut)
-        : (estimatedOut * 95n) / 100n; // 5% slippage fallback
-
-      return {
-        tokenIn:      pq.tokenIn,
-        amountIn:     BigInt(pq.amountIn), // FIX 3: use quote amountIn (may be partial)
-        poolFee:      pq.poolFee,
-        minAmountOut: minOut,
-      };
-    });
-
-    // ── Sweep call ────────────────────────────────────────────────────────
-    if (outputToken === 'ETH') {
-      calls.push({
-        to: ROUTER_ADDRESS,
-        data: encodeFunctionData({
-          abi: DustSweepRouterABI,
-          functionName: 'sweepDustToETH',
-          args: [orderTuples],
-        }),
-      });
-    } else {
-      calls.push({
-        to: ROUTER_ADDRESS,
-        data: encodeFunctionData({
-          abi: DustSweepRouterABI,
-          functionName: 'sweepDust',
-          args: [orderTuples, OUTPUT_TOKEN_MAP[outputToken].address],
-        }),
-      });
+      // Add swap transaction
+      if (pq.swapTransaction && pq.swapTransaction.to && pq.swapTransaction.data) {
+        calls.push({
+          to: pq.swapTransaction.to as Address,
+          data: pq.swapTransaction.data as `0x${string}`,
+          value: BigInt(pq.swapTransaction.value || 0),
+        });
+      }
     }
 
     return calls;
-  }, [quote, address, selectedTokens, approvalStatuses, outputToken]);
+  }, [quote, address, selectedTokens]);
 
-  // ── 6. Handle Success ─────────────────────────────────────────────────────
+  // ── 5. Handle Success ─────────────────────────────────────────────────────
 
   const handleSuccess = useCallback(
     async (txHash: string) => {
