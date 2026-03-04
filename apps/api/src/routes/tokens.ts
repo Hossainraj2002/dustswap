@@ -342,26 +342,17 @@ tokens.post("/batch-quote", async (c) => {
     const batch = orders.slice(i, i + BATCH_SIZE);
 
     const batchPromises = batch.map(async (order) => {
-      const fromTokenDecimals = order.decimals ?? 18;
-
-      // Convert raw amount to human-readable for OnchainKit API
-      // The API expects a decimal string like "0.001", not raw units
-      let humanAmount: string;
       try {
-        humanAmount = formatUnits(BigInt(order.amountIn), fromTokenDecimals);
-      } catch {
-        humanAmount = order.amountIn;
-      }
-
-      try {
-        // cdp_getSwapTrade params match what buildSwapTransaction sends internally:
-        // { fromAddress, from: tokenAddress, to: tokenAddress, amount, amountReference }
+        // cdp_getSwapTrade expects amount in RAW units (smallest token denomination).
+        // OnchainKit's getAPIParamsForToken calls fromReadableAmount() which converts
+        // human-readable → raw BEFORE sending. Since order.amountIn is already raw,
+        // we pass it directly.
         const rpcResponse = await cdpRpc(CDP_GET_SWAP_TRADE, [
           {
             fromAddress,
             from: order.tokenIn,
             to: toTokenAddress,
-            amount: humanAmount,
+            amount: order.amountIn,
             amountReference: "from",
           },
         ]);
