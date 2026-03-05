@@ -1,9 +1,8 @@
 // apps/api/src/routes/tokens.ts
-// Uses Coinbase Developer Platform (CDP) JSON-RPC API
-// Same internal endpoints that @coinbase/onchainkit uses
+// Dual-strategy quoting: CDP API (V3 tokens) → 0x API fallback (V4 / Base App coins)
 
 import { Hono } from "hono";
-import { getAddress, formatUnits } from "viem";
+import { getAddress, formatUnits, encodeFunctionData, erc20Abi } from "viem";
 
 const tokens = new Hono();
 
@@ -12,16 +11,11 @@ const tokens = new Hono();
 const BASE_CHAIN_ID = 8453;
 
 // CDP JSON-RPC endpoint — same one OnchainKit uses internally
-// The ONCHAINKIT_API_KEY is a Client API Key (UUID) — only works from browsers.
-// The PAYMASTER_URL contains a server-compatible CDP RPC key.
 function getCdpRpcUrl(): string {
-  // 1. Try dedicated server RPC key first
   const cdpKey = process.env.CDP_API_KEY || "";
   if (cdpKey) {
     return `https://api.developer.coinbase.com/rpc/v1/base/${cdpKey}`;
   }
-
-  // 2. Extract key from paymaster URL (format: .../rpc/v1/base/{key})
   const paymasterUrl =
     process.env.NEXT_PUBLIC_PAYMASTER_URL ||
     process.env.PAYMASTER_URL ||
@@ -32,8 +26,6 @@ function getCdpRpcUrl(): string {
       return `https://api.developer.coinbase.com/rpc/v1/base/${match[1]}`;
     }
   }
-
-  // 3. Fallback to OnchainKit client key (may fail from servers)
   const apiKey =
     process.env.ONCHAINKIT_API_KEY ||
     process.env.NEXT_PUBLIC_ONCHAINKIT_API_KEY ||
@@ -45,19 +37,31 @@ function getCdpRpcUrl(): string {
   return `https://api.developer.coinbase.com/rpc/v1/base/${apiKey}`;
 }
 
-// CDP JSON-RPC method names (from OnchainKit source)
+// CDP JSON-RPC method names
 const CDP_GET_TOKEN_BALANCES = "cdp_getTokensForAddresses";
 const CDP_GET_SWAP_QUOTE = "cdp_getSwapQuote";
 const CDP_GET_SWAP_TRADE = "cdp_getSwapTrade";
 
+// Token addresses
 const WETH_ADDRESS = "0x4200000000000000000000000000000000000006";
 const USDC_ADDRESS = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+const ETH_PLACEHOLDER = "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE";
 
 const STABLECOINS = new Set([
-  "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913", // USDC
-  "0xd9aaec86b65d86f6a7b5b1b0c42ffa531710b6ca", // USDbC
-  "0x50c5725949a6f0c72e6c4a641f24049a917db0cb", // DAI
+  "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+  "0xd9aaec86b65d86f6a7b5b1b0c42ffa531710b6ca",
+  "0x50c5725949a6f0c72e6c4a641f24049a917db0cb",
 ]);
+
+// ─── 0x API Config ─────────────────────────────────────────────────────────────
+// The 0x aggregator supports Uniswap V4 pools on Base — perfect fallback for
+// Base App coins that the CDP API can't route.
+
+const ZEROX_API_BASE = "https://api.0x.org";
+
+function get0xApiKey(): string {
+  return process.env.ZEROX_API_KEY || "";
+}
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -78,39 +82,96 @@ function okJson<T>(data: T) {
   return { success: true, error: null, data };
 }
 
-/**
- * Send a JSON-RPC request to the Coinbase Developer Platform API.
- * This is the same transport that @coinbase/onchainkit uses internally.
- */
-async function cdpRpc(method: string, params: unknown[]): Promise<{
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+// ─── CDP JSON-RPC ──────────────────────────────────────────────────────────────
+
+async function cdpRpc(
+  method: string,
+  params: unknown[]
+): Promise<{
   result?: unknown;
   error?: { code: number; message: string };
 }> {
   const url = getCdpRpcUrl();
-
   const res = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      id: 1,
-      jsonrpc: "2.0",
-      method,
-      params,
-    }),
+    body: JSON.stringify({ id: 1, jsonrpc: "2.0", method, params }),
   });
-
   if (!res.ok) {
     const text = await res.text();
     throw new Error(`CDP RPC failed (${res.status}): ${text}`);
   }
-
   return (await res.json()) as {
     result?: unknown;
     error?: { code: number; message: string };
   };
 }
 
-// ─── Token balance types (from CDP response) ─────────────────────────────────
+// ─── 0x API Swap Quote ─────────────────────────────────────────────────────────
+// Used as fallback when CDP can't route (e.g. V4-only Base App coins).
+// 0x aggregates across V3, V4, and other DEXs on Base.
+
+interface ZeroXQuote {
+  buyAmount: string;
+  sellAmount: string;
+  price: string;
+  estimatedPriceImpact: string;
+  to: string;
+  data: string;
+  value: string;
+  gas: string;
+  estimatedGas: string;
+  allowanceTarget: string;
+  buyTokenAddress: string;
+  sellTokenAddress: string;
+}
+
+async function get0xSwapQuote(params: {
+  sellToken: string;
+  buyToken: string;
+  sellAmount: string;
+  takerAddress: string;
+}): Promise<ZeroXQuote> {
+  const apiKey = get0xApiKey();
+  if (!apiKey) {
+    throw new Error("ZEROX_API_KEY not configured");
+  }
+
+  // For ETH output, 0x uses 0xEeee... placeholder
+  const buyToken =
+    params.buyToken.toLowerCase() === WETH_ADDRESS.toLowerCase()
+      ? ETH_PLACEHOLDER
+      : params.buyToken;
+
+  const url = new URL(`${ZEROX_API_BASE}/swap/v1/quote`);
+  url.searchParams.set("chainId", BASE_CHAIN_ID.toString());
+  url.searchParams.set("sellToken", params.sellToken);
+  url.searchParams.set("buyToken", buyToken);
+  url.searchParams.set("sellAmount", params.sellAmount);
+  url.searchParams.set("takerAddress", params.takerAddress);
+  url.searchParams.set("skipValidation", "true"); // Skip on-chain validation for quoting
+  url.searchParams.set("slippagePercentage", "0.05"); // 5% slippage
+
+  const res = await fetch(url.toString(), {
+    headers: {
+      "0x-api-key": apiKey,
+      Accept: "application/json",
+    },
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`0x API failed (${res.status}): ${text}`);
+  }
+
+  return (await res.json()) as ZeroXQuote;
+}
+
+// ─── Token balance types ─────────────────────────────────────────────────────
 
 interface CdpTokenBalance {
   address: string;
@@ -129,13 +190,179 @@ interface CdpPortfolio {
   portfolioBalanceInUsd: number;
 }
 
-// Sleep helper
-function sleep(ms: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms));
+// ─── Shared quote result type ──────────────────────────────────────────────────
+
+interface QuoteResult {
+  tokenIn: string;
+  amountIn: string;
+  success: boolean;
+  error?: string;
+  amountOut?: string;
+  estimatedAmountOut?: string;
+  minAmountOut?: string;
+  fromAmountUSD?: string;
+  toAmountUSD?: string;
+  priceImpact?: string;
+  poolFee?: number;
+  maxSwappablePercent?: number;
+  source?: string; // "cdp" or "0x"
+  approveTransaction?: {
+    to: string;
+    data: string;
+    gas: number;
+    value: number;
+  };
+  swapTransaction?: {
+    to: string;
+    data: string;
+    gas: number;
+    value: number;
+  };
+  _fromUSD?: number;
+  _toUSD?: number;
+}
+
+// ─── CDP quote helper ──────────────────────────────────────────────────────────
+
+async function getQuoteViaCdp(
+  order: { tokenIn: string; amountIn: string; decimals?: number },
+  fromAddress: string,
+  toTokenAddress: string
+): Promise<QuoteResult> {
+  const rpcResponse = await cdpRpc(CDP_GET_SWAP_TRADE, [
+    {
+      fromAddress,
+      from: order.tokenIn,
+      to: toTokenAddress,
+      amount: order.amountIn,
+      amountReference: "from",
+    },
+  ]);
+
+  if (rpcResponse.error) {
+    throw new Error(rpcResponse.error.message);
+  }
+
+  const trade = rpcResponse.result as {
+    approveTx?: { to: string; data: string; gas: string; value: string };
+    tx: { to: string; data: string; gas: string; value: string };
+    fee?: { percentage: string; amount: string };
+    quote: {
+      from: { address: string; symbol: string; decimals: number };
+      to: { address: string; symbol: string; decimals: number };
+      fromAmount: string;
+      toAmount: string;
+      fromAmountUSD?: string;
+      toAmountUSD?: string;
+      priceImpact: string;
+      highPriceImpact: boolean;
+      slippage: string;
+    };
+    chainId: number;
+  };
+
+  const fromUSD = parseFloat(trade.quote.fromAmountUSD || "0");
+  const toUSD = parseFloat(trade.quote.toAmountUSD || "0");
+  const amountOut = BigInt(trade.quote.toAmount || "0");
+  const minAmountOut = (amountOut * 95n) / 100n;
+
+  return {
+    tokenIn: order.tokenIn,
+    amountIn: order.amountIn,
+    success: true,
+    source: "cdp",
+    amountOut: trade.quote.toAmount,
+    estimatedAmountOut: trade.quote.toAmount,
+    minAmountOut: minAmountOut.toString(),
+    fromAmountUSD: fromUSD.toFixed(4),
+    toAmountUSD: toUSD.toFixed(4),
+    priceImpact: trade.quote.priceImpact,
+    poolFee: 3000,
+    maxSwappablePercent: 100,
+    approveTransaction: trade.approveTx
+      ? {
+          to: trade.approveTx.to,
+          data: trade.approveTx.data,
+          gas: parseInt(trade.approveTx.gas || "0"),
+          value: parseInt(trade.approveTx.value || "0"),
+        }
+      : undefined,
+    swapTransaction: {
+      to: trade.tx.to,
+      data: trade.tx.data,
+      gas: parseInt(trade.tx.gas || "0"),
+      value: parseInt(trade.tx.value || "0"),
+    },
+    _fromUSD: fromUSD,
+    _toUSD: toUSD,
+  };
+}
+
+// ─── 0x quote helper (V4 fallback) ─────────────────────────────────────────────
+
+async function getQuoteVia0x(
+  order: { tokenIn: string; amountIn: string; decimals?: number },
+  fromAddress: string,
+  toTokenAddress: string
+): Promise<QuoteResult> {
+  const zeroXQuote = await get0xSwapQuote({
+    sellToken: order.tokenIn,
+    buyToken: toTokenAddress,
+    sellAmount: order.amountIn,
+    takerAddress: fromAddress,
+  });
+
+  const amountOut = BigInt(zeroXQuote.buyAmount || "0");
+  const minAmountOut = (amountOut * 95n) / 100n;
+
+  // Build approval call if 0x needs token allowance
+  let approveTransaction: QuoteResult["approveTransaction"] = undefined;
+  if (
+    zeroXQuote.allowanceTarget &&
+    zeroXQuote.allowanceTarget !== "0x0000000000000000000000000000000000000000"
+  ) {
+    const approveData = encodeFunctionData({
+      abi: erc20Abi,
+      functionName: "approve",
+      args: [
+        zeroXQuote.allowanceTarget as `0x${string}`,
+        BigInt(order.amountIn),
+      ],
+    });
+    approveTransaction = {
+      to: order.tokenIn,
+      data: approveData,
+      gas: 60000,
+      value: 0,
+    };
+  }
+
+  return {
+    tokenIn: order.tokenIn,
+    amountIn: order.amountIn,
+    success: true,
+    source: "0x",
+    amountOut: zeroXQuote.buyAmount,
+    estimatedAmountOut: zeroXQuote.buyAmount,
+    minAmountOut: minAmountOut.toString(),
+    fromAmountUSD: "0",
+    toAmountUSD: "0",
+    priceImpact: zeroXQuote.estimatedPriceImpact || "0",
+    poolFee: 3000,
+    maxSwappablePercent: 100,
+    approveTransaction,
+    swapTransaction: {
+      to: zeroXQuote.to,
+      data: zeroXQuote.data,
+      gas: parseInt(zeroXQuote.estimatedGas || zeroXQuote.gas || "250000"),
+      value: parseInt(zeroXQuote.value || "0"),
+    },
+    _fromUSD: 0,
+    _toUSD: 0,
+  };
 }
 
 // ─── GET /api/tokens/dust?address=0x...&threshold=5 ──────────────────────────
-// Uses cdp_getTokensForAddresses to show ALL tokens with correct USD values
 
 tokens.get("/dust", async (c) => {
   const address = c.req.query("address");
@@ -161,10 +388,7 @@ tokens.get("/dust", async (c) => {
       );
     }
 
-    const result = rpcResponse.result as {
-      portfolios?: CdpPortfolio[];
-    };
-
+    const result = rpcResponse.result as { portfolios?: CdpPortfolio[] };
     const portfolio = result?.portfolios?.[0];
 
     if (!portfolio || !portfolio.tokenBalances) {
@@ -173,7 +397,6 @@ tokens.get("/dust", async (c) => {
       );
     }
 
-    // Filter out zero balances
     const nonZero = portfolio.tokenBalances.filter(
       (tb) => tb.cryptoBalance > 0
     );
@@ -198,7 +421,6 @@ tokens.get("/dust", async (c) => {
       const priceUsd =
         tb.cryptoBalance > 0 ? tb.fiatBalance / tb.cryptoBalance : 0;
 
-      // Compute raw balance from cryptoBalance * 10^decimals
       const rawBalance = BigInt(
         Math.floor(tb.cryptoBalance * Math.pow(10, tb.decimals))
       ).toString();
@@ -213,28 +435,16 @@ tokens.get("/dust", async (c) => {
         usdValue: Math.round(usdValue * 10000) / 10000,
         priceUsd,
         logoURI: tb.image,
-        hasLiquidity:
-          usdValue > 0 ||
-          priceUsd > 0 ||
-          STABLECOINS.has(tb.address?.toLowerCase()),
+        hasLiquidity: true, // Mark all as having liquidity — we'll try 0x fallback
       };
 
-      // Skip tokens above threshold (they're not dust)
       if (usdValue > threshold && priceUsd > 0) continue;
-
-      // Skip native ETH from dust (address is empty string or zero address)
       if (!tb.address || tb.address === "" || tb.symbol === "ETH") continue;
 
-      if (entry.hasLiquidity) {
-        dustTokens.push(entry);
-      } else {
-        noLiquidityTokens.push(entry);
-      }
+      dustTokens.push(entry);
     }
 
-    // Sort by USD value descending
     dustTokens.sort((a, b) => b.usdValue - a.usdValue);
-    noLiquidityTokens.sort((a, b) => b.usdValue - a.usdValue);
 
     const totalDustValueUsd = dustTokens.reduce((s, t) => s + t.usdValue, 0);
 
@@ -257,8 +467,9 @@ tokens.get("/dust", async (c) => {
 });
 
 // ─── POST /api/tokens/batch-quote ────────────────────────────────────────────
-// For each selected dust token, calls cdp_getSwapTrade to get
-// ready-to-sign swap data (approval + swap tx).
+// Dual-strategy quoting:
+//   1. Try CDP API (cdp_getSwapTrade) — covers V3 tokens
+//   2. If CDP fails, try 0x API — covers V4 Base App coins and other DEXs
 
 tokens.post("/batch-quote", async (c) => {
   const body = await c.req.json<{
@@ -300,37 +511,17 @@ tokens.post("/batch-quote", async (c) => {
     toTokenDecimals = 6;
   }
 
-  // We need a wallet address to build transactions
+  // For "ETH" output, use WETH address for quoting
+  if (toTokenAddress === "ETH" || toTokenAddress === ETH_PLACEHOLDER) {
+    toTokenAddress = WETH_ADDRESS;
+    toTokenSymbol = "ETH";
+    toTokenDecimals = 18;
+  }
+
   const fromAddress =
     walletAddress || "0x0000000000000000000000000000000000000001";
 
-  const results: {
-    tokenIn: string;
-    amountIn: string;
-    success: boolean;
-    error?: string;
-    amountOut?: string;
-    estimatedAmountOut?: string;
-    minAmountOut?: string;
-    fromAmountUSD?: string;
-    toAmountUSD?: string;
-    priceImpact?: string;
-    poolFee?: number;
-    maxSwappablePercent?: number;
-    approveTransaction?: {
-      to: string;
-      data: string;
-      gas: number;
-      value: number;
-    };
-    swapTransaction?: {
-      to: string;
-      data: string;
-      gas: number;
-      value: number;
-    };
-  }[] = [];
-
+  const results: QuoteResult[] = [];
   let totalFromUSD = 0;
   let totalToUSD = 0;
   let successCount = 0;
@@ -341,93 +532,48 @@ tokens.post("/batch-quote", async (c) => {
   for (let i = 0; i < orders.length; i += BATCH_SIZE) {
     const batch = orders.slice(i, i + BATCH_SIZE);
 
-    const batchPromises = batch.map(async (order) => {
+    const batchPromises = batch.map(async (order): Promise<QuoteResult> => {
+      // ── Strategy 1: Try CDP API (V3 routing) ──────────────────────────
       try {
-        // cdp_getSwapTrade expects amount in RAW units (smallest token denomination).
-        // OnchainKit's getAPIParamsForToken calls fromReadableAmount() which converts
-        // human-readable → raw BEFORE sending. Since order.amountIn is already raw,
-        // we pass it directly.
-        const rpcResponse = await cdpRpc(CDP_GET_SWAP_TRADE, [
-          {
-            fromAddress,
-            from: order.tokenIn,
-            to: toTokenAddress,
-            amount: order.amountIn,
-            amountReference: "from",
-          },
-        ]);
-
-        if (rpcResponse.error) {
-          return {
-            tokenIn: order.tokenIn,
-            amountIn: order.amountIn,
-            success: false,
-            error: rpcResponse.error.message,
-          };
-        }
-
-        const trade = rpcResponse.result as {
-          approveTx?: { to: string; data: string; gas: string; value: string };
-          tx: { to: string; data: string; gas: string; value: string };
-          fee?: { percentage: string; amount: string };
-          quote: {
-            from: { address: string; symbol: string; decimals: number };
-            to: { address: string; symbol: string; decimals: number };
-            fromAmount: string;
-            toAmount: string;
-            fromAmountUSD?: string;
-            toAmountUSD?: string;
-            priceImpact: string;
-            highPriceImpact: boolean;
-            slippage: string;
-          };
-          chainId: number;
-        };
-
-        const fromUSD = parseFloat(trade.quote.fromAmountUSD || "0");
-        const toUSD = parseFloat(trade.quote.toAmountUSD || "0");
-
-        // Apply 5% slippage for minAmountOut
-        const amountOut = BigInt(trade.quote.toAmount || "0");
-        const minAmountOut = (amountOut * 95n) / 100n;
-
-        return {
-          tokenIn: order.tokenIn,
-          amountIn: order.amountIn,
-          success: true,
-          amountOut: trade.quote.toAmount,
-          estimatedAmountOut: trade.quote.toAmount,
-          minAmountOut: minAmountOut.toString(),
-          fromAmountUSD: fromUSD.toFixed(4),
-          toAmountUSD: toUSD.toFixed(4),
-          priceImpact: trade.quote.priceImpact,
-          poolFee: 3000,
-          maxSwappablePercent: 100,
-          approveTransaction: trade.approveTx
-            ? {
-                to: trade.approveTx.to,
-                data: trade.approveTx.data,
-                gas: parseInt(trade.approveTx.gas || "0"),
-                value: parseInt(trade.approveTx.value || "0"),
-              }
-            : undefined,
-          swapTransaction: {
-            to: trade.tx.to,
-            data: trade.tx.data,
-            gas: parseInt(trade.tx.gas || "0"),
-            value: parseInt(trade.tx.value || "0"),
-          },
-          _fromUSD: fromUSD,
-          _toUSD: toUSD,
-        };
-      } catch (err) {
-        return {
-          tokenIn: order.tokenIn,
-          amountIn: order.amountIn,
-          success: false,
-          error: (err as Error).message,
-        };
+        const cdpResult = await getQuoteViaCdp(
+          order,
+          fromAddress,
+          toTokenAddress
+        );
+        console.log(
+          `[batch-quote] CDP success for ${order.tokenIn.slice(0, 10)}...`
+        );
+        return cdpResult;
+      } catch (cdpErr) {
+        console.log(
+          `[batch-quote] CDP failed for ${order.tokenIn.slice(0, 10)}...: ${(cdpErr as Error).message.slice(0, 80)}`
+        );
       }
+
+      // ── Strategy 2: Try 0x API (V4 + aggregator routing) ──────────────
+      try {
+        const zeroXResult = await getQuoteVia0x(
+          order,
+          fromAddress,
+          toTokenAddress
+        );
+        console.log(
+          `[batch-quote] 0x success for ${order.tokenIn.slice(0, 10)}...`
+        );
+        return zeroXResult;
+      } catch (zeroXErr) {
+        console.log(
+          `[batch-quote] 0x failed for ${order.tokenIn.slice(0, 10)}...: ${(zeroXErr as Error).message.slice(0, 80)}`
+        );
+      }
+
+      // ── Both strategies failed ────────────────────────────────────────
+      return {
+        tokenIn: order.tokenIn,
+        amountIn: order.amountIn,
+        success: false,
+        error: "No swap route found via CDP or 0x aggregator",
+      };
     });
 
     const batchResults = await Promise.all(batchPromises);
@@ -435,22 +581,19 @@ tokens.post("/batch-quote", async (c) => {
     for (const r of batchResults) {
       if (r.success) {
         successCount++;
-        totalFromUSD += (r as { _fromUSD?: number })._fromUSD || 0;
-        totalToUSD += (r as { _toUSD?: number })._toUSD || 0;
+        totalFromUSD += r._fromUSD || 0;
+        totalToUSD += r._toUSD || 0;
       } else {
         failCount++;
       }
-      // Remove internal fields
-      const { _fromUSD, _toUSD, ...cleanResult } = r as typeof r & {
-        _fromUSD?: number;
-        _toUSD?: number;
-      };
+      // Remove internal fields before adding to results
+      const { _fromUSD, _toUSD, ...cleanResult } = r;
       results.push(cleanResult);
     }
 
-    // Small delay between batches
+    // Small delay between batches to respect rate limits
     if (i + BATCH_SIZE < orders.length) {
-      await sleep(200);
+      await sleep(300);
     }
   }
 
@@ -596,7 +739,6 @@ tokens.get("/prices", async (c) => {
       }
 
       try {
-        // Use cdp_getSwapQuote to derive a price
         const rpcResponse = await cdpRpc(CDP_GET_SWAP_QUOTE, [
           {
             from: tokenAddr,
@@ -613,7 +755,7 @@ tokens.get("/prices", async (c) => {
         ) {
           const quote = rpcResponse.result as { toAmount?: string };
           const toAmount = parseFloat(quote.toAmount || "0");
-          const priceUsd = toAmount / 1e6; // USDC has 6 decimals
+          const priceUsd = toAmount / 1e6;
           prices[tokenAddr] = {
             priceUsd,
             liquidity: priceUsd > 0 ? 1 : 0,
@@ -692,10 +834,15 @@ tokens.get("/quote", async (c) => {
 tokens.get("/health", (c) => {
   return c.json({
     status: "ok",
-    service: "token-discovery-cdp-rpc",
+    service: "token-discovery-dual-strategy",
     chain: "base",
     chainId: 8453,
-    apiKeyConfigured: !!process.env.ONCHAINKIT_API_KEY,
+    cdpKeyConfigured: !!(
+      process.env.CDP_API_KEY ||
+      process.env.NEXT_PUBLIC_PAYMASTER_URL ||
+      process.env.ONCHAINKIT_API_KEY
+    ),
+    zeroxKeyConfigured: !!process.env.ZEROX_API_KEY,
     timestamp: new Date().toISOString(),
   });
 });
