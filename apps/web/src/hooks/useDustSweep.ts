@@ -32,18 +32,19 @@ export interface PerTokenQuote {
   maxSwappablePercent?: number;
   success: boolean;
   error?: string;
-  // Transaction data from buildSwapTransaction
+  source?: string; // "cdp", "0x", or "uniswap"
+  // Transaction data — gas/value are string|number for BigInt safety
   approveTransaction?: {
     to: string;
     data: string;
-    gas: number;
-    value: number;
+    gas: string | number;
+    value: string | number;
   };
   swapTransaction?: {
     to: string;
     data: string;
-    gas: number;
-    value: number;
+    gas: string | number;
+    value: string | number;
   };
 }
 

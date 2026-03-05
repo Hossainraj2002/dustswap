@@ -224,7 +224,7 @@ async function get0xSwapQuote(params: {
   url.searchParams.set("buyToken", buyToken);
   url.searchParams.set("sellAmount", params.sellAmount);
   url.searchParams.set("taker", params.takerAddress); // v2 uses "taker" not "takerAddress"
-  url.searchParams.set("slippagePercentage", "0.05"); // 5% slippage
+  url.searchParams.set("slippageBps", "500"); // 5% slippage in basis points (0x v2 format)
 
   const res = await fetch(url.toString(), {
     headers: {
@@ -240,12 +240,13 @@ async function get0xSwapQuote(params: {
   }
 
   const json = await res.json();
-  // Debug: log response keys so we can see the exact structure
-  console.log(`[0x-v2] Response keys: ${Object.keys(json).join(", ")}`);
-  if (json.transaction) {
-    console.log(`[0x-v2] transaction keys: ${Object.keys(json.transaction).join(", ")}`);
+  console.log(`[0x-v2] buyAmount=${json.buyAmount}, liquidityAvailable=${json.liquidityAvailable}`);
+
+  // 0x v2 returns liquidityAvailable: false when there is no route
+  if (json.liquidityAvailable === false) {
+    throw new Error("0x: no liquidity available for this token pair");
   }
-  console.log(`[0x-v2] buyAmount=${json.buyAmount}, minBuyAmount=${json.minBuyAmount}`);
+
   return json as ZeroXV2Response;
 }
 
@@ -283,18 +284,18 @@ interface QuoteResult {
   priceImpact?: string;
   poolFee?: number;
   maxSwappablePercent?: number;
-  source?: string; // "cdp" or "0x"
+  source?: string; // "cdp", "0x", or "uniswap"
   approveTransaction?: {
     to: string;
     data: string;
-    gas: number;
-    value: number;
+    gas: string;   // string to avoid BigInt overflow
+    value: string; // string to avoid BigInt overflow
   };
   swapTransaction?: {
     to: string;
     data: string;
-    gas: number;
-    value: number;
+    gas: string;   // string to avoid BigInt overflow
+    value: string; // string to avoid BigInt overflow
   };
   _fromUSD?: number;
   _toUSD?: number;
@@ -361,15 +362,15 @@ async function getQuoteViaCdp(
       ? {
           to: trade.approveTx.to,
           data: trade.approveTx.data,
-          gas: parseInt(trade.approveTx.gas || "0"),
-          value: parseInt(trade.approveTx.value || "0"),
+          gas: trade.approveTx.gas || "0",
+          value: trade.approveTx.value || "0",
         }
       : undefined,
     swapTransaction: {
       to: trade.tx.to,
       data: trade.tx.data,
-      gas: parseInt(trade.tx.gas || "0"),
-      value: parseInt(trade.tx.value || "0"),
+      gas: trade.tx.gas || "0",
+      value: trade.tx.value || "0",
     },
     _fromUSD: fromUSD,
     _toUSD: toUSD,
@@ -414,19 +415,22 @@ async function getQuoteVia0x(
     allowanceTarget &&
     allowanceTarget !== "0x0000000000000000000000000000000000000000"
   ) {
+    // Approve MaxUint256 — 0x docs recommend providing enough allowance
+    // for sell amount + gas. MaxUint256 is safe and avoids re-approval.
+    const MAX_UINT256 = BigInt("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
     const approveData = encodeFunctionData({
       abi: erc20Abi,
       functionName: "approve",
       args: [
         allowanceTarget as `0x${string}`,
-        BigInt(order.amountIn),
+        MAX_UINT256,
       ],
     });
     approveTransaction = {
       to: order.tokenIn,
       data: approveData,
-      gas: 60000,
-      value: 0,
+      gas: "60000",
+      value: "0",
     };
   }
 
@@ -447,8 +451,106 @@ async function getQuoteVia0x(
     swapTransaction: {
       to: tx.to,
       data: tx.data,
-      gas: parseInt(tx.gas || "250000"),
-      value: parseInt(tx.value || "0"),
+      gas: tx.gas || "250000",
+      value: tx.value || "0",
+    },
+    _fromUSD: 0,
+    _toUSD: 0,
+  };
+}
+
+// ─── Uniswap Trading API quote (3rd fallback) ────────────────────────────────
+// Uses the Uniswap routing API which natively supports V2, V3, and V4 pools.
+// This catches tokens that CDP (V3-only) and 0x both miss.
+
+const UNISWAP_TRADE_API = "https://trade-api.gateway.uniswap.org/v1/quote";
+
+async function getQuoteViaUniswap(
+  order: { tokenIn: string; amountIn: string; decimals?: number },
+  fromAddress: string,
+  toTokenAddress: string
+): Promise<QuoteResult> {
+  // Uniswap Trading API — POST with JSON body
+  const reqBody = {
+    type: "EXACT_INPUT",
+    tokenInChainId: BASE_CHAIN_ID,
+    tokenOutChainId: BASE_CHAIN_ID,
+    tokenIn: order.tokenIn,
+    tokenOut: toTokenAddress,
+    amount: order.amountIn,
+    swapper: fromAddress,
+    slippageTolerance: 0.05, // 5%
+    urgency: 1.0,
+  };
+
+  const res = await fetch(UNISWAP_TRADE_API, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    },
+    body: JSON.stringify(reqBody),
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Uniswap API failed (${res.status}): ${text.slice(0, 200)}`);
+  }
+
+  const json = await res.json() as {
+    quote?: {
+      output?: { amount?: string };
+      input?: { amount?: string };
+    };
+    routing?: string;
+    methodParameters?: {
+      to: string;
+      calldata: string;
+      value: string;
+    };
+  };
+
+  if (!json.methodParameters || !json.methodParameters.calldata) {
+    throw new Error("Uniswap API: no method parameters in response");
+  }
+
+  const amountOut = json.quote?.output?.amount || "0";
+  const minAmountOut = (BigInt(amountOut) * 95n / 100n).toString();
+
+  // Build approval for the Universal Router
+  const UNIVERSAL_ROUTER = json.methodParameters.to;
+  const MAX_UINT256 = BigInt("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
+
+  const approveData = encodeFunctionData({
+    abi: erc20Abi,
+    functionName: "approve",
+    args: [UNIVERSAL_ROUTER as `0x${string}`, MAX_UINT256],
+  });
+
+  return {
+    tokenIn: order.tokenIn,
+    amountIn: order.amountIn,
+    success: true,
+    source: "uniswap",
+    amountOut,
+    estimatedAmountOut: amountOut,
+    minAmountOut,
+    fromAmountUSD: "0",
+    toAmountUSD: "0",
+    priceImpact: "0",
+    poolFee: 3000,
+    maxSwappablePercent: 100,
+    approveTransaction: {
+      to: order.tokenIn,
+      data: approveData,
+      gas: "60000",
+      value: "0",
+    },
+    swapTransaction: {
+      to: json.methodParameters.to,
+      data: json.methodParameters.calldata,
+      gas: "350000",
+      value: json.methodParameters.value || "0",
     },
     _fromUSD: 0,
     _toUSD: 0,
@@ -581,9 +683,10 @@ tokens.get("/dust", async (c) => {
 });
 
 // ─── POST /api/tokens/batch-quote ────────────────────────────────────────────
-// Dual-strategy quoting:
+// Triple-strategy quoting:
 //   1. Try CDP API (cdp_getSwapTrade) — covers V3 tokens
 //   2. If CDP fails, try 0x API — covers V4 Base App coins and other DEXs
+//   3. If 0x fails, try Uniswap Trading API — native V2/V3/V4 routing
 
 tokens.post("/batch-quote", async (c) => {
   const body = await c.req.json<{
@@ -681,12 +784,29 @@ tokens.post("/batch-quote", async (c) => {
         );
       }
 
-      // ── Both strategies failed ────────────────────────────────────────
+      // ── Strategy 3: Try Uniswap Trading API (V2/V3/V4) ────────────────
+      try {
+        const uniResult = await getQuoteViaUniswap(
+          order,
+          fromAddress,
+          toTokenAddress
+        );
+        console.log(
+          `[batch-quote] Uniswap success for ${order.tokenIn.slice(0, 10)}...`
+        );
+        return uniResult;
+      } catch (uniErr) {
+        console.log(
+          `[batch-quote] Uniswap failed for ${order.tokenIn.slice(0, 10)}...: ${(uniErr as Error).message.slice(0, 120)}`
+        );
+      }
+
+      // ── All strategies failed ─────────────────────────────────────────
       return {
         tokenIn: order.tokenIn,
         amountIn: order.amountIn,
         success: false,
-        error: "No swap route found via CDP or 0x aggregator",
+        error: "No swap route found via CDP, 0x, or Uniswap",
       };
     });
 
