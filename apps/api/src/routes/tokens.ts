@@ -111,6 +111,63 @@ async function cdpRpc(
   };
 }
 
+// ─── Exact Balance Fetching (Multicall fallback) ───────────────────────────────
+
+async function getExactTokenBalances(
+  walletAddress: string,
+  tokenAddresses: string[]
+): Promise<Record<string, string>> {
+  const url = getCdpRpcUrl();
+  const balanceMap: Record<string, string> = {};
+
+  if (tokenAddresses.length === 0) return balanceMap;
+
+  // Batch JSON-RPC eth_call for balanceOf
+  const batchReq = tokenAddresses.map((tokenAddr, idx) => {
+    // encodeFunctionData for balanceOf(address)
+    const data = encodeFunctionData({
+      abi: erc20Abi,
+      functionName: "balanceOf",
+      args: [walletAddress as `0x${string}`],
+    });
+
+    return {
+      jsonrpc: "2.0",
+      id: idx + 1,
+      method: "eth_call",
+      params: [
+        {
+          to: tokenAddr,
+          data,
+        },
+        "latest",
+      ],
+    };
+  });
+
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(batchReq),
+    });
+
+    if (res.ok) {
+      const results = (await res.json()) as { id: number; result?: string; error?: any }[];
+      for (const r of results) {
+        if (r.result && r.result !== "0x") {
+          const tokenAddr = tokenAddresses[r.id - 1].toLowerCase();
+          balanceMap[tokenAddr] = BigInt(r.result).toString();
+        }
+      }
+    }
+  } catch (err) {
+    console.warn("Failed to fetch exact token balances", err);
+  }
+
+  return balanceMap;
+}
+
 // ─── 0x API Swap Quote ─────────────────────────────────────────────────────────
 // Used as fallback when CDP can't route (e.g. V4-only Base App coins).
 // 0x aggregates across V3, V4, and other DEXs on Base.
@@ -437,6 +494,14 @@ tokens.get("/dust", async (c) => {
       (tb) => tb.cryptoBalance > 0
     );
 
+    // Fetch EXACT raw balances from the chain to avoid floating-point truncations
+    // that cause "ERC20: transfer amount exceeds balance"
+    const nonZeroAddresses = nonZero
+      .map((tb) => tb.address)
+      .filter((addr): addr is string => !!addr && addr !== "");
+      
+    const exactBalances = await getExactTokenBalances(address, nonZeroAddresses);
+
     const dustTokens: {
       address: string;
       name: string;
@@ -457,17 +522,21 @@ tokens.get("/dust", async (c) => {
       const priceUsd =
         tb.cryptoBalance > 0 ? tb.fiatBalance / tb.cryptoBalance : 0;
 
-      // Fix precision bug: avoid floating point math for large decimal balances
+      // Fix precision bug: prioritize exact on-chain balance over CDP's float
       let rawBalance = "0";
-      try {
-        // Convert to 10-decimal precision string to avoid exponential notation, then parse
-        const strBalance = tb.cryptoBalance.toFixed(tb.decimals);
-        rawBalance = parseUnits(strBalance, tb.decimals).toString();
-      } catch {
-        // Fallback if parseUnits fails
-        rawBalance = BigInt(
-          Math.floor(tb.cryptoBalance * Math.pow(10, tb.decimals))
-        ).toString();
+      const tokenAddrMap = (tb.address || "").toLowerCase();
+      
+      if (exactBalances[tokenAddrMap]) {
+        rawBalance = exactBalances[tokenAddrMap];
+      } else {
+        try {
+          const strBalance = tb.cryptoBalance.toFixed(tb.decimals);
+          rawBalance = parseUnits(strBalance, tb.decimals).toString();
+        } catch {
+          rawBalance = BigInt(
+            Math.floor(tb.cryptoBalance * Math.pow(10, tb.decimals))
+          ).toString();
+        }
       }
 
       const entry = {
@@ -719,25 +788,42 @@ tokens.get("/balances", async (c) => {
       );
     }
 
-    const balances = portfolio.tokenBalances
-      .filter((tb) => tb.cryptoBalance > 0)
-      .map((tb) => ({
+    const nonZero = portfolio.tokenBalances.filter(
+      (tb) => tb.cryptoBalance > 0
+    );
+
+    const nonZeroAddresses = nonZero
+      .map((tb) => tb.address)
+      .filter((addr): addr is string => !!addr && addr !== "");
+      
+    const exactBalances = await getExactTokenBalances(address, nonZeroAddresses);
+
+    const balances = nonZero.map((tb) => {
+      const tokenAddrMap = (tb.address || "").toLowerCase();
+      
+      let rawBalance = "0";
+      if (exactBalances[tokenAddrMap]) {
+        rawBalance = exactBalances[tokenAddrMap];
+      } else {
+        try {
+          rawBalance = parseUnits(tb.cryptoBalance.toFixed(tb.decimals), tb.decimals).toString();
+        } catch {
+          rawBalance = BigInt(Math.floor(tb.cryptoBalance * Math.pow(10, tb.decimals))).toString();
+        }
+      }
+
+      return {
         tokenAddress: tb.address,
         symbol: tb.symbol,
         name: tb.name,
         decimals: tb.decimals,
-        balance: (() => {
-          try {
-            return parseUnits(tb.cryptoBalance.toFixed(tb.decimals), tb.decimals).toString();
-          } catch {
-            return BigInt(Math.floor(tb.cryptoBalance * Math.pow(10, tb.decimals))).toString();
-          }
-        })(),
+        balance: rawBalance,
         balanceFormatted: tb.cryptoBalance.toString(),
         usdValue: tb.fiatBalance,
         priceUsd: tb.cryptoBalance > 0 ? tb.fiatBalance / tb.cryptoBalance : 0,
         logoURI: tb.image,
-      }));
+      };
+    });
 
     return c.json(
       okJson({
