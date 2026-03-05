@@ -224,7 +224,7 @@ async function get0xSwapQuote(params: {
   url.searchParams.set("buyToken", buyToken);
   url.searchParams.set("sellAmount", params.sellAmount);
   url.searchParams.set("taker", params.takerAddress); // v2 uses "taker" not "takerAddress"
-  url.searchParams.set("slippageBps", "500"); // 5% slippage in basis points (0x v2 format)
+  url.searchParams.set("slippageBps", "1500"); // 15% auto slippage for low liquidity dust tokens
 
   const res = await fetch(url.toString(), {
     headers: {
@@ -479,7 +479,7 @@ async function getQuoteViaUniswap(
     tokenOut: toTokenAddress,
     amount: order.amountIn,
     swapper: fromAddress,
-    slippageTolerance: 0.05, // 5%
+    slippageTolerance: 0.15, // 15% auto slippage for low liquidity dust tokens
     urgency: 1.0,
   };
 
@@ -631,13 +631,19 @@ tokens.get("/dust", async (c) => {
       if (exactBalances[tokenAddrMap]) {
         rawBalance = exactBalances[tokenAddrMap];
       } else {
-        try {
-          const strBalance = tb.cryptoBalance.toFixed(tb.decimals);
-          rawBalance = parseUnits(strBalance, tb.decimals).toString();
-        } catch {
-          rawBalance = BigInt(
-            Math.floor(tb.cryptoBalance * Math.pow(10, tb.decimals))
-          ).toString();
+        // Fallback: If cryptoBalance is already impossibly large, assume CDP returned raw Wei
+        // instead of a float. Otherwise, reliably convert the float to Wei.
+        if (tb.cryptoBalance > 1e15) {
+          rawBalance = BigInt(Math.floor(tb.cryptoBalance)).toString();
+        } else {
+          try {
+            const strBalance = Number(tb.cryptoBalance).toFixed(tb.decimals);
+            rawBalance = parseUnits(strBalance, tb.decimals).toString();
+          } catch {
+            rawBalance = BigInt(
+              Math.floor(tb.cryptoBalance * Math.pow(10, tb.decimals))
+            ).toString();
+          }
         }
       }
 
@@ -647,7 +653,7 @@ tokens.get("/dust", async (c) => {
         symbol: tb.symbol,
         decimals: tb.decimals,
         balance: rawBalance,
-        balanceFormatted: tb.cryptoBalance.toString(),
+        balanceFormatted: formatUnits(BigInt(rawBalance), tb.decimals),
         usdValue: Math.round(usdValue * 10000) / 10000,
         priceUsd,
         logoURI: tb.image,
