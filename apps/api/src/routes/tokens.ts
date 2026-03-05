@@ -115,19 +115,32 @@ async function cdpRpc(
 // Used as fallback when CDP can't route (e.g. V4-only Base App coins).
 // 0x aggregates across V3, V4, and other DEXs on Base.
 
-interface ZeroXQuote {
+// 0x API v2 response (allowance-holder) — transaction data is nested
+interface ZeroXV2Response {
   buyAmount: string;
   sellAmount: string;
-  price: string;
-  estimatedPriceImpact: string;
-  to: string;
-  data: string;
-  value: string;
-  gas: string;
-  estimatedGas: string;
-  allowanceTarget: string;
-  buyTokenAddress: string;
-  sellTokenAddress: string;
+  minBuyAmount: string;
+  liquidityAvailable: boolean;
+  // In v2, tx details are nested inside `transaction`
+  transaction: {
+    to: string;
+    data: string;
+    value: string;
+    gas: string;
+    gasPrice: string;
+  };
+  // The spender address for token approvals
+  issues?: {
+    allowance?: {
+      spender?: string;
+    };
+  };
+  // Legacy flat fields (may still appear in some versions)
+  allowanceTarget?: string;
+  to?: string;
+  data?: string;
+  value?: string;
+  gas?: string;
 }
 
 async function get0xSwapQuote(params: {
@@ -135,7 +148,7 @@ async function get0xSwapQuote(params: {
   buyToken: string;
   sellAmount: string;
   takerAddress: string;
-}): Promise<ZeroXQuote> {
+}): Promise<ZeroXV2Response> {
   const apiKey = get0xApiKey();
   if (!apiKey) {
     throw new Error("ZEROX_API_KEY not configured");
@@ -169,7 +182,14 @@ async function get0xSwapQuote(params: {
     throw new Error(`0x API failed (${res.status}): ${text}`);
   }
 
-  return (await res.json()) as ZeroXQuote;
+  const json = await res.json();
+  // Debug: log response keys so we can see the exact structure
+  console.log(`[0x-v2] Response keys: ${Object.keys(json).join(", ")}`);
+  if (json.transaction) {
+    console.log(`[0x-v2] transaction keys: ${Object.keys(json.transaction).join(", ")}`);
+  }
+  console.log(`[0x-v2] buyAmount=${json.buyAmount}, minBuyAmount=${json.minBuyAmount}`);
+  return json as ZeroXV2Response;
 }
 
 // ─── Token balance types ─────────────────────────────────────────────────────
@@ -306,27 +326,42 @@ async function getQuoteVia0x(
   fromAddress: string,
   toTokenAddress: string
 ): Promise<QuoteResult> {
-  const zeroXQuote = await get0xSwapQuote({
+  const resp = await get0xSwapQuote({
     sellToken: order.tokenIn,
     buyToken: toTokenAddress,
     sellAmount: order.amountIn,
     takerAddress: fromAddress,
   });
 
-  const amountOut = BigInt(zeroXQuote.buyAmount || "0");
-  const minAmountOut = (amountOut * 95n) / 100n;
+  // v2 response: buyAmount at top level, tx details in `transaction` object
+  const buyAmount = resp.buyAmount || "0";
+  const amountOut = BigInt(buyAmount);
+  const minBuyAmount = resp.minBuyAmount || (amountOut * 95n / 100n).toString();
+
+  // Extract transaction data — v2 nests in `transaction`, v1 had them flat
+  const tx = resp.transaction || { to: resp.to || "", data: resp.data || "", value: resp.value || "0", gas: resp.gas || "250000" };
+
+  if (!tx.to || !tx.data) {
+    throw new Error("0x response missing transaction data");
+  }
+
+  // Allowance target: v2 puts it in issues.allowance.spender, v1 in allowanceTarget
+  const allowanceTarget =
+    resp.issues?.allowance?.spender ||
+    resp.allowanceTarget ||
+    "";
 
   // Build approval call if 0x needs token allowance
   let approveTransaction: QuoteResult["approveTransaction"] = undefined;
   if (
-    zeroXQuote.allowanceTarget &&
-    zeroXQuote.allowanceTarget !== "0x0000000000000000000000000000000000000000"
+    allowanceTarget &&
+    allowanceTarget !== "0x0000000000000000000000000000000000000000"
   ) {
     const approveData = encodeFunctionData({
       abi: erc20Abi,
       functionName: "approve",
       args: [
-        zeroXQuote.allowanceTarget as `0x${string}`,
+        allowanceTarget as `0x${string}`,
         BigInt(order.amountIn),
       ],
     });
@@ -343,20 +378,20 @@ async function getQuoteVia0x(
     amountIn: order.amountIn,
     success: true,
     source: "0x",
-    amountOut: zeroXQuote.buyAmount,
-    estimatedAmountOut: zeroXQuote.buyAmount,
-    minAmountOut: minAmountOut.toString(),
+    amountOut: buyAmount,
+    estimatedAmountOut: buyAmount,
+    minAmountOut: minBuyAmount.toString(),
     fromAmountUSD: "0",
     toAmountUSD: "0",
-    priceImpact: zeroXQuote.estimatedPriceImpact || "0",
+    priceImpact: "0",
     poolFee: 3000,
     maxSwappablePercent: 100,
     approveTransaction,
     swapTransaction: {
-      to: zeroXQuote.to,
-      data: zeroXQuote.data,
-      gas: parseInt(zeroXQuote.estimatedGas || zeroXQuote.gas || "250000"),
-      value: parseInt(zeroXQuote.value || "0"),
+      to: tx.to,
+      data: tx.data,
+      gas: parseInt(tx.gas || "250000"),
+      value: parseInt(tx.value || "0"),
     },
     _fromUSD: 0,
     _toUSD: 0,
