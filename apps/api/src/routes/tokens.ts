@@ -744,16 +744,49 @@ tokens.post("/batch-quote", async (c) => {
   const fromAddress =
     walletAddress || "0x0000000000000000000000000000000000000001";
 
+  // ── PRE-FLIGHT CHECK: Mathematically guarantee we don't exceed balances ──
+  // If the frontend passed a slightly inflated balance due to float rounding,
+  // or if the user's balance dropped, this capping prevents "ERC20: transfer amount exceeds balance"
+  if (walletAddress && isValidAddress(walletAddress)) {
+    const tokenAddressesToVerify = orders.map((o) => o.tokenIn);
+    const realBalances = await getExactTokenBalances(walletAddress, tokenAddressesToVerify);
+
+    for (const order of orders) {
+      const realBalStr = realBalances[order.tokenIn.toLowerCase()];
+      if (realBalStr) {
+        const realBal = BigInt(realBalStr);
+        try {
+          const requestedBal = BigInt(order.amountIn);
+          if (requestedBal > realBal) {
+            order.amountIn = realBal.toString();
+          }
+        } catch {
+          // If amountIn is malformed, force it to real balance
+          order.amountIn = realBal.toString();
+        }
+      }
+    }
+  }
+
+  // Filter out any orders that dropped to 0
+  const validOrders = orders.filter((o) => {
+    try {
+      return BigInt(o.amountIn) > 0n;
+    } catch {
+      return false;
+    }
+  });
+
   const results: QuoteResult[] = [];
   let totalFromUSD = 0;
   let totalToUSD = 0;
   let successCount = 0;
-  let failCount = 0;
+  let failCount = orders.length - validOrders.length; // Count 0-balance as failed
 
   // Process orders in batches of 3 to avoid rate limits
   const BATCH_SIZE = 3;
-  for (let i = 0; i < orders.length; i += BATCH_SIZE) {
-    const batch = orders.slice(i, i + BATCH_SIZE);
+  for (let i = 0; i < validOrders.length; i += BATCH_SIZE) {
+    const batch = validOrders.slice(i, i + BATCH_SIZE);
 
     const batchPromises = batch.map(async (order): Promise<QuoteResult> => {
       // ── Strategy 1: Try CDP API (V3 routing) ──────────────────────────
