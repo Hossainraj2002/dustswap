@@ -147,18 +147,19 @@ async function get0xSwapQuote(params: {
       ? ETH_PLACEHOLDER
       : params.buyToken;
 
-  const url = new URL(`${ZEROX_API_BASE}/swap/v1/quote`);
+  // 0x API v2 uses /swap/allowance-holder/quote (v1 is deprecated, returns 404)
+  const url = new URL(`${ZEROX_API_BASE}/swap/allowance-holder/quote`);
   url.searchParams.set("chainId", BASE_CHAIN_ID.toString());
   url.searchParams.set("sellToken", params.sellToken);
   url.searchParams.set("buyToken", buyToken);
   url.searchParams.set("sellAmount", params.sellAmount);
-  url.searchParams.set("takerAddress", params.takerAddress);
-  url.searchParams.set("skipValidation", "true"); // Skip on-chain validation for quoting
+  url.searchParams.set("taker", params.takerAddress); // v2 uses "taker" not "takerAddress"
   url.searchParams.set("slippagePercentage", "0.05"); // 5% slippage
 
   const res = await fetch(url.toString(), {
     headers: {
       "0x-api-key": apiKey,
+      "0x-version": "v2", // Required for the v2 endpoint
       Accept: "application/json",
     },
   });
