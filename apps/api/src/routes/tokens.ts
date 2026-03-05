@@ -2,7 +2,7 @@
 // Dual-strategy quoting: CDP API (V3 tokens) → 0x API fallback (V4 / Base App coins)
 
 import { Hono } from "hono";
-import { getAddress, formatUnits, encodeFunctionData, erc20Abi } from "viem";
+import { getAddress, formatUnits, parseUnits, encodeFunctionData, erc20Abi } from "viem";
 
 const tokens = new Hono();
 
@@ -457,9 +457,18 @@ tokens.get("/dust", async (c) => {
       const priceUsd =
         tb.cryptoBalance > 0 ? tb.fiatBalance / tb.cryptoBalance : 0;
 
-      const rawBalance = BigInt(
-        Math.floor(tb.cryptoBalance * Math.pow(10, tb.decimals))
-      ).toString();
+      // Fix precision bug: avoid floating point math for large decimal balances
+      let rawBalance = "0";
+      try {
+        // Convert to 10-decimal precision string to avoid exponential notation, then parse
+        const strBalance = tb.cryptoBalance.toFixed(tb.decimals);
+        rawBalance = parseUnits(strBalance, tb.decimals).toString();
+      } catch {
+        // Fallback if parseUnits fails
+        rawBalance = BigInt(
+          Math.floor(tb.cryptoBalance * Math.pow(10, tb.decimals))
+        ).toString();
+      }
 
       const entry = {
         address: tb.address || "0x0000000000000000000000000000000000000000",
@@ -717,9 +726,13 @@ tokens.get("/balances", async (c) => {
         symbol: tb.symbol,
         name: tb.name,
         decimals: tb.decimals,
-        balance: BigInt(
-          Math.floor(tb.cryptoBalance * Math.pow(10, tb.decimals))
-        ).toString(),
+        balance: (() => {
+          try {
+            return parseUnits(tb.cryptoBalance.toFixed(tb.decimals), tb.decimals).toString();
+          } catch {
+            return BigInt(Math.floor(tb.cryptoBalance * Math.pow(10, tb.decimals))).toString();
+          }
+        })(),
         balanceFormatted: tb.cryptoBalance.toString(),
         usdValue: tb.fiatBalance,
         priceUsd: tb.cryptoBalance > 0 ? tb.fiatBalance / tb.cryptoBalance : 0,
