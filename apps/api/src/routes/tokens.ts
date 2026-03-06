@@ -557,6 +557,73 @@ async function getQuoteViaUniswap(
   };
 }
 
+// ─── Content Coin Ownership Check ──────────────────────────────────────────────
+
+const OWNERSHIP_ABI = [
+  { inputs: [], name: "platformReferrer", outputs: [{ name: "", type: "address" }], stateMutability: "view", type: "function" },
+  { inputs: [], name: "owner", outputs: [{ name: "", type: "address" }], stateMutability: "view", type: "function" },
+  { inputs: [], name: "payoutRecipient", outputs: [{ name: "", type: "address" }], stateMutability: "view", type: "function" },
+] as const;
+
+async function getOwnContentCoins(
+  walletAddress: string,
+  tokenAddresses: string[]
+): Promise<Set<string>> {
+  const url = getCdpRpcUrl();
+  const ownCoins = new Set<string>();
+  if (tokenAddresses.length === 0) return ownCoins;
+
+  const targetAddress = walletAddress.toLowerCase();
+  const batchReq = [];
+  let reqId = 1;
+  const reqMap = new Map<number, string>();
+
+  // Check all 3 possible creator/owner fields
+  for (const tokenAddr of tokenAddresses) {
+    const funcs = ["platformReferrer", "owner", "payoutRecipient"] as const;
+    for (const func of funcs) {
+      try {
+        const data = encodeFunctionData({ abi: OWNERSHIP_ABI, functionName: func });
+        batchReq.push({
+          jsonrpc: "2.0",
+          id: reqId,
+          method: "eth_call",
+          params: [{ to: tokenAddr, data }, "latest"],
+        });
+        reqMap.set(reqId, tokenAddr.toLowerCase());
+        reqId++;
+      } catch (e) {}
+    }
+  }
+
+  // To prevent 413 Payload Too Large, split into smaller chunks if > 100 requests
+  for (let i = 0; i < batchReq.length; i += 100) {
+    const chunk = batchReq.slice(i, i + 100);
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(chunk),
+      });
+      if (res.ok) {
+        const results = (await res.json()) as { id: number; result?: string; error?: any }[];
+        for (const r of results) {
+          if (r.result && r.result !== "0x" && r.result.length === 66) {
+            // padded address (32 bytes)
+            const addr = "0x" + r.result.slice(26).toLowerCase();
+            if (addr === targetAddress) {
+              const tokenAddr = reqMap.get(r.id);
+              if (tokenAddr) ownCoins.add(tokenAddr);
+            }
+          }
+        }
+      }
+    } catch (err) { }
+  }
+
+  return ownCoins;
+}
+
 // ─── GET /api/tokens/dust?address=0x...&threshold=5 ──────────────────────────
 
 tokens.get("/dust", async (c) => {
@@ -603,6 +670,7 @@ tokens.get("/dust", async (c) => {
       .filter((addr): addr is string => !!addr && addr !== "");
       
     const exactBalances = await getExactTokenBalances(address, nonZeroAddresses);
+    const ownContentCoins = await getOwnContentCoins(address, nonZeroAddresses);
 
     const dustTokens: {
       address: string;
@@ -615,6 +683,7 @@ tokens.get("/dust", async (c) => {
       priceUsd: number;
       logoURI: string | null;
       hasLiquidity: boolean;
+      isOwnContentCoin: boolean;
     }[] = [];
 
     const noLiquidityTokens: typeof dustTokens = [];
@@ -658,12 +727,17 @@ tokens.get("/dust", async (c) => {
         priceUsd,
         logoURI: tb.image,
         hasLiquidity: true, // Mark all as having liquidity — we'll try 0x fallback
+        isOwnContentCoin: ownContentCoins.has(tokenAddrMap),
       };
 
       if (usdValue > threshold && priceUsd > 0) continue;
       if (!tb.address || tb.address === "" || tb.symbol === "ETH") continue;
 
-      dustTokens.push(entry);
+      if (!entry.isOwnContentCoin && usdValue <= threshold) {
+        dustTokens.push(entry);
+      } else if (entry.isOwnContentCoin) {
+        dustTokens.push(entry);
+      }
     }
 
     dustTokens.sort((a, b) => b.usdValue - a.usdValue);

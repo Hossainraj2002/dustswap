@@ -30,10 +30,10 @@ const THRESHOLDS: { value: ThresholdValue; label: string }[] = [
   { value: 10, label: 'Under $10' },
 ];
 
-const OUTPUT_OPTIONS: { value: OutputTokenOption; label: string; icon: string }[] = [
-  { value: 'ETH',  label: 'ETH',  icon: 'Ξ' },
-  { value: 'USDC', label: 'USDC', icon: '$' },
-  { value: 'WETH', label: 'WETH', icon: 'Ξ' },
+const OUTPUT_OPTIONS: { value: OutputTokenOption; label: string; icon: string; logoURI: string }[] = [
+  { value: 'ETH',  label: 'ETH',  icon: 'Ξ', logoURI: 'https://basescan.org/token/images/ethereum_32.png' },
+  { value: 'USDC', label: 'USDC', icon: '$', logoURI: 'https://basescan.org/token/images/centre-usdc_28.png' },
+  { value: 'WETH', label: 'WETH', icon: 'Ξ', logoURI: 'https://basescan.org/token/images/weth_28.png' },
 ];
 
 const MAX_SELECTED = 10;
@@ -431,6 +431,9 @@ export default function DustSweepPage() {
     handleSuccess,
     successData,
     clearSuccess,
+    showOwnContentCoins,
+    setShowOwnContentCoins,
+    ownContentCoinCount,
   } = useDustSweep();
 
   const [outputDropdownOpen, setOutputDropdownOpen] = useState(false);
@@ -538,9 +541,17 @@ export default function DustSweepPage() {
                 className="w-full flex items-center justify-between p-4 rounded-xl bg-gray-900/80 border border-gray-800 hover:border-gray-600 transition-colors"
               >
                 <div className="flex items-center gap-3">
-                  <span className="w-8 h-8 rounded-full bg-gradient-to-br from-purple-500 to-indigo-600 flex items-center justify-center text-white font-bold text-sm">
-                    {OUTPUT_OPTIONS.find((o) => o.value === outputToken)?.icon}
-                  </span>
+                  {OUTPUT_OPTIONS.find((o) => o.value === outputToken)?.logoURI ? (
+                    <img 
+                      src={OUTPUT_OPTIONS.find((o) => o.value === outputToken)?.logoURI} 
+                      alt={outputToken}
+                      className="w-8 h-8 rounded-full bg-gray-800"
+                    />
+                  ) : (
+                    <span className="w-8 h-8 rounded-full bg-gradient-to-br from-purple-500 to-indigo-600 flex items-center justify-center text-white font-bold text-sm">
+                      {OUTPUT_OPTIONS.find((o) => o.value === outputToken)?.icon}
+                    </span>
+                  )}
                   <span className="text-white font-medium">
                     {OUTPUT_OPTIONS.find((o) => o.value === outputToken)?.label}
                   </span>
@@ -564,9 +575,13 @@ export default function DustSweepPage() {
                         ${outputToken === option.value ? 'bg-purple-900/20 text-white' : 'text-gray-300'}
                       `}
                     >
-                      <span className="w-7 h-7 rounded-full bg-gradient-to-br from-purple-500 to-indigo-600 flex items-center justify-center text-white font-bold text-xs">
-                        {option.icon}
-                      </span>
+                      {option.logoURI ? (
+                        <img src={option.logoURI} alt={option.label} className="w-7 h-7 rounded-full bg-gray-800" />
+                      ) : (
+                        <span className="w-7 h-7 rounded-full bg-gradient-to-br from-purple-500 to-indigo-600 flex items-center justify-center text-white font-bold text-xs">
+                          {option.icon}
+                        </span>
+                      )}
                       <span className="font-medium">{option.label}</span>
                       {outputToken === option.value && (
                         <svg className="w-4 h-4 text-purple-400 ml-auto" fill="currentColor" viewBox="0 0 20 20">
@@ -590,6 +605,42 @@ export default function DustSweepPage() {
 
         {/* Token List */}
         <div className="mb-6">
+          {/* Content Coin Filter */}
+          {!isLoading && ownContentCoinCount > 0 && (
+            <div className="mb-4 bg-gray-900/80 border border-gray-800 rounded-xl p-4">
+              <div className="flex justify-between items-start mb-2">
+                <div>
+                  <h3 className="text-white font-medium text-sm">Filter your own content coin</h3>
+                  <p className="text-gray-400 text-xs mt-1">
+                    Content coins often don't have much liquidity, you should try swap them separately from here.
+                  </p>
+                </div>
+                <button
+                  onClick={() => setShowOwnContentCoins(!showOwnContentCoins)}
+                  className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center justify-center rounded-full focus:outline-none transition-colors duration-200 ease-in-out ${
+                    showOwnContentCoins ? 'bg-purple-600' : 'bg-gray-700'
+                  }`}
+                  role="switch"
+                  aria-checked={showOwnContentCoins}
+                >
+                  <span className="sr-only">Toggle content coins</span>
+                  <span
+                    aria-hidden="true"
+                    className={`pointer-events-none absolute left-0 inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                      showOwnContentCoins ? 'translate-x-4' : 'translate-x-[2px]'
+                    } top-[2px]`}
+                  />
+                </button>
+              </div>
+              {showOwnContentCoins && (
+                <div className="mt-3 p-3 bg-amber-900/20 border border-amber-800/40 rounded-lg text-amber-400 text-xs leading-relaxed">
+                  <span className="font-semibold block mb-1">Warning:</span>
+                  The value showing is not correct. You will not get the same value after swap due to liquidity issues. Only process after you understand it.
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Select controls */}
           <div className="flex items-center justify-between mb-3">
             <p className="text-sm text-gray-400">

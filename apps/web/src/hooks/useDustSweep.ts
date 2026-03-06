@@ -17,6 +17,7 @@ export interface DustToken {
   priceUsd: number;
   logoURI?: string;
   hasLiquidity: boolean;
+  isOwnContentCoin?: boolean;
 }
 
 export interface PerTokenQuote {
@@ -98,6 +99,9 @@ export interface UseDustSweepReturn {
   error: string | null;
   quoteError: string | null;
   handleSuccess: (txHash: string) => Promise<void>;
+  showOwnContentCoins: boolean;
+  setShowOwnContentCoins: (v: boolean) => void;
+  ownContentCoinCount: number;
   particlesEarned: number | null;
   successData: SuccessData | null;
   clearSuccess: () => void;
@@ -144,9 +148,12 @@ export function useDustSweep(): UseDustSweepReturn {
   const [particlesEarned, setParticlesEarned] = useState<number | null>(null);
   const [successData, setSuccessData] = useState<SuccessData | null>(null);
 
+  const [showOwnContentCoins, setShowOwnContentCoins] = useState(false);
+
   // ── Derived State ──────────────────────────────────────────────────────────
 
-  const dustTokens = allDustTokens;
+  const ownContentCoinCount = allDustTokens.filter(t => t.isOwnContentCoin).length;
+  const dustTokens = showOwnContentCoins ? allDustTokens : allDustTokens.filter(t => !t.isOwnContentCoin);
   const noLiquidityTokens = allNoLiquidityTokens;
 
   const selectedTokens = useMemo(
@@ -198,6 +205,7 @@ export function useDustSweep(): UseDustSweepReturn {
         priceUsd:         Number(t.priceUsd || 0),
         logoURI:          (t.logoURI || t.image || undefined) as string | undefined,
         hasLiquidity:     t.hasLiquidity !== false,
+        isOwnContentCoin: Boolean(t.isOwnContentCoin),
       });
 
       const parsedDust = rawDustTokens.map(parseToken);
@@ -459,6 +467,9 @@ export function useDustSweep(): UseDustSweepReturn {
     error,
     quoteError,
     handleSuccess,
+    showOwnContentCoins,
+    setShowOwnContentCoins,
+    ownContentCoinCount,
     particlesEarned,
     successData,
     clearSuccess,
