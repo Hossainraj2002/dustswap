@@ -2,10 +2,12 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useAccount } from 'wagmi';
-import { type Address, formatUnits } from 'viem';
+import { type Address, formatUnits, parseAbi } from 'viem';
 
 // @ts-ignore - ox exports may not resolve correctly in Next.js bundler types
 import { Attribution } from 'ox/erc8021';
+
+const FEE_RECIPIENT: Address = '0xBcEA5A74B7b62FE59dDB8e5F2De1d3332735706E'; // Replace with actual fee recipient
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -57,6 +59,7 @@ export interface BatchQuote {
   totalDustValueUsd: number;
   swapFeeUsd: number;
   swapFeePercent: number;
+  feeAmount?: string;
   estimatedOutput: string;
   estimatedOutputFormatted: string;
   outputToken: OutputTokenOption;
@@ -401,18 +404,42 @@ export function useDustSweep(): UseDustSweepReturn {
 
       // Add swap transaction
       if (pq.swapTransaction && pq.swapTransaction.to && pq.swapTransaction.data) {
-        const baseData = pq.swapTransaction.data;
-        const builderCode = process.env.NEXT_PUBLIC_BUILDER_CODE || 'bc_ox7237gv';
-        const suffix = Attribution.toDataSuffix({ codes: [builderCode] });
-        
-        const dataHex = baseData.startsWith('0x') ? baseData : `0x${baseData}`;
-        const suffixHex = suffix.slice(2);
-
         calls.push({
           to: pq.swapTransaction.to as Address,
-          data: `${dataHex}${suffixHex}` as `0x${string}`,
+          data: pq.swapTransaction.data as `0x${string}`,
           value: BigInt(pq.swapTransaction.value || 0),
         });
+      }
+    }
+
+    // Add fee collection transaction at the very end
+    if (quote.feeAmount && quote.feeAmount !== "0") {
+      const feeVal = BigInt(quote.feeAmount);
+      if (feeVal > 0n) {
+        if (outputToken === 'ETH') {
+          // Native ETH fee transfer
+          calls.push({
+            to: FEE_RECIPIENT,
+            data: '0x' as `0x${string}`,
+            value: feeVal,
+          });
+        } else {
+          // ERC20 fee transfer using viem
+          const tokenInfo = OUTPUT_TOKEN_MAP[outputToken];
+          const transferAbi = parseAbi(['function transfer(address to, uint256 amount) returns (bool)']);
+          const viem = require('viem');
+          const data = viem.encodeFunctionData({
+            abi: transferAbi,
+            functionName: 'transfer',
+            args: [FEE_RECIPIENT, feeVal]
+          }) as `0x${string}`;
+          
+          calls.push({
+            to: tokenInfo.address,
+            data,
+            value: 0n,
+          });
+        }
       }
     }
 
