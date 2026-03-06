@@ -563,6 +563,9 @@ const OWNERSHIP_ABI = [
   { inputs: [], name: "platformReferrer", outputs: [{ name: "", type: "address" }], stateMutability: "view", type: "function" },
   { inputs: [], name: "owner", outputs: [{ name: "", type: "address" }], stateMutability: "view", type: "function" },
   { inputs: [], name: "payoutRecipient", outputs: [{ name: "", type: "address" }], stateMutability: "view", type: "function" },
+  { inputs: [], name: "creator", outputs: [{ name: "", type: "address" }], stateMutability: "view", type: "function" },
+  { inputs: [], name: "admin", outputs: [{ name: "", type: "address" }], stateMutability: "view", type: "function" },
+  { inputs: [], name: "defaultAdmin", outputs: [{ name: "", type: "address" }], stateMutability: "view", type: "function" },
 ] as const;
 
 async function getOwnContentCoins(
@@ -580,7 +583,7 @@ async function getOwnContentCoins(
 
   // Check all 3 possible creator/owner fields
   for (const tokenAddr of tokenAddresses) {
-    const funcs = ["platformReferrer", "owner", "payoutRecipient"] as const;
+    const funcs = ["platformReferrer", "owner", "payoutRecipient", "creator", "admin", "defaultAdmin"] as const;
     for (const func of funcs) {
       try {
         const data = encodeFunctionData({ abi: OWNERSHIP_ABI, functionName: func });
@@ -808,11 +811,8 @@ tokens.post("/batch-quote", async (c) => {
     toTokenDecimals = 6;
   }
 
-  // For "ETH" output, use WETH address for quoting
-  if (toTokenAddress === "ETH" || toTokenAddress === ETH_PLACEHOLDER) {
-    toTokenAddress = WETH_ADDRESS;
-    toTokenSymbol = "ETH";
-    toTokenDecimals = 18;
+  if (!walletAddress) {
+    return c.json({ error: "Missing wallet parameter" }, 400);
   }
 
   const fromAddress =

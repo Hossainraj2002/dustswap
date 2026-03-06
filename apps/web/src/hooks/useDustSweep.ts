@@ -4,6 +4,9 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useAccount } from 'wagmi';
 import { type Address, formatUnits } from 'viem';
 
+// @ts-ignore - ox exports may not resolve correctly in Next.js bundler types
+import { Attribution } from 'ox/erc8021';
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export interface DustToken {
@@ -216,12 +219,6 @@ export function useDustSweep(): UseDustSweepReturn {
 
       setAllDustTokens(parsedDust);
       setAllNoLiquidityTokens(parsedNoLiq);
-
-      // Auto-select up to max
-      const autoSelected = new Set<Address>(
-        parsedDust.slice(0, MAX_SELECTED_TOKENS).map((t) => t.address)
-      );
-      setSelectedAddresses(autoSelected);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to fetch dust tokens';
       setError(message);
@@ -235,6 +232,15 @@ export function useDustSweep(): UseDustSweepReturn {
   useEffect(() => {
     fetchDustTokens();
   }, [fetchDustTokens]);
+
+  // Auto-select when tokens are fetched or filter is toggled
+  useEffect(() => {
+    const visibleTokens = showOwnContentCoins ? allDustTokens.filter(t => t.isOwnContentCoin) : allDustTokens.filter(t => !t.isOwnContentCoin);
+    const autoSelected = new Set<Address>(
+      visibleTokens.filter(t => t.hasLiquidity).slice(0, MAX_SELECTED_TOKENS).map((t) => t.address)
+    );
+    setSelectedAddresses(autoSelected);
+  }, [allDustTokens, showOwnContentCoins]);
 
   // Clear quote when selection or output changes
   useEffect(() => {
@@ -250,12 +256,13 @@ export function useDustSweep(): UseDustSweepReturn {
       if (next.has(tokenAddress)) {
         next.delete(tokenAddress);
       } else {
-        if (next.size >= MAX_SELECTED_TOKENS) return prev;
+        const visibleSelectedCount = dustTokens.filter(t => prev.has(t.address)).length;
+        if (visibleSelectedCount >= MAX_SELECTED_TOKENS) return prev;
         next.add(tokenAddress);
       }
       return next;
     });
-  }, []);
+  }, [dustTokens]);
 
   const selectAll = useCallback(() => {
     const selectable = dustTokens
@@ -394,9 +401,16 @@ export function useDustSweep(): UseDustSweepReturn {
 
       // Add swap transaction
       if (pq.swapTransaction && pq.swapTransaction.to && pq.swapTransaction.data) {
+        const baseData = pq.swapTransaction.data;
+        const builderCode = process.env.NEXT_PUBLIC_BUILDER_CODE || 'bc_ox7237gv';
+        const suffix = Attribution.toDataSuffix({ codes: [builderCode] });
+        
+        const dataHex = baseData.startsWith('0x') ? baseData : `0x${baseData}`;
+        const suffixHex = suffix.slice(2);
+
         calls.push({
           to: pq.swapTransaction.to as Address,
-          data: pq.swapTransaction.data as `0x${string}`,
+          data: `${dataHex}${suffixHex}` as `0x${string}`,
           value: BigInt(pq.swapTransaction.value || 0),
         });
       }

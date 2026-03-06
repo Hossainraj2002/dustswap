@@ -31,7 +31,7 @@ const THRESHOLDS: { value: ThresholdValue; label: string }[] = [
 ];
 
 const OUTPUT_OPTIONS: { value: OutputTokenOption; label: string; icon: string; logoURI: string }[] = [
-  { value: 'ETH',  label: 'ETH',  icon: 'Ξ', logoURI: 'https://basescan.org/token/images/ethereum_32.png' },
+  { value: 'ETH',  label: 'ETH',  icon: 'Ξ', logoURI: 'https://cryptologos.cc/logos/ethereum-eth-logo.png' },
   { value: 'USDC', label: 'USDC', icon: '$', logoURI: 'https://basescan.org/token/images/centre-usdc_28.png' },
   { value: 'WETH', label: 'WETH', icon: 'Ξ', logoURI: 'https://basescan.org/token/images/weth_28.png' },
 ];
@@ -610,7 +610,7 @@ export default function DustSweepPage() {
             <div className="mb-4 bg-gray-900/80 border border-gray-800 rounded-xl p-4">
               <div className="flex justify-between items-start mb-2">
                 <div>
-                  <h3 className="text-white font-medium text-sm">Filter your own content coin</h3>
+                  <h3 className="text-white font-medium text-sm">Show your content coin</h3>
                   <p className="text-gray-400 text-xs mt-1">
                     Content coins often don't have much liquidity, you should try swap them separately from here.
                   </p>
