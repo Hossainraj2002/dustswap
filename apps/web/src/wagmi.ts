@@ -2,6 +2,7 @@ import { http, createConfig } from "wagmi";
 import { base } from "wagmi/chains";
 import { coinbaseWallet } from "wagmi/connectors";
 
+// @ts-ignore - ox exports may not resolve correctly in Next.js bundler types
 import { Attribution } from "ox/erc8021";
 
 const DATA_SUFFIX = Attribution.toDataSuffix({
