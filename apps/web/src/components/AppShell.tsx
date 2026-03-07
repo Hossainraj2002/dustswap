@@ -2,7 +2,8 @@
 
 import { usePathname } from 'next/navigation';
 import Link from 'next/link';
-import { ReactNode } from 'react';
+import { ReactNode, useEffect } from 'react';
+import { useMiniKit } from '@coinbase/onchainkit/minikit';
 
 interface AppShellProps {
   children: ReactNode;
@@ -18,6 +19,13 @@ const NAV_ITEMS = [
 
 export function AppShell({ children }: AppShellProps) {
   const pathname = usePathname();
+  const { setFrameReady, isFrameReady } = useMiniKit();
+
+  useEffect(() => {
+    if (!isFrameReady) {
+      setFrameReady();
+    }
+  }, [setFrameReady, isFrameReady]);
 
   return (
     <div className="flex min-h-screen bg-[#0a0a0f] text-white">

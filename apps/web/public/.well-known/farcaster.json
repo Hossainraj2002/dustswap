@@ -13,6 +13,14 @@
     "buttonTitle": "Open DustSwap",
     "splashImageUrl": "https://dustswap.vercel.app/splash.png",
     "splashBackgroundColor": "#030305",
-    "webhookUrl": "https://dustswap.vercel.app/api/webhook"
+    "webhookUrl": "https://dustswap.vercel.app/api/webhook",
+    "primaryCategory": "finance",
+    "tags": [
+      "dex",
+      "swap",
+      "aggregator",
+      "defi",
+      "base"
+    ]
   }
 }
