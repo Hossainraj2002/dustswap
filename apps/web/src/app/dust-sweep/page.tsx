@@ -437,10 +437,6 @@ export default function DustSweepPage() {
     handleSuccess,
     successData,
     clearSuccess,
-    showOwnContentCoins,
-    setShowOwnContentCoins,
-    ownContentCoinCount,
-    contentCoinCount,
   } = useDustSweep();
 
   const [outputDropdownOpen, setOutputDropdownOpen] = useState(false);

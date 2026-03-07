@@ -113,10 +113,6 @@ export interface UseDustSweepReturn {
   error: string | null;
   quoteError: string | null;
   handleSuccess: (txHash: string) => Promise<void>;
-  showOwnContentCoins: boolean;
-  setShowOwnContentCoins: (v: boolean) => void;
-  ownContentCoinCount: number;
-  contentCoinCount: number;
   particlesEarned: number | null;
   successData: SuccessData | null;
   clearSuccess: () => void;
