@@ -161,6 +161,54 @@ export class PointsEngine {
     };
   }
 
+  async getUserStats(address: string) {
+    const user = await this.getOrCreate(address);
+    
+    const { data } = await supabase.from('sweep_history')
+      .select('type, output_value_usd, token_count')
+      .eq('user_id', user.id);
+
+    let dustSwept = 0;
+    let swapVolume = 0;
+    let tokensBurned = 0;
+
+    for (const row of (data || [])) {
+      if (row.type === 'sweep') dustSwept += row.token_count;
+      if (row.type === 'swap' && row.output_value_usd) swapVolume += Number(row.output_value_usd);
+      if (row.type === 'burn') tokensBurned += row.token_count;
+    }
+
+    return {
+      totalPoints: user.total_points,
+      dustSwept,
+      swapVolume,
+      tokensBurned
+    };
+  }
+
+  async getReferralStats(address: string) {
+    const user = await this.getOrCreate(address);
+    
+    // Count friends joined
+    const { count } = await supabase.from('referrals')
+      .select('*', { count: 'exact', head: true })
+      .eq('referrer_id', user.id);
+      
+    // Sum points earned from referrals
+    const { data } = await supabase.from('point_events')
+      .select('total_awarded')
+      .eq('user_id', user.id)
+      .in('action', ['referral_commission', 'referral_new_user']);
+      
+    const referralPoints = (data || []).reduce((sum: number, row: { total_awarded: number }) => sum + row.total_awarded, 0);
+
+    return {
+      code: user.referral_code,
+      friendsJoined: count || 0,
+      pointsEarned: referralPoints
+    };
+  }
+
   async getLeaderboard(page = 1, limit = 50) {
     const offset = (page - 1) * limit;
     const { data } = await supabase.from('users').select('address,total_points,current_streak')

@@ -16,6 +16,26 @@ pointsRoutes.get("/:address", async (c) => {
   }
 });
 
+// GET /api/points/:address/stats
+pointsRoutes.get("/:address/stats", async (c) => {
+  try {
+    const data = await pointsEngine.getUserStats(c.req.param("address"));
+    return c.json({ success: true, ...data });
+  } catch (e: unknown) {
+    return c.json({ success: false, error: (e as Error).message }, 500);
+  }
+});
+
+// GET /api/points/:address/referrals
+pointsRoutes.get("/:address/referrals", async (c) => {
+  try {
+    const data = await pointsEngine.getReferralStats(c.req.param("address"));
+    return c.json({ success: true, ...data });
+  } catch (e: unknown) {
+    return c.json({ success: false, error: (e as Error).message }, 500);
+  }
+});
+
 // POST /api/points/check-in
 pointsRoutes.post("/check-in", async (c) => {
   const body = await c.req.json<{ address?: string }>();

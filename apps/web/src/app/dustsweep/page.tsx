@@ -3,8 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useAccount } from 'wagmi';
 import { type Address } from 'viem';
-// @ts-ignore
-import { Attribution } from 'ox/erc8021';
+
 import {
   Transaction,
   TransactionButton,
@@ -342,10 +341,6 @@ function StickySweepPanel({
                 calls={sweepCalls}
                 capabilities={{
                   paymasterService: { url: process.env.NEXT_PUBLIC_PAYMASTER_URL! },
-                  dataSuffix: {
-                    value: Attribution.toDataSuffix({ codes: [process.env.NEXT_PUBLIC_BUILDER_CODE || 'bc_ox7237gv'] }),
-                    optional: true
-                  }
                 } as any}
                 onSuccess={onTransactionSuccess}
                 onError={onTransactionError}
