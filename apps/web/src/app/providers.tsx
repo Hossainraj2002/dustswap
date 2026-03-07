@@ -37,6 +37,7 @@ export function Providers({ children }: ProvidersProps) {
               mode: "dark",
               theme: "cyberpunk",
             },
+            paymaster: process.env.NEXT_PUBLIC_PAYMASTER_URL,
           }}
         >
           {children}

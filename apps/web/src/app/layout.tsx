@@ -1,7 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Inter } from "next/font/google";
 import { Providers } from "./providers";
-import { Navbar } from "@/components/Navbar";
+import { AppShell } from "@/components/AppShell";
 import "./globals.css";
 
 const inter = Inter({
@@ -43,6 +43,7 @@ export const metadata: Metadata = {
   other: {
     "fc:frame": "vNext",
   },
+  manifest: "/manifest.json",
 };
 
 export const viewport: Viewport = {
@@ -86,9 +87,8 @@ export default function RootLayout({
           </div>
 
           {/* App shell */}
-          <div className="relative z-10 flex min-h-screen flex-col">
-            <Navbar />
-            <main className="flex-1">{children}</main>
+          <div className="relative z-10">
+            <AppShell>{children}</AppShell>
           </div>
         </Providers>
       </body>
