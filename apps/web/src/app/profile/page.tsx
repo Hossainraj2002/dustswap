@@ -285,10 +285,10 @@ export default function ProfilePage() {
 
       {/* SECTION 3: User Stats */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <StatCard title="Particle Points" value={stats?.totalPoints.toLocaleString()} icon="⚡" />
-        <StatCard title="Dust Swept" value={stats?.dustSwept.toLocaleString()} icon="🌪️" />
-        <StatCard title="Swap Volume" value={stats ? `$${stats.swapVolume.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits:2})}` : undefined} icon="💱" />
-        <StatCard title="Tokens Burned" value={stats?.tokensBurned.toLocaleString()} icon="🔥" />
+        <StatCard title="Particle Points" value={(stats?.totalPoints || 0).toLocaleString()} icon="⚡" />
+        <StatCard title="Dust Swept" value={(stats?.dustSwept || 0).toLocaleString()} icon="🌪️" />
+        <StatCard title="Swap Volume" value={`$${(stats?.swapVolume || 0).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits:2})}`} icon="💱" />
+        <StatCard title="Tokens Burned" value={(stats?.tokensBurned || 0).toLocaleString()} icon="🔥" />
       </div>
 
       {/* SECTION 4: Referral */}
@@ -308,7 +308,7 @@ export default function ProfilePage() {
               </div>
               <div className="bg-gray-800/80 px-3 py-1.5 rounded-lg border border-gray-700">
                 <span className="text-gray-400">Points Earned: </span>
-                <span className="text-white font-medium">⚡ {referral?.pointsEarned.toLocaleString() || 0}</span>
+                <span className="text-white font-medium">⚡ {(referral?.pointsEarned || 0).toLocaleString()}</span>
               </div>
             </div>
           </div>
