@@ -7,7 +7,7 @@ const supabase = createClient(
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 const CFG = {
-  CHECK_IN:                  50,
+  CHECK_IN:                  500,
   SWAP:                      50,
   SWEEP_PER_TOKEN:           50,
   BRIDGE_PER_TOKEN:          50,
@@ -56,7 +56,14 @@ export class PointsEngine {
   async getOrCreate(address: string) {
     const norm = address.toLowerCase();
     const { data } = await supabase.from('users').select('*').eq('address', norm).single();
-    if (data) return data;
+    if (data) {
+      if (!data.referral_code) {
+        const code = genCode();
+        await supabase.from('users').update({ referral_code: code }).eq('id', data.id);
+        data.referral_code = code;
+      }
+      return data;
+    }
 
     const { data: nu, error } = await supabase
       .from('users')
@@ -158,6 +165,7 @@ export class PointsEngine {
       streak:        user.current_streak,
       longestStreak: user.longest_streak,
       referralCode:  user.referral_code,
+      checkedInToday: isToday(user.last_check_in),
     };
   }
 

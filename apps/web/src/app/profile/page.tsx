@@ -4,6 +4,8 @@ import { useEffect, useState, useCallback, useMemo } from 'react';
 import { useAccount, useReadContract, useBalance } from 'wagmi';
 import { parseUnits, encodeFunctionData, erc20Abi } from 'viem';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
+// @ts-ignore
+import { Attribution } from 'ox/erc8021';
 
 import {
   Transaction,
@@ -114,6 +116,7 @@ export default function ProfilePage() {
         .then((data) => {
            if (data.success) {
              setStreak(data.streak || 0);
+             setCheckInDone(data.checkedInToday || false);
            }
         })
         .catch(console.error);
@@ -259,22 +262,30 @@ export default function ProfilePage() {
       </div>
 
       {/* SECTION 2: Daily Check-In Banner */}
-      {!checkInDone && (
-        <div className="h-16 w-full rounded-2xl bg-gradient-to-r from-blue-900/40 to-purple-900/40 border border-indigo-500/30 overflow-hidden flex shadow-lg shadow-indigo-500/10">
-          <div className="flex-1 flex items-center px-6">
-             <span className="text-2xl mr-3 opacity-90">🔥</span>
-             <div>
-                <p className="text-white font-semibold text-sm">Daily Check-In</p>
-                <p className="text-indigo-300 text-xs">Day {streak + 1} of 30 • Earn 500 pts</p>
-             </div>
-          </div>
-          
-          <div className="flex items-center px-3" onClick={(e) => e.stopPropagation()}>
+      <div className="h-16 w-full rounded-2xl bg-gradient-to-r from-blue-900/40 to-purple-900/40 border border-indigo-500/30 overflow-hidden flex shadow-lg shadow-indigo-500/10 mb-6">
+        <div className="flex-1 flex items-center px-6">
+           <span className="text-2xl mr-3 opacity-90">🔥</span>
+           <div>
+              <p className="text-white font-semibold text-sm">Daily Check-In</p>
+              <p className="text-indigo-300 text-xs">Day {streak + (checkInDone ? 0 : 1)} of 30 • {checkInDone ? 'Earned 500 pts + 10% Boost!' : 'Earn 500 pts'}</p>
+           </div>
+        </div>
+        
+        <div className="flex items-center px-3" onClick={(e) => e.stopPropagation()}>
+           {checkInDone ? (
+              <button disabled className="bg-gray-800 text-gray-400 font-bold text-sm px-6 py-2 rounded-xl shadow-md min-w-[120px] opacity-70 cursor-not-allowed">
+                 CHECKED IN
+              </button>
+           ) : (
              <Transaction
                 chainId={8453}
                 calls={checkInCalls as any}
                 capabilities={{
                   paymasterService: { url: process.env.NEXT_PUBLIC_PAYMASTER_URL! },
+                  dataSuffix: {
+                    value: Attribution.toDataSuffix({ codes: [process.env.NEXT_PUBLIC_BUILDER_CODE || 'bc_ox7237gv'] }),
+                    optional: true
+                  }
                 } as any}
                 onSuccess={onCheckInSuccess}
              >
@@ -283,9 +294,9 @@ export default function ProfilePage() {
                    className="!bg-indigo-600 hover:!bg-indigo-500 !text-white !font-bold !text-sm !px-6 !py-2 !rounded-xl !shadow-md !shadow-indigo-500/20 w-auto min-w-[120px]"
                 />
              </Transaction>
-          </div>
+           )}
         </div>
-      )}
+      </div>
 
       {/* SECTION 3: User Stats */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
