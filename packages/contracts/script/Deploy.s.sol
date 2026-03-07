@@ -45,6 +45,11 @@ contract DeployDustSwap is Script {
         console2.log("FeeCollector:      ", address(feeCollector));
         console2.log("BurnVault:         ", address(burnVault));
         console2.log("DustSweepRouter:   ", address(router));
+        console2.log("-------------------------------------------");
+        console2.log("Features: Pausable, MultiHop, Deadline, ETH Swaps");
+        console2.log("Builder Code:       bc_ox7237gv");
+        console2.log("Dust Sweep Fee:     2% (200 bps)");
+        console2.log("Single Swap Fee:    0.1% (10 bps)");
 
         vm.stopBroadcast();
     }

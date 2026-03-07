@@ -28,6 +28,8 @@ contract DustSweepRouterTest is Test {
     address public user;
     address public nonOwner;
 
+    uint256 constant DEADLINE = type(uint256).max; // never expires in tests
+
     function setUp() public {
         owner = makeAddr("owner");
         treasury = makeAddr("treasury");
@@ -43,7 +45,7 @@ contract DustSweepRouterTest is Test {
         vm.stopPrank();
 
         // Fund user with ETH for gas and swaps
-       vm.deal(address(this), 1 ether);
+        vm.deal(address(this), 1 ether);
         vm.deal(user, 100 ether);
     }
 
@@ -91,15 +93,12 @@ contract DustSweepRouterTest is Test {
     // ======================= sweepDust - 1 TOKEN ===========
 
     function test_sweepDust_singleToken() public {
-        // Get USDC dust for user
         _getToken(USDC, user, 0.01 ether);
         uint256 usdcBalance = IERC20(USDC).balanceOf(user);
         assertGt(usdcBalance, 0, "User should have USDC");
 
-        // Approve router
         _approveRouter(USDC, user, usdcBalance);
 
-        // Build order: swap USDC to WETH
         DustSweepRouter.SwapOrder[] memory orders = new DustSweepRouter.SwapOrder[](1);
         orders[0] = DustSweepRouter.SwapOrder({
             tokenIn: USDC,
@@ -112,7 +111,7 @@ contract DustSweepRouterTest is Test {
         uint256 feeCollectorWethBefore = IERC20(WETH).balanceOf(address(feeCollector));
 
         vm.prank(user);
-        router.sweepDust(orders, WETH, user);
+        router.sweepDust(orders, WETH, user, DEADLINE);
 
         uint256 wethReceived = IERC20(WETH).balanceOf(user) - wethBefore;
         uint256 feeReceived = IERC20(WETH).balanceOf(address(feeCollector)) - feeCollectorWethBefore;
@@ -120,7 +119,7 @@ contract DustSweepRouterTest is Test {
         assertGt(wethReceived, 0, "User should receive WETH");
         assertGt(feeReceived, 0, "FeeCollector should receive fee");
 
-        // Verify 2% fee: feeReceived / (wethReceived + feeReceived) approx 0.02
+        // Verify 2% fee
         uint256 totalOutput = wethReceived + feeReceived;
         uint256 expectedFee = (totalOutput * 200) / 10_000;
         assertApproxEqAbs(feeReceived, expectedFee, 1, "Fee should be ~2%");
@@ -129,7 +128,6 @@ contract DustSweepRouterTest is Test {
     // ======================= sweepDust - MAX BATCH =========
 
     function test_sweepDust_maxBatch() public {
-        // Create 10 orders all swapping USDC to WETH
         _getToken(USDC, user, 1 ether);
         uint256 totalUsdc = IERC20(USDC).balanceOf(user);
         assertGt(totalUsdc, 0, "User should have USDC");
@@ -149,7 +147,7 @@ contract DustSweepRouterTest is Test {
         }
 
         vm.prank(user);
-        router.sweepDust(orders, WETH, user);
+        router.sweepDust(orders, WETH, user, DEADLINE);
 
         uint256 wethBalance = IERC20(WETH).balanceOf(user);
         assertGt(wethBalance, 0, "User should receive WETH from max batch");
@@ -170,7 +168,7 @@ contract DustSweepRouterTest is Test {
 
         vm.prank(user);
         vm.expectRevert(DustSweepRouter.BatchTooLarge.selector);
-        router.sweepDust(orders, WETH, user);
+        router.sweepDust(orders, WETH, user, DEADLINE);
     }
 
     // ======================= sweepDust - EMPTY =============
@@ -180,7 +178,23 @@ contract DustSweepRouterTest is Test {
 
         vm.prank(user);
         vm.expectRevert(DustSweepRouter.EmptyOrders.selector);
-        router.sweepDust(orders, WETH, user);
+        router.sweepDust(orders, WETH, user, DEADLINE);
+    }
+
+    // ======================= sweepDust - DEADLINE ===========
+
+    function test_sweepDust_revertsOnExpiredDeadline() public {
+        DustSweepRouter.SwapOrder[] memory orders = new DustSweepRouter.SwapOrder[](1);
+        orders[0] = DustSweepRouter.SwapOrder({
+            tokenIn: USDC,
+            amountIn: 1_000_000,
+            poolFee: 500,
+            minAmountOut: 0
+        });
+
+        vm.prank(user);
+        vm.expectRevert(DustSweepRouter.DeadlineExpired.selector);
+        router.sweepDust(orders, WETH, user, block.timestamp - 1);
     }
 
     // ======================= sweepDustToETH ================
@@ -201,10 +215,76 @@ contract DustSweepRouterTest is Test {
         uint256 ethBefore = user.balance;
 
         vm.prank(user);
-        router.sweepDustToETH(orders, user);
+        router.sweepDustToETH(orders, user, DEADLINE);
 
         uint256 ethReceived = user.balance - ethBefore;
         assertGt(ethReceived, 0, "User should receive ETH");
+    }
+
+    // ======================= sweepDustMultiHop =============
+
+    function test_sweepDustMultiHop_singleToken() public {
+        // Get DAI, then multi-hop swap DAI -> WETH -> USDC through the router
+        _getToken(DAI, user, 0.05 ether);
+        uint256 daiBalance = IERC20(DAI).balanceOf(user);
+        assertGt(daiBalance, 0, "User should have DAI");
+
+        _approveRouter(DAI, user, daiBalance);
+
+        // Encode multi-hop path: DAI -> (3000 fee) -> WETH -> (500 fee) -> USDC
+        bytes memory path = abi.encodePacked(
+            DAI, uint24(3000), WETH, uint24(500), USDC
+        );
+
+        DustSweepRouter.MultiHopSwapOrder[] memory orders = new DustSweepRouter.MultiHopSwapOrder[](1);
+        orders[0] = DustSweepRouter.MultiHopSwapOrder({
+            tokenIn: DAI,
+            amountIn: daiBalance,
+            path: path,
+            minAmountOut: 0
+        });
+
+        uint256 usdcBefore = IERC20(USDC).balanceOf(user);
+        uint256 feeCollectorUsdcBefore = IERC20(USDC).balanceOf(address(feeCollector));
+
+        vm.prank(user);
+        router.sweepDustMultiHop(orders, USDC, user, DEADLINE);
+
+        uint256 usdcReceived = IERC20(USDC).balanceOf(user) - usdcBefore;
+        uint256 feeReceived = IERC20(USDC).balanceOf(address(feeCollector)) - feeCollectorUsdcBefore;
+
+        assertGt(usdcReceived, 0, "User should receive USDC from multi-hop");
+        assertGt(feeReceived, 0, "FeeCollector should receive fee from multi-hop");
+
+        // Verify 2% fee
+        uint256 totalOutput = usdcReceived + feeReceived;
+        uint256 expectedFee = (totalOutput * 200) / 10_000;
+        assertApproxEqAbs(feeReceived, expectedFee, 1, "Fee should be ~2%");
+    }
+
+    function test_sweepDustMultiHopToETH() public {
+        _getToken(USDC, user, 0.05 ether);
+        uint256 usdcBalance = IERC20(USDC).balanceOf(user);
+        _approveRouter(USDC, user, usdcBalance);
+
+        // Path: USDC -> (500 fee) -> WETH (end must be WETH for ETH output)
+        bytes memory path = abi.encodePacked(USDC, uint24(500), WETH);
+
+        DustSweepRouter.MultiHopSwapOrder[] memory orders = new DustSweepRouter.MultiHopSwapOrder[](1);
+        orders[0] = DustSweepRouter.MultiHopSwapOrder({
+            tokenIn: USDC,
+            amountIn: usdcBalance,
+            path: path,
+            minAmountOut: 0
+        });
+
+        uint256 ethBefore = user.balance;
+
+        vm.prank(user);
+        router.sweepDustMultiHopToETH(orders, user, DEADLINE);
+
+        uint256 ethReceived = user.balance - ethBefore;
+        assertGt(ethReceived, 0, "User should receive ETH from multi-hop");
     }
 
     // ======================= singleSwap ====================
@@ -218,7 +298,7 @@ contract DustSweepRouterTest is Test {
         uint256 feeCollectorBefore = IERC20(WETH).balanceOf(address(feeCollector));
 
         vm.prank(user);
-        router.singleSwap(USDC, usdcBalance, WETH, 500, 0, user);
+        router.singleSwap(USDC, usdcBalance, WETH, 500, 0, user, DEADLINE);
 
         uint256 wethReceived = IERC20(WETH).balanceOf(user) - wethBefore;
         uint256 feeReceived = IERC20(WETH).balanceOf(address(feeCollector)) - feeCollectorBefore;
@@ -232,26 +312,121 @@ contract DustSweepRouterTest is Test {
         assertApproxEqAbs(feeReceived, expectedFee, 1, "Fee should be ~0.1%");
     }
 
+    // ======================= swapETHForTokens ==============
+
+    function test_swapETHForTokens() public {
+        uint256 usdcBefore = IERC20(USDC).balanceOf(user);
+        uint256 feeCollectorBefore = IERC20(USDC).balanceOf(address(feeCollector));
+
+        vm.prank(user);
+        router.swapETHForTokens{value: 0.01 ether}(USDC, 500, 0, user, DEADLINE);
+
+        uint256 usdcReceived = IERC20(USDC).balanceOf(user) - usdcBefore;
+        uint256 feeReceived = IERC20(USDC).balanceOf(address(feeCollector)) - feeCollectorBefore;
+
+        assertGt(usdcReceived, 0, "User should receive USDC");
+        assertGt(feeReceived, 0, "FeeCollector should receive fee");
+
+        // Verify 0.1% fee
+        uint256 totalOutput = usdcReceived + feeReceived;
+        uint256 expectedFee = (totalOutput * 10) / 10_000;
+        assertApproxEqAbs(feeReceived, expectedFee, 1, "Fee should be ~0.1%");
+    }
+
+    // ======================= swapTokensForETH ==============
+
+    function test_swapTokensForETH() public {
+        _getToken(USDC, user, 0.05 ether);
+        uint256 usdcBalance = IERC20(USDC).balanceOf(user);
+        _approveRouter(USDC, user, usdcBalance);
+
+        uint256 ethBefore = user.balance;
+        uint256 feeCollectorWethBefore = IERC20(WETH).balanceOf(address(feeCollector));
+
+        vm.prank(user);
+        router.swapTokensForETH(USDC, usdcBalance, 500, 0, user, DEADLINE);
+
+        uint256 ethReceived = user.balance - ethBefore;
+        uint256 feeReceived = IERC20(WETH).balanceOf(address(feeCollector)) - feeCollectorWethBefore;
+
+        assertGt(ethReceived, 0, "User should receive ETH");
+        assertGt(feeReceived, 0, "FeeCollector should receive WETH fee");
+    }
+
+    // ======================= PAUSE =========================
+
+    function test_pause_blocksSweepDust() public {
+        vm.prank(owner);
+        router.pause();
+
+        DustSweepRouter.SwapOrder[] memory orders = new DustSweepRouter.SwapOrder[](1);
+        orders[0] = DustSweepRouter.SwapOrder({
+            tokenIn: USDC,
+            amountIn: 1_000_000,
+            poolFee: 500,
+            minAmountOut: 0
+        });
+
+        vm.prank(user);
+        vm.expectRevert(); // EnforcedPause
+        router.sweepDust(orders, WETH, user, DEADLINE);
+    }
+
+    function test_unpause_allowsSweepDust() public {
+        vm.prank(owner);
+        router.pause();
+
+        vm.prank(owner);
+        router.unpause();
+
+        // Should not revert now (will revert for other reasons like no approval, but not Paused)
+        _getToken(USDC, user, 0.01 ether);
+        uint256 usdcBalance = IERC20(USDC).balanceOf(user);
+        _approveRouter(USDC, user, usdcBalance);
+
+        DustSweepRouter.SwapOrder[] memory orders = new DustSweepRouter.SwapOrder[](1);
+        orders[0] = DustSweepRouter.SwapOrder({
+            tokenIn: USDC,
+            amountIn: usdcBalance,
+            poolFee: 500,
+            minAmountOut: 0
+        });
+
+        vm.prank(user);
+        router.sweepDust(orders, WETH, user, DEADLINE);
+
+        assertGt(IERC20(WETH).balanceOf(user), 0, "Sweep should work after unpause");
+    }
+
+    function test_pause_onlyOwner() public {
+        vm.prank(nonOwner);
+        vm.expectRevert();
+        router.pause();
+    }
+
     // ======================= FEE CALCULATIONS ==============
 
     function test_feeCalculation_dustSweep() public view {
-        // dustSweepFeeBps = 200 means 2%
         assertEq(router.dustSweepFeeBps(), 200);
 
-        // Verify math: 2% of 10000 = 200
         uint256 totalOutput = 10_000;
         uint256 fee = (totalOutput * router.dustSweepFeeBps()) / router.BPS_DENOMINATOR();
         assertEq(fee, 200, "2% of 10000 should be 200");
     }
 
     function test_feeCalculation_singleSwap() public view {
-        // swapFeeBps = 10 means 0.1%
         assertEq(router.swapFeeBps(), 10);
 
-        // Verify math: 0.1% of 10000 = 10
         uint256 totalOutput = 10_000;
         uint256 fee = (totalOutput * router.swapFeeBps()) / router.BPS_DENOMINATOR();
         assertEq(fee, 10, "0.1% of 10000 should be 10");
+    }
+
+    // ======================= BUILDER CODE ==================
+
+    function test_builderCode() public view {
+        string memory code = router.BUILDER_CODE();
+        assertEq(keccak256(bytes(code)), keccak256(bytes("bc_ox7237gv")));
     }
 
     // ======================= ADMIN =========================
@@ -307,10 +482,8 @@ contract DustSweepRouterTest is Test {
     }
 
     function test_rescueTokens_onlyOwner() public {
-        // Fund the router with ETH so _getToken can wrap ETH -> WETH -> USDC
         vm.deal(address(router), 1 ether);
 
-        // Send some USDC to router accidentally
         _getToken(USDC, address(router), 0.01 ether);
         uint256 stuckBalance = IERC20(USDC).balanceOf(address(router));
         assertGt(stuckBalance, 0);

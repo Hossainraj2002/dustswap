@@ -2,7 +2,7 @@
 // Dual-strategy quoting: CDP API (V3 tokens) → 0x API fallback (V4 / Base App coins)
 
 import { Hono } from "hono";
-import { getAddress, formatUnits, parseUnits, encodeFunctionData, erc20Abi } from "viem";
+import { getAddress, formatUnits, parseUnits, encodeFunctionData, encodePacked, erc20Abi, concat } from "viem";
 
 const tokens = new Hono();
 
@@ -52,6 +52,78 @@ const STABLECOINS = new Set([
   "0xd9aaec86b65d86f6a7b5b1b0c42ffa531710b6ca",
   "0x50c5725949a6f0c72e6c4a641f24049a917db0cb",
 ]);
+
+// ─── DustSweepRouter Contract Config ──────────────────────────────────────────
+const DUST_SWEEP_ROUTER_ADDRESS = process.env.DUST_SWEEP_ROUTER_ADDRESS || "";
+
+const dustSweepRouterAbi = [
+  {
+    name: "sweepDust",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "orders", type: "tuple[]", components: [
+        { name: "tokenIn", type: "address" },
+        { name: "amountIn", type: "uint256" },
+        { name: "poolFee", type: "uint24" },
+        { name: "minAmountOut", type: "uint256" },
+      ]},
+      { name: "tokenOut", type: "address" },
+      { name: "recipient", type: "address" },
+      { name: "deadline", type: "uint256" },
+    ],
+    outputs: [],
+  },
+  {
+    name: "sweepDustToETH",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "orders", type: "tuple[]", components: [
+        { name: "tokenIn", type: "address" },
+        { name: "amountIn", type: "uint256" },
+        { name: "poolFee", type: "uint24" },
+        { name: "minAmountOut", type: "uint256" },
+      ]},
+      { name: "recipient", type: "address" },
+      { name: "deadline", type: "uint256" },
+    ],
+    outputs: [],
+  },
+  {
+    name: "sweepDustMultiHop",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "orders", type: "tuple[]", components: [
+        { name: "tokenIn", type: "address" },
+        { name: "amountIn", type: "uint256" },
+        { name: "path", type: "bytes" },
+        { name: "minAmountOut", type: "uint256" },
+      ]},
+      { name: "tokenOut", type: "address" },
+      { name: "recipient", type: "address" },
+      { name: "deadline", type: "uint256" },
+    ],
+    outputs: [],
+  },
+  {
+    name: "sweepDustMultiHopToETH",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "orders", type: "tuple[]", components: [
+        { name: "tokenIn", type: "address" },
+        { name: "amountIn", type: "uint256" },
+        { name: "path", type: "bytes" },
+        { name: "minAmountOut", type: "uint256" },
+      ]},
+      { name: "recipient", type: "address" },
+      { name: "deadline", type: "uint256" },
+    ],
+    outputs: [],
+  },
+] as const;
 
 // ─── 0x API Config ─────────────────────────────────────────────────────────────
 // The 0x aggregator supports Uniswap V4 pools on Base — perfect fallback for
@@ -557,7 +629,11 @@ async function getQuoteViaUniswap(
   };
 }
 
-// ─── Content Coin Ownership Check ──────────────────────────────────────────────
+// ─── Content Coin Detection ─────────────────────────────────────────────────
+// Detects content coins via two rules:
+// Rule 1: totalSupply == 10,000,000 * 10^decimals (Zora content coins have fixed 10M supply)
+// Rule 2: platformReferrer() returns a valid non-zero address (Zora coin contract)
+// Also checks if the connected wallet owns the coin (payoutRecipient/owner/creator match).
 
 const OWNERSHIP_ABI = [
   { inputs: [], name: "platformReferrer", outputs: [{ name: "", type: "address" }], stateMutability: "view", type: "function" },
@@ -568,38 +644,63 @@ const OWNERSHIP_ABI = [
   { inputs: [], name: "defaultAdmin", outputs: [{ name: "", type: "address" }], stateMutability: "view", type: "function" },
 ] as const;
 
-async function getOwnContentCoins(
+const TOTAL_SUPPLY_ABI = [
+  { inputs: [], name: "totalSupply", outputs: [{ name: "", type: "uint256" }], stateMutability: "view", type: "function" },
+] as const;
+
+const DECIMALS_ABI = [
+  { inputs: [], name: "decimals", outputs: [{ name: "", type: "uint8" }], stateMutability: "view", type: "function" },
+] as const;
+
+interface ContentCoinResult {
+  isContentCoin: Set<string>;
+  isOwnContentCoin: Set<string>;
+}
+
+async function detectContentCoins(
   walletAddress: string,
   tokenAddresses: string[]
-): Promise<Set<string>> {
+): Promise<ContentCoinResult> {
   const url = getCdpRpcUrl();
-  const ownCoins = new Set<string>();
-  if (tokenAddresses.length === 0) return ownCoins;
+  const isContentCoin = new Set<string>();
+  const isOwnContentCoin = new Set<string>();
+  if (tokenAddresses.length === 0) return { isContentCoin, isOwnContentCoin };
 
   const targetAddress = walletAddress.toLowerCase();
-  const batchReq = [];
+  const batchReq: { jsonrpc: string; id: number; method: string; params: [{ to: string; data: string }, string] }[] = [];
   let reqId = 1;
-  const reqMap = new Map<number, string>();
+  const reqMap = new Map<number, { token: string; method: string }>();
 
-  // Check all 3 possible creator/owner fields
   for (const tokenAddr of tokenAddresses) {
-    const funcs = ["platformReferrer", "owner", "payoutRecipient", "creator", "admin", "defaultAdmin"] as const;
-    for (const func of funcs) {
+    // Rule 1: totalSupply check
+    try {
+      const totalSupplyData = encodeFunctionData({ abi: TOTAL_SUPPLY_ABI, functionName: "totalSupply" });
+      batchReq.push({ jsonrpc: "2.0", id: reqId, method: "eth_call", params: [{ to: tokenAddr, data: totalSupplyData }, "latest"] });
+      reqMap.set(reqId++, { token: tokenAddr.toLowerCase(), method: "totalSupply" });
+    } catch {}
+
+    // Rule 1: decimals (to compare totalSupply correctly)
+    try {
+      const decimalsData = encodeFunctionData({ abi: DECIMALS_ABI, functionName: "decimals" });
+      batchReq.push({ jsonrpc: "2.0", id: reqId, method: "eth_call", params: [{ to: tokenAddr, data: decimalsData }, "latest"] });
+      reqMap.set(reqId++, { token: tokenAddr.toLowerCase(), method: "decimals" });
+    } catch {}
+
+    // Rule 2 + ownership: platformReferrer, payoutRecipient, owner, creator
+    const ownerFuncs = ["platformReferrer", "payoutRecipient", "owner", "creator"] as const;
+    for (const func of ownerFuncs) {
       try {
         const data = encodeFunctionData({ abi: OWNERSHIP_ABI, functionName: func });
-        batchReq.push({
-          jsonrpc: "2.0",
-          id: reqId,
-          method: "eth_call",
-          params: [{ to: tokenAddr, data }, "latest"],
-        });
-        reqMap.set(reqId, tokenAddr.toLowerCase());
-        reqId++;
-      } catch (e) {}
+        batchReq.push({ jsonrpc: "2.0", id: reqId, method: "eth_call", params: [{ to: tokenAddr, data }, "latest"] });
+        reqMap.set(reqId++, { token: tokenAddr.toLowerCase(), method: func });
+      } catch {}
     }
   }
 
-  // To prevent 413 Payload Too Large, split into smaller chunks if > 100 requests
+  // Collect results per token
+  const tokenData = new Map<string, { totalSupply?: bigint; decimals?: number; hasPlatformReferrer?: boolean }>();
+  const ZERO_ADDR = "0x0000000000000000000000000000000000000000";
+
   for (let i = 0; i < batchReq.length; i += 100) {
     const chunk = batchReq.slice(i, i + 100);
     try {
@@ -608,23 +709,60 @@ async function getOwnContentCoins(
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(chunk),
       });
-      if (res.ok) {
-        const results = (await res.json()) as { id: number; result?: string; error?: any }[];
-        for (const r of results) {
-          if (r.result && r.result !== "0x" && r.result.length === 66) {
-            // padded address (32 bytes)
-            const addr = "0x" + r.result.slice(26).toLowerCase();
-            if (addr === targetAddress) {
-              const tokenAddr = reqMap.get(r.id);
-              if (tokenAddr) ownCoins.add(tokenAddr);
-            }
+      if (!res.ok) continue;
+
+      const results = (await res.json()) as { id: number; result?: string; error?: unknown }[];
+      for (const r of results) {
+        const info = reqMap.get(r.id);
+        if (!info || !r.result || r.result === "0x") continue;
+
+        const entry = tokenData.get(info.token) || {};
+
+        if (info.method === "totalSupply" && r.result.length >= 3) {
+          try { entry.totalSupply = BigInt(r.result); } catch {}
+        } else if (info.method === "decimals" && r.result.length >= 3) {
+          try { entry.decimals = Number(BigInt(r.result)); } catch {}
+        } else if (info.method === "platformReferrer" && r.result.length === 66) {
+          const addr = "0x" + r.result.slice(26).toLowerCase();
+          if (addr !== ZERO_ADDR) {
+            entry.hasPlatformReferrer = true;
+          }
+        } else if (r.result.length === 66) {
+          // Ownership check (payoutRecipient, owner, creator)
+          const addr = "0x" + r.result.slice(26).toLowerCase();
+          if (addr === targetAddress) {
+            isOwnContentCoin.add(info.token);
           }
         }
+
+        tokenData.set(info.token, entry);
       }
-    } catch (err) { }
+    } catch {}
   }
 
-  return ownCoins;
+  // Apply content coin rules
+  for (const [token, data] of tokenData) {
+    // Rule 1: Exactly 10,000,000 total supply (for any decimals)
+    if (data.totalSupply !== undefined) {
+      const decimals = data.decimals ?? 18;
+      const expectedSupply = BigInt(10_000_000) * (10n ** BigInt(decimals));
+      if (data.totalSupply === expectedSupply) {
+        isContentCoin.add(token);
+      }
+    }
+
+    // Rule 2: Has platformReferrer (Zora coin contract)
+    if (data.hasPlatformReferrer) {
+      isContentCoin.add(token);
+    }
+  }
+
+  // Own content coins are also content coins
+  for (const token of isOwnContentCoin) {
+    isContentCoin.add(token);
+  }
+
+  return { isContentCoin, isOwnContentCoin };
 }
 
 // ─── GET /api/tokens/dust?address=0x...&threshold=5 ──────────────────────────
@@ -673,7 +811,7 @@ tokens.get("/dust", async (c) => {
       .filter((addr): addr is string => !!addr && addr !== "");
       
     const exactBalances = await getExactTokenBalances(address, nonZeroAddresses);
-    const ownContentCoins = await getOwnContentCoins(address, nonZeroAddresses);
+    const contentCoinResult = await detectContentCoins(address, nonZeroAddresses);
 
     const dustTokens: {
       address: string;
@@ -686,6 +824,7 @@ tokens.get("/dust", async (c) => {
       priceUsd: number;
       logoURI: string | null;
       hasLiquidity: boolean;
+      isContentCoin: boolean;
       isOwnContentCoin: boolean;
     }[] = [];
 
@@ -730,17 +869,15 @@ tokens.get("/dust", async (c) => {
         priceUsd,
         logoURI: tb.image,
         hasLiquidity: true, // Mark all as having liquidity — we'll try 0x fallback
-        isOwnContentCoin: ownContentCoins.has(tokenAddrMap),
+        isContentCoin: contentCoinResult.isContentCoin.has(tokenAddrMap),
+        isOwnContentCoin: contentCoinResult.isOwnContentCoin.has(tokenAddrMap),
       };
 
-      if (usdValue > threshold && priceUsd > 0) continue;
       if (!tb.address || tb.address === "" || tb.symbol === "ETH") continue;
+      // Skip non-dust tokens unless they're content coins (which get included for toggle)
+      if (usdValue > threshold && priceUsd > 0 && !entry.isContentCoin) continue;
 
-      if (!entry.isOwnContentCoin && usdValue <= threshold) {
-        dustTokens.push(entry);
-      } else if (entry.isOwnContentCoin) {
-        dustTokens.push(entry);
-      }
+      dustTokens.push(entry);
     }
 
     dustTokens.sort((a, b) => b.usdValue - a.usdValue);
@@ -951,7 +1088,7 @@ tokens.post("/batch-quote", async (c) => {
     totalAmountOut += BigInt(q.amountOut || "0");
   }
 
-  // DustSwap fee: 2%
+  // DustSwap fee: 2% (applied on-chain by the contract)
   const DUST_SWEEP_FEE_BPS = 200;
   const feeAmount = (totalAmountOut * BigInt(DUST_SWEEP_FEE_BPS)) / 10000n;
   const netOutput = totalAmountOut - feeAmount;
@@ -961,6 +1098,65 @@ tokens.post("/batch-quote", async (c) => {
     estimatedOutputFormatted = formatUnits(netOutput, toTokenDecimals);
   } catch {
     estimatedOutputFormatted = "0";
+  }
+
+  // ── Build contract-routed transactions ──────────────────────────────────
+  // Instead of passing through external router calldata, we encode calls
+  // to our DustSweepRouter contract which handles swaps + fee extraction.
+
+  let approveTransactions: { to: string; data: string; gas: string; value: string }[] = [];
+  let sweepTransaction: { to: string; data: string; gas: string; value: string } | undefined;
+
+  if (DUST_SWEEP_ROUTER_ADDRESS && successfulQuotes.length > 0) {
+    const MAX_UINT256 = BigInt("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
+
+    // Build N approve transactions (one per token, targeting DustSweepRouter)
+    approveTransactions = successfulQuotes.map((q) => ({
+      to: q.tokenIn,
+      data: encodeFunctionData({
+        abi: erc20Abi,
+        functionName: "approve",
+        args: [DUST_SWEEP_ROUTER_ADDRESS as `0x${string}`, MAX_UINT256],
+      }),
+      gas: "60000",
+      value: "0",
+    }));
+
+    // Build ONE sweep transaction with all orders
+    const contractOrders = successfulQuotes.map((q) => ({
+      tokenIn: q.tokenIn as `0x${string}`,
+      amountIn: BigInt(q.amountIn),
+      poolFee: q.poolFee || 3000,
+      minAmountOut: BigInt(q.minAmountOut || "0"),
+    }));
+
+    const deadline = BigInt(Math.floor(Date.now() / 1000) + 1800); // 30 min
+
+    // Determine if ETH output (user selected ETH, not WETH)
+    const isETHOutput = toTokenSymbol === "ETH" ||
+      (toTokenAddress.toLowerCase() === WETH_ADDRESS.toLowerCase() && toTokenSymbol !== "WETH");
+
+    let sweepCalldata: string;
+    if (isETHOutput) {
+      sweepCalldata = encodeFunctionData({
+        abi: dustSweepRouterAbi,
+        functionName: "sweepDustToETH",
+        args: [contractOrders, fromAddress as `0x${string}`, deadline],
+      });
+    } else {
+      sweepCalldata = encodeFunctionData({
+        abi: dustSweepRouterAbi,
+        functionName: "sweepDust",
+        args: [contractOrders, toTokenAddress as `0x${string}`, fromAddress as `0x${string}`, deadline],
+      });
+    }
+
+    sweepTransaction = {
+      to: DUST_SWEEP_ROUTER_ADDRESS,
+      data: sweepCalldata,
+      gas: String(200000 + successfulQuotes.length * 180000),
+      value: "0",
+    };
   }
 
   return c.json(
@@ -980,6 +1176,10 @@ tokens.post("/batch-quote", async (c) => {
       outputTokenSymbol: toTokenSymbol,
       outputTokenDecimals: toTokenDecimals,
       selectedCount: successCount,
+      // Contract-routed transaction data
+      approveTransactions,
+      sweepTransaction,
+      routerAddress: DUST_SWEEP_ROUTER_ADDRESS || null,
       summary: {
         orderCount: orders.length,
         successCount,

@@ -2,12 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useAccount } from 'wagmi';
-import { type Address, formatUnits, parseAbi } from 'viem';
-
-// @ts-ignore - ox exports may not resolve correctly in Next.js bundler types
-import { Attribution } from 'ox/erc8021';
-
-const FEE_RECIPIENT: Address = '0xBcEA5A74B7b62FE59dDB8e5F2De1d3332735706E'; // Replace with actual fee recipient
+import { type Address, formatUnits } from 'viem';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -22,6 +17,7 @@ export interface DustToken {
   priceUsd: number;
   logoURI?: string;
   hasLiquidity: boolean;
+  isContentCoin?: boolean;
   isOwnContentCoin?: boolean;
 }
 
@@ -66,6 +62,18 @@ export interface BatchQuote {
   outputTokenSymbol: string;
   outputTokenDecimals: number;
   perTokenQuotes: PerTokenQuote[];
+  approveTransactions?: {
+    to: string;
+    data: string;
+    gas: string | number;
+    value: string | number;
+  }[];
+  sweepTransaction?: {
+    to: string;
+    data: string;
+    gas: string | number;
+    value: string | number;
+  };
 }
 
 export interface TransactionCall {
@@ -108,6 +116,7 @@ export interface UseDustSweepReturn {
   showOwnContentCoins: boolean;
   setShowOwnContentCoins: (v: boolean) => void;
   ownContentCoinCount: number;
+  contentCoinCount: number;
   particlesEarned: number | null;
   successData: SuccessData | null;
   clearSuccess: () => void;
@@ -159,7 +168,8 @@ export function useDustSweep(): UseDustSweepReturn {
   // ── Derived State ──────────────────────────────────────────────────────────
 
   const ownContentCoinCount = allDustTokens.filter(t => t.isOwnContentCoin).length;
-  const dustTokens = showOwnContentCoins ? allDustTokens : allDustTokens.filter(t => !t.isOwnContentCoin);
+  const contentCoinCount = allDustTokens.filter(t => t.isContentCoin).length;
+  const dustTokens = showOwnContentCoins ? allDustTokens : allDustTokens.filter(t => !t.isContentCoin);
   const noLiquidityTokens = allNoLiquidityTokens;
 
   const selectedTokens = useMemo(
@@ -211,6 +221,7 @@ export function useDustSweep(): UseDustSweepReturn {
         priceUsd:         Number(t.priceUsd || 0),
         logoURI:          (t.logoURI || t.image || undefined) as string | undefined,
         hasLiquidity:     t.hasLiquidity !== false,
+        isContentCoin:    Boolean(t.isContentCoin),
         isOwnContentCoin: Boolean(t.isOwnContentCoin),
       });
 
@@ -238,7 +249,7 @@ export function useDustSweep(): UseDustSweepReturn {
 
   // Auto-select when tokens are fetched or filter is toggled
   useEffect(() => {
-    const visibleTokens = showOwnContentCoins ? allDustTokens.filter(t => t.isOwnContentCoin) : allDustTokens.filter(t => !t.isOwnContentCoin);
+    const visibleTokens = showOwnContentCoins ? allDustTokens : allDustTokens.filter(t => !t.isContentCoin);
     const autoSelected = new Set<Address>(
       visibleTokens.filter(t => t.hasLiquidity).slice(0, MAX_SELECTED_TOKENS).map((t) => t.address)
     );
@@ -350,6 +361,10 @@ export function useDustSweep(): UseDustSweepReturn {
       const feePercent = Number(summary.dustSweepFeeBps ?? 200) / 100;
       const swapFeeUsd = Number(data.swapFeeUsd || (totalDustUsd * feePercent) / 100);
 
+      // Extract contract-routed transaction data
+      const apiApproveTransactions = (data.approveTransactions || []) as BatchQuote['approveTransactions'];
+      const apiSweepTransaction = (data.sweepTransaction || undefined) as BatchQuote['sweepTransaction'];
+
       const batchQuote: BatchQuote = {
         selectedCount: validQuotes.length,
         totalDustValueUsd: Math.round(totalDustUsd * 100) / 100,
@@ -361,6 +376,8 @@ export function useDustSweep(): UseDustSweepReturn {
         outputTokenSymbol: tokenOutInfo.symbol,
         outputTokenDecimals: outputDecimals,
         perTokenQuotes: validQuotes,
+        approveTransactions: apiApproveTransactions,
+        sweepTransaction: apiSweepTransaction,
       };
 
       setQuote(batchQuote);
@@ -384,60 +401,52 @@ export function useDustSweep(): UseDustSweepReturn {
   // Uses the pre-built transaction data from buildSwapTransaction API
 
   const sweepCalls = useMemo((): TransactionCall[] => {
-    if (!quote || !address || selectedTokens.length === 0 || !quote.perTokenQuotes.length) {
+    if (!quote || !address || selectedTokens.length === 0) {
       return [];
     }
 
     const calls: TransactionCall[] = [];
 
-    for (const pq of quote.perTokenQuotes) {
-      if (!pq.success) continue;
-
-      // Add approval transaction if needed
-      if (pq.approveTransaction && pq.approveTransaction.to && pq.approveTransaction.data) {
-        calls.push({
-          to: pq.approveTransaction.to as Address,
-          data: pq.approveTransaction.data as `0x${string}`,
-          value: BigInt(pq.approveTransaction.value || 0),
-        });
-      }
-
-      // Add swap transaction
-      if (pq.swapTransaction && pq.swapTransaction.to && pq.swapTransaction.data) {
-        calls.push({
-          to: pq.swapTransaction.to as Address,
-          data: pq.swapTransaction.data as `0x${string}`,
-          value: BigInt(pq.swapTransaction.value || 0),
-        });
-      }
-    }
-
-    // Add fee collection transaction at the very end
-    if (quote.feeAmount && quote.feeAmount !== "0") {
-      const feeVal = BigInt(quote.feeAmount);
-      if (feeVal > 0n) {
-        if (outputToken === 'ETH') {
-          // Native ETH fee transfer
+    // Contract-routed flow: N approve calls + 1 sweep call
+    // Fee is extracted on-chain by the DustSweepRouter contract
+    if (quote.approveTransactions && quote.sweepTransaction) {
+      // Add all approve transactions
+      for (const approveTx of quote.approveTransactions) {
+        if (approveTx.to && approveTx.data) {
           calls.push({
-            to: FEE_RECIPIENT,
-            data: '0x' as `0x${string}`,
-            value: feeVal,
-          });
-        } else {
-          // ERC20 fee transfer using viem
-          const tokenInfo = OUTPUT_TOKEN_MAP[outputToken];
-          const transferAbi = parseAbi(['function transfer(address to, uint256 amount) returns (bool)']);
-          const viem = require('viem');
-          const data = viem.encodeFunctionData({
-            abi: transferAbi,
-            functionName: 'transfer',
-            args: [FEE_RECIPIENT, feeVal]
-          }) as `0x${string}`;
-          
-          calls.push({
-            to: tokenInfo.address,
-            data,
+            to: approveTx.to as Address,
+            data: approveTx.data as `0x${string}`,
             value: 0n,
+          });
+        }
+      }
+
+      // Add the single sweep transaction
+      if (quote.sweepTransaction.to && quote.sweepTransaction.data) {
+        calls.push({
+          to: quote.sweepTransaction.to as Address,
+          data: quote.sweepTransaction.data as `0x${string}`,
+          value: BigInt(quote.sweepTransaction.value || 0),
+        });
+      }
+    } else {
+      // Fallback: per-token calls (for backward compat if router not configured)
+      for (const pq of quote.perTokenQuotes) {
+        if (!pq.success) continue;
+
+        if (pq.approveTransaction && pq.approveTransaction.to && pq.approveTransaction.data) {
+          calls.push({
+            to: pq.approveTransaction.to as Address,
+            data: pq.approveTransaction.data as `0x${string}`,
+            value: BigInt(pq.approveTransaction.value || 0),
+          });
+        }
+
+        if (pq.swapTransaction && pq.swapTransaction.to && pq.swapTransaction.data) {
+          calls.push({
+            to: pq.swapTransaction.to as Address,
+            data: pq.swapTransaction.data as `0x${string}`,
+            value: BigInt(pq.swapTransaction.value || 0),
           });
         }
       }
@@ -511,6 +520,7 @@ export function useDustSweep(): UseDustSweepReturn {
     showOwnContentCoins,
     setShowOwnContentCoins,
     ownContentCoinCount,
+    contentCoinCount,
     particlesEarned,
     successData,
     clearSuccess,

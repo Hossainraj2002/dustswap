@@ -440,6 +440,7 @@ export default function DustSweepPage() {
     showOwnContentCoins,
     setShowOwnContentCoins,
     ownContentCoinCount,
+    contentCoinCount,
   } = useDustSweep();
 
   const [outputDropdownOpen, setOutputDropdownOpen] = useState(false);
@@ -612,13 +613,13 @@ export default function DustSweepPage() {
         {/* Token List */}
         <div className="mb-6">
           {/* Content Coin Filter */}
-          {!isLoading && ownContentCoinCount > 0 && (
+          {!isLoading && contentCoinCount > 0 && (
             <div className="mb-4 bg-gray-900/80 border border-gray-800 rounded-xl p-4">
               <div className="flex justify-between items-start mb-2">
                 <div>
-                  <h3 className="text-white font-medium text-sm">Show your content coin</h3>
+                  <h3 className="text-white font-medium text-sm">Show content coins ({contentCoinCount})</h3>
                   <p className="text-gray-400 text-xs mt-1">
-                    Content coins often don't have much liquidity, you should try swap them separately from here.
+                    Content coins often don&apos;t have much liquidity. They are hidden by default.
                   </p>
                 </div>
                 <button

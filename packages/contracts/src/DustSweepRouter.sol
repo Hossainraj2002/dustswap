@@ -5,13 +5,14 @@ import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 import {ISwapRouter02} from "./interfaces/ISwapRouter02.sol";
 import {IWETH} from "./interfaces/IWETH.sol";
 
 /// @title DustSweepRouter
 /// @notice Batch-swap small "dust" ERC-20 balances into a single output token
 ///         via Uniswap V3 on Base, with a protocol fee sent to FeeCollector.
-contract DustSweepRouter is Ownable, ReentrancyGuard {
+contract DustSweepRouter is Ownable, ReentrancyGuard, Pausable {
     using SafeERC20 for IERC20;
 
     // ──────────────────────── Types ────────────────────────
@@ -23,11 +24,19 @@ contract DustSweepRouter is Ownable, ReentrancyGuard {
         uint256 minAmountOut;
     }
 
+    struct MultiHopSwapOrder {
+        address tokenIn;
+        uint256 amountIn;
+        bytes path;
+        uint256 minAmountOut;
+    }
+
     // ──────────────────────── Constants ────────────────────
     uint256 public constant BPS_DENOMINATOR = 10_000;
     uint256 public constant MAX_BATCH_SIZE = 10;
     uint256 public constant MAX_DUST_SWEEP_FEE_BPS = 500; // 5 %
     uint256 public constant MAX_SWAP_FEE_BPS = 100; // 1 %
+    string public constant BUILDER_CODE = "bc_ox7237gv";
 
     // ──────────────────────── Immutables ───────────────────
     ISwapRouter02 public immutable swapRouter;
@@ -71,6 +80,7 @@ contract DustSweepRouter is Ownable, ReentrancyGuard {
     error ETHTransferFailed();
     error InsufficientOutput();
     error InvalidTokenOut();
+    error DeadlineExpired();
 
     // ──────────────────────── Constructor ──────────────────
     /// @param _swapRouter   Uniswap V3 SwapRouter02 on Base.
@@ -95,17 +105,20 @@ contract DustSweepRouter is Ownable, ReentrancyGuard {
     // ──────────────────────── Receive (for WETH unwrap) ───
     receive() external payable {}
 
-    // ──────────────────────── Core: Dust Sweep ─────────────
+    // ──────────────────────── Core: Dust Sweep (single-hop) ─
 
     /// @notice Batch-swap multiple dust tokens into a single ERC-20 tokenOut.
     /// @param orders    Array of SwapOrder structs (max 10).
     /// @param tokenOut  The desired output token.
     /// @param recipient Address that receives the net output.
+    /// @param deadline  Unix timestamp after which the transaction reverts.
     function sweepDust(
         SwapOrder[] calldata orders,
         address tokenOut,
-        address recipient
-    ) external nonReentrant {
+        address recipient,
+        uint256 deadline
+    ) external nonReentrant whenNotPaused {
+        if (block.timestamp > deadline) revert DeadlineExpired();
         if (orders.length == 0) revert EmptyOrders();
         if (orders.length > MAX_BATCH_SIZE) revert BatchTooLarge();
         if (tokenOut == address(0)) revert InvalidTokenOut();
@@ -129,10 +142,13 @@ contract DustSweepRouter is Ownable, ReentrancyGuard {
     /// @notice Batch-swap multiple dust tokens into ETH (via WETH).
     /// @param orders    Array of SwapOrder structs (max 10).
     /// @param recipient Address that receives the net ETH output.
+    /// @param deadline  Unix timestamp after which the transaction reverts.
     function sweepDustToETH(
         SwapOrder[] calldata orders,
-        address recipient
-    ) external nonReentrant {
+        address recipient,
+        uint256 deadline
+    ) external nonReentrant whenNotPaused {
+        if (block.timestamp > deadline) revert DeadlineExpired();
         if (orders.length == 0) revert EmptyOrders();
         if (orders.length > MAX_BATCH_SIZE) revert BatchTooLarge();
         if (recipient == address(0)) revert ZeroAddress();
@@ -157,23 +173,84 @@ contract DustSweepRouter is Ownable, ReentrancyGuard {
         emit DustSwept(msg.sender, recipient, address(0), totalOutput, feeAmount, orders.length);
     }
 
+    // ──────────────────────── Core: Dust Sweep (multi-hop) ─
+
+    /// @notice Batch-swap multiple dust tokens via multi-hop paths into a single ERC-20.
+    /// @param orders    Array of MultiHopSwapOrder structs (max 10).
+    /// @param tokenOut  The desired output token (must match end of each path).
+    /// @param recipient Address that receives the net output.
+    /// @param deadline  Unix timestamp after which the transaction reverts.
+    function sweepDustMultiHop(
+        MultiHopSwapOrder[] calldata orders,
+        address tokenOut,
+        address recipient,
+        uint256 deadline
+    ) external nonReentrant whenNotPaused {
+        if (block.timestamp > deadline) revert DeadlineExpired();
+        if (orders.length == 0) revert EmptyOrders();
+        if (orders.length > MAX_BATCH_SIZE) revert BatchTooLarge();
+        if (tokenOut == address(0)) revert InvalidTokenOut();
+        if (recipient == address(0)) revert ZeroAddress();
+
+        uint256 totalOutput = _executeBatchMultiHopSwaps(orders);
+        if (totalOutput == 0) revert InsufficientOutput();
+
+        uint256 feeAmount = (totalOutput * dustSweepFeeBps) / BPS_DENOMINATOR;
+        uint256 netOutput = totalOutput - feeAmount;
+
+        IERC20 outputToken = IERC20(tokenOut);
+        if (feeAmount > 0) {
+            outputToken.safeTransfer(feeCollector, feeAmount);
+        }
+        outputToken.safeTransfer(recipient, netOutput);
+
+        emit DustSwept(msg.sender, recipient, tokenOut, totalOutput, feeAmount, orders.length);
+    }
+
+    /// @notice Batch-swap multiple dust tokens via multi-hop paths into ETH.
+    /// @param orders    Array of MultiHopSwapOrder structs (max 10).
+    /// @param recipient Address that receives the net ETH output.
+    /// @param deadline  Unix timestamp after which the transaction reverts.
+    function sweepDustMultiHopToETH(
+        MultiHopSwapOrder[] calldata orders,
+        address recipient,
+        uint256 deadline
+    ) external nonReentrant whenNotPaused {
+        if (block.timestamp > deadline) revert DeadlineExpired();
+        if (orders.length == 0) revert EmptyOrders();
+        if (orders.length > MAX_BATCH_SIZE) revert BatchTooLarge();
+        if (recipient == address(0)) revert ZeroAddress();
+
+        uint256 totalOutput = _executeBatchMultiHopSwaps(orders);
+        if (totalOutput == 0) revert InsufficientOutput();
+
+        uint256 feeAmount = (totalOutput * dustSweepFeeBps) / BPS_DENOMINATOR;
+        uint256 netOutput = totalOutput - feeAmount;
+
+        if (feeAmount > 0) {
+            IERC20(address(weth)).safeTransfer(feeCollector, feeAmount);
+        }
+
+        weth.withdraw(netOutput);
+        (bool success,) = recipient.call{value: netOutput}("");
+        if (!success) revert ETHTransferFailed();
+
+        emit DustSwept(msg.sender, recipient, address(0), totalOutput, feeAmount, orders.length);
+    }
+
     // ──────────────────────── Core: Single Swap ────────────
 
     /// @notice Swap a single token through Uniswap V3 with a 0.1 % fee.
-    /// @param tokenIn   Input token.
-    /// @param amountIn  Amount of input token.
-    /// @param tokenOut  Desired output token.
-    /// @param poolFee   Uniswap V3 pool fee tier (e.g. 500, 3000, 10000).
-    /// @param minOut    Minimum acceptable output (slippage protection).
-    /// @param recipient Address that receives the net output.
     function singleSwap(
         address tokenIn,
         uint256 amountIn,
         address tokenOut,
         uint24 poolFee,
         uint256 minOut,
-        address recipient
-    ) external nonReentrant {
+        address recipient,
+        uint256 deadline
+    ) external nonReentrant whenNotPaused {
+        if (block.timestamp > deadline) revert DeadlineExpired();
         if (tokenIn == address(0) || tokenOut == address(0)) revert ZeroAddress();
         if (amountIn == 0) revert ZeroAmount();
         if (recipient == address(0)) revert ZeroAddress();
@@ -205,9 +282,94 @@ contract DustSweepRouter is Ownable, ReentrancyGuard {
         emit SingleSwap(msg.sender, recipient, tokenOut, tokenIn, amountIn, amountOut, feeAmount);
     }
 
+    // ──────────────────────── ETH Swap Functions ─────────────
+
+    /// @notice Swap ETH for tokens. Wraps ETH to WETH, swaps, takes fee from output.
+    function swapETHForTokens(
+        address tokenOut,
+        uint24 poolFee,
+        uint256 minOut,
+        address recipient,
+        uint256 deadline
+    ) external payable nonReentrant whenNotPaused {
+        if (block.timestamp > deadline) revert DeadlineExpired();
+        if (msg.value == 0) revert ZeroAmount();
+        if (tokenOut == address(0)) revert ZeroAddress();
+        if (recipient == address(0)) revert ZeroAddress();
+
+        weth.deposit{value: msg.value}();
+        IERC20(address(weth)).forceApprove(address(swapRouter), msg.value);
+
+        uint256 amountOut = swapRouter.exactInputSingle(
+            ISwapRouter02.ExactInputSingleParams({
+                tokenIn: address(weth),
+                tokenOut: tokenOut,
+                fee: poolFee,
+                recipient: address(this),
+                amountIn: msg.value,
+                amountOutMinimum: minOut,
+                sqrtPriceLimitX96: 0
+            })
+        );
+
+        uint256 feeAmount = (amountOut * swapFeeBps) / BPS_DENOMINATOR;
+        uint256 netOutput = amountOut - feeAmount;
+
+        IERC20 outputToken = IERC20(tokenOut);
+        if (feeAmount > 0) {
+            outputToken.safeTransfer(feeCollector, feeAmount);
+        }
+        outputToken.safeTransfer(recipient, netOutput);
+
+        emit SingleSwap(msg.sender, recipient, tokenOut, address(weth), msg.value, amountOut, feeAmount);
+    }
+
+    /// @notice Swap tokens for ETH. Swaps to WETH, unwraps, takes fee, sends ETH.
+    function swapTokensForETH(
+        address tokenIn,
+        uint256 amountIn,
+        uint24 poolFee,
+        uint256 minOut,
+        address recipient,
+        uint256 deadline
+    ) external nonReentrant whenNotPaused {
+        if (block.timestamp > deadline) revert DeadlineExpired();
+        if (tokenIn == address(0)) revert ZeroAddress();
+        if (amountIn == 0) revert ZeroAmount();
+        if (recipient == address(0)) revert ZeroAddress();
+
+        IERC20(tokenIn).safeTransferFrom(msg.sender, address(this), amountIn);
+        IERC20(tokenIn).forceApprove(address(swapRouter), amountIn);
+
+        uint256 amountOut = swapRouter.exactInputSingle(
+            ISwapRouter02.ExactInputSingleParams({
+                tokenIn: tokenIn,
+                tokenOut: address(weth),
+                fee: poolFee,
+                recipient: address(this),
+                amountIn: amountIn,
+                amountOutMinimum: minOut,
+                sqrtPriceLimitX96: 0
+            })
+        );
+
+        uint256 feeAmount = (amountOut * swapFeeBps) / BPS_DENOMINATOR;
+        uint256 netOutput = amountOut - feeAmount;
+
+        if (feeAmount > 0) {
+            IERC20(address(weth)).safeTransfer(feeCollector, feeAmount);
+        }
+
+        weth.withdraw(netOutput);
+        (bool success,) = recipient.call{value: netOutput}("");
+        if (!success) revert ETHTransferFailed();
+
+        emit SingleSwap(msg.sender, recipient, address(0), tokenIn, amountIn, amountOut, feeAmount);
+    }
+
     // ──────────────────────── Internal ─────────────────────
 
-    /// @dev Execute all swaps and return total output (held by this contract).
+    /// @dev Execute single-hop batch swaps and return total output (held by this contract).
     function _executeBatchSwaps(
         SwapOrder[] calldata orders,
         address tokenOut
@@ -220,13 +382,9 @@ contract DustSweepRouter is Ownable, ReentrancyGuard {
             if (order.tokenIn == address(0)) revert ZeroAddress();
             if (order.amountIn == 0) revert ZeroAmount();
 
-            // Pull token from sender
             IERC20(order.tokenIn).safeTransferFrom(msg.sender, address(this), order.amountIn);
-
-            // Approve Uniswap Router
             IERC20(order.tokenIn).forceApprove(address(swapRouter), order.amountIn);
 
-            // Execute swap — output sent to this contract
             uint256 amountOut = swapRouter.exactInputSingle(
                 ISwapRouter02.ExactInputSingleParams({
                     tokenIn: order.tokenIn,
@@ -236,6 +394,38 @@ contract DustSweepRouter is Ownable, ReentrancyGuard {
                     amountIn: order.amountIn,
                     amountOutMinimum: order.minAmountOut,
                     sqrtPriceLimitX96: 0
+                })
+            );
+
+            totalOutput += amountOut;
+
+            unchecked {
+                ++i;
+            }
+        }
+    }
+
+    /// @dev Execute multi-hop batch swaps and return total output (held by this contract).
+    function _executeBatchMultiHopSwaps(
+        MultiHopSwapOrder[] calldata orders
+    ) internal returns (uint256 totalOutput) {
+        uint256 length = orders.length;
+
+        for (uint256 i; i < length;) {
+            MultiHopSwapOrder calldata order = orders[i];
+
+            if (order.tokenIn == address(0)) revert ZeroAddress();
+            if (order.amountIn == 0) revert ZeroAmount();
+
+            IERC20(order.tokenIn).safeTransferFrom(msg.sender, address(this), order.amountIn);
+            IERC20(order.tokenIn).forceApprove(address(swapRouter), order.amountIn);
+
+            uint256 amountOut = swapRouter.exactInput(
+                ISwapRouter02.ExactInputParams({
+                    path: order.path,
+                    recipient: address(this),
+                    amountIn: order.amountIn,
+                    amountOutMinimum: order.minAmountOut
                 })
             );
 
@@ -279,5 +469,15 @@ contract DustSweepRouter is Ownable, ReentrancyGuard {
         if (amount == 0) revert ZeroAmount();
         IERC20(token).safeTransfer(owner(), amount);
         emit TokensRescued(token, amount, owner());
+    }
+
+    /// @notice Pause all swap functions.
+    function pause() external onlyOwner {
+        _pause();
+    }
+
+    /// @notice Unpause all swap functions.
+    function unpause() external onlyOwner {
+        _unpause();
     }
 }
