@@ -655,11 +655,6 @@ async function getQuoteViaUniswap(
 
 const OWNERSHIP_ABI = [
   { inputs: [], name: "platformReferrer", outputs: [{ name: "", type: "address" }], stateMutability: "view", type: "function" },
-  { inputs: [], name: "owner", outputs: [{ name: "", type: "address" }], stateMutability: "view", type: "function" },
-  { inputs: [], name: "payoutRecipient", outputs: [{ name: "", type: "address" }], stateMutability: "view", type: "function" },
-  { inputs: [], name: "creator", outputs: [{ name: "", type: "address" }], stateMutability: "view", type: "function" },
-  { inputs: [], name: "admin", outputs: [{ name: "", type: "address" }], stateMutability: "view", type: "function" },
-  { inputs: [], name: "defaultAdmin", outputs: [{ name: "", type: "address" }], stateMutability: "view", type: "function" },
 ] as const;
 
 const TOTAL_SUPPLY_ABI = [
@@ -704,15 +699,12 @@ async function detectContentCoins(
       reqMap.set(reqId++, { token: tokenAddr.toLowerCase(), method: "decimals" });
     } catch {}
 
-    // Rule 2 + ownership: platformReferrer, payoutRecipient, owner, creator
-    const ownerFuncs = ["platformReferrer", "payoutRecipient", "owner", "creator"] as const;
-    for (const func of ownerFuncs) {
-      try {
-        const data = encodeFunctionData({ abi: OWNERSHIP_ABI, functionName: func });
-        batchReq.push({ jsonrpc: "2.0", id: reqId, method: "eth_call", params: [{ to: tokenAddr, data }, "latest"] });
-        reqMap.set(reqId++, { token: tokenAddr.toLowerCase(), method: func });
-      } catch {}
-    }
+    // Rule 2: platformReferrer (Zora coin contract)
+    try {
+      const data = encodeFunctionData({ abi: OWNERSHIP_ABI, functionName: "platformReferrer" });
+      batchReq.push({ jsonrpc: "2.0", id: reqId, method: "eth_call", params: [{ to: tokenAddr, data }, "latest"] });
+      reqMap.set(reqId++, { token: tokenAddr.toLowerCase(), method: "platformReferrer" });
+    } catch {}
   }
 
   // Collect results per token
@@ -745,8 +737,7 @@ async function detectContentCoins(
           if (addr !== ZERO_ADDR) {
             entry.hasPlatformReferrer = true;
           }
-        } else if (r.result.length === 66) {
-          // Ownership check (payoutRecipient, owner, creator)
+          // Ownership check
           const addr = "0x" + r.result.slice(26).toLowerCase();
           if (addr === targetAddress) {
             isOwnContentCoin.add(info.token);
@@ -879,11 +870,11 @@ tokens.get("/dust", async (c) => {
       let isOwnContentCoin = contentCoinResult.isOwnContentCoin.has(tokenAddrMap);
       let isContentCoin = contentCoinResult.isContentCoin.has(tokenAddrMap);
 
-      // Fallback: User specifically requested that exactly 10,000,000 balance implies self-content coin
+      // Fallback: If balance falls into the extremely loose 9M - 11M bound (e.g., Zora 10M tokens)
       if (!isOwnContentCoin) {
         const roundedBal = Number(tb.cryptoBalance);
-        const isTenMil = roundedBal >= 9_998_000 && roundedBal <= 10_020_000;
-        const isOneBil = roundedBal >= 999_800_000 && roundedBal <= 1_002_000_000;
+        const isTenMil = roundedBal >= 9_000_000 && roundedBal <= 11_000_000;
+        const isOneBil = roundedBal >= 900_000_000 && roundedBal <= 1_100_000_000;
         if (isTenMil || isOneBil) {
           isOwnContentCoin = true;
           isContentCoin = true;
