@@ -7,12 +7,12 @@
   "frame": {
     "version": "1",
     "name": "DustSwap",
-    "iconUrl": "https://dustswap.xyz/icon.png",
-    "homeUrl": "https://dustswap.xyz",
-    "imageUrl": "https://dustswap.xyz/og.png",
+    "iconUrl": "https://dustswap.vercel.app/icon.png",
+    "homeUrl": "https://dustswap.vercel.app",
+    "imageUrl": "https://dustswap.vercel.app/og.png",
     "buttonTitle": "Open DustSwap",
-    "splashImageUrl": "https://dustswap.xyz/splash.png",
+    "splashImageUrl": "https://dustswap.vercel.app/splash.png",
     "splashBackgroundColor": "#030305",
-    "webhookUrl": "https://dustswap.xyz/api/webhook"
+    "webhookUrl": "https://dustswap.vercel.app/api/webhook"
   }
 }
