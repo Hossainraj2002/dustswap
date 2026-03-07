@@ -42,7 +42,6 @@ export const metadata: Metadata = {
   },
   other: {
     "fc:frame": "vNext",
-    "base:app_id": "6992d2eae0d5d2cf831b5db6",
   },
   manifest: "/manifest.json",
 };
@@ -63,6 +62,11 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className={`${inter.variable} dark`} suppressHydrationWarning>
+      <head>
+        {/* Base App verification */}
+        <meta name="base:app_id" content="6992d2eae0d5d2cf831b5db6" />
+        <meta property="base:app_id" content="6992d2eae0d5d2cf831b5db6" />
+      </head>
       <body className="min-h-screen bg-[#030305] font-sans text-white antialiased">
         <Providers>
           {/* Ambient background glow effects */}
