@@ -292,7 +292,7 @@ function StickySweepPanel({
   );
 
   return (
-    <div className="fixed bottom-0 left-0 right-0 z-40 bg-gray-950/95 backdrop-blur border-t border-gray-800 shadow-2xl shadow-black/50">
+    <div className="fixed md:bottom-0 bottom-[calc(64px+env(safe-area-inset-bottom))] left-0 right-0 z-40 bg-gray-950/95 backdrop-blur border-t border-gray-800 shadow-2xl shadow-black/50">
       <div className="max-w-2xl mx-auto px-4 py-4">
 
         {/* ── Partial liquidity warning ──────────────────────────────────── */}
@@ -322,8 +322,8 @@ function StickySweepPanel({
                 <>
                   ~${quote.totalDustValueUsd.toFixed(2)} dust
                   {' → '}
-                  <span className="text-purple-400 font-medium">
-                    ~{quote.estimatedOutputFormatted} {quote.outputTokenSymbol}
+                  <span className="text-purple-400 font-medium whitespace-nowrap">
+                    ~{Number(quote.estimatedOutputFormatted).toLocaleString(undefined, { maximumFractionDigits: 6 })} {quote.outputTokenSymbol}
                   </span>
                 </>
               ) : quoteError ? (
@@ -502,8 +502,8 @@ export default function DustSweepPage() {
     <div className="min-h-screen bg-gray-950">
       {successData && <SuccessModal data={successData} onClose={clearSuccess} />}
 
-      {/* ── FIX 5: Add bottom padding so sticky panel doesn't cover tokens ── */}
-      <div className={`max-w-2xl mx-auto px-4 py-8 sm:py-12 ${hasSelectedTokens ? 'pb-40' : ''}`}>
+      {/* ── Add padding so sticky panel doesn't cover tokens, with extra room for mobile nav ── */}
+      <div className={`max-w-2xl mx-auto px-4 py-8 sm:py-12 ${hasSelectedTokens ? 'pb-48 md:pb-40' : ''}`}>
 
         {/* Header */}
         <div className="text-center mb-8">

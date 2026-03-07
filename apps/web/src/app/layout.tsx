@@ -42,6 +42,7 @@ export const metadata: Metadata = {
   },
   other: {
     "fc:frame": "vNext",
+    "base:app_id": "6992d2eae0d5d2cf831b5db6",
   },
   manifest: "/manifest.json",
 };
