@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import { useAccount, useReadContract, useBalance } from 'wagmi';
 import { parseUnits, encodeFunctionData, erc20Abi } from 'viem';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
 
 import {
   Transaction,
@@ -206,7 +207,8 @@ export default function ProfilePage() {
 
   if (!isConnected) {
     return (
-      <div className="min-h-[70vh] flex items-center justify-center p-4">
+      <ErrorBoundary>
+        <div className="min-h-[70vh] flex items-center justify-center p-4">
         <div className="bg-gray-900/80 border border-gray-800 rounded-2xl p-8 max-w-sm w-full text-center shadow-2xl glass">
           <div className="w-16 h-16 bg-purple-500/20 rounded-full flex items-center justify-center mx-auto mb-4">
             <svg className="w-8 h-8 text-purple-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -222,11 +224,13 @@ export default function ProfilePage() {
           </div>
         </div>
       </div>
+      </ErrorBoundary>
     );
   }
 
   // --- Render Connected ---
   return (
+    <ErrorBoundary>
     <div className="max-w-4xl mx-auto px-4 py-8 space-y-6 pb-24">
       
       {/* SECTION 1: Header Bar */}
@@ -397,6 +401,7 @@ export default function ProfilePage() {
       </div>
 
     </div>
+    </ErrorBoundary>
   );
 }
 
