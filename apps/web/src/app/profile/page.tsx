@@ -358,8 +358,8 @@ export default function ProfilePage() {
                <tbody className="divide-y divide-gray-800/50">
                   {leaderboard.map((row) => (
                     <tr 
-                      key={row.address} 
-                      className={`${(address && row.address.toLowerCase() === address.toLowerCase()) ? 'bg-purple-900/20' : 'hover:bg-gray-800/30'}`}
+                      key={row.address || Math.random()} 
+                      className={`${(address && row.address?.toLowerCase() === address.toLowerCase()) ? 'bg-purple-900/20' : 'hover:bg-gray-800/30'}`}
                     >
                        <td className="px-6 py-4">
                           {row.rank === 1 ? '🥇' : row.rank === 2 ? '🥈' : row.rank === 3 ? '🥉' : <span className="text-gray-400 font-mono">#{row.rank}</span>}
@@ -367,20 +367,20 @@ export default function ProfilePage() {
                        <td className="px-6 py-4">
                           <div className="flex items-center gap-3">
                              <div className="w-8 h-8 rounded-full bg-gradient-to-br from-gray-700 to-gray-800 flex items-center justify-center border border-gray-600">
-                                <span className="text-gray-300 text-xs font-bold">{row.address.slice(2,4)}</span>
+                                <span className="text-gray-300 text-xs font-bold">{row.address?.slice(2,4) || '??'}</span>
                              </div>
-                             {(address && row.address.toLowerCase() === address.toLowerCase()) ? (
+                             {(address && row.address?.toLowerCase() === address.toLowerCase()) ? (
                                 <span className="text-purple-400 font-medium">{shortAddress(row.address)} (You)</span>
                              ) : (
-                                <span className="text-gray-300">{shortAddress(row.address)}</span>
+                                <span className="text-gray-300">{shortAddress(row.address || '')}</span>
                              )}
                           </div>
                        </td>
                        <td className="px-6 py-4 text-right">
-                          <span className="text-white font-bold">⚡ {row.points.toLocaleString()}</span>
+                          <span className="text-white font-bold">⚡ {(row.points || 0).toLocaleString()}</span>
                        </td>
                        <td className="px-6 py-4 text-right">
-                          <span className="text-gray-400">{row.streak} 🔥</span>
+                          <span className="text-gray-400">{row.streak || 0} 🔥</span>
                        </td>
                     </tr>
                   ))}
