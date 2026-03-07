@@ -858,6 +858,22 @@ tokens.get("/dust", async (c) => {
         }
       }
 
+      let isOwnContentCoin = contentCoinResult.isOwnContentCoin.has(tokenAddrMap);
+      let isContentCoin = contentCoinResult.isContentCoin.has(tokenAddrMap);
+
+      // Fallback: User specifically requested that exactly 10,000,000 balance implies self-content coin
+      if (!isOwnContentCoin) {
+        const decimals = tb.decimals ?? 18;
+        const tenMillion = BigInt(10_000_000) * (10n ** BigInt(decimals));
+        const oneBillion = BigInt(1_000_000_000) * (10n ** BigInt(decimals));
+        const userBal = BigInt(rawBalance);
+        
+        if (userBal === tenMillion || userBal === oneBillion) {
+          isOwnContentCoin = true;
+          isContentCoin = true;
+        }
+      }
+
       const entry = {
         address: tb.address || "0x0000000000000000000000000000000000000000",
         name: tb.name,
@@ -869,8 +885,8 @@ tokens.get("/dust", async (c) => {
         priceUsd,
         logoURI: tb.image,
         hasLiquidity: true, // Mark all as having liquidity — we'll try 0x fallback
-        isContentCoin: contentCoinResult.isContentCoin.has(tokenAddrMap),
-        isOwnContentCoin: contentCoinResult.isOwnContentCoin.has(tokenAddrMap),
+        isContentCoin,
+        isOwnContentCoin,
       };
 
       if (!tb.address || tb.address === "" || tb.symbol === "ETH") continue;

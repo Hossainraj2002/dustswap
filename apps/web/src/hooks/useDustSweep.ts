@@ -129,11 +129,11 @@ const WETH_ADDRESS: Address = '0x4200000000000000000000000000000000000006';
 
 const OUTPUT_TOKEN_MAP: Record<
   OutputTokenOption,
-  { address: Address; symbol: string; decimals: number }
+  { address: Address; symbol: string; decimals: number; logoURI: string }
 > = {
-  ETH:  { address: WETH_ADDRESS, symbol: 'ETH',  decimals: 18 },
-  USDC: { address: USDC_ADDRESS, symbol: 'USDC', decimals: 6  },
-  WETH: { address: WETH_ADDRESS, symbol: 'WETH', decimals: 18 },
+  ETH:  { address: WETH_ADDRESS, symbol: 'ETH',  decimals: 18, logoURI: 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/info/logo.png' },
+  USDC: { address: USDC_ADDRESS, symbol: 'USDC', decimals: 6,  logoURI: 'https://basescan.org/token/images/centre-usdc_28.png' },
+  WETH: { address: WETH_ADDRESS, symbol: 'WETH', decimals: 18, logoURI: 'https://basescan.org/token/images/weth_28.png' },
 };
 
 const MAX_SELECTED_TOKENS = 10;

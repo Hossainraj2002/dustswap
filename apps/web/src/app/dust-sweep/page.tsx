@@ -33,7 +33,7 @@ const THRESHOLDS: { value: ThresholdValue; label: string }[] = [
 ];
 
 const OUTPUT_OPTIONS: { value: OutputTokenOption; label: string; icon: string; logoURI: string }[] = [
-  { value: 'ETH',  label: 'ETH',  icon: 'Ξ', logoURI: 'https://cryptologos.cc/logos/ethereum-eth-logo.png' },
+  { value: 'ETH',  label: 'ETH',  icon: 'Ξ', logoURI: 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/info/logo.png' },
   { value: 'USDC', label: 'USDC', icon: '$', logoURI: 'https://basescan.org/token/images/centre-usdc_28.png' },
   { value: 'WETH', label: 'WETH', icon: 'Ξ', logoURI: 'https://basescan.org/token/images/weth_28.png' },
 ];
