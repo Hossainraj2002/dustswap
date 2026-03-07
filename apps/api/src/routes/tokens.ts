@@ -283,11 +283,7 @@ async function get0xSwapQuote(params: {
     throw new Error("ZEROX_API_KEY not configured");
   }
 
-  // For ETH output, 0x uses 0xEeee... placeholder
-  const buyToken =
-    params.buyToken.toLowerCase() === WETH_ADDRESS.toLowerCase()
-      ? ETH_PLACEHOLDER
-      : params.buyToken;
+  const buyToken = params.buyToken;
 
   // 0x API v2 uses /swap/allowance-holder/quote (v1 is deprecated, returns 404)
   const url = new URL(`${ZEROX_API_BASE}/swap/allowance-holder/quote`);
@@ -863,12 +859,8 @@ tokens.get("/dust", async (c) => {
 
       // Fallback: User specifically requested that exactly 10,000,000 balance implies self-content coin
       if (!isOwnContentCoin) {
-        const decimals = tb.decimals ?? 18;
-        const tenMillion = BigInt(10_000_000) * (10n ** BigInt(decimals));
-        const oneBillion = BigInt(1_000_000_000) * (10n ** BigInt(decimals));
-        const userBal = BigInt(rawBalance);
-        
-        if (userBal === tenMillion || userBal === oneBillion) {
+        const roundedBal = Math.round(Number(tb.cryptoBalance));
+        if (roundedBal === 10_000_000 || roundedBal === 1_000_000_000) {
           isOwnContentCoin = true;
           isContentCoin = true;
         }
