@@ -647,152 +647,7 @@ async function getQuoteViaUniswap(
   };
 }
 
-// ─── Content Coin Detection ─────────────────────────────────────────────────
-// Detects content coins via two rules:
-// Rule 1: totalSupply == 10,000,000 * 10^decimals (Zora content coins have fixed 10M supply)
-// Rule 2: platformReferrer() returns a valid non-zero address (Zora coin contract)
-// Also checks if the connected wallet owns the coin (payoutRecipient/owner/creator match).
 
-const OWNERSHIP_ABI = [
-  { inputs: [], name: "platformReferrer", outputs: [{ name: "", type: "address" }], stateMutability: "view", type: "function" },
-] as const;
-
-const TOTAL_SUPPLY_ABI = [
-  { inputs: [], name: "totalSupply", outputs: [{ name: "", type: "uint256" }], stateMutability: "view", type: "function" },
-] as const;
-
-const DECIMALS_ABI = [
-  { inputs: [], name: "decimals", outputs: [{ name: "", type: "uint8" }], stateMutability: "view", type: "function" },
-] as const;
-
-interface ContentCoinResult {
-  isContentCoin: Set<string>;
-  isOwnContentCoin: Set<string>;
-}
-
-async function detectContentCoins(
-  walletAddress: string,
-  tokenAddresses: string[]
-): Promise<ContentCoinResult> {
-  const url = getCdpRpcUrl();
-  const isContentCoin = new Set<string>();
-  const isOwnContentCoin = new Set<string>();
-  if (tokenAddresses.length === 0) return { isContentCoin, isOwnContentCoin };
-
-  const targetAddress = walletAddress.toLowerCase();
-  const batchReq: { jsonrpc: string; id: number; method: string; params: [{ to: string; data: string }, string] }[] = [];
-  let reqId = 1;
-  const reqMap = new Map<number, { token: string; method: string }>();
-
-  for (const tokenAddr of tokenAddresses) {
-    // Rule 1: totalSupply check
-    try {
-      const totalSupplyData = encodeFunctionData({ abi: TOTAL_SUPPLY_ABI, functionName: "totalSupply" });
-      batchReq.push({ jsonrpc: "2.0", id: reqId, method: "eth_call", params: [{ to: tokenAddr, data: totalSupplyData }, "latest"] });
-      reqMap.set(reqId++, { token: tokenAddr.toLowerCase(), method: "totalSupply" });
-    } catch {}
-
-    // Rule 1: decimals (to compare totalSupply correctly)
-    try {
-      const decimalsData = encodeFunctionData({ abi: DECIMALS_ABI, functionName: "decimals" });
-      batchReq.push({ jsonrpc: "2.0", id: reqId, method: "eth_call", params: [{ to: tokenAddr, data: decimalsData }, "latest"] });
-      reqMap.set(reqId++, { token: tokenAddr.toLowerCase(), method: "decimals" });
-    } catch {}
-
-    // Rule 2: platformReferrer (Zora coin contract)
-    try {
-      const data = encodeFunctionData({ abi: OWNERSHIP_ABI, functionName: "platformReferrer" });
-      batchReq.push({ jsonrpc: "2.0", id: reqId, method: "eth_call", params: [{ to: tokenAddr, data }, "latest"] });
-      reqMap.set(reqId++, { token: tokenAddr.toLowerCase(), method: "platformReferrer" });
-    } catch {}
-  }
-
-  // Collect results per token
-  const tokenData = new Map<string, { totalSupply?: bigint; decimals?: number; hasPlatformReferrer?: boolean }>();
-  const ZERO_ADDR = "0x0000000000000000000000000000000000000000";
-
-  for (let i = 0; i < batchReq.length; i += 100) {
-    const chunk = batchReq.slice(i, i + 100);
-    let res: Response | null = null;
-    let success = false;
-    for (let retries = 0; retries < 3; retries++) {
-      try {
-        res = await fetch(url, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(chunk),
-        });
-
-        if (res.status === 429) {
-          console.warn(`[detectContentCoins] Rate limited (429), retrying in ${1000 * (retries + 1)}ms...`);
-          await sleep(1000 * (retries + 1));
-          continue;
-        }
-
-        if (res.ok) {
-          success = true;
-          break;
-        }
-      } catch (e) {
-        console.warn(`[detectContentCoins] Network error, retrying...`, e);
-      }
-    }
-
-    if (!success || !res) continue;
-
-    try {
-
-      const results = (await res.json()) as { id: number; result?: string; error?: unknown }[];
-      for (const r of results) {
-        const info = reqMap.get(r.id);
-        if (!info || !r.result || r.result === "0x") continue;
-
-        const entry = tokenData.get(info.token) || {};
-
-        if (info.method === "totalSupply" && r.result.length >= 3) {
-          try { entry.totalSupply = BigInt(r.result); } catch {}
-        } else if (info.method === "decimals" && r.result.length >= 3) {
-          try { entry.decimals = Number(BigInt(r.result)); } catch {}
-        } else if (info.method === "platformReferrer" && r.result.length === 66) {
-          const addr = "0x" + r.result.slice(26).toLowerCase();
-          if (addr !== ZERO_ADDR) {
-            entry.hasPlatformReferrer = true;
-          }
-          // Ownership check (if referrer is the current wallet, they created it via platform)
-          if (addr === targetAddress) {
-            isOwnContentCoin.add(info.token);
-          }
-        }
-
-        tokenData.set(info.token, entry);
-      }
-    } catch {}
-  }
-
-  // Apply content coin rules
-  for (const [token, data] of tokenData) {
-    // Rule 1: Exactly 10,000,000 total supply (for any decimals)
-    if (data.totalSupply !== undefined) {
-      const decimals = data.decimals ?? 18;
-      const expectedSupply = BigInt(10_000_000) * (10n ** BigInt(decimals));
-      if (data.totalSupply === expectedSupply) {
-        isContentCoin.add(token);
-      }
-    }
-
-    // Rule 2: Has platformReferrer (Zora coin contract)
-    if (data.hasPlatformReferrer) {
-      isContentCoin.add(token);
-    }
-  }
-
-  // Own content coins are also content coins
-  for (const token of isOwnContentCoin) {
-    isContentCoin.add(token);
-  }
-
-  return { isContentCoin, isOwnContentCoin };
-}
 
 // ─── GET /api/tokens/dust?address=0x...&threshold=5 ──────────────────────────
 
@@ -840,7 +695,7 @@ tokens.get("/dust", async (c) => {
       .filter((addr): addr is string => !!addr && addr !== "");
       
     const exactBalances = await getExactTokenBalances(address, nonZeroAddresses);
-    const contentCoinResult = await detectContentCoins(address, nonZeroAddresses);
+
 
     const dustTokens: {
       address: string;
@@ -887,20 +742,6 @@ tokens.get("/dust", async (c) => {
         }
       }
 
-      let isOwnContentCoin = contentCoinResult.isOwnContentCoin.has(tokenAddrMap);
-      let isContentCoin = contentCoinResult.isContentCoin.has(tokenAddrMap);
-
-      // Fallback: If balance falls strictly into the 9.99M - 10.01M bound
-      if (!isOwnContentCoin) {
-        const roundedBal = Number(tb.cryptoBalance);
-        const isTenMil = roundedBal >= 9_990_000 && roundedBal <= 10_010_000;
-        const isOneBil = roundedBal >= 999_000_000 && roundedBal <= 1_001_000_000;
-        if (isTenMil || isOneBil) {
-          isOwnContentCoin = true;
-          isContentCoin = true;
-        }
-      }
-
       const entry = {
         address: tb.address || "0x0000000000000000000000000000000000000000",
         name: tb.name,
@@ -912,13 +753,13 @@ tokens.get("/dust", async (c) => {
         priceUsd,
         logoURI: tb.image,
         hasLiquidity: true, // Mark all as having liquidity — we'll try 0x fallback
-        isContentCoin,
-        isOwnContentCoin,
+        isContentCoin: false,
+        isOwnContentCoin: false,
       };
 
       if (!tb.address || tb.address === "" || tb.symbol === "ETH") continue;
-      // Skip non-dust tokens unless they're content coins (which get included for toggle)
-      if (usdValue > threshold && priceUsd > 0 && !entry.isContentCoin) continue;
+      // Skip non-dust tokens
+      if (usdValue > threshold && priceUsd > 0) continue;
 
       dustTokens.push(entry);
     }

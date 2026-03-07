@@ -163,13 +163,10 @@ export function useDustSweep(): UseDustSweepReturn {
   const [particlesEarned, setParticlesEarned] = useState<number | null>(null);
   const [successData, setSuccessData] = useState<SuccessData | null>(null);
 
-  const [showOwnContentCoins, setShowOwnContentCoins] = useState(false);
 
   // ── Derived State ──────────────────────────────────────────────────────────
 
-  const ownContentCoinCount = allDustTokens.filter(t => t.isOwnContentCoin).length;
-  const contentCoinCount = allDustTokens.filter(t => t.isContentCoin).length;
-  const dustTokens = showOwnContentCoins ? allDustTokens.filter(t => t.isContentCoin) : allDustTokens.filter(t => !t.isContentCoin);
+  const dustTokens = allDustTokens;
   const noLiquidityTokens = allNoLiquidityTokens;
 
   const selectedTokens = useMemo(
@@ -247,14 +244,7 @@ export function useDustSweep(): UseDustSweepReturn {
     fetchDustTokens();
   }, [fetchDustTokens]);
 
-  // Auto-select when tokens are fetched or filter is toggled
-  useEffect(() => {
-    const visibleTokens = showOwnContentCoins ? allDustTokens : allDustTokens.filter(t => !t.isContentCoin);
-    const autoSelected = new Set<Address>(
-      visibleTokens.filter(t => t.hasLiquidity).slice(0, MAX_SELECTED_TOKENS).map((t) => t.address)
-    );
-    setSelectedAddresses(autoSelected);
-  }, [allDustTokens, showOwnContentCoins]);
+
 
   // Clear quote when selection or output changes
   useEffect(() => {
@@ -532,10 +522,6 @@ export function useDustSweep(): UseDustSweepReturn {
     error,
     quoteError,
     handleSuccess,
-    showOwnContentCoins,
-    setShowOwnContentCoins,
-    ownContentCoinCount,
-    contentCoinCount,
     particlesEarned,
     successData,
     clearSuccess,

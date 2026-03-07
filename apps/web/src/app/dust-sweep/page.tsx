@@ -612,41 +612,7 @@ export default function DustSweepPage() {
 
         {/* Token List */}
         <div className="mb-6">
-          {/* Content Coin Filter */}
-          {!isLoading && contentCoinCount > 0 && (
-            <div className="mb-4 bg-gray-900/80 border border-gray-800 rounded-xl p-4">
-              <div className="flex justify-between items-start mb-2">
-                <div>
-                  <h3 className="text-white font-medium text-sm">Show self content coins ({contentCoinCount})</h3>
-                  <p className="text-gray-400 text-xs mt-1">
-                    Content coins often don&apos;t have much liquidity. They are hidden by default.
-                  </p>
-                </div>
-                <button
-                  onClick={() => setShowOwnContentCoins(!showOwnContentCoins)}
-                  className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center justify-center rounded-full focus:outline-none transition-colors duration-200 ease-in-out ${
-                    showOwnContentCoins ? 'bg-purple-600' : 'bg-gray-700'
-                  }`}
-                  role="switch"
-                  aria-checked={showOwnContentCoins}
-                >
-                  <span className="sr-only">Toggle self content coins</span>
-                  <span
-                    aria-hidden="true"
-                    className={`pointer-events-none absolute left-0 inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
-                      showOwnContentCoins ? 'translate-x-4' : 'translate-x-[2px]'
-                    } top-[2px]`}
-                  />
-                </button>
-              </div>
-              {showOwnContentCoins && (
-                <div className="mt-3 p-3 bg-amber-900/20 border border-amber-800/40 rounded-lg text-amber-400 text-xs leading-relaxed">
-                  <span className="font-semibold block mb-1">Warning:</span>
-                  The value showing is not correct. You will not get the same value after swap due to liquidity issues. Only process after you understand it.
-                </div>
-              )}
-            </div>
-          )}
+
 
           {/* Select controls */}
           <div className="flex items-center justify-between mb-3">
