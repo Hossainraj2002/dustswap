@@ -169,7 +169,7 @@ export function useDustSweep(): UseDustSweepReturn {
 
   const ownContentCoinCount = allDustTokens.filter(t => t.isOwnContentCoin).length;
   const contentCoinCount = allDustTokens.filter(t => t.isContentCoin).length;
-  const dustTokens = showOwnContentCoins ? allDustTokens : allDustTokens.filter(t => !t.isContentCoin);
+  const dustTokens = showOwnContentCoins ? allDustTokens.filter(t => t.isContentCoin) : allDustTokens.filter(t => !t.isContentCoin);
   const noLiquidityTokens = allNoLiquidityTokens;
 
   const selectedTokens = useMemo(
