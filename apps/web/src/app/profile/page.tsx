@@ -59,6 +59,11 @@ function shortAddress(address: string) {
 
 export default function ProfilePage() {
   const { address, isConnected } = useAccount();
+  const [isMounted, setIsMounted] = useState(false);
+
+  useEffect(() => {
+    setIsMounted(true);
+  }, []);
 
   const [profile, setProfile] = useState<NeynarProfile | null>(null);
   const [stats, setStats] = useState<UserStats | null>(null);
@@ -196,7 +201,9 @@ export default function ProfilePage() {
   }, [address, stats]);
 
 
-  // --- Render Unconnected ---
+  // --- Render Unconnected / Unmounted ---
+  if (!isMounted) return null;
+
   if (!isConnected) {
     return (
       <div className="min-h-[70vh] flex items-center justify-center p-4">
@@ -280,7 +287,7 @@ export default function ProfilePage() {
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <StatCard title="Particle Points" value={stats?.totalPoints.toLocaleString()} icon="⚡" />
         <StatCard title="Dust Swept" value={stats?.dustSwept.toLocaleString()} icon="🌪️" />
-        <StatCard title="Swap Volume" value={`$${stats?.swapVolume.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits:2})}`} icon="💱" />
+        <StatCard title="Swap Volume" value={stats ? `$${stats.swapVolume.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits:2})}` : undefined} icon="💱" />
         <StatCard title="Tokens Burned" value={stats?.tokensBurned.toLocaleString()} icon="🔥" />
       </div>
 
