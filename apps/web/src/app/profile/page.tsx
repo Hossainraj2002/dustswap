@@ -250,7 +250,7 @@ export default function ProfilePage() {
 
         <div className="bg-purple-900/30 border border-purple-500/30 px-5 py-2.5 rounded-xl shadow-[0_0_15px_rgba(168,85,247,0.2)]">
           <p className="text-purple-300 text-xs font-semibold uppercase tracking-wider mb-0.5">Particle Points</p>
-          <p className="text-2xl font-bold text-white tracking-tight">⚡ {stats?.totalPoints.toLocaleString() || '0'}</p>
+          <p className="text-2xl font-bold text-white tracking-tight">⚡ {(stats?.totalPoints || 0).toLocaleString()}</p>
         </div>
       </div>
 
