@@ -497,6 +497,9 @@ export function useDustSweep(): UseDustSweepReturn {
         particlesEarned: earned,
       });
 
+      setSelectedAddresses(new Set());
+      setQuote(null);
+
       setTimeout(() => { fetchDustTokens(); }, 3000);
     },
     [address, selectedTokens, outputToken, threshold, quote, fetchDustTokens]

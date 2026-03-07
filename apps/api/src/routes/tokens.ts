@@ -890,11 +890,11 @@ tokens.get("/dust", async (c) => {
       let isOwnContentCoin = contentCoinResult.isOwnContentCoin.has(tokenAddrMap);
       let isContentCoin = contentCoinResult.isContentCoin.has(tokenAddrMap);
 
-      // Fallback: If balance falls into the extremely loose 9M - 11M bound (e.g., Zora 10M tokens)
+      // Fallback: If balance falls strictly into the 9.99M - 10.01M bound
       if (!isOwnContentCoin) {
         const roundedBal = Number(tb.cryptoBalance);
-        const isTenMil = roundedBal >= 9_000_000 && roundedBal <= 11_000_000;
-        const isOneBil = roundedBal >= 900_000_000 && roundedBal <= 1_100_000_000;
+        const isTenMil = roundedBal >= 9_990_000 && roundedBal <= 10_010_000;
+        const isOneBil = roundedBal >= 999_000_000 && roundedBal <= 1_001_000_000;
         if (isTenMil || isOneBil) {
           isOwnContentCoin = true;
           isContentCoin = true;

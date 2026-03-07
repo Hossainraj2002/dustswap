@@ -617,7 +617,7 @@ export default function DustSweepPage() {
             <div className="mb-4 bg-gray-900/80 border border-gray-800 rounded-xl p-4">
               <div className="flex justify-between items-start mb-2">
                 <div>
-                  <h3 className="text-white font-medium text-sm">Show content coins ({contentCoinCount})</h3>
+                  <h3 className="text-white font-medium text-sm">Show self content coins ({contentCoinCount})</h3>
                   <p className="text-gray-400 text-xs mt-1">
                     Content coins often don&apos;t have much liquidity. They are hidden by default.
                   </p>
@@ -630,7 +630,7 @@ export default function DustSweepPage() {
                   role="switch"
                   aria-checked={showOwnContentCoins}
                 >
-                  <span className="sr-only">Toggle content coins</span>
+                  <span className="sr-only">Toggle self content coins</span>
                   <span
                     aria-hidden="true"
                     className={`pointer-events-none absolute left-0 inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
