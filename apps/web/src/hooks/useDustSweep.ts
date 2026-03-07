@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useAccount } from 'wagmi';
-import { type Address, formatUnits } from 'viem';
+import { type Address, formatUnits, encodeFunctionData } from 'viem';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -406,54 +406,66 @@ export function useDustSweep(): UseDustSweepReturn {
     }
 
     const calls: TransactionCall[] = [];
+    let totalMinOutput = 0n;
 
-    // Contract-routed flow: N approve calls + 1 sweep call
-    // Fee is extracted on-chain by the DustSweepRouter contract
-    if (quote.approveTransactions && quote.sweepTransaction) {
-      // Add all approve transactions
-      for (const approveTx of quote.approveTransactions) {
-        if (approveTx.to && approveTx.data) {
-          calls.push({
-            to: approveTx.to as Address,
-            data: approveTx.data as `0x${string}`,
-            value: 0n,
-          });
-        }
-      }
+    // 1. Add all per-token approve and swap calls
+    for (const pq of quote.perTokenQuotes) {
+      if (!pq.success) continue;
 
-      // Add the single sweep transaction
-      if (quote.sweepTransaction.to && quote.sweepTransaction.data) {
+      if (pq.approveTransaction && pq.approveTransaction.to && pq.approveTransaction.data) {
         calls.push({
-          to: quote.sweepTransaction.to as Address,
-          data: quote.sweepTransaction.data as `0x${string}`,
-          value: BigInt(quote.sweepTransaction.value || 0),
+          to: pq.approveTransaction.to as Address,
+          data: pq.approveTransaction.data as `0x${string}`,
+          value: BigInt(pq.approveTransaction.value || 0),
         });
       }
-    } else {
-      // Fallback: per-token calls (for backward compat if router not configured)
-      for (const pq of quote.perTokenQuotes) {
-        if (!pq.success) continue;
 
-        if (pq.approveTransaction && pq.approveTransaction.to && pq.approveTransaction.data) {
-          calls.push({
-            to: pq.approveTransaction.to as Address,
-            data: pq.approveTransaction.data as `0x${string}`,
-            value: BigInt(pq.approveTransaction.value || 0),
-          });
-        }
+      if (pq.swapTransaction && pq.swapTransaction.to && pq.swapTransaction.data) {
+        calls.push({
+          to: pq.swapTransaction.to as Address,
+          data: pq.swapTransaction.data as `0x${string}`,
+          value: BigInt(pq.swapTransaction.value || 0),
+        });
+      }
 
-        if (pq.swapTransaction && pq.swapTransaction.to && pq.swapTransaction.data) {
-          calls.push({
-            to: pq.swapTransaction.to as Address,
-            data: pq.swapTransaction.data as `0x${string}`,
-            value: BigInt(pq.swapTransaction.value || 0),
-          });
-        }
+      if (pq.minAmountOut) {
+        totalMinOutput += BigInt(pq.minAmountOut);
       }
     }
 
+    // 2. Add 2% Fee Transfer
+    const feeCollector = (process.env.NEXT_PUBLIC_FEE_COLLECTOR_ADDRESS || '0x37f9061676b0425b652d7e54f3c386cf6015c7d3') as Address;
+    const feeAmount = (totalMinOutput * 2n) / 100n;
+    const outTokenAddr = outputToken === 'USDC' ? USDC_ADDRESS : WETH_ADDRESS;
+
+    if (feeAmount > 0n && calls.length > 0) {
+      calls.push({
+        to: outTokenAddr,
+        data: encodeFunctionData({
+          abi: [{ inputs: [{ name: "to", type: "address" }, { name: "amount", type: "uint256" }], name: "transfer", outputs: [{ name: "", type: "bool" }], stateMutability: "nonpayable", type: "function" }],
+          functionName: "transfer",
+          args: [feeCollector, feeAmount]
+        }),
+        value: 0n,
+      });
+    }
+
+    // 3. Unwrap WETH if output is ETH
+    const netOutput = totalMinOutput - feeAmount;
+    if (outputToken === 'ETH' && netOutput > 0n && calls.length > 0) {
+      calls.push({
+        to: WETH_ADDRESS,
+        data: encodeFunctionData({
+          abi: [{ inputs: [{ name: "amount", type: "uint256" }], name: "withdraw", outputs: [], stateMutability: "nonpayable", type: "function" }],
+          functionName: "withdraw",
+          args: [netOutput]
+        }),
+        value: 0n,
+      });
+    }
+
     return calls;
-  }, [quote, address, selectedTokens]);
+  }, [quote, address, selectedTokens, outputToken]);
 
   // ── 5. Handle Success ─────────────────────────────────────────────────────
 
