@@ -713,13 +713,34 @@ async function detectContentCoins(
 
   for (let i = 0; i < batchReq.length; i += 100) {
     const chunk = batchReq.slice(i, i + 100);
+    let res: Response | null = null;
+    let success = false;
+    for (let retries = 0; retries < 3; retries++) {
+      try {
+        res = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(chunk),
+        });
+
+        if (res.status === 429) {
+          console.warn(`[detectContentCoins] Rate limited (429), retrying in ${1000 * (retries + 1)}ms...`);
+          await sleep(1000 * (retries + 1));
+          continue;
+        }
+
+        if (res.ok) {
+          success = true;
+          break;
+        }
+      } catch (e) {
+        console.warn(`[detectContentCoins] Network error, retrying...`, e);
+      }
+    }
+
+    if (!success || !res) continue;
+
     try {
-      const res = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(chunk),
-      });
-      if (!res.ok) continue;
 
       const results = (await res.json()) as { id: number; result?: string; error?: unknown }[];
       for (const r of results) {
@@ -737,8 +758,7 @@ async function detectContentCoins(
           if (addr !== ZERO_ADDR) {
             entry.hasPlatformReferrer = true;
           }
-          // Ownership check
-          const addr = "0x" + r.result.slice(26).toLowerCase();
+          // Ownership check (if referrer is the current wallet, they created it via platform)
           if (addr === targetAddress) {
             isOwnContentCoin.add(info.token);
           }
