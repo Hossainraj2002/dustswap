@@ -2,7 +2,6 @@ import type { Metadata, Viewport } from "next";
 import { Inter } from "next/font/google";
 import { Providers } from "./providers";
 import { AppShell } from "@/components/AppShell";
-import { MiniKitProvider } from "@coinbase/onchainkit/minikit";
 import "./globals.css";
 
 const inter = Inter({
@@ -90,9 +89,7 @@ export default function RootLayout({
 
           {/* App shell */}
           <div className="relative z-10">
-            <MiniKitProvider>
-              <AppShell>{children}</AppShell>
-            </MiniKitProvider>
+            <AppShell>{children}</AppShell>
           </div>
         </Providers>
       </body>
