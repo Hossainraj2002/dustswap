@@ -162,25 +162,37 @@ function sleep(ms: number): Promise<void> {
 
 async function cdpRpc(
   method: string,
-  params: unknown[]
+  params: unknown[],
+  retries = 3
 ): Promise<{
   result?: unknown;
   error?: { code: number; message: string };
 }> {
   const url = getCdpRpcUrl();
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ id: 1, jsonrpc: "2.0", method, params }),
-  });
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`CDP RPC failed (${res.status}): ${text}`);
+  for (let i = 0; i < retries; i++) {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: 1, jsonrpc: "2.0", method, params }),
+    });
+
+    if (res.status === 429) {
+      console.warn(`[cdpRpc] Rate limited (429), retrying in ${1000 * (i + 1)}ms...`);
+      await sleep(1000 * (i + 1));
+      continue;
+    }
+
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`CDP RPC failed (${res.status}): ${text}`);
+    }
+
+    return (await res.json()) as {
+      result?: unknown;
+      error?: { code: number; message: string };
+    };
   }
-  return (await res.json()) as {
-    result?: unknown;
-    error?: { code: number; message: string };
-  };
+  throw new Error(`CDP RPC failed: Rate limited after ${retries} retries`);
 }
 
 // ─── Exact Balance Fetching (Multicall fallback) ───────────────────────────────
@@ -218,13 +230,23 @@ async function getExactTokenBalances(
   });
 
   try {
-    const res = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(batchReq),
-    });
+    let res: Response | null = null;
+    for (let i = 0; i < 3; i++) {
+        res = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(batchReq),
+        });
 
-    if (res.ok) {
+        if (res.status === 429) {
+          console.warn(`[getExactTokenBalances] Rate limited (429), retrying in ${1000 * (i + 1)}ms...`);
+          await sleep(1000 * (i + 1));
+          continue;
+        }
+        break;
+    }
+
+    if (res && res.ok) {
       const results = (await res.json()) as { id: number; result?: string; error?: any }[];
       for (const r of results) {
         if (r.result && r.result !== "0x") {
@@ -859,8 +881,10 @@ tokens.get("/dust", async (c) => {
 
       // Fallback: User specifically requested that exactly 10,000,000 balance implies self-content coin
       if (!isOwnContentCoin) {
-        const roundedBal = Math.round(Number(tb.cryptoBalance));
-        if (roundedBal === 10_000_000 || roundedBal === 1_000_000_000) {
+        const roundedBal = Number(tb.cryptoBalance);
+        const isTenMil = roundedBal >= 9_998_000 && roundedBal <= 10_020_000;
+        const isOneBil = roundedBal >= 999_800_000 && roundedBal <= 1_002_000_000;
+        if (isTenMil || isOneBil) {
           isOwnContentCoin = true;
           isContentCoin = true;
         }
