@@ -60,7 +60,7 @@ function shortAddress(address: string) {
   return `${address.slice(0, 6)}...${address.slice(-4)}`;
 }
 
-export default function ProfilePage() {
+function ProfilePageContent() {
   const { address, isConnected } = useAccount();
   const [isMounted, setIsMounted] = useState(false);
 
@@ -210,8 +210,7 @@ export default function ProfilePage() {
 
   if (!isConnected) {
     return (
-      <ErrorBoundary>
-        <div className="min-h-[70vh] flex items-center justify-center p-4">
+      <div className="min-h-[70vh] flex items-center justify-center p-4">
         <div className="bg-gray-900/80 border border-gray-800 rounded-2xl p-8 max-w-sm w-full text-center shadow-2xl glass">
           <div className="w-16 h-16 bg-purple-500/20 rounded-full flex items-center justify-center mx-auto mb-4">
             <svg className="w-8 h-8 text-purple-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -227,13 +226,11 @@ export default function ProfilePage() {
           </div>
         </div>
       </div>
-      </ErrorBoundary>
     );
   }
 
   // --- Render Connected ---
   return (
-    <ErrorBoundary>
     <div className="max-w-4xl mx-auto px-4 py-8 space-y-6 pb-24">
       
       {/* SECTION 1: Header Bar */}
@@ -412,6 +409,13 @@ export default function ProfilePage() {
       </div>
 
     </div>
+  );
+}
+
+export default function ProfilePage() {
+  return (
+    <ErrorBoundary>
+      <ProfilePageContent />
     </ErrorBoundary>
   );
 }
