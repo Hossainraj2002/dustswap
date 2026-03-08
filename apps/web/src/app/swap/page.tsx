@@ -552,7 +552,7 @@ export default function SwapPage() {
     if (!swap.inputToken || !swap.outputToken) return { text: 'Select Token', disabled: true, action: 'none' };
     if (!swap.amountIn || parseFloat(swap.amountIn) <= 0) return { text: 'Enter Amount', disabled: true, action: 'none' };
     if (swap.isQuoting) return { text: 'Getting Quote...', disabled: true, action: 'none' };
-    if (swap.quoteError) return { text: 'Quote Error', disabled: false, action: 'retry' };
+    if (swap.error) return { text: 'Quote Error', disabled: false, action: 'retry' };
     if (!swap.quote) return { text: 'Get Quote', disabled: false, action: 'quote' };
     if (swap.isApproving) return { text: 'Approving...', disabled: true, action: 'none' };
     if (swap.isSwapping) return { text: 'Swapping...', disabled: true, action: 'none' };
