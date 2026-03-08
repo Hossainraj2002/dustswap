@@ -501,6 +501,8 @@ export function useUniswapSwap() {
     setState(prev => ({ ...prev, error: null }));
   }, []);
 
+  const isLoading = state.isQuoting || state.isApproving || state.isSigning || state.isSwapping;
+
   return {
     ...state,
     setInputToken,
@@ -513,9 +515,9 @@ export function useUniswapSwap() {
     signUniswapXOrder,
     clearError,
     isConnected,
-    isLoading: state.isQuoting || state.isApproving || state.isSigning || state.isSwapping,
+    isLoading,
     hasQuote: !!state.quote,
-    canSwap: !!state.quote && !state.isLoading && parseFloat(state.amountIn) > 0,
+    canSwap: !!state.quote && !isLoading && parseFloat(state.amountIn) > 0,
   };
 }
 
