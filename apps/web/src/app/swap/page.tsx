@@ -143,15 +143,15 @@ function TokenSelector({ isOpen, onClose, onSelect, excludeToken, title }: Token
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center">
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center safe-area-inset">
       {/* Backdrop */}
-      <div 
+      <div
         className="absolute inset-0 bg-black/70 backdrop-blur-sm animate-fade-in"
         onClick={onClose}
       />
       
       {/* Modal */}
-      <div className="relative w-full max-w-md bg-[#0D111C] border border-[#1B2236] rounded-t-3xl sm:rounded-3xl max-h-[85vh] overflow-hidden flex flex-col animate-slide-up">
+      <div className="relative w-full max-w-md bg-[#0D111C] border border-[#1B2236] rounded-t-3xl sm:rounded-3xl max-h-[80dvh] sm:max-h-[85vh] overflow-hidden flex flex-col animate-slide-up">
         {/* Header */}
         <div className="flex items-center justify-between p-4 border-b border-[#1B2236] shrink-0">
           <h2 className="text-lg font-semibold text-white font-syne">{title}</h2>
@@ -425,10 +425,10 @@ function TransactionHistory({ isOpen, onClose }: TransactionHistoryProps) {
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center">
+    <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center safe-area-inset">
       <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={onClose} />
       
-      <div className="relative w-full max-w-md bg-[#0D111C] border border-[#1B2236] rounded-t-3xl sm:rounded-3xl max-h-[70vh] overflow-hidden flex flex-col animate-slide-up">
+      <div className="relative w-full max-w-md bg-[#0D111C] border border-[#1B2236] rounded-t-3xl sm:rounded-3xl max-h-[70dvh] sm:max-h-[70vh] overflow-hidden flex flex-col animate-slide-up">
         <div className="flex items-center justify-between p-4 border-b border-[#1B2236] shrink-0">
           <h2 className="text-lg font-semibold text-white font-syne">Recent Transactions</h2>
           <div className="flex items-center gap-2">
@@ -561,23 +561,38 @@ export default function SwapPage() {
     setShowTokenSelector(null);
   }, [showTokenSelector, swap, addRecentSearch]);
 
-  // Handle percentage buttons - NOW WORKS FOR ALL TOKENS
+  // Handle percentage buttons - FIXED: uses fresh balance data
   const handleSetPercentage = useCallback((percent: number) => {
-    if (!swap.inputToken) return;
+    if (!swap.inputToken || !address) return;
     
-    const balance = getTokenBalance(swap.inputToken);
-    if (!balance || parseFloat(balance) <= 0) return;
+    // Get fresh balance directly
+    let balanceStr = '0';
+    if (swap.inputToken.address.toLowerCase() === NATIVE_ETH.toLowerCase()) {
+      balanceStr = ethBalance?.formatted || '0';
+    } else {
+      const userToken = userTokens.find(
+        t => t.address.toLowerCase() === swap.inputToken!.address.toLowerCase()
+      );
+      balanceStr = userToken?.balanceFormatted || '0';
+    }
+    
+    const balance = parseFloat(balanceStr);
+    if (!balance || balance <= 0) return;
     
     // For native ETH, leave some for gas (except 100%)
-    let maxAmount = parseFloat(balance);
+    let maxAmount = balance;
     if (swap.inputToken.address.toLowerCase() === NATIVE_ETH.toLowerCase() && percent < 100) {
-      // Leave ~0.01 ETH for gas when using percentage buttons
-      maxAmount = Math.max(0, maxAmount - 0.01);
+      // Leave ~0.005 ETH for gas when using percentage buttons
+      maxAmount = Math.max(0, maxAmount - 0.005);
     }
     
     const amount = maxAmount * (percent / 100);
-    swap.setAmountIn(amount > 0 ? amount.toFixed(6) : '0');
-  }, [swap.inputToken, getTokenBalance, swap.setAmountIn]);
+    const formattedAmount = amount > 0
+      ? amount.toFixed(swap.inputToken.decimals > 6 ? 6 : swap.inputToken.decimals)
+      : '0';
+    
+    swap.setAmountIn(formattedAmount);
+  }, [swap.inputToken, address, ethBalance, userTokens, swap.setAmountIn]);
 
   // Handle swap execution
   const handleSwap = useCallback(async () => {
@@ -663,8 +678,8 @@ export default function SwapPage() {
   const inputBalance = getTokenBalance(swap.inputToken);
 
   return (
-    <div className="min-h-screen pb-24 pt-2 px-3 sm:px-4">
-      <div className="max-w-md mx-auto">
+    <div className="min-h-[calc(100vh-80px)] pb-20 pt-2 px-3 sm:px-4 overflow-x-hidden">
+      <div className="w-full max-w-md mx-auto">
         {/* Header */}
         <div className="flex items-center justify-between mb-3 px-1">
           <h1 className="text-xl font-bold text-white font-syne">Swap</h1>
@@ -782,12 +797,12 @@ export default function SwapPage() {
 
             {/* Percentage Buttons - FIXED FOR ALL TOKENS */}
             {swap.inputToken && parseFloat(inputBalance) > 0 && (
-              <div className="flex items-center gap-2 mt-3">
+              <div className="flex flex-wrap items-center gap-2 mt-3">
                 {[25, 50, 75, 100].map((pct) => (
                   <button
                     key={pct}
                     onClick={() => handleSetPercentage(pct)}
-                    className="px-2.5 py-1 text-xs font-medium text-[#3b82f6] bg-[#3b82f6]/10 border border-[#3b82f6]/20 rounded-lg hover:bg-[#3b82f6]/20 hover:border-[#3b82f6]/30 transition-colors"
+                    className="px-3 py-1.5 text-xs font-medium text-[#3b82f6] bg-[#3b82f6]/10 border border-[#3b82f6]/20 rounded-lg hover:bg-[#3b82f6]/20 hover:border-[#3b82f6]/30 transition-colors active:scale-95"
                   >
                     {pct}%
                   </button>
@@ -989,24 +1004,6 @@ export default function SwapPage() {
         isOpen={showHistory}
         onClose={() => setShowHistory(false)}
       />
-
-      {/* Animation Styles */}
-      <style jsx global>{`
-        @keyframes fade-in {
-          from { opacity: 0; }
-          to { opacity: 1; }
-        }
-        @keyframes slide-up {
-          from { transform: translateY(100%); opacity: 0; }
-          to { transform: translateY(0); opacity: 1; }
-        }
-        .animate-fade-in {
-          animation: fade-in 0.2s ease-out;
-        }
-        .animate-slide-up {
-          animation: slide-up 0.3s ease-out;
-        }
-      `}</style>
     </div>
   );
 }

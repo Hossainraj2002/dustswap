@@ -212,9 +212,12 @@ export function useUserTokens() {
   const [error, setError] = useState<string | null>(null);
 
   // Fetch ETH balance separately
-  const { data: ethBalance } = useBalance({
+  const { data: ethBalance, refetch: refetchEth } = useBalance({
     address,
-    query: { enabled: !!address },
+    query: {
+      enabled: !!address,
+      refetchInterval: 30000, // Refetch every 30 seconds
+    },
   });
 
   const fetchUserTokens = useCallback(async () => {
@@ -227,48 +230,73 @@ export function useUserTokens() {
     setError(null);
 
     try {
+      // Always include ETH first
+      const formattedTokens: TokenWithBalance[] = [];
+      
+      // Add ETH as first token (even with 0 balance)
+      const ethToken: TokenWithBalance = {
+        address: '0x0000000000000000000000000000000000000000' as Address,
+        symbol: 'ETH',
+        name: 'Ethereum',
+        decimals: 18,
+        logoURI: 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/info/logo.png',
+        balance: ethBalance?.value || 0n,
+        balanceFormatted: ethBalance?.formatted || '0',
+        priceUsd: 3500, // Approximate ETH price
+        usdValue: parseFloat(ethBalance?.formatted || '0') * 3500,
+      };
+      formattedTokens.push(ethToken);
+
       // Call our backend API to get token balances
-      const response = await fetch(`${API_BASE}/api/tokens/balances?address=${address}`);
+      try {
+        const response = await fetch(`${API_BASE}/api/tokens/balances?address=${address}`, {
+          signal: AbortSignal.timeout(10000)
+        });
 
-      if (!response.ok) {
-        throw new Error(`Failed to fetch tokens: ${response.status}`);
+        if (!response.ok) {
+          throw new Error(`Failed to fetch tokens: ${response.status}`);
+        }
+
+        const data = await response.json();
+        const tokenBalances = data.data?.tokens || data.tokens || [];
+
+        // Format tokens with balance info and add to list
+        for (const t of tokenBalances) {
+          const balance = BigInt(t.balance || '0');
+          const decimals = t.decimals || 18;
+          const balanceFormatted = formatUnits(balance, decimals);
+          
+          // Skip tokens with 0 balance unless it's a popular token
+          if (balance === 0n) continue;
+
+          formattedTokens.push({
+            address: (t.address || t.tokenAddress) as Address,
+            symbol: t.symbol || 'UNKNOWN',
+            name: t.name || 'Unknown Token',
+            decimals: decimals,
+            logoURI: t.logoURI || t.image || '',
+            balance: balance,
+            balanceFormatted: balanceFormatted,
+            priceUsd: t.priceUsd || 0,
+            usdValue: t.usdValue || t.fiatBalance || 0,
+          });
+        }
+      } catch (apiErr) {
+        console.warn('[useUserTokens] API fetch failed, using fallback:', apiErr);
+        // Add popular tokens with 0 balance as fallback
+        for (const t of BASE_TOKENS) {
+          if (t.address.toLowerCase() === '0x0000000000000000000000000000000000000000') continue;
+          formattedTokens.push({
+            ...t,
+            balance: 0n,
+            balanceFormatted: '0',
+            priceUsd: 0,
+            usdValue: 0,
+          });
+        }
       }
 
-      const data = await response.json();
-      const tokenBalances = data.data?.tokens || data.tokens || [];
-
-      // Format tokens with balance info
-      const formattedTokens: TokenWithBalance[] = tokenBalances.map((t: any) => ({
-        address: t.address || t.tokenAddress,
-        symbol: t.symbol || 'UNKNOWN',
-        name: t.name || 'Unknown Token',
-        decimals: t.decimals || 18,
-        logoURI: t.logoURI || t.image,
-        balance: BigInt(t.balance || '0'),
-        balanceFormatted: t.balanceFormatted || formatUnits(BigInt(t.balance || '0'), t.decimals || 18),
-        priceUsd: t.priceUsd || 0,
-        usdValue: t.usdValue || t.fiatBalance || 0,
-      }));
-
-      // Add ETH as first token
-      if (ethBalance && ethBalance.value > 0n) {
-        const ethToken: TokenWithBalance = {
-          address: '0x0000000000000000000000000000000000000000' as Address,
-          symbol: 'ETH',
-          name: 'Ethereum',
-          decimals: 18,
-          logoURI: 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/info/logo.png',
-          balance: ethBalance.value,
-          balanceFormatted: ethBalance.formatted,
-          priceUsd: 0, // Will be fetched separately
-          usdValue: 0,
-        };
-        
-        // Insert ETH at the beginning
-        formattedTokens.unshift(ethToken);
-      }
-
-      // Sort by USD value
+      // Sort by USD value (descending)
       formattedTokens.sort((a, b) => b.usdValue - a.usdValue);
 
       setTokens(formattedTokens);
@@ -276,14 +304,31 @@ export function useUserTokens() {
       console.error('Failed to fetch user tokens:', err);
       setError(err.message || 'Failed to fetch tokens');
       
-      // Fallback to base tokens with zero balance
-      setTokens(BASE_TOKENS.map(t => ({
-        ...t,
-        balance: 0n,
-        balanceFormatted: '0',
-        priceUsd: 0,
-        usdValue: 0,
-      })));
+      // Fallback: return ETH + base tokens
+      const fallbackTokens: TokenWithBalance[] = [{
+        address: '0x0000000000000000000000000000000000000000' as Address,
+        symbol: 'ETH',
+        name: 'Ethereum',
+        decimals: 18,
+        logoURI: 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/info/logo.png',
+        balance: ethBalance?.value || 0n,
+        balanceFormatted: ethBalance?.formatted || '0',
+        priceUsd: 3500,
+        usdValue: parseFloat(ethBalance?.formatted || '0') * 3500,
+      }];
+      
+      for (const t of BASE_TOKENS) {
+        if (t.address.toLowerCase() === '0x0000000000000000000000000000000000000000') continue;
+        fallbackTokens.push({
+          ...t,
+          balance: 0n,
+          balanceFormatted: '0',
+          priceUsd: 0,
+          usdValue: 0,
+        });
+      }
+      
+      setTokens(fallbackTokens);
     } finally {
       setIsLoading(false);
     }
@@ -293,11 +338,17 @@ export function useUserTokens() {
     fetchUserTokens();
   }, [fetchUserTokens]);
 
+  // Refetch function that also refreshes ETH balance
+  const refetch = useCallback(async () => {
+    await refetchEth();
+    await fetchUserTokens();
+  }, [refetchEth, fetchUserTokens]);
+
   return {
     tokens,
     isLoading,
     error,
-    refetch: fetchUserTokens,
+    refetch,
   };
 }
 
