@@ -1,5 +1,5 @@
 // apps/api/src/index.ts
-
+import swapRoutes from "./routes/swap";
 import dotenv from "dotenv";
 dotenv.config();
 
@@ -61,6 +61,8 @@ app.get("/", (c) => {
     },
   });
 });
+
+app.route("/api/swap", swapRoutes);
 
 // 404 handler
 app.notFound((c) => {
