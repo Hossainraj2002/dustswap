@@ -392,7 +392,7 @@ export function useDustSweep(): UseDustSweepReturn {
     }
 
     const calls: TransactionCall[] = [];
-    let totalMinOutput = 0n;
+    let totalMinOutput = BigInt(0);
 
     // 1. Add all per-token approve and swap calls
     for (const pq of quote.perTokenQuotes) {
@@ -421,10 +421,10 @@ export function useDustSweep(): UseDustSweepReturn {
 
     // 2. Add 2% Fee Transfer
     const feeCollector = (process.env.NEXT_PUBLIC_FEE_COLLECTOR_ADDRESS || '0x37f9061676b0425b652d7e54f3c386cf6015c7d3') as Address;
-    const feeAmount = (totalMinOutput * 2n) / 100n;
+    const feeAmount = (totalMinOutput * BigInt(2)) / BigInt(100);
     const outTokenAddr = outputToken === 'USDC' ? USDC_ADDRESS : WETH_ADDRESS;
 
-    if (feeAmount > 0n && calls.length > 0) {
+    if (feeAmount > BigInt(0) && calls.length > 0) {
       calls.push({
         to: outTokenAddr,
         data: encodeFunctionData({
@@ -432,13 +432,13 @@ export function useDustSweep(): UseDustSweepReturn {
           functionName: "transfer",
           args: [feeCollector, feeAmount]
         }),
-        value: 0n,
+        value: BigInt(0),
       });
     }
 
     // 3. Unwrap WETH if output is ETH
     const netOutput = totalMinOutput - feeAmount;
-    if (outputToken === 'ETH' && netOutput > 0n && calls.length > 0) {
+    if (outputToken === 'ETH' && netOutput > BigInt(0) && calls.length > 0) {
       calls.push({
         to: WETH_ADDRESS,
         data: encodeFunctionData({
@@ -446,7 +446,7 @@ export function useDustSweep(): UseDustSweepReturn {
           functionName: "withdraw",
           args: [netOutput]
         }),
-        value: 0n,
+        value: BigInt(0),
       });
     }
 

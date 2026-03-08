@@ -47,7 +47,7 @@ export async function GET(req: Request) {
 
     // 1. Quote V3 (parallel tiers)
     let bestV3Quote: any = null;
-    let bestV3AmountOut = 0n;
+    let bestV3AmountOut = BigInt(0);
 
     const v3Promises = V3_FEE_TIERS.map(async (fee) => {
       try {
@@ -61,7 +61,7 @@ export async function GET(req: Request) {
               tokenOut: V3TokenOut as `0x${string}`,
               amountIn,
               fee,
-              sqrtPriceLimitX96: 0n,
+              sqrtPriceLimitX96: BigInt(0),
             },
           ],
         });
@@ -129,10 +129,8 @@ export async function GET(req: Request) {
     const route = useV4 ? "v4" : "v3";
 
     // 3. Deduct 0.2% protocol fee
-    const protocolFeeBps = 20n;
-    const protocolFeeAmount = (amountIn * protocolFeeBps) / 10000n;
-    // Protocol fee reduces amountIn, effectively reducing amountOut by ~0.2% too
-    const amountOutAfterFee = bestQuote.amountOut - ((bestQuote.amountOut * protocolFeeBps) / 10000n);
+    const protocolFeeBps = BigInt(20);
+    const amountOutAfterFee = bestQuote.amountOut - ((bestQuote.amountOut * protocolFeeBps) / BigInt(10000));
 
     // Simulated execution price for display
     const executionPrice =

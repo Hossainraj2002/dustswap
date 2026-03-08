@@ -80,7 +80,7 @@ export function useSwap() {
         const amountOutBig = BigInt(params.amountOut);
         // Calculate amountOutMin safely with BigInt maths: out * (10000 - slippageBps) / 10000
         const slippageBps = BigInt(Math.floor(params.slippage * 100));
-        const amountOutMin = (amountOutBig * (10000n - slippageBps)) / 10000n;
+        const amountOutMin = (amountOutBig * (BigInt(10000) - slippageBps)) / BigInt(10000);
 
         const swapData = encodeFunctionData({
           abi: [
@@ -113,7 +113,7 @@ export function useSwap() {
         const tx = await walletClient.sendTransaction({
           to: SINGLE_SWAP_ROUTER,
           data: swapData,
-          value: isNativeIn ? amountInBig : 0n,
+          value: isNativeIn ? amountInBig : BigInt(0),
           capabilities: {
             paymasterService: {
               url: process.env.NEXT_PUBLIC_PAYMASTER_URL!,

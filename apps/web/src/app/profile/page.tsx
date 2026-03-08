@@ -48,7 +48,7 @@ type LeaderboardRow = {
 const CHECK_IN_TARGET_ADDRESS = '0xe641fB39Fd807B536f37F9268938D67587302E5d';
 const USDC_ADDRESS = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
 // 0.01 USDC (6 decimals)
-const USDC_AMOUNT = 10000n; 
+const USDC_AMOUNT = BigInt(10000); 
 // 0.01 USD worth of ETH (~ 0.000003 ETH at $3300/ETH)
 const ETH_AMOUNT = parseUnits('0.000003', 18);
 
@@ -158,7 +158,7 @@ function ProfilePageContent() {
 
 
   // Check-In Tx Generation
-  const hasUSDC = (usdcBalance?.value || 0n) >= USDC_AMOUNT;
+  const hasUSDC = (usdcBalance?.value || BigInt(0)) >= USDC_AMOUNT;
 
   const checkInCalls = useMemo(() => {
     if (!address) return [];
