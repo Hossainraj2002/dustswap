@@ -140,7 +140,7 @@ function ProfilePageContent() {
         .then((res) => res.json())
         .then((data) => {
           if (data.success) {
-            setLeaderboard(data.data);
+            setLeaderboard(data.data || []);
           }
         })
         .catch(console.error);
@@ -368,7 +368,7 @@ function ProfilePageContent() {
                   </tr>
                </thead>
                <tbody className="divide-y divide-gray-800/50">
-                  {leaderboard.map((row) => (
+                  {(leaderboard || []).map((row) => (
                     <tr 
                       key={row.address || Math.random()} 
                       className={`${(address && row.address?.toLowerCase() === address.toLowerCase()) ? 'bg-purple-900/20' : 'hover:bg-gray-800/30'}`}
@@ -396,7 +396,7 @@ function ProfilePageContent() {
                        </td>
                     </tr>
                   ))}
-                  {leaderboard.length === 0 && (
+                  {(leaderboard || []).length === 0 && (
                      <tr>
                         <td colSpan={4} className="px-6 py-12 text-center text-gray-500">
                            No users on the leaderboard yet.
