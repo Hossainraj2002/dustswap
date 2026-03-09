@@ -27,7 +27,9 @@ export function useSwapQuote() {
       const params = {
         from: fromToken.address,
         to: toToken.address,
-        amount: amountInStr,
+        amount: amountInStr, // BigInt string
+        chainId: 8453,
+        slippage: slippage, // 0.5% default or user selected
       };
       
       const response = await getSwapQuote(params as any) as any;

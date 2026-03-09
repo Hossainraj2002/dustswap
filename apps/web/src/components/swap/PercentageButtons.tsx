@@ -37,11 +37,11 @@ export function PercentageButtons({
         const spendable = balance > gasReserve ? balance - gasReserve : 0n;
         amount = calculatePercentage(spendable, percent);
       } else {
-        // For standard ERC20, use straight percentage
+        // For standard ERC20, use straight percentage rounding down native (BigInt div rounds down safely)
         amount = calculatePercentage(balance, percent);
       }
 
-      // Format safely explicitly down to string without precision loss points
+      // Format safely explicitly down to string. When 100% Native, output precise balance - fee.
       const formatted = formatTokenAmount(amount, decimals);
       onSelect(formatted, percent);
     },
