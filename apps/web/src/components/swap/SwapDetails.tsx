@@ -25,32 +25,32 @@ export function SwapDetails({
   if (priceImpact > 3.0) impactColor = 'text-red-400';
 
   return (
-    <div className="mt-4 p-4 bg-[#131A2A] rounded-2xl border border-[#1B2236] text-sm font-medium">
-      <div className="flex items-center justify-between text-gray-400 mb-3">
+    <div className="mt-4 swap-quote-info">
+      <div className="swap-quote-row">
         <span>Rate</span>
-        <span className="text-white">
+        <span className="value">
           1 {inputSymbol} = {formatSwapAmount(rate, 6)} {outputSymbol}
         </span>
       </div>
 
-      <div className="flex items-center justify-between text-gray-400 mb-3">
+      <div className="swap-quote-row">
         <span>Price Impact</span>
-        <span className={impactColor}>
+        <span className={impactColor.replace('text-green-400', 'success').replace('text-red-400', 'warning').replace('text-yellow-400', 'text-yellow-500 font-semibold')}>
           {priceImpact < 0.01 ? '<0.01' : priceImpact.toFixed(2)}%
         </span>
       </div>
 
-      <div className="flex items-center justify-between text-gray-400 mb-3">
+      <div className="swap-quote-row">
         <span>Minimum Received</span>
-        <span className="text-white">
+        <span className="value">
           {formatSwapAmount(minReceived, 6)} {outputSymbol}
         </span>
       </div>
 
       {networkFeeUsd !== undefined && (
-        <div className="flex items-center justify-between text-gray-400">
+        <div className="swap-quote-row">
           <span>Network Fee</span>
-          <span className="text-white">
+          <span className="value">
             ${formatSwapAmount(networkFeeUsd, 2)}
           </span>
         </div>

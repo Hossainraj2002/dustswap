@@ -129,10 +129,10 @@ export function SwapButton({
 
   if (needsApproval) {
     return (
-      <div className="w-full mt-2">
+      <div className="w-full mt-4">
         <button 
           onClick={handleApprove}
-          className="w-full min-h-[56px] py-4 bg-orange-500 hover:bg-orange-600 text-white font-bold rounded-2xl text-lg transition-colors shadow-lg shadow-orange-500/20"
+          className="swap-button"
         >
           Approve {fromToken.symbol}
         </button>
@@ -141,10 +141,10 @@ export function SwapButton({
   }
 
   return (
-    <div className="w-full mt-2">
+    <div className="w-full mt-4">
       <button 
         onClick={handleSwap}
-        className="w-full min-h-[56px] py-4 bg-orange-500 hover:bg-orange-600 text-white font-bold rounded-2xl text-lg transition-colors shadow-lg shadow-orange-500/20"
+        className="swap-button"
       >
         Swap
       </button>

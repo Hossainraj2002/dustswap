@@ -25,8 +25,22 @@ export function useSwapQuote() {
 
     try {
       const params = {
-        from: fromToken.address,
-        to: toToken.address,
+        from: {
+          address: fromToken.address,
+          chainId: 8453,
+          decimals: fromToken.decimals,
+          name: fromToken.name,
+          symbol: fromToken.symbol,
+          image: fromToken.logoURI || ''
+        },
+        to: {
+          address: toToken.address,
+          chainId: 8453,
+          decimals: toToken.decimals,
+          name: toToken.name,
+          symbol: toToken.symbol,
+          image: toToken.logoURI || ''
+        },
         amount: amountInStr, // BigInt string
         chainId: 8453,
         slippage: slippage, // 0.5% default or user selected
@@ -58,5 +72,7 @@ export function useSwapQuote() {
     }
   }, []);
 
-  return { quote, isQuoting, error, fetchQuote, clearQuote: () => setQuote(null) };
+  const clearQuote = useCallback(() => setQuote(null), []);
+
+  return { quote, isQuoting, error, fetchQuote, clearQuote };
 }

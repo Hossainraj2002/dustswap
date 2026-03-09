@@ -160,17 +160,15 @@ export default function SwapPage() {
         />
         
         {/* Switch Button */}
-        <div className="absolute left-1/2 -ml-6 -mt-5 -mb-5 z-10 top-[100%]">
-          <button
-            onClick={switchTokens}
-            className="w-12 h-12 bg-[#0D111C] border-[4px] border-[#0D111C] rounded-full flex items-center justify-center text-gray-400 hover:text-orange-500 hover:bg-[#1B2236] transition-all min-h-[44px] min-w-[44px] hover:rotate-180 duration-300 shadow-xl"
-            aria-label="Switch Tokens"
-          >
-            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4" />
-            </svg>
-          </button>
-        </div>
+        <button
+          onClick={switchTokens}
+          className="swap-switch-button group"
+          aria-label="Switch Tokens"
+        >
+          <svg className="w-5 h-5 group-hover:rotate-180 transition-transform duration-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4" />
+          </svg>
+        </button>
 
         <div className="mt-2">
           <TokenInput

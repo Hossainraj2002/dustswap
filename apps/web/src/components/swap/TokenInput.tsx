@@ -35,7 +35,7 @@ export function TokenInput({
 
   return (
     <div 
-      className="bg-[#131A2A] rounded-2xl p-4 border border-[#1B2236] hover:border-[#293249] transition-colors"
+      className="swap-glass-inner p-4 mb-2 transition-all hover:border-dust-purple/30 border border-transparent"
       onClick={handleContainerClick}
     >
       <div className="flex items-center justify-between mb-2">
@@ -50,8 +50,7 @@ export function TokenInput({
           onChange={(e) => onAmountChange?.(e.target.value)}
           placeholder="0"
           readOnly={readonly}
-          className={`flex-1 bg-transparent text-3xl font-normal text-white focus:outline-none overflow-hidden text-ellipsis placeholder-gray-600 ${readonly ? 'cursor-default' : ''}`}
-          style={{ fontSize: '32px' }}
+          className={`swap-token-input flex-1 ${readonly ? 'cursor-default' : ''}`}
         />
         
         <button
@@ -59,7 +58,7 @@ export function TokenInput({
             e.stopPropagation();
             onSelectToken();
           }}
-          className="flex items-center gap-2 bg-[#1B2236] hover:bg-[#293249] px-3 py-2 rounded-2xl transition-colors min-h-[44px] shrink-0 shadow-sm"
+          className="swap-token-button shrink-0 shadow-sm"
         >
           {token ? (
             <>

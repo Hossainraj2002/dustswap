@@ -20,7 +20,7 @@ export const DEFAULT_OUTPUT_TOKEN: Token = {
   symbol: 'USDC',
   name: 'USD Coin',
   decimals: 6,
-  logoURI: 'https://basescan.org/token/images/centre-usdc_28.png',
+  logoURI: 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/assets/0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48/logo.png',
 };
 
 export const DEFAULT_TOKENS: Token[] = [
@@ -31,7 +31,7 @@ export const DEFAULT_TOKENS: Token[] = [
     symbol: 'cbBTC',
     name: 'Coinbase Wrapped BTC',
     decimals: 8,
-    logoURI: 'https://basescan.org/token/images/cbbtc_32.png',
+    logoURI: 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/assets/0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599/logo.png', // Using WBTC as fallback cbBTC representation graphically
   },
   {
     address: WETH_ADDRESS,
