@@ -24,13 +24,13 @@ export function useSwapQuote() {
     setError(null);
 
     try {
-      const response = await getSwapQuote({
+      const params = {
         from: fromToken.address,
         to: toToken.address,
         amount: amountInStr,
-        chainId: BASE_CHAIN_ID,
-        // Using standard slippage property as string format if needed, but docs say string or number is often fine
-      });
+      };
+      
+      const response = await getSwapQuote(params as any) as any;
 
       if (response.error || !response.toAmount) {
         setError(response.error?.message || response.error || 'Got invalid quote response');
