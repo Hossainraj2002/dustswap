@@ -1,18 +1,18 @@
 'use client';
 
 /**
- * Swap Page - Native Uniswap Clone
- * ==================================
+ * Swap Page - DustSwap DEX Interface
+ * ===================================
  * 
- * Complete DEX swap interface using Uniswap Trading API.
- * Features: Your Tokens, Recent Searches, Trending Tokens, Transaction History
+ * Mobile-first DEX swap interface using Uniswap V4 via OnchainKit.
+ * Features: Token balances, percentage buttons, V4 routing, gasless swaps
  * 
- * FIXED: Mobile responsive, token overflow, % buttons for all tokens
+ * FIXED: Mobile responsive, BigInt percentages, V4 quotes, builder code
  */
 
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
-import { useAccount, useBalance, useReadContracts } from 'wagmi';
-import { formatUnits, parseUnits, erc20Abi, type Address } from 'viem';
+import { useAccount, useBalance } from 'wagmi';
+import { formatUnits, parseUnits, type Address } from 'viem';
 import {
   Transaction,
   TransactionButton,
@@ -28,8 +28,6 @@ import {
   useRecentSearches,
   useSwapHistory,
   useTokenSearch,
-  type TokenWithBalance,
-  type TrendingToken,
 } from '@/hooks/useTokens';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -55,6 +53,21 @@ const DEFAULT_OUTPUT_TOKEN: Token = {
   decimals: 6,
   logoURI: 'https://basescan.org/token/images/centre-usdc_28.png',
 };
+
+// ─── Helper Functions ─────────────────────────────────────────────────────────
+
+function calculatePercentage(balance: bigint, percentage: number): bigint {
+  return (balance * BigInt(percentage)) / 100n;
+}
+
+function formatTokenAmount(amount: bigint, decimals: number): string {
+  const divisor = 10n ** BigInt(decimals);
+  const integerPart = amount / divisor;
+  const fractionalPart = amount % divisor;
+  const fractionalStr = fractionalPart.toString().padStart(decimals, '0').slice(0, 6);
+  const trimmedFractional = fractionalStr.replace(/0+$/, '');
+  return trimmedFractional ? `${integerPart}.${trimmedFractional}` : integerPart.toString();
+}
 
 // ─── Token Selector Modal ──────────────────────────────────────────────────────
 
@@ -157,10 +170,10 @@ function TokenSelector({ isOpen, onClose, onSelect, excludeToken, title }: Token
           <h2 className="text-lg font-semibold text-white font-syne">{title}</h2>
           <button
             onClick={onClose}
-            className="w-8 h-8 flex items-center justify-center rounded-full bg-[#1B2236] text-gray-400 hover:text-white hover:bg-[#293249] transition-colors"
+            className="w-10 h-10 flex items-center justify-center rounded-full bg-[#1B2236] text-gray-400 hover:text-white hover:bg-[#293249] transition-colors min-h-[44px] min-w-[44px]"
             aria-label="Close"
           >
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
             </svg>
           </button>
@@ -174,8 +187,9 @@ function TokenSelector({ isOpen, onClose, onSelect, excludeToken, title }: Token
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search token name or paste address"
-              className="w-full px-4 py-3.5 pl-11 bg-[#131A2A] border border-[#1B2236] rounded-2xl text-white placeholder-gray-500 focus:outline-none focus:border-[#3b82f6] text-sm transition-colors"
+              placeholder="Search name or paste address"
+              className="w-full px-4 py-3.5 pl-11 bg-[#131A2A] border border-[#1B2236] rounded-2xl text-white placeholder-gray-500 focus:outline-none focus:border-[#3b82f6] text-base transition-colors"
+              style={{ fontSize: '16px' }} // Prevents zoom on iOS
             />
             <svg className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
@@ -188,7 +202,7 @@ function TokenSelector({ isOpen, onClose, onSelect, excludeToken, title }: Token
           <div className="flex border-b border-[#1B2236] shrink-0">
             <button
               onClick={() => setActiveTab('your-tokens')}
-              className={`flex-1 py-3.5 text-sm font-medium transition-colors ${
+              className={`flex-1 py-3.5 text-sm font-medium transition-colors min-h-[44px] ${
                 activeTab === 'your-tokens'
                   ? 'text-[#3b82f6] border-b-2 border-[#3b82f6]'
                   : 'text-gray-400 hover:text-white'
@@ -198,7 +212,7 @@ function TokenSelector({ isOpen, onClose, onSelect, excludeToken, title }: Token
             </button>
             <button
               onClick={() => setActiveTab('trending')}
-              className={`flex-1 py-3.5 text-sm font-medium transition-colors ${
+              className={`flex-1 py-3.5 text-sm font-medium transition-colors min-h-[44px] ${
                 activeTab === 'trending'
                   ? 'text-[#3b82f6] border-b-2 border-[#3b82f6]'
                   : 'text-gray-400 hover:text-white'
@@ -220,7 +234,7 @@ function TokenSelector({ isOpen, onClose, onSelect, excludeToken, title }: Token
                   <button
                     key={token.address}
                     onClick={() => handleSelect(token)}
-                    className="flex items-center gap-2 px-3 py-2 bg-[#1B2236] rounded-xl hover:bg-[#293249] transition-colors"
+                    className="flex items-center gap-2 px-3 py-2 bg-[#1B2236] rounded-xl hover:bg-[#293249] transition-colors min-h-[44px]"
                   >
                     {token.logoURI ? (
                       <img 
@@ -342,10 +356,12 @@ interface TokenRowProps {
 }
 
 function TokenRow({ token, balance, usdValue, priceUsd, priceChange, rank, onClick }: TokenRowProps) {
+  const hasBalance = balance && parseFloat(balance) > 0;
+  
   return (
     <button
       onClick={onClick}
-      className="w-full flex items-center justify-between p-3 rounded-xl hover:bg-[#131A2A] active:bg-[#1B2236] transition-colors"
+      className="w-full flex items-center justify-between p-3 rounded-xl hover:bg-[#131A2A] active:bg-[#1B2236] transition-colors min-h-[44px]"
     >
       <div className="flex items-center gap-3 min-w-0">
         {rank && (
@@ -371,9 +387,11 @@ function TokenRow({ token, balance, usdValue, priceUsd, priceChange, rank, onCli
         </div>
       </div>
       <div className="text-right shrink-0 pl-2">
-        {balance && (
+        {balance !== undefined && (
           <>
-            <p className="font-medium text-white text-sm">{formatSwapAmount(balance)}</p>
+            <p className={`font-medium text-sm ${hasBalance ? 'text-white' : 'text-gray-600'}`}>
+              {hasBalance ? formatSwapAmount(balance) : 'No balance'}
+            </p>
             {usdValue !== undefined && usdValue > 0 && (
               <p className="text-xs text-gray-500">${formatSwapAmount(usdValue, 2)}</p>
             )}
@@ -396,7 +414,7 @@ function TokenRow({ token, balance, usdValue, priceUsd, priceChange, rank, onCli
 
 function TokenRowSkeleton() {
   return (
-    <div className="flex items-center justify-between p-3 rounded-xl animate-pulse">
+    <div className="flex items-center justify-between p-3 rounded-xl animate-pulse min-h-[44px]">
       <div className="flex items-center gap-3">
         <div className="w-9 h-9 rounded-full bg-[#1B2236]" />
         <div>
@@ -435,16 +453,16 @@ function TransactionHistory({ isOpen, onClose }: TransactionHistoryProps) {
             {history.length > 0 && (
               <button
                 onClick={clearHistory}
-                className="text-xs text-gray-500 hover:text-red-400 transition-colors px-2 py-1"
+                className="text-xs text-gray-500 hover:text-red-400 transition-colors px-2 py-1 min-h-[44px]"
               >
                 Clear All
               </button>
             )}
             <button
               onClick={onClose}
-              className="w-8 h-8 flex items-center justify-center rounded-full bg-[#1B2236] text-gray-400 hover:text-white hover:bg-[#293249] transition-colors"
+              className="w-10 h-10 flex items-center justify-center rounded-full bg-[#1B2236] text-gray-400 hover:text-white hover:bg-[#293249] transition-colors min-h-[44px] min-w-[44px]"
             >
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
               </svg>
             </button>
@@ -483,7 +501,7 @@ function TransactionHistory({ isOpen, onClose }: TransactionHistoryProps) {
                         rel="noopener noreferrer"
                         className="text-[#3b82f6] hover:underline"
                       >
-                        View on Basescan ↗
+                        View ↗
                       </a>
                     )}
                   </div>
@@ -503,20 +521,91 @@ function TransactionHistory({ isOpen, onClose }: TransactionHistoryProps) {
   );
 }
 
+// ─── Percentage Buttons Component ──────────────────────────────────────────────
+
+interface PercentageButtonsProps {
+  balance: bigint;
+  decimals: number;
+  isNative: boolean;
+  onSelect: (amount: string) => void;
+  selectedPercent: number | null;
+}
+
+function PercentageButtons({ balance, decimals, isNative, onSelect, selectedPercent }: PercentageButtonsProps) {
+  const percentages = [25, 50, 75, 100];
+  
+  const handlePercentClick = useCallback((percent: number) => {
+    if (balance <= 0n) return;
+    
+    let amount: bigint;
+    
+    if (isNative && percent === 100) {
+      // For 100% native ETH, use full balance
+      amount = balance;
+    } else if (isNative) {
+      // For partial native ETH, reserve gas (0.005 ETH = 5000000000000000 wei)
+      const gasReserve = 5000000000000000n;
+      const spendable = balance > gasReserve ? balance - gasReserve : 0n;
+      amount = (spendable * BigInt(percent)) / 100n;
+    } else {
+      // For ERC-20 tokens, use full percentage
+      amount = (balance * BigInt(percent)) / 100n;
+    }
+    
+    // Round down to avoid exceeding balance
+    const formatted = formatTokenAmount(amount, decimals);
+    onSelect(formatted);
+  }, [balance, decimals, isNative, onSelect]);
+
+  if (balance <= 0n) {
+    return (
+      <div className="grid grid-cols-4 gap-2 mt-3">
+        {percentages.map((pct) => (
+          <button
+            key={pct}
+            disabled
+            className="px-2 py-2 text-xs font-medium rounded-lg bg-[#1B2236] text-gray-600 cursor-not-allowed min-h-[44px]"
+          >
+            {pct}%
+          </button>
+        ))}
+      </div>
+    );
+  }
+
+  return (
+    <div className="grid grid-cols-4 gap-2 mt-3">
+      {percentages.map((pct) => (
+        <button
+          key={pct}
+          onClick={() => handlePercentClick(pct)}
+          className={`px-2 py-2 text-xs font-medium rounded-lg transition-colors min-h-[44px] ${
+            selectedPercent === pct
+              ? 'bg-[#3b82f6] text-white'
+              : 'bg-[#3b82f6]/10 text-[#3b82f6] border border-[#3b82f6]/20 hover:bg-[#3b82f6]/20'
+          }`}
+        >
+          {pct}%
+        </button>
+      ))}
+    </div>
+  );
+}
+
 // ─── Main Swap Component ───────────────────────────────────────────────────────
 
 export default function SwapPage() {
   const { address, isConnected } = useAccount();
   const swap = useUniswapSwap();
   const { addRecentSearch } = useRecentSearches();
-  const { addToHistory, updateStatus } = useSwapHistory();
+  const { addToHistory } = useSwapHistory();
   const { tokens: userTokens, refetch: refetchUserTokens } = useUserTokens();
 
   // UI State
   const [showTokenSelector, setShowTokenSelector] = useState<'input' | 'output' | null>(null);
   const [showHistory, setShowHistory] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
-  const [lastTxHash, setLastTxHash] = useState<string | null>(null);
+  const [selectedPercent, setSelectedPercent] = useState<number | null>(null);
 
   // Initialize with default tokens
   useEffect(() => {
@@ -534,8 +623,24 @@ export default function SwapPage() {
     query: { enabled: !!address },
   });
 
-  // Get balance for selected input token (for % buttons)
-  const getTokenBalance = useCallback((token: Token | null): string => {
+  // Get raw balance for percentage calculations
+  const getTokenBalanceRaw = useCallback((token: Token | null): bigint => {
+    if (!token || !address) return 0n;
+    
+    // Native ETH
+    if (token.address.toLowerCase() === NATIVE_ETH.toLowerCase()) {
+      return ethBalance?.value || 0n;
+    }
+    
+    // Find in user tokens
+    const userToken = userTokens.find(
+      t => t.address.toLowerCase() === token.address.toLowerCase()
+    );
+    return userToken?.balance || 0n;
+  }, [address, ethBalance, userTokens]);
+
+  // Get formatted balance for display
+  const getTokenBalanceFormatted = useCallback((token: Token | null): string => {
     if (!token || !address) return '0';
     
     // Native ETH
@@ -554,6 +659,7 @@ export default function SwapPage() {
   const handleSelectToken = useCallback((token: Token) => {
     if (showTokenSelector === 'input') {
       swap.setInputToken(token);
+      setSelectedPercent(null);
     } else if (showTokenSelector === 'output') {
       swap.setOutputToken(token);
     }
@@ -561,71 +667,17 @@ export default function SwapPage() {
     setShowTokenSelector(null);
   }, [showTokenSelector, swap, addRecentSearch]);
 
-  // Handle percentage buttons - FIXED: uses fresh balance data
-  const handleSetPercentage = useCallback((percent: number) => {
-    if (!swap.inputToken || !address) return;
-    
-    // Get fresh balance directly
-    let balanceStr = '0';
-    if (swap.inputToken.address.toLowerCase() === NATIVE_ETH.toLowerCase()) {
-      balanceStr = ethBalance?.formatted || '0';
-    } else {
-      const userToken = userTokens.find(
-        t => t.address.toLowerCase() === swap.inputToken!.address.toLowerCase()
-      );
-      balanceStr = userToken?.balanceFormatted || '0';
-    }
-    
-    const balance = parseFloat(balanceStr);
-    if (!balance || balance <= 0) return;
-    
-    // For native ETH, leave some for gas (except 100%)
-    let maxAmount = balance;
-    if (swap.inputToken.address.toLowerCase() === NATIVE_ETH.toLowerCase() && percent < 100) {
-      // Leave ~0.005 ETH for gas when using percentage buttons
-      maxAmount = Math.max(0, maxAmount - 0.005);
-    }
-    
-    const amount = maxAmount * (percent / 100);
-    const formattedAmount = amount > 0
-      ? amount.toFixed(swap.inputToken.decimals > 6 ? 6 : swap.inputToken.decimals)
-      : '0';
-    
-    swap.setAmountIn(formattedAmount);
-  }, [swap.inputToken, address, ethBalance, userTokens, swap.setAmountIn]);
+  // Handle percentage selection with BigInt
+  const handleSetPercentage = useCallback((amount: string, percent: number) => {
+    swap.setAmountIn(amount);
+    setSelectedPercent(percent);
+  }, [swap]);
 
-  // Handle swap execution
-  const handleSwap = useCallback(async () => {
-    const result = await swap.executeSwap();
-    
-    if (result.success) {
-      setLastTxHash(result.txHash || null);
-      addToHistory({
-        id: result.txHash || Date.now().toString(),
-        type: 'swap',
-        inputToken: swap.inputToken?.symbol,
-        outputToken: swap.outputToken?.symbol,
-        amountIn: swap.amountIn,
-        amountOut: swap.amountOut,
-        status: 'confirmed',
-        txHash: result.txHash,
-      });
-      // Refresh token balances after swap
-      refetchUserTokens();
-    } else {
-      addToHistory({
-        id: Date.now().toString(),
-        type: 'swap',
-        inputToken: swap.inputToken?.symbol,
-        outputToken: swap.outputToken?.symbol,
-        amountIn: swap.amountIn,
-        amountOut: swap.amountOut,
-        status: 'failed',
-      });
-    }
-    
-    return result;
-  }, [swap, addToHistory, refetchUserTokens]);
+  // Handle amount input change
+  const handleAmountChange = useCallback((value: string) => {
+    swap.setAmountIn(value);
+    setSelectedPercent(null);
+  }, [swap]);
 
   // Compute button state
   const buttonState = useMemo(() => {
@@ -633,25 +685,26 @@ export default function SwapPage() {
     if (!swap.inputToken || !swap.outputToken) return { text: 'Select Token', disabled: true, action: 'none' };
     if (!swap.amountIn || parseFloat(swap.amountIn) <= 0) return { text: 'Enter Amount', disabled: true, action: 'none' };
     
-    // Check balance
-    const balance = getTokenBalance(swap.inputToken);
-    if (parseFloat(balance) < parseFloat(swap.amountIn)) {
+    // Check balance using raw BigInt comparison
+    const balanceRaw = getTokenBalanceRaw(swap.inputToken);
+    const amountRaw = parseUnits(swap.amountIn, swap.inputToken.decimals);
+    if (balanceRaw < amountRaw) {
       return { text: 'Insufficient Balance', disabled: true, action: 'none' };
     }
     
     if (swap.isQuoting) return { text: 'Getting Quote...', disabled: true, action: 'none' };
-    if (swap.error) return { text: swap.error.slice(0, 30), disabled: false, action: 'retry' };
+    if (swap.error) return { text: swap.error.slice(0, 40), disabled: false, action: 'retry' };
     if (!swap.quote) return { text: 'Get Quote', disabled: false, action: 'quote' };
     if (swap.isApproving) return { text: 'Approving...', disabled: true, action: 'none' };
     if (swap.isSwapping) return { text: 'Swapping...', disabled: true, action: 'none' };
     return { text: 'Swap', disabled: false, action: 'swap' };
-  }, [isConnected, swap, getTokenBalance]);
+  }, [isConnected, swap, getTokenBalanceRaw]);
 
   // ── Render: Not Connected ────────────────────────────────────────────────────
 
   if (!isConnected) {
     return (
-      <div className="min-h-[80vh] flex items-center justify-center p-4">
+      <div className="min-h-[100dvh] flex items-center justify-center p-4 safe-area-bottom">
         <div className="max-w-md w-full">
           <div className="text-center mb-8">
             <div className="text-6xl mb-4">💫</div>
@@ -662,7 +715,7 @@ export default function SwapPage() {
           <div className="bg-[#0D111C] border border-[#1B2236] rounded-3xl p-6">
             <Wallet>
               <ConnectWallet className="w-full">
-                <button className="w-full py-4 bg-[#3b82f6] hover:bg-[#2563eb] text-white font-semibold rounded-2xl transition-colors font-syne">
+                <button className="w-full py-4 bg-[#3b82f6] hover:bg-[#2563eb] text-white font-semibold rounded-2xl transition-colors font-syne min-h-[56px]">
                   Connect Wallet
                 </button>
               </ConnectWallet>
@@ -675,18 +728,20 @@ export default function SwapPage() {
 
   // ── Render: Main UI ──────────────────────────────────────────────────────────
 
-  const inputBalance = getTokenBalance(swap.inputToken);
+  const inputBalanceRaw = getTokenBalanceRaw(swap.inputToken);
+  const inputBalanceFormatted = getTokenBalanceFormatted(swap.inputToken);
+  const isNativeInput = swap.inputToken?.address.toLowerCase() === NATIVE_ETH.toLowerCase();
 
   return (
-    <div className="min-h-[calc(100vh-80px)] pb-20 pt-2 px-3 sm:px-4 overflow-x-hidden">
+    <div className="min-h-[100dvh] overflow-x-hidden px-4 pb-24 pt-4 safe-area-bottom">
       <div className="w-full max-w-md mx-auto">
         {/* Header */}
-        <div className="flex items-center justify-between mb-3 px-1">
+        <div className="flex items-center justify-between mb-4 px-1">
           <h1 className="text-xl font-bold text-white font-syne">Swap</h1>
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-2">
             <button
               onClick={() => setShowHistory(true)}
-              className="p-2.5 rounded-xl bg-[#0D111C] border border-[#1B2236] text-gray-400 hover:text-white hover:border-[#3b82f6]/50 transition-colors"
+              className="p-3 rounded-xl bg-[#0D111C] border border-[#1B2236] text-gray-400 hover:text-white hover:border-[#3b82f6]/50 transition-colors min-h-[44px] min-w-[44px]"
               aria-label="Transaction History"
             >
               <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -695,7 +750,7 @@ export default function SwapPage() {
             </button>
             <button
               onClick={() => setShowSettings(!showSettings)}
-              className={`p-2.5 rounded-xl border transition-colors ${
+              className={`p-3 rounded-xl border transition-colors min-h-[44px] min-w-[44px] ${
                 showSettings 
                   ? 'bg-[#3b82f6]/20 border-[#3b82f6]/50 text-[#3b82f6]' 
                   : 'bg-[#0D111C] border-[#1B2236] text-gray-400 hover:text-white hover:border-[#3b82f6]/50'
@@ -712,15 +767,15 @@ export default function SwapPage() {
 
         {/* Settings Panel */}
         {showSettings && (
-          <div className="mb-3 p-4 bg-[#0D111C] border border-[#1B2236] rounded-2xl animate-fade-in">
-            <div className="flex items-center justify-between mb-3">
+          <div className="mb-4 p-4 bg-[#0D111C] border border-[#1B2236] rounded-2xl animate-fade-in">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-3">
               <span className="text-sm text-gray-400">Slippage Tolerance</span>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 {[0.1, 0.5, 1.0].map((s) => (
                   <button
                     key={s}
                     onClick={() => swap.setSlippage(s)}
-                    className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                    className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors min-h-[44px] ${
                       swap.slippage === s
                         ? 'bg-[#3b82f6] text-white'
                         : 'bg-[#1B2236] text-gray-400 hover:text-white hover:bg-[#293249]'
@@ -734,7 +789,8 @@ export default function SwapPage() {
                     type="number"
                     value={swap.slippage}
                     onChange={(e) => swap.setSlippage(parseFloat(e.target.value) || 0.5)}
-                    className="w-16 px-2 py-1.5 bg-[#1B2236] rounded-lg text-white text-sm text-center focus:outline-none focus:ring-1 focus:ring-[#3b82f6]"
+                    className="w-20 px-2 py-2 bg-[#1B2236] rounded-lg text-white text-sm text-center focus:outline-none focus:ring-1 focus:ring-[#3b82f6] min-h-[44px]"
+                    style={{ fontSize: '16px' }}
                   />
                   <span className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-500 text-xs">%</span>
                 </div>
@@ -750,29 +806,30 @@ export default function SwapPage() {
         )}
 
         {/* Main Swap Card */}
-        <div className="bg-[#0D111C] border border-[#1B2236] rounded-3xl p-3 relative">
+        <div className="bg-[#0D111C] border border-[#1B2236] rounded-3xl p-4 relative">
           {/* Input Token */}
           <div className="bg-[#131A2A] rounded-2xl p-4">
-            <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center justify-between mb-3">
               <span className="text-sm text-gray-500">You pay</span>
               {swap.inputToken && (
-                <span className="text-sm text-gray-500">
-                  Balance: {formatSwapAmount(inputBalance)}
+                <span className="text-sm text-gray-500 truncate max-w-[50%]">
+                  Balance: {formatSwapAmount(inputBalanceFormatted)}
                 </span>
               )}
             </div>
             
-            <div className="flex items-center gap-2">
+            <div className="flex flex-col sm:flex-row sm:items-center gap-3">
               <input
                 type="number"
                 value={swap.amountIn}
-                onChange={(e) => swap.setAmountIn(e.target.value)}
+                onChange={(e) => handleAmountChange(e.target.value)}
                 placeholder="0"
-                className="flex-1 min-w-0 bg-transparent text-2xl sm:text-3xl font-medium text-white outline-none placeholder-gray-600 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                className="flex-1 min-w-0 bg-transparent text-3xl font-medium text-white outline-none placeholder-gray-600 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                style={{ fontSize: '32px' }}
               />
               <button
                 onClick={() => setShowTokenSelector('input')}
-                className="flex items-center gap-2 px-3 py-2 bg-[#1B2236] rounded-2xl hover:bg-[#293249] transition-colors shrink-0"
+                className="flex items-center justify-between sm:justify-start gap-2 px-3 py-2.5 bg-[#1B2236] rounded-2xl hover:bg-[#293249] transition-colors shrink-0 min-h-[44px]"
               >
                 {swap.inputToken?.logoURI ? (
                   <img 
@@ -788,26 +845,22 @@ export default function SwapPage() {
                     {swap.inputToken?.symbol?.charAt(0) || '?'}
                   </div>
                 )}
-                <span className="font-medium text-white text-sm">{swap.inputToken?.symbol || 'Select'}</span>
-                <svg className="w-4 h-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <span className="font-medium text-white text-sm truncate max-w-[100px]">{swap.inputToken?.symbol || 'Select'}</span>
+                <svg className="w-4 h-4 text-gray-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
                 </svg>
               </button>
             </div>
 
-            {/* Percentage Buttons - FIXED FOR ALL TOKENS */}
-            {swap.inputToken && parseFloat(inputBalance) > 0 && (
-              <div className="flex flex-wrap items-center gap-2 mt-3">
-                {[25, 50, 75, 100].map((pct) => (
-                  <button
-                    key={pct}
-                    onClick={() => handleSetPercentage(pct)}
-                    className="px-3 py-1.5 text-xs font-medium text-[#3b82f6] bg-[#3b82f6]/10 border border-[#3b82f6]/20 rounded-lg hover:bg-[#3b82f6]/20 hover:border-[#3b82f6]/30 transition-colors active:scale-95"
-                  >
-                    {pct}%
-                  </button>
-                ))}
-              </div>
+            {/* Percentage Buttons with BigInt */}
+            {swap.inputToken && (
+              <PercentageButtons
+                balance={inputBalanceRaw}
+                decimals={swap.inputToken.decimals}
+                isNative={isNativeInput}
+                onSelect={(amount) => handleSetPercentage(amount, selectedPercent || 0)}
+                selectedPercent={selectedPercent}
+              />
             )}
           </div>
 
@@ -815,7 +868,7 @@ export default function SwapPage() {
           <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-10">
             <button
               onClick={swap.switchTokens}
-              className="w-10 h-10 flex items-center justify-center bg-[#0D111C] border-4 border-[#131A2A] rounded-xl hover:bg-[#1B2236] hover:border-[#293249] transition-all active:scale-90"
+              className="w-12 h-12 flex items-center justify-center bg-[#0D111C] border-4 border-[#131A2A] rounded-xl hover:bg-[#1B2236] hover:border-[#293249] transition-all active:scale-90 min-h-[44px] min-w-[44px]"
               aria-label="Switch tokens"
             >
               <svg className="w-5 h-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -825,27 +878,28 @@ export default function SwapPage() {
           </div>
 
           {/* Output Token */}
-          <div className="bg-[#131A2A] rounded-2xl p-4 mt-1">
-            <div className="flex items-center justify-between mb-2">
+          <div className="bg-[#131A2A] rounded-2xl p-4 mt-2">
+            <div className="flex items-center justify-between mb-3">
               <span className="text-sm text-gray-500">You receive</span>
               {swap.quote && swap.outputToken && (
-                <span className="text-sm text-gray-500">
+                <span className="text-xs text-gray-500 truncate max-w-[60%]">
                   1 {swap.inputToken?.symbol} ≈ {formatSwapAmount(parseFloat(swap.amountOut) / Math.max(parseFloat(swap.amountIn || '1'), 0.000001))} {swap.outputToken?.symbol}
                 </span>
               )}
             </div>
             
-            <div className="flex items-center gap-2">
+            <div className="flex flex-col sm:flex-row sm:items-center gap-3">
               <input
                 type="text"
                 value={swap.isQuoting ? '...' : swap.amountOut || '0'}
                 readOnly
                 placeholder="0"
-                className="flex-1 min-w-0 bg-transparent text-2xl sm:text-3xl font-medium text-white outline-none placeholder-gray-600"
+                className="flex-1 min-w-0 bg-transparent text-3xl font-medium text-white outline-none placeholder-gray-600"
+                style={{ fontSize: '32px' }}
               />
               <button
                 onClick={() => setShowTokenSelector('output')}
-                className="flex items-center gap-2 px-3 py-2 bg-[#1B2236] rounded-2xl hover:bg-[#293249] transition-colors shrink-0"
+                className="flex items-center justify-between sm:justify-start gap-2 px-3 py-2.5 bg-[#1B2236] rounded-2xl hover:bg-[#293249] transition-colors shrink-0 min-h-[44px]"
               >
                 {swap.outputToken?.logoURI ? (
                   <img 
@@ -861,8 +915,8 @@ export default function SwapPage() {
                     {swap.outputToken?.symbol?.charAt(0) || '?'}
                   </div>
                 )}
-                <span className="font-medium text-white text-sm">{swap.outputToken?.symbol || 'Select'}</span>
-                <svg className="w-4 h-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <span className="font-medium text-white text-sm truncate max-w-[100px]">{swap.outputToken?.symbol || 'Select'}</span>
+                <svg className="w-4 h-4 text-gray-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
                 </svg>
               </button>
@@ -871,7 +925,7 @@ export default function SwapPage() {
 
           {/* Quote Info */}
           {swap.quote && !swap.isQuoting && (
-            <div className="mt-3 p-3 bg-[#131A2A] rounded-xl text-sm space-y-1.5">
+            <div className="mt-4 p-3 bg-[#131A2A] rounded-xl text-sm space-y-2">
               <div className="flex items-center justify-between text-gray-500">
                 <span>Price Impact</span>
                 <span className={swap.quote.priceImpact > 3 ? 'text-red-400' : swap.quote.priceImpact > 1 ? 'text-yellow-400' : 'text-gray-400'}>
@@ -891,12 +945,18 @@ export default function SwapPage() {
                 <span>Slippage Tolerance</span>
                 <span>{swap.slippage}%</span>
               </div>
+              {swap.quote.route.length > 0 && (
+                <div className="flex items-center justify-between text-gray-500">
+                  <span>Route</span>
+                  <span className="truncate max-w-[60%] text-gray-400">{swap.quote.route.join(' → ')}</span>
+                </div>
+              )}
             </div>
           )}
 
           {/* Error Message */}
           {swap.error && (
-            <div className="mt-3 p-3 bg-red-500/10 border border-red-500/20 rounded-xl">
+            <div className="mt-4 p-3 bg-red-500/10 border border-red-500/20 rounded-xl">
               <p className="text-sm text-red-400 flex items-start gap-2">
                 <svg className="w-4 h-4 mt-0.5 shrink-0" fill="currentColor" viewBox="0 0 20 20">
                   <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
@@ -908,20 +968,21 @@ export default function SwapPage() {
 
           {/* Swap Button */}
           <div className="mt-4">
-            {swap.quote && swap.canSwap ? (
+            {swap.quote && swap.canSwap && swap.quote.tx ? (
               <Transaction
                 chainId={BASE_CHAIN_ID}
-                calls={swap.quote.tx ? [{
-                  to: swap.quote.tx.to,
-                  data: swap.quote.tx.data,
-                  value: BigInt(swap.quote.tx.value || '0'),
-                }] : []}
+                calls={[
+                  {
+                    to: swap.quote.tx.to,
+                    data: swap.quote.tx.data,
+                    value: BigInt(swap.quote.tx.value || '0'),
+                  },
+                ]}
                 capabilities={{
                   paymasterService: { url: process.env.NEXT_PUBLIC_PAYMASTER_URL! },
                 }}
                 onSuccess={(data: any) => {
                   const txHash = data?.transactionReceipts?.[0]?.transactionHash || '';
-                  setLastTxHash(txHash);
                   addToHistory({
                     id: txHash,
                     type: 'swap',
@@ -933,15 +994,25 @@ export default function SwapPage() {
                     txHash,
                   });
                   swap.setAmountIn('');
+                  setSelectedPercent(null);
                   refetchUserTokens();
                 }}
                 onError={(err: any) => {
                   console.error('Transaction failed:', err);
+                  addToHistory({
+                    id: Date.now().toString(),
+                    type: 'swap',
+                    inputToken: swap.inputToken?.symbol,
+                    outputToken: swap.outputToken?.symbol,
+                    amountIn: swap.amountIn,
+                    amountOut: swap.amountOut,
+                    status: 'failed',
+                  });
                 }}
               >
                 <TransactionButton
                   text={buttonState.text}
-                  className="!w-full !py-4 !bg-[#3b82f6] hover:!bg-[#2563eb] !text-white !font-semibold !rounded-2xl !transition-colors !font-syne disabled:!bg-[#1B2236] disabled:!text-gray-500"
+                  className="!w-full !py-4 !bg-[#3b82f6] hover:!bg-[#2563eb] !text-white !font-semibold !rounded-2xl !transition-colors !font-syne disabled:!bg-[#1B2236] disabled:!text-gray-500 !min-h-[56px]"
                 />
                 <TransactionStatus className="mt-2">
                   <TransactionStatusLabel className="text-sm text-gray-400" />
@@ -956,7 +1027,7 @@ export default function SwapPage() {
                   }
                 }}
                 disabled={buttonState.disabled}
-                className={`w-full py-4 font-semibold rounded-2xl transition-all font-syne ${
+                className={`w-full py-4 font-semibold rounded-2xl transition-all font-syne min-h-[56px] ${
                   buttonState.disabled
                     ? 'bg-[#1B2236] text-gray-500 cursor-not-allowed'
                     : buttonState.action === 'retry'
@@ -979,13 +1050,15 @@ export default function SwapPage() {
 
         {/* Footer Info */}
         <div className="mt-4 px-2 text-center">
-          <p className="text-xs text-gray-600 flex items-center justify-center gap-1">
+          <p className="text-xs text-gray-600 flex flex-wrap items-center justify-center gap-1">
             <span>Powered by</span>
-            <span className="text-[#ff007a] font-medium">Uniswap</span>
+            <span className="text-[#ff007a] font-medium">Uniswap V4</span>
             <span>•</span>
             <span className="text-green-400">Gas sponsored</span>
             <span>•</span>
             <span>0.2% fee</span>
+            <span>•</span>
+            <span className="text-gray-500">Builder: bc_ox7237gv</span>
           </p>
         </div>
       </div>
@@ -1007,4 +1080,3 @@ export default function SwapPage() {
     </div>
   );
 }
-//g
