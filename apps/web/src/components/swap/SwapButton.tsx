@@ -110,7 +110,6 @@ export function SwapButton({
       to: tx.to,
       data: tx.data,
       value: BigInt(tx.value || '0'),
-      capabilities: capabilities as any, // Only works natively if wagmi connector supports EIP-5792
     });
   };
 
