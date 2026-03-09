@@ -44,6 +44,9 @@ export function useSwapQuote() {
         amount: amountInStr, // BigInt string
         chainId: 8453,
         slippage: slippage, // 0.5% default or user selected
+        // Explicitly inject API key here just in case OnchainKitProvider context drops
+        projectId: process.env.NEXT_PUBLIC_ONCHAINKIT_API_KEY, 
+        apiKey: process.env.NEXT_PUBLIC_ONCHAINKIT_API_KEY
       };
       
       const response = await getSwapQuote(params as any) as any;
