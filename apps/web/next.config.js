@@ -35,13 +35,6 @@ const nextConfig = {
       tls: false, 
       '@react-native-async-storage/async-storage': false
     };
-    config.resolve.alias = {
-      ...config.resolve.alias,
-      '@mysten/dapp-kit': false,
-      '@mysten/sui': false,
-      '@solana/wallet-adapter-react': false,
-      '@solana/web3.js': false
-    };
     return config;
   }
 };

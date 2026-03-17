@@ -10,9 +10,16 @@
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
+    "@bigmi/client": "^0.7.1",
+    "@bigmi/core": "^0.7.1",
+    "@bigmi/react": "^0.7.1",
     "@coinbase/onchainkit": "^0.38.19",
     "@coinbase/wallet-sdk": "^4.3.0",
     "@lifi/widget": "^3.40.12",
+    "@mysten/dapp-kit": "^1.0.4",
+    "@mysten/sui": "^2.8.0",
+    "@solana/wallet-adapter-react": "^0.15.39",
+    "@solana/web3.js": "^1.98.4",
     "@tanstack/react-query": "^5.62.0",
     "@uniswap/uniswapx-sdk": "2.0.1-alpha.10",
     "ethers": "^5.7.2",
