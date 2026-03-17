@@ -10,8 +10,12 @@
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
-    "@coinbase/onchainkit": "^0.38.5",
+    "@bigmi/react": "^0.7.1",
+    "@coinbase/onchainkit": "^0.38.19",
     "@coinbase/wallet-sdk": "^4.3.0",
+    "@lifi/widget": "^3.40.12",
+    "@mysten/dapp-kit": "^1.0.4",
+    "@solana/wallet-adapter-react": "^0.15.39",
     "@tanstack/react-query": "^5.62.0",
     "@uniswap/uniswapx-sdk": "2.0.1-alpha.10",
     "ethers": "^5.7.2",
@@ -20,7 +24,7 @@
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "viem": "^2.23.2",
-    "wagmi": "^2.14.11"
+    "wagmi": "^2.19.5"
   },
   "devDependencies": {
     "@tailwindcss/forms": "^0.5.9",

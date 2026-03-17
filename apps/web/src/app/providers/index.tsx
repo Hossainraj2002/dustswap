@@ -1,27 +1,20 @@
 "use client";
 
-import { type ReactNode, useState } from "react";
 import { WagmiProvider } from "wagmi";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { OnchainKitProvider } from "@coinbase/onchainkit";
-import { MiniKitProvider } from "@coinbase/onchainkit/minikit";
 import { base } from "wagmi/chains";
-import { wagmiConfig } from "@/wagmi";
+import { wagmiConfig } from "@/config/wagmi";
+import { ReactNode, useState } from "react";
 
-interface ProvidersProps {
-  children: ReactNode;
-}
-
-export function Providers({ children }: ProvidersProps) {
+export function Providers({ children }: { children: ReactNode }) {
   const [queryClient] = useState(
     () =>
       new QueryClient({
         defaultOptions: {
           queries: {
-            staleTime: 30 * 1000,
-            gcTime: 5 * 60 * 1000,
-            retry: 2,
             refetchOnWindowFocus: false,
+            retry: 1,
           },
         },
       })
@@ -31,20 +24,13 @@ export function Providers({ children }: ProvidersProps) {
     <WagmiProvider config={wagmiConfig}>
       <QueryClientProvider client={queryClient}>
         <OnchainKitProvider
-          apiKey={process.env.NEXT_PUBLIC_ONCHAINKIT_API_KEY}
-          projectId={process.env.NEXT_PUBLIC_ONCHAINKIT_API_KEY}
           chain={base}
+          apiKey={process.env.NEXT_PUBLIC_ONCHAINKIT_API_KEY}
           config={{
-            appearance: {
-              mode: "dark",
-              theme: "cyberpunk",
-            },
             paymaster: process.env.NEXT_PUBLIC_PAYMASTER_URL,
           }}
         >
-          <MiniKitProvider chain={base}>
-            {children}
-          </MiniKitProvider>
+          {children}
         </OnchainKitProvider>
       </QueryClientProvider>
     </WagmiProvider>

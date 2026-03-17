@@ -1,4 +1,4 @@
-import { http, createConfig } from "wagmi";
+import { createConfig, http } from "wagmi";
 import {
   base,
   mainnet,
@@ -8,24 +8,15 @@ import {
   optimism,
   avalanche,
 } from "wagmi/chains";
-import { coinbaseWallet } from "wagmi/connectors";
-
-// @ts-ignore - ox exports may not resolve correctly in Next.js bundler types
 import { Attribution } from "ox/erc8021";
 
+// Builder code for transaction attribution - appended to EVERY transaction
 const DATA_SUFFIX = Attribution.toDataSuffix({
   codes: [process.env.NEXT_PUBLIC_BUILDER_CODE || "bc_ox7237gv"],
 });
 
 export const wagmiConfig = createConfig({
   chains: [base, mainnet, arbitrum, polygon, bsc, optimism, avalanche] as any,
-  connectors: [
-    coinbaseWallet({
-      appName: "DustSwap",
-      appLogoUrl: "https://dustswap.xyz/logo.png",
-      preference: "smartWalletOnly",
-    }),
-  ],
   transports: {
     [base.id]: http(),
     [mainnet.id]: http(),
@@ -35,12 +26,17 @@ export const wagmiConfig = createConfig({
     [optimism.id]: http(),
     [avalanche.id]: http(),
   },
-  dataSuffix: DATA_SUFFIX,
-  ssr: true,
+  dataSuffix: DATA_SUFFIX, // Builder code appended to every tx automatically
+  multiInjectedProviderDiscovery: true,
 });
 
-declare module "wagmi" {
-  interface Register {
-    config: typeof wagmiConfig;
-  }
-}
+// Export chain ids for reference
+export const SUPPORTED_CHAINS = {
+  base: 8453,
+  ethereum: 1,
+  arbitrum: 42161,
+  polygon: 137,
+  bsc: 56,
+  optimism: 10,
+  avalanche: 43114,
+};

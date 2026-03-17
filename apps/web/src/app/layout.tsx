@@ -11,37 +11,16 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: {
-    default: "DustSwap",
-    template: "%s | DustSwap",
-  },
-  description: "Sweep your dust tokens into value",
-  applicationName: "DustSwap",
-  keywords: [
-    "DustSwap",
-    "dust tokens",
-    "DEX aggregator",
-    "Base",
-    "swap",
-    "batch swap",
-    "MiniApp",
-  ],
+  title: "DustSwap - Cross-Chain Swaps",
+  description: "Swap and bridge tokens across chains with zero gas fees",
+  keywords: ["DustSwap", "Swap", "Bridge", "Cross-chain", "LI.FI", "Base"],
   authors: [{ name: "DustSwap Team" }],
-  creator: "DustSwap",
-  openGraph: {
-    type: "website",
-    locale: "en_US",
-    title: "DustSwap",
-    description: "Sweep your dust tokens into value",
-    siteName: "DustSwap",
-  },
-  twitter: {
-    card: "summary_large_image",
-    title: "DustSwap",
-    description: "Sweep your dust tokens into value",
+  icons: {
+    icon: "/logo.svg",
   },
   other: {
     "fc:frame": "vNext",
+    "base:app_id": "6992d2eae0d5d2cf831b5db6",
   },
   manifest: "/manifest.json",
 };
@@ -62,11 +41,6 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className={`${inter.variable} dark`} suppressHydrationWarning>
-      <head>
-        {/* Base App verification */}
-        <meta name="base:app_id" content="6992d2eae0d5d2cf831b5db6" />
-        <meta property="base:app_id" content="6992d2eae0d5d2cf831b5db6" />
-      </head>
       <body className="min-h-screen bg-[#030305] font-sans text-white antialiased">
         <Providers>
           {/* Ambient background glow effects */}
