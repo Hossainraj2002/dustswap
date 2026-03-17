@@ -28,7 +28,20 @@ const nextConfig = {
 
   webpack: (config) => {
     config.externals.push('pino-pretty', 'lokijs', 'encoding');
-    config.resolve.fallback = { ...config.resolve.fallback, fs: false, net: false, tls: false, '@react-native-async-storage/async-storage': false };
+    config.resolve.fallback = { 
+      ...config.resolve.fallback, 
+      fs: false, 
+      net: false, 
+      tls: false, 
+      '@react-native-async-storage/async-storage': false
+    };
+    config.resolve.alias = {
+      ...config.resolve.alias,
+      '@mysten/dapp-kit': false,
+      '@mysten/sui': false,
+      '@solana/wallet-adapter-react': false,
+      '@solana/web3.js': false
+    };
     return config;
   }
 };
