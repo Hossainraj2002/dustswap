@@ -1,36 +1,49 @@
 import type { WidgetConfig } from "@lifi/widget";
+import {
+  DEFAULT_SOURCE_CHAIN_ID,
+  getLifiRpcUrls,
+  SUPPORTED_EVM_CHAIN_IDS,
+} from "@/config/web3";
 
 // Export integrator name
 export const LIFI_INTEGRATOR =
   process.env.NEXT_PUBLIC_LIFI_INTEGRATOR || "DustSwap";
 
+const configuredFee = Number(process.env.NEXT_PUBLIC_LIFI_FEE);
+const lifiRpcUrls = getLifiRpcUrls();
+
 export const widgetConfig: WidgetConfig = {
   integrator: LIFI_INTEGRATOR,
-  apiKey: process.env.NEXT_PUBLIC_LIFI_API_KEY && process.env.NEXT_PUBLIC_LIFI_API_KEY !== "PLACEHOLDER_FOR_API_KEY" 
-    ? process.env.NEXT_PUBLIC_LIFI_API_KEY 
-    : undefined,
-  // Fee configuration: 0.2% = 20 basis points
-  fee: 0.002, // 0.2%
+  ...(Number.isFinite(configuredFee) &&
+  configuredFee > 0 &&
+  configuredFee < 1
+    ? { fee: configuredFee }
+    : {}),
 
-  // Theme customization
+  appearance: "dark",
   theme: {
     container: {
-      border: "1px solid rgb(234, 234, 234)",
+      border: "1px solid rgba(255, 255, 255, 0.08)",
       borderRadius: "16px",
-      boxShadow: "0 4px 6px -1px rgb(0 0 0 / 0.1)",
+      boxShadow: "0 24px 80px rgba(0, 0, 0, 0.28)",
+      backgroundColor: "#0b1020",
     },
-    palette: {
-      primary: {
-        main: "#3b82f6",
-        dark: "#2563eb",
-        light: "#60a5fa",
-      },
-      secondary: {
-        main: "#8b5cf6",
-      },
-      background: {
-        default: "#ffffff",
-        paper: "#f9fafb",
+    colorSchemes: {
+      dark: {
+        palette: {
+          primary: {
+            main: "#3b82f6",
+            dark: "#2563eb",
+            light: "#60a5fa",
+          },
+          secondary: {
+            main: "#14b8a6",
+          },
+          background: {
+            default: "#050816",
+            paper: "#0b1020",
+          },
+        },
       },
     },
     typography: {
@@ -38,14 +51,15 @@ export const widgetConfig: WidgetConfig = {
     },
   },
 
-  // Chain configuration
-  fromChain: 8453, // Base
-  toChain: 8453,   // Base
+  // Default source on Base, but let users pick any supported destination.
+  fromChain: DEFAULT_SOURCE_CHAIN_ID,
   chains: {
-    allow: [1, 10, 56, 137, 42161, 43114, 8453], // Ethereum, Optimism, BSC, Polygon, Arbitrum, Avalanche, Base
+    allow: [...SUPPORTED_EVM_CHAIN_IDS],
   },
+  ...(lifiRpcUrls ? { sdkConfig: { rpcUrls: lifiRpcUrls } } : {}),
 
-  // Widget appearance
-  variant: "wide", // Options: "compact" | "wide" | "drawer"
-  subvariant: "default", // Options: "default" | "swap" | "split"
+  buildUrl: true,
+  useRecommendedRoute: true,
+  variant: "wide",
+  subvariant: "default",
 };
