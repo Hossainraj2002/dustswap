@@ -6,8 +6,11 @@ export const LIFI_INTEGRATOR =
 
 export const widgetConfig: WidgetConfig = {
   integrator: LIFI_INTEGRATOR,
+  apiKey: process.env.NEXT_PUBLIC_LIFI_API_KEY && process.env.NEXT_PUBLIC_LIFI_API_KEY !== "PLACEHOLDER_FOR_API_KEY" 
+    ? process.env.NEXT_PUBLIC_LIFI_API_KEY 
+    : undefined,
   // Fee configuration: 0.2% = 20 basis points
-  fee: 0.002,
+  fee: 0.002, // 0.2%
 
   // Theme customization
   theme: {
@@ -35,9 +38,11 @@ export const widgetConfig: WidgetConfig = {
     },
   },
 
-  // Chain configuration - Base as primary
+  // Chain configuration
+  fromChain: 8453, // Base
+  toChain: 8453,   // Base
   chains: {
-    allow: [8453, 1, 42161, 137, 56, 10, 43114], // Base, ETH, Arb, Polygon, BSC, Optimism, Avalanche
+    allow: [1, 10, 56, 137, 42161, 43114, 8453], // Ethereum, Optimism, BSC, Polygon, Arbitrum, Avalanche, Base
   },
 
   // Widget appearance

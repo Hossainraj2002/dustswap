@@ -3,6 +3,12 @@
 
 import { Hono } from "hono";
 import { getAddress, formatUnits, parseUnits, encodeFunctionData, encodePacked, erc20Abi, concat } from "viem";
+import { createConfig } from '@lifi/sdk';
+
+// Initialize LI.FI SDK
+createConfig({
+  integrator: 'DustSwap',
+});
 
 const tokens = new Hono();
 
@@ -647,6 +653,83 @@ async function getQuoteViaUniswap(
   };
 }
 
+// ─── LI.FI API quote (Primary Strategy) ──────────────────────────────────────
+// LI.FI aggregates across many DEXs and bridges, providing the most robust routing.
+
+async function getQuoteViaLiFi(
+  order: { tokenIn: string; amountIn: string; decimals?: number },
+  fromAddress: string,
+  toTokenAddress: string
+): Promise<QuoteResult> {
+  const url = new URL("https://li.quest/v1/quote");
+  url.searchParams.set("fromChain", BASE_CHAIN_ID.toString());
+  url.searchParams.set("toChain", BASE_CHAIN_ID.toString());
+  url.searchParams.set("fromToken", order.tokenIn);
+  url.searchParams.set("toToken", toTokenAddress);
+  url.searchParams.set("fromAmount", order.amountIn);
+  url.searchParams.set("fromAddress", fromAddress);
+  url.searchParams.set("slippage", "0.03"); // 3% slippage for dust tokens
+  
+  // Inject fee configuration (0.2%)
+  // LI.FI allows integrators to take a fee
+  // url.searchParams.set("fee", "0.002"); 
+
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+
+  const apiKey = process.env.LIFI_API_KEY;
+  if (apiKey && apiKey !== "PLACEHOLDER_FOR_API_KEY") {
+    headers["x-lifi-api-key"] = apiKey;
+  }
+
+  const res = await fetch(url.toString(), {
+    headers,
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`LI.FI API failed (${res.status}): ${text.slice(0, 200)}`);
+  }
+
+  const json = await res.json() as {
+    estimate: { toAmount: string; toAmountMin: string; fromAmountUSD?: string; toAmountUSD?: string; feeCosts?: any[] };
+    transactionRequest?: { to: string; data: string; value: string; gasLimit: string };
+  };
+
+  if (!json.transactionRequest) {
+    throw new Error("LI.FI: No transaction data returned (likely no possible route)");
+  }
+
+  const fromUSD = parseFloat(json.estimate.fromAmountUSD || "0");
+  const toUSD = parseFloat(json.estimate.toAmountUSD || "0");
+
+  return {
+    tokenIn: order.tokenIn,
+    amountIn: order.amountIn,
+    success: true,
+    source: "lifi",
+    amountOut: json.estimate.toAmount,
+    estimatedAmountOut: json.estimate.toAmount,
+    minAmountOut: json.estimate.toAmountMin,
+    fromAmountUSD: fromUSD.toFixed(4),
+    toAmountUSD: toUSD.toFixed(4),
+    priceImpact: "0",
+    poolFee: 3000,
+    maxSwappablePercent: 100,
+    // LI.FI handles its own approval checks, but we'll provide standard ERC20 approval if needed
+    approveTransaction: undefined, // Usually handled by the widget/sdk flow
+    swapTransaction: {
+      to: json.transactionRequest.to,
+      data: json.transactionRequest.data,
+      gas: json.transactionRequest.gasLimit || "350000",
+      value: json.transactionRequest.value || "0",
+    },
+    _fromUSD: fromUSD,
+    _toUSD: toUSD,
+  };
+}
+
 
 
 // ─── GET /api/tokens/dust?address=0x...&threshold=5 ──────────────────────────
@@ -884,7 +967,24 @@ tokens.post("/batch-quote", async (c) => {
     const batch = validOrders.slice(i, i + BATCH_SIZE);
 
     const batchPromises = batch.map(async (order): Promise<QuoteResult> => {
-      // ── Strategy 1: Try CDP API (V3 routing) ──────────────────────────
+      // ── Strategy 1: Try LI.FI API (Primary Aggregator) ────────────────
+      try {
+        const lifiResult = await getQuoteViaLiFi(
+          order,
+          fromAddress,
+          toTokenAddress
+        );
+        console.log(
+          `[batch-quote] LI.FI success for ${order.tokenIn.slice(0, 10)}...`
+        );
+        return lifiResult;
+      } catch (lifiErr) {
+        console.log(
+          `[batch-quote] LI.FI failed for ${order.tokenIn.slice(0, 10)}...: ${(lifiErr as Error).message.slice(0, 120)}`
+        );
+      }
+
+      // ── Strategy 2: Try CDP API (V3 routing) ──────────────────────────
       try {
         const cdpResult = await getQuoteViaCdp(
           order,
@@ -901,7 +1001,7 @@ tokens.post("/batch-quote", async (c) => {
         );
       }
 
-      // ── Strategy 2: Try 0x API (V4 + aggregator routing) ──────────────
+      // ── Strategy 3: Try 0x API (V4 + aggregator routing) ──────────────
       try {
         const zeroXResult = await getQuoteVia0x(
           order,
@@ -918,7 +1018,7 @@ tokens.post("/batch-quote", async (c) => {
         );
       }
 
-      // ── Strategy 3: Try Uniswap Trading API (V2/V3/V4) ────────────────
+      // ── Strategy 4: Try Uniswap Trading API (V2/V3/V4) ────────────────
       try {
         const uniResult = await getQuoteViaUniswap(
           order,
@@ -940,7 +1040,7 @@ tokens.post("/batch-quote", async (c) => {
         tokenIn: order.tokenIn,
         amountIn: order.amountIn,
         success: false,
-        error: "No swap route found via CDP, 0x, or Uniswap",
+        error: "No swap route found via LI.FI, CDP, 0x, or Uniswap",
       };
     });
 
