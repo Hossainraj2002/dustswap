@@ -9,7 +9,7 @@ import {
   WidgetEvent,
   widgetEvents,
 } from "@lifi/widget";
-import { useEffect, useEffectEvent, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { DEFAULT_SOURCE_CHAIN_ID, SUPPORTED_EVM_CHAINS } from "@/config/web3";
 
 type DebugFieldName = keyof DefaultFieldValues;
@@ -100,7 +100,7 @@ export function LifiRouteDebugPanel() {
   });
   const [logs, setLogs] = useState<DebugLogEntry[]>([]);
 
-  const appendLog = useEffectEvent(
+  const appendLog = useCallback(
     (level: DebugLogLevel, title: string, detail?: string) => {
       setLogs((current) =>
         [
@@ -114,7 +114,8 @@ export function LifiRouteDebugPanel() {
           ...current,
         ].slice(0, 12)
       );
-    }
+    },
+    []
   );
 
   useEffect(() => {
@@ -233,11 +234,11 @@ export function LifiRouteDebugPanel() {
     recentEvents: logs,
   };
 
-  const copySnapshot = useEffectEvent(async () => {
+  const copySnapshot = useCallback(async () => {
     await navigator.clipboard.writeText(JSON.stringify(snapshot, null, 2));
     setCopied(true);
     window.setTimeout(() => setCopied(false), 1500);
-  });
+  }, [snapshot]);
 
   const noRoutes =
     availableRoutes?.length === 0 &&

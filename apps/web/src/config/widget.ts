@@ -1,4 +1,4 @@
-import type { WidgetConfig } from "@lifi/widget";
+import { ChainType, type WidgetConfig } from "@lifi/widget";
 import {
   DEFAULT_SOURCE_CHAIN_ID,
   getLifiRpcUrls,
@@ -12,7 +12,11 @@ export const LIFI_INTEGRATOR =
 const configuredFee = Number(process.env.NEXT_PUBLIC_LIFI_FEE);
 const lifiRpcUrls = getLifiRpcUrls();
 
-export const widgetConfig: WidgetConfig = {
+type CreateWidgetConfigOptions = {
+  onConnect?: () => void;
+};
+
+const baseWidgetConfig: WidgetConfig = {
   integrator: LIFI_INTEGRATOR,
   ...(Number.isFinite(configuredFee) &&
   configuredFee > 0 &&
@@ -51,15 +55,45 @@ export const widgetConfig: WidgetConfig = {
     },
   },
 
-  // Default source on Base, but let users pick any supported destination.
   fromChain: DEFAULT_SOURCE_CHAIN_ID,
   chains: {
+    types: {
+      allow: [ChainType.EVM],
+    },
     allow: [...SUPPORTED_EVM_CHAIN_IDS],
   },
-  ...(lifiRpcUrls ? { sdkConfig: { rpcUrls: lifiRpcUrls } } : {}),
 
-  buildUrl: true,
+  sdkConfig: {
+    ...(lifiRpcUrls ? { rpcUrls: lifiRpcUrls } : {}),
+    executionOptions: {
+      // Coinbase Smart Wallet may fall back to classic approvals more reliably
+      // than permit-based message signing depending on account capabilities.
+      disableMessageSigning: true,
+    },
+  },
+
+  // Avoid stale URL/query-state breaking route lookups across refreshes.
+  buildUrl: false,
+  keyPrefix: "dustswap-lifi-v2",
   useRecommendedRoute: true,
   variant: "wide",
-  subvariant: "default",
+  subvariant: "split",
+  subvariantOptions: {
+    split: {
+      defaultTab: "swap",
+    },
+  },
 };
+
+export function createWidgetConfig({
+  onConnect,
+}: CreateWidgetConfigOptions = {}): WidgetConfig {
+  return {
+    ...baseWidgetConfig,
+    walletConfig: onConnect
+      ? {
+          onConnect,
+        }
+      : undefined,
+  };
+}
