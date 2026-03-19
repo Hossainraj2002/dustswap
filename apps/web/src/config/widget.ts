@@ -1,4 +1,4 @@
-import { type ToAddress, type WidgetConfig } from "@lifi/widget";
+import type { WidgetConfig } from "@lifi/widget";
 import {
   DEFAULT_SOURCE_CHAIN_ID,
   getLifiRpcUrls,
@@ -14,7 +14,6 @@ const lifiRpcUrls = getLifiRpcUrls();
 
 type CreateWidgetConfigOptions = {
   onConnect?: () => void;
-  toAddress?: ToAddress;
 };
 
 const baseWidgetConfig: WidgetConfig = {
@@ -58,11 +57,7 @@ const baseWidgetConfig: WidgetConfig = {
 
   fromChain: DEFAULT_SOURCE_CHAIN_ID,
   chains: {
-    // Keep source chains EVM-only for the connected wallet flow, while still
-    // allowing LI.FI destination chains from other ecosystems.
-    from: {
-      allow: [...SUPPORTED_EVM_CHAIN_IDS],
-    },
+    allow: [...SUPPORTED_EVM_CHAIN_IDS],
   },
 
   sdkConfig: {
@@ -80,20 +75,13 @@ const baseWidgetConfig: WidgetConfig = {
   useRecommendedRoute: true,
   variant: "wide",
   subvariant: "split",
-  subvariantOptions: {
-    split: {
-      defaultTab: "swap",
-    },
-  },
 };
 
 export function createWidgetConfig({
   onConnect,
-  toAddress,
 }: CreateWidgetConfigOptions = {}): WidgetConfig {
   return {
     ...baseWidgetConfig,
-    toAddress,
     walletConfig: onConnect
       ? {
           onConnect,
