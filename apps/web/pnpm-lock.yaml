@@ -23,6 +23,12 @@ importers:
       '@coinbase/wallet-sdk':
         specifier: ^4.3.0
         version: 4.3.7(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6)(zod@4.3.6)
+      '@lifi/sdk':
+        specifier: ^3.16.2
+        version: 3.16.2(@solana/wallet-adapter-base@0.9.27(@solana/web3.js@1.98.4(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6)))(@solana/web3.js@1.98.4(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6))(@types/react@19.2.14)(bufferutil@4.1.0)(react@19.2.4)(typescript@5.9.3)(use-sync-external-store@1.4.0(react@19.2.4))(utf-8-validate@6.0.6)(viem@2.47.4(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6)(zod@4.3.6))(zod@4.3.6)
+      '@lifi/wallet-management':
+        specifier: ^3.22.8
+        version: 3.22.8(cc21e302118ac6015c4f475f2da5e486)
       '@lifi/widget':
         specifier: ^3.40.12
         version: 3.40.12(c0904d074eeaf6f7dabd2c4815b83943)

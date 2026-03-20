@@ -1,73 +1,56 @@
-import {
-  arbitrum,
-  avalanche,
-  base,
-  bsc,
-  mainnet,
-  optimism,
-  polygon,
-} from "wagmi/chains";
-
-export const SUPPORTED_EVM_CHAINS = [
-  base,
-  mainnet,
-  arbitrum,
-  polygon,
-  bsc,
-  optimism,
-  avalanche,
-] as const;
-
-export const SUPPORTED_EVM_CHAIN_IDS = [
-  base.id,
-  mainnet.id,
-  arbitrum.id,
-  polygon.id,
-  bsc.id,
-  optimism.id,
-  avalanche.id,
-] as const;
+import { base, mainnet, arbitrum, optimism, polygon, bsc, avalanche } from "wagmi/chains";
+import type { Chain } from "wagmi/chains";
+import { http } from "wagmi";
 
 export const DEFAULT_SOURCE_CHAIN_ID = base.id;
+
+// Seed the app with a stable starter set, then sync the full LI.FI EVM list at runtime.
+export const INITIAL_WAGMI_CHAINS = [
+  base,
+  mainnet,
+  arbitrum,
+  optimism,
+  polygon,
+  bsc,
+  avalanche,
+] as const satisfies readonly [Chain, ...Chain[]];
 
 export const SUPPORTED_CHAINS = {
   base: base.id,
   ethereum: mainnet.id,
   arbitrum: arbitrum.id,
+  optimism: optimism.id,
   polygon: polygon.id,
   bsc: bsc.id,
-  optimism: optimism.id,
   avalanche: avalanche.id,
 } as const;
 
+const rpcUrlByChainId: Record<number, string | undefined> = {
+  [base.id]: process.env.NEXT_PUBLIC_BASE_RPC_URL,
+  [mainnet.id]: process.env.NEXT_PUBLIC_ETHEREUM_RPC_URL,
+  [arbitrum.id]: process.env.NEXT_PUBLIC_ARBITRUM_RPC_URL,
+  [optimism.id]: process.env.NEXT_PUBLIC_OPTIMISM_RPC_URL,
+  [polygon.id]: process.env.NEXT_PUBLIC_POLYGON_RPC_URL,
+  [bsc.id]: process.env.NEXT_PUBLIC_BSC_RPC_URL,
+  [avalanche.id]: process.env.NEXT_PUBLIC_AVALANCHE_RPC_URL,
+};
+
 export function getRpcUrlForChain(chainId: number) {
-  switch (chainId) {
-    case base.id:
-      return process.env.NEXT_PUBLIC_BASE_RPC_URL;
-    case mainnet.id:
-      return process.env.NEXT_PUBLIC_ETHEREUM_RPC_URL;
-    case arbitrum.id:
-      return process.env.NEXT_PUBLIC_ARBITRUM_RPC_URL;
-    case polygon.id:
-      return process.env.NEXT_PUBLIC_POLYGON_RPC_URL;
-    case bsc.id:
-      return process.env.NEXT_PUBLIC_BSC_RPC_URL;
-    case optimism.id:
-      return process.env.NEXT_PUBLIC_OPTIMISM_RPC_URL;
-    case avalanche.id:
-      return process.env.NEXT_PUBLIC_AVALANCHE_RPC_URL;
-    default:
-      return undefined;
-  }
+  return rpcUrlByChainId[chainId];
 }
 
 export function getLifiRpcUrls() {
-  const rpcEntries = SUPPORTED_EVM_CHAIN_IDS.flatMap((chainId) => {
-    const rpcUrl = getRpcUrlForChain(chainId);
-    return rpcUrl ? [[chainId, [rpcUrl] as string[]]] : [];
-  });
+  const rpcEntries = Object.entries(rpcUrlByChainId).flatMap(
+    ([chainId, rpcUrl]) => (rpcUrl ? [[Number(chainId), [rpcUrl] as string[]]] : [])
+  );
 
   return rpcEntries.length
     ? (Object.fromEntries(rpcEntries) as Record<number, string[]>)
     : undefined;
+}
+
+export function getWagmiTransports(chains: readonly Chain[]) {
+  return Object.fromEntries(
+    chains.map((chain) => [chain.id, http(getRpcUrlForChain(chain.id))])
+  );
 }

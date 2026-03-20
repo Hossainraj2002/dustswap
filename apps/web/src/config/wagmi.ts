@@ -1,2 +1,2 @@
 export { wagmiConfig } from "@/wagmi";
-export { SUPPORTED_CHAINS, SUPPORTED_EVM_CHAIN_IDS } from "@/config/web3";
+export { SUPPORTED_CHAINS } from "@/config/web3";

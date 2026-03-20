@@ -10,7 +10,7 @@ import {
   widgetEvents,
 } from "@lifi/widget";
 import { useCallback, useEffect, useState } from "react";
-import { DEFAULT_SOURCE_CHAIN_ID, SUPPORTED_EVM_CHAINS } from "@/config/web3";
+import { DEFAULT_SOURCE_CHAIN_ID, INITIAL_WAGMI_CHAINS } from "@/config/web3";
 
 type DebugFieldName = keyof DefaultFieldValues;
 type DebugFormState = Partial<DefaultFieldValues>;
@@ -35,7 +35,7 @@ const trackedFields: DebugFieldName[] = [
 ];
 
 const chainNameById = Object.fromEntries(
-  SUPPORTED_EVM_CHAINS.map((chain) => [chain.id, chain.name])
+  INITIAL_WAGMI_CHAINS.map((chain) => [chain.id, chain.name])
 ) as Record<number, string>;
 
 function formatValue(value: unknown) {

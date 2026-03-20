@@ -15,6 +15,8 @@
     "@bigmi/react": "^0.7.1",
     "@coinbase/onchainkit": "^0.38.19",
     "@coinbase/wallet-sdk": "^4.3.0",
+    "@lifi/sdk": "^3.16.2",
+    "@lifi/wallet-management": "^3.22.8",
     "@lifi/widget": "^3.40.12",
     "@mysten/dapp-kit": "^1.0.4",
     "@mysten/sui": "^2.8.0",

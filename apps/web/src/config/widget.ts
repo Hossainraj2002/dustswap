@@ -1,9 +1,7 @@
 import type { WidgetConfig } from "@lifi/widget";
-import {
-  DEFAULT_SOURCE_CHAIN_ID,
-  getLifiRpcUrls,
-  SUPPORTED_EVM_CHAIN_IDS,
-} from "@/config/web3";
+import type { WalletMenuOpenArgs } from "@lifi/wallet-management";
+import { DEFAULT_SOURCE_CHAIN_ID, getLifiRpcUrls } from "@/config/web3";
+import { lifiEvmProvider } from "@/lib/lifi";
 
 // Export integrator name
 export const LIFI_INTEGRATOR =
@@ -11,9 +9,10 @@ export const LIFI_INTEGRATOR =
 
 const configuredFee = Number(process.env.NEXT_PUBLIC_LIFI_FEE);
 const lifiRpcUrls = getLifiRpcUrls();
+const walletConnectProjectId = process.env.NEXT_PUBLIC_WALLET_CONNECT_PROJECT_ID;
 
 type CreateWidgetConfigOptions = {
-  onConnect?: () => void;
+  onConnect?: (args?: WalletMenuOpenArgs) => void;
 };
 
 const baseWidgetConfig: WidgetConfig = {
@@ -56,12 +55,10 @@ const baseWidgetConfig: WidgetConfig = {
   },
 
   fromChain: DEFAULT_SOURCE_CHAIN_ID,
-  chains: {
-    allow: [...SUPPORTED_EVM_CHAIN_IDS],
-  },
 
   sdkConfig: {
     ...(lifiRpcUrls ? { rpcUrls: lifiRpcUrls } : {}),
+    providers: [lifiEvmProvider],
     executionOptions: {
       // Coinbase Smart Wallet may fall back to classic approvals more reliably
       // than permit-based message signing depending on account capabilities.
@@ -85,6 +82,17 @@ export function createWidgetConfig({
     walletConfig: onConnect
       ? {
           onConnect,
+          ...(walletConnectProjectId
+            ? {
+                walletConnect: {
+                  projectId: walletConnectProjectId,
+                },
+              }
+            : {}),
+          coinbase: {
+            appName: "DustSwap",
+            appLogoUrl: "https://dustswap.xyz/logo.png",
+          },
           usePartialWalletManagement: true,
         }
       : undefined,

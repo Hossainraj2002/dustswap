@@ -1,31 +1,39 @@
-import { http, createConfig } from "wagmi";
-import { coinbaseWallet } from "wagmi/connectors";
-import { getRpcUrlForChain, SUPPORTED_EVM_CHAINS } from "@/config/web3";
+import type { CreateConnectorFn } from "wagmi";
+import { createConfig } from "wagmi";
+import { coinbaseWallet, injected, walletConnect } from "wagmi/connectors";
+import { INITIAL_WAGMI_CHAINS, getWagmiTransports } from "@/config/web3";
+import { DATA_SUFFIX } from "@/lib/builderCode";
 
-// @ts-ignore - ox exports may not resolve correctly in Next.js bundler types
-import { Attribution } from "ox/erc8021";
+const walletConnectProjectId =
+  process.env.NEXT_PUBLIC_WALLET_CONNECT_PROJECT_ID;
 
-const DATA_SUFFIX = Attribution.toDataSuffix({
-  codes: [process.env.NEXT_PUBLIC_BUILDER_CODE || "bc_ox7237gv"],
-});
+export const wagmiConnectors: CreateConnectorFn[] = [
+  injected({ shimDisconnect: true }),
+  ...(walletConnectProjectId
+    ? [
+        walletConnect({
+          projectId: walletConnectProjectId,
+          showQrModal: true,
+          metadata: {
+            name: "DustSwap",
+            description: "DustSwap cross-chain swaps and bridges",
+            url: "https://dustswap.xyz",
+            icons: ["https://dustswap.xyz/logo.png"],
+          },
+        }),
+      ]
+    : []),
+  coinbaseWallet({
+    appName: "DustSwap",
+    appLogoUrl: "https://dustswap.xyz/logo.png",
+    preference: "all",
+  }),
+];
 
 export const wagmiConfig = createConfig({
-  chains: [...SUPPORTED_EVM_CHAINS] as any,
-  connectors: [
-    coinbaseWallet({
-      appName: "DustSwap",
-      appLogoUrl: "https://dustswap.xyz/logo.png",
-      preference: "smartWalletOnly",
-    }),
-  ],
-  transports: {
-    ...Object.fromEntries(
-      SUPPORTED_EVM_CHAINS.map((chain) => [
-        chain.id,
-        http(getRpcUrlForChain(chain.id)),
-      ])
-    ),
-  },
+  chains: [...INITIAL_WAGMI_CHAINS],
+  connectors: wagmiConnectors,
+  transports: getWagmiTransports(INITIAL_WAGMI_CHAINS) as any,
   dataSuffix: DATA_SUFFIX,
   ssr: true,
 });
