@@ -1,7 +1,7 @@
 import type { WidgetConfig } from "@lifi/widget";
 import type { WalletMenuOpenArgs } from "@lifi/wallet-management";
 import { DEFAULT_SOURCE_CHAIN_ID, getLifiRpcUrls } from "@/config/web3";
-import { lifiEvmProvider } from "@/lib/lifi";
+import { appendBuilderCodeData } from "@/lib/builderCode";
 
 // Export integrator name
 export const LIFI_INTEGRATOR =
@@ -58,18 +58,20 @@ const baseWidgetConfig: WidgetConfig = {
 
   sdkConfig: {
     ...(lifiRpcUrls ? { rpcUrls: lifiRpcUrls } : {}),
-    providers: [lifiEvmProvider],
     executionOptions: {
       // Coinbase Smart Wallet may fall back to classic approvals more reliably
       // than permit-based message signing depending on account capabilities.
       disableMessageSigning: true,
+      updateTransactionRequestHook: async (request) => ({
+        data: appendBuilderCodeData(request.data),
+      }),
     },
   },
 
   // Avoid stale URL/query-state breaking route lookups across refreshes.
   buildUrl: false,
   keyPrefix: "dustswap-lifi-v2",
-  useRecommendedRoute: true,
+  useRecommendedRoute: false,
   variant: "wide",
   subvariant: "split",
 };
