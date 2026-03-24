@@ -1,6 +1,8 @@
 import type { WidgetConfig } from "@lifi/widget";
 import type { WalletMenuOpenArgs } from "@lifi/wallet-management";
+import type { Hex } from "viem";
 import { DEFAULT_SOURCE_CHAIN_ID, getLifiRpcUrls } from "@/config/web3";
+import { appendBuilderCodeToData } from "@/lib/builderCode";
 import { lifiEvmProvider } from "@/lib/lifi";
 
 const rawIntegrator = process.env.NEXT_PUBLIC_LIFI_INTEGRATOR?.trim();
@@ -99,6 +101,10 @@ const baseWidgetConfig: WidgetConfig = {
       // Coinbase Smart Wallet may fall back to classic approvals more reliably
       // than permit-based message signing depending on account capabilities.
       disableMessageSigning: true,
+      updateTransactionRequestHook: async (request) => ({
+        ...request,
+        data: appendBuilderCodeToData(request.data as Hex | undefined),
+      }),
     },
   },
 

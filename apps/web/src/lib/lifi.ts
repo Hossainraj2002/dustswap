@@ -2,10 +2,7 @@
 
 import { EVM } from "@lifi/sdk";
 import { getConnectorClient, switchChain } from "wagmi/actions";
-import {
-  appendBuilderCodeToData,
-  DATA_SUFFIX,
-} from "@/lib/builderCode";
+import { appendBuilderCodeToData, DATA_SUFFIX } from "@/lib/builderCode";
 import { wagmiConfig } from "@/wagmi";
 
 async function getBuilderCodeWalletClient(chainId?: number) {
@@ -16,11 +13,39 @@ async function getBuilderCodeWalletClient(chainId?: number) {
 
   const request = client.request.bind(client);
 
-  // Keep Wagmi's native connector client intact and enforce builder-code
-  // attribution at the final JSON-RPC payload LI.FI sends to the wallet.
+  // Keep Wagmi's native connector client intact, but make LI.FI prefer the
+  // standard sendTransaction path so ERC-8021 attribution lands on calldata.
   return Object.assign(client, {
-    dataSuffix: DATA_SUFFIX,
     request: async (args: any, options?: any) => {
+      if (args?.method === "wallet_getCapabilities") {
+        const capabilities = await request(args, options);
+
+        if (!capabilities || typeof capabilities !== "object") {
+          return capabilities;
+        }
+
+        return Object.fromEntries(
+          Object.entries(capabilities).map(([key, value]) => {
+            if (!value || typeof value !== "object") {
+              return [key, value];
+            }
+
+            return [
+              key,
+              {
+                ...(value as Record<string, unknown>),
+                atomic: {
+                  status: "unsupported",
+                },
+                atomicBatch: {
+                  supported: false,
+                },
+              },
+            ];
+          })
+        );
+      }
+
       if (
         args?.method === "eth_sendTransaction" ||
         args?.method === "wallet_sendTransaction"
@@ -51,6 +76,10 @@ async function getBuilderCodeWalletClient(chainId?: number) {
             params: [
               {
                 ...payload,
+                calls: (payload?.calls ?? []).map((call: any) => ({
+                  ...call,
+                  data: appendBuilderCodeToData(call?.data),
+                })),
                 capabilities: {
                   ...payload?.capabilities,
                   dataSuffix: {
