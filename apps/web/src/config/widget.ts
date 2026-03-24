@@ -11,20 +11,20 @@ function parseLifiFee(value?: string) {
     return undefined;
   }
 
-  const parsedValue = Number(value);
+  const normalizedInput = value.trim();
+  const parsedValue = normalizedInput.endsWith("%")
+    ? Number(normalizedInput.slice(0, -1)) / 100
+    : Number(normalizedInput);
 
   if (!Number.isFinite(parsedValue) || parsedValue <= 0) {
     return undefined;
   }
 
-  // Accept either "0.2" or "20" for 20%.
-  const normalizedValue = parsedValue >= 1 ? parsedValue / 100 : parsedValue;
-
-  if (normalizedValue >= 1) {
+  if (parsedValue >= 1) {
     return undefined;
   }
 
-  return normalizedValue;
+  return parsedValue;
 }
 
 // LI.FI portal integration IDs are matched by string; the configured value
