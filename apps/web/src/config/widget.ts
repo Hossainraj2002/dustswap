@@ -34,6 +34,9 @@ export const LIFI_INTEGRATOR = (rawIntegrator || "dustswap").toLowerCase();
 const configuredFee = parseLifiFee(rawFeeValue);
 const lifiRpcUrls = getLifiRpcUrls();
 const walletConnectProjectId = process.env.NEXT_PUBLIC_WALLET_CONNECT_PROJECT_ID;
+const formattedIntegratorFeeLabel = configuredFee
+  ? `${(configuredFee * 100).toFixed(3).replace(/\.?0+$/, "")}%`
+  : undefined;
 
 type CreateWidgetConfigOptions = {
   onConnect?: (args?: WalletMenuOpenArgs) => void;
@@ -45,9 +48,12 @@ const baseWidgetConfig: WidgetConfig = {
     ? {
         feeConfig: {
           fee: configuredFee,
+          feeTooltipComponent: formattedIntegratorFeeLabel
+            ? `DustSwap fee: ${formattedIntegratorFeeLabel}. LI.FI and route providers may add separate fees.`
+            : undefined,
           logoURI: "https://dustswap.xyz/logo.png",
           name: "DustSwap",
-          showFeePercentage: true,
+          showFeePercentage: false,
           showFeeTooltip: true,
         },
       }
