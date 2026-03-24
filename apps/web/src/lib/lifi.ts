@@ -2,7 +2,10 @@
 
 import { EVM } from "@lifi/sdk";
 import { getConnectorClient, switchChain } from "wagmi/actions";
-import { DATA_SUFFIX } from "@/lib/builderCode";
+import {
+  appendBuilderCodeToData,
+  DATA_SUFFIX,
+} from "@/lib/builderCode";
 import { wagmiConfig } from "@/wagmi";
 
 async function getBuilderCodeWalletClient(chainId?: number) {
@@ -11,10 +14,59 @@ async function getBuilderCodeWalletClient(chainId?: number) {
     ...(chainId ? { chainId } : {}),
   } as any);
 
-  // Keep Wagmi's native connector client intact for LI.FI execution and only
-  // attach Base's attribution suffix so sendTransaction/sendCalls include it.
+  const request = client.request.bind(client);
+
+  // Keep Wagmi's native connector client intact and enforce builder-code
+  // attribution at the final JSON-RPC payload LI.FI sends to the wallet.
   return Object.assign(client, {
     dataSuffix: DATA_SUFFIX,
+    request: async (args: any, options?: any) => {
+      if (
+        args?.method === "eth_sendTransaction" ||
+        args?.method === "wallet_sendTransaction"
+      ) {
+        const [transaction, ...rest] = args.params ?? [];
+
+        return request(
+          {
+            ...args,
+            params: [
+              {
+                ...transaction,
+                data: appendBuilderCodeToData(transaction?.data),
+              },
+              ...rest,
+            ],
+          },
+          options
+        );
+      }
+
+      if (args?.method === "wallet_sendCalls") {
+        const [payload, ...rest] = args.params ?? [];
+
+        return request(
+          {
+            ...args,
+            params: [
+              {
+                ...payload,
+                capabilities: {
+                  ...payload?.capabilities,
+                  dataSuffix: {
+                    value: DATA_SUFFIX,
+                  },
+                },
+              },
+              ...rest,
+            ],
+          },
+          options
+        );
+      }
+
+      return request(args, options);
+    },
   });
 }
 

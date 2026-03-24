@@ -3,11 +3,35 @@ import type { WalletMenuOpenArgs } from "@lifi/wallet-management";
 import { DEFAULT_SOURCE_CHAIN_ID, getLifiRpcUrls } from "@/config/web3";
 import { lifiEvmProvider } from "@/lib/lifi";
 
-// Export integrator name
-export const LIFI_INTEGRATOR =
-  process.env.NEXT_PUBLIC_LIFI_INTEGRATOR || "DustSwap";
+const rawIntegrator = process.env.NEXT_PUBLIC_LIFI_INTEGRATOR?.trim();
+const rawFeeValue = process.env.NEXT_PUBLIC_LIFI_FEE?.trim();
 
-const configuredFee = Number(process.env.NEXT_PUBLIC_LIFI_FEE);
+function parseLifiFee(value?: string) {
+  if (!value) {
+    return undefined;
+  }
+
+  const parsedValue = Number(value);
+
+  if (!Number.isFinite(parsedValue) || parsedValue <= 0) {
+    return undefined;
+  }
+
+  // Accept either "0.2" or "20" for 20%.
+  const normalizedValue = parsedValue >= 1 ? parsedValue / 100 : parsedValue;
+
+  if (normalizedValue >= 1) {
+    return undefined;
+  }
+
+  return normalizedValue;
+}
+
+// LI.FI portal integration IDs are matched by string; the configured value
+// for this project is the lowercase "dustswap" identifier from the portal.
+export const LIFI_INTEGRATOR = (rawIntegrator || "dustswap").toLowerCase();
+
+const configuredFee = parseLifiFee(rawFeeValue);
 const lifiRpcUrls = getLifiRpcUrls();
 const walletConnectProjectId = process.env.NEXT_PUBLIC_WALLET_CONNECT_PROJECT_ID;
 
@@ -17,10 +41,16 @@ type CreateWidgetConfigOptions = {
 
 const baseWidgetConfig: WidgetConfig = {
   integrator: LIFI_INTEGRATOR,
-  ...(Number.isFinite(configuredFee) &&
-  configuredFee > 0 &&
-  configuredFee < 1
-    ? { fee: configuredFee }
+  ...(configuredFee
+    ? {
+        feeConfig: {
+          fee: configuredFee,
+          logoURI: "https://dustswap.xyz/logo.png",
+          name: "DustSwap",
+          showFeePercentage: true,
+          showFeeTooltip: true,
+        },
+      }
     : {}),
 
   appearance: "dark",
