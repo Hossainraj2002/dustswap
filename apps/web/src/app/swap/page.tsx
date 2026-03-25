@@ -20,7 +20,7 @@ export default function SwapPage() {
       address: "0x0fd79f3ceaE7ddA5cFC15b35188E67EFAc542573",
       fee: ".25"
     },
-    slippage: 0.08,
+    slippage: 0.005,
     theme: {
       palette: {
         primary: { main: "#006Eff" },

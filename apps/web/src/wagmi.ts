@@ -6,7 +6,7 @@ import { INITIAL_WAGMI_CHAINS, getWagmiTransports } from "@/config/web3";
 import { DATA_SUFFIX } from "@/lib/builderCode";
 
 export const projectId =
-  process.env.NEXT_PUBLIC_WALLET_CONNECT_PROJECT_ID || "ee4bc9b4662d5118fbc8d31ab1a11516"; // Valid fallback for AppKit
+  process.env.NEXT_PUBLIC_WALLET_CONNECT_PROJECT_ID || process.env.NEXT_PUBLIC_WC_PROJECT_ID || "e3ac88268c575d561fc945ca1e2a2874";
 
 export const wagmiConnectors: CreateConnectorFn[] = [
   injected({ shimDisconnect: true }),
