@@ -13,7 +13,7 @@ export const wagmiConnectors: CreateConnectorFn[] = [
   coinbaseWallet({
     appName: "DustSwap",
     appLogoUrl: "https://dustswap.vercel.app/logo.png",
-    preference: "all",
+    preference: { options: "all" },
   }),
   walletConnect({
     projectId,

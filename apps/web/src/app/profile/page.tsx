@@ -78,10 +78,17 @@ function ProfilePageContent() {
   const [checkInDone, setCheckInDone] = useState(false);
   
   // Wallet Balances for CheckIn Choice
-  const { data: usdcBalance } = useBalance({
-    address,
-    token: USDC_ADDRESS,
+  const { data: usdcBalanceRaw } = useReadContract({
+    address: USDC_ADDRESS,
+    abi: erc20Abi,
+    functionName: 'balanceOf',
+    args: [address!],
+    query: {
+      enabled: !!address,
+    }
   });
+
+  const usdcBalanceValue = usdcBalanceRaw as bigint | undefined;
 
   const fetchProfileData = useCallback(async () => {
     if (!address) return;
@@ -158,7 +165,7 @@ function ProfilePageContent() {
 
 
   // Check-In Tx Generation
-  const hasUSDC = (usdcBalance?.value || BigInt(0)) >= USDC_AMOUNT;
+  const hasUSDC = (usdcBalanceValue || BigInt(0)) >= USDC_AMOUNT;
 
   const checkInCalls = useMemo(() => {
     if (!address) return [];

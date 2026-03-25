@@ -241,9 +241,9 @@ export function useUserTokens() {
         decimals: 18,
         logoURI: 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/info/logo.png',
         balance: ethBalance?.value || 0n,
-        balanceFormatted: ethBalance?.formatted || '0',
+        balanceFormatted: ethBalance ? formatUnits(ethBalance.value, ethBalance.decimals) : '0',
         priceUsd: 3500, // Approximate ETH price
-        usdValue: parseFloat(ethBalance?.formatted || '0') * 3500,
+        usdValue: parseFloat(ethBalance ? formatUnits(ethBalance.value, ethBalance.decimals) : '0') * 3500,
       };
       formattedTokens.push(ethToken);
 
@@ -312,9 +312,9 @@ export function useUserTokens() {
         decimals: 18,
         logoURI: 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/info/logo.png',
         balance: ethBalance?.value || 0n,
-        balanceFormatted: ethBalance?.formatted || '0',
+        balanceFormatted: ethBalance ? formatUnits(ethBalance.value, ethBalance.decimals) : '0',
         priceUsd: 3500,
-        usdValue: parseFloat(ethBalance?.formatted || '0') * 3500,
+        usdValue: parseFloat(ethBalance ? formatUnits(ethBalance.value, ethBalance.decimals) : '0') * 3500,
       }];
       
       for (const t of BASE_TOKENS) {

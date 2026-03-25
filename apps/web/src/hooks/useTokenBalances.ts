@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useAccount, useBalance, useReadContracts } from 'wagmi';
-import { erc20Abi, type Address } from 'viem';
+import { erc20Abi, type Address, formatUnits } from 'viem';
 import { Token } from '../types/lifi';
 import { DEFAULT_TOKENS, NATIVE_ETH } from '../lib/tokens';
 import { formatTokenAmount } from '../lib/utils';
@@ -118,7 +118,7 @@ export function useTokenBalances() {
         return {
           ...token,
           balance: ethBalance?.value || 0n,
-          balanceFormatted: ethBalance ? ethBalance.formatted : '0',
+          balanceFormatted: ethBalance ? formatUnits(ethBalance.value, ethBalance.decimals) : '0',
         };
       }
       

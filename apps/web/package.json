@@ -13,7 +13,7 @@
     "@bigmi/client": "^0.7.1",
     "@bigmi/core": "^0.7.1",
     "@bigmi/react": "^0.7.1",
-    "@coinbase/onchainkit": "^0.38.19",
+    "@coinbase/onchainkit": "^1.1.2",
     "@coinbase/wallet-sdk": "^4.3.0",
     "@lifi/sdk": "^3.16.2",
     "@lifi/wallet-management": "^3.22.8",
@@ -33,7 +33,7 @@
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "viem": "^2.45.0",
-    "wagmi": "^2.19.5"
+    "wagmi": "^3.0.0"
   },
   "devDependencies": {
     "@tailwindcss/forms": "^0.5.9",

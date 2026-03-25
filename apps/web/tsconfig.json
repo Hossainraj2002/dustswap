@@ -20,7 +20,9 @@
     ],
     "paths": {
       "@/*": ["./src/*"],
-      "@coinbase/onchainkit/minikit": ["./node_modules/@coinbase/onchainkit/dist/minikit/index.d.ts"]
+      "@coinbase/onchainkit/minikit": ["./node_modules/@coinbase/onchainkit/dist/minikit/index.d.ts"],
+      "@coinbase/onchainkit/transaction": ["./node_modules/@coinbase/onchainkit/dist/transaction/index.d.ts"],
+      "@coinbase/onchainkit/wallet": ["./node_modules/@coinbase/onchainkit/dist/wallet/index.d.ts"]
     }
   },
   "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
