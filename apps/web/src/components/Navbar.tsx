@@ -12,7 +12,7 @@ import {
 } from "@coinbase/onchainkit/wallet";
 import {
   Address,
-  Avatar,
+  Avatar,  
   Name,
   Identity,
 } from "@coinbase/onchainkit/identity";
