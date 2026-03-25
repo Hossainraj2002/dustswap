@@ -1,5 +1,5 @@
 import React, { useRef } from 'react';
-import { Token } from '../../types/swap';
+import { Token } from '../../types/lifi';
 import { formatSwapAmount } from '../../lib/utils';
 
 interface TokenInputProps {

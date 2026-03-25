@@ -39,7 +39,7 @@ function getConnectorPriority(connectorId: string, connectorName: string) {
   return 4;
 }
 
-export function SwapBridgeWidget() {
+export function LifiBridgeWidget() {
   const { connectAsync, connectors, error, isPending } = useConnect();
   const [isWalletModalOpen, setIsWalletModalOpen] = useState(false);
   const [walletMenuArgs, setWalletMenuArgs] = useState<

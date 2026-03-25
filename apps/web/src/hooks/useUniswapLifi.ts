@@ -108,7 +108,7 @@ const getApiBase = (): string => {
 
 // ─── Hook Implementation ──────────────────────────────────────────────────────
 
-export function useUniswapSwap() {
+export function useUniswapLifi() {
   const { address, isConnected } = useAccount();
   const { data: walletClient } = useWalletClient();
   const publicClient = usePublicClient();
@@ -215,7 +215,7 @@ export function useUniswapSwap() {
       let useFallback = false;
 
       try {
-        const response = await fetch(`${apiBase}/api/swap/quote`, {
+        const response = await fetch(`${apiBase}/api/lifi/quote`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -383,7 +383,7 @@ export function useUniswapSwap() {
       }
 
       const apiBase = getApiBase();
-      const signResponse = await fetch(`${apiBase}/api/swap/sign-order`, {
+      const signResponse = await fetch(`${apiBase}/api/lifi/sign-order`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -412,7 +412,7 @@ export function useUniswapSwap() {
         primaryType: signData.primaryType,
       });
 
-      const submitResponse = await fetch(`${apiBase}/api/swap/submit-order`, {
+      const submitResponse = await fetch(`${apiBase}/api/lifi/submit-order`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

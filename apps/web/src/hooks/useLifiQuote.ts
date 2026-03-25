@@ -1,9 +1,9 @@
 import { useState, useCallback } from 'react';
 import { getSwapQuote } from '@coinbase/onchainkit/api';
-import { Token } from '../types/swap';
+import { Token } from '../types/lifi';
 import { BASE_CHAIN_ID } from '../lib/tokens';
 
-export function useSwapQuote() {
+export function useLifiQuote() {
   const [quote, setQuote] = useState<any>(null);
   const [isQuoting, setIsQuoting] = useState(false);
   const [error, setError] = useState<string | null>(null);

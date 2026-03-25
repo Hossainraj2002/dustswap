@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useAccount, useBalance, useReadContracts } from 'wagmi';
 import { erc20Abi, type Address } from 'viem';
-import { Token } from '../types/swap';
+import { Token } from '../types/lifi';
 import { DEFAULT_TOKENS, NATIVE_ETH } from '../lib/tokens';
 import { formatTokenAmount } from '../lib/utils';
 

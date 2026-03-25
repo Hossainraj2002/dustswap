@@ -11,7 +11,7 @@
 import { useState, useCallback, useEffect } from 'react';
 import { useAccount, useBalance } from 'wagmi';
 import { formatUnits, type Address } from 'viem';
-import type { Token } from './useUniswapSwap';
+import type { Token } from './useUniswapLifi';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 

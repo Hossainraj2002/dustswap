@@ -1,10 +1,10 @@
 import React, { useEffect, useState } from 'react';
 import { useAccount, useSendTransaction, useWaitForTransactionReceipt, useReadContract, useWriteContract } from 'wagmi';
 import { erc20Abi, type Address } from 'viem';
-import { Token } from '../../types/swap';
+import { Token } from '../../types/lifi';
 import { NATIVE_ETH } from '../../lib/tokens';
 
-interface SwapButtonProps {
+interface LifiButtonProps {
   quote: any;
   fromToken: Token | null;
   toToken: Token | null;
@@ -17,7 +17,7 @@ interface SwapButtonProps {
   isDisabled?: boolean;
 }
 
-export function SwapButton({ 
+export function LifiButton({
   quote, 
   fromToken, 
   toToken, 
@@ -28,7 +28,7 @@ export function SwapButton({
   onSuccess, 
   isConnected,
   isDisabled 
-}: SwapButtonProps) {
+}: LifiButtonProps) {
   const { address } = useAccount();
   const [isApproving, setIsApproving] = useState(false);
 

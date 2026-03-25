@@ -1,10 +1,10 @@
 import React from 'react';
 
-interface SwapCardProps {
+interface LifiCardProps {
   children: React.ReactNode;
 }
 
-export function SwapCard({ children }: SwapCardProps) {
+export function LifiCard({ children }: LifiCardProps) {
   return (
     <div className="flex flex-col min-h-screen pb-safe relative overflow-hidden bg-[#030305]">
       {/* 3D Ambient Background Elements */}

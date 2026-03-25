@@ -593,7 +593,7 @@
 
 /* ─── Quote Info ────────────────────────────────────────────────────────────── */
 
-.swap-quote-info {
+.lifi-quote-info {
   background: rgba(19, 26, 42, 0.6);
   border-radius: 12px;
   padding: 0.75rem;
@@ -601,7 +601,7 @@
   font-family: 'DM Sans', sans-serif;
 }
 
-.swap-quote-row {
+.lifi-quote-row {
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -609,15 +609,15 @@
   color: #6b7280;
 }
 
-.swap-quote-row .value {
+.lifi-quote-row .value {
   color: #9ca3af;
 }
 
-.swap-quote-row .warning {
+.lifi-quote-row .warning {
   color: #f87171;
 }
 
-.swap-quote-row .success {
+.lifi-quote-row .success {
   color: #4ade80;
 }
 
@@ -1032,7 +1032,7 @@
     font-size: 1rem;
   }
   
-  .swap-quote-info {
+  .lifi-quote-info {
     font-size: 0.75rem;
   }
   

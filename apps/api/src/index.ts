@@ -1,5 +1,5 @@
 // apps/api/src/index.ts
-import swapRoutes from "./routes/swap";
+import lifiRoutes from "./routes/lifi";
 import dotenv from "dotenv";
 dotenv.config();
 
@@ -62,7 +62,7 @@ app.get("/", (c) => {
   });
 });
 
-app.route("/api/swap", swapRoutes);
+app.route("/api/lifi", lifiRoutes);
 
 // 404 handler
 app.notFound((c) => {
