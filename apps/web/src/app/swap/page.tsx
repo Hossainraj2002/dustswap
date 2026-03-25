@@ -4,8 +4,8 @@ import dynamic from 'next/dynamic';
 import { useAppKit } from '@reown/appkit/react';
 import { useMemo } from 'react';
 
-const OpenOceanWidget = dynamic(
-  () => import('@openocean.finance/widget').then((mod) => mod.OpenOceanWidget),
+const OpenOceanWidget = dynamic<{ integrator: string; config: any }>(
+  () => import('@openocean.finance/widget').then((mod) => mod.OpenOceanWidget as any),
   { ssr: false }
 );
 
