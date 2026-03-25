@@ -1,9 +1,13 @@
 "use client";
 
-import { OpenOceanWidget } from '@openocean.finance/widget';
-
+import dynamic from 'next/dynamic';
 import { useAppKit } from '@reown/appkit/react';
 import { useMemo } from 'react';
+
+const OpenOceanWidget = dynamic(
+  () => import('@openocean.finance/widget').then((mod) => mod.OpenOceanWidget),
+  { ssr: false }
+);
 
 export default function SwapPage() {
   const { open } = useAppKit();
