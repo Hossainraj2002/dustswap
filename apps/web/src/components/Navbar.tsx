@@ -252,27 +252,10 @@ export function Navbar() {
                 </Link>
               )}
 
-              {/* OnchainKit Wallet */}
-              <Wallet>
-                <ConnectWallet
-                  className="!rounded-xl !border !border-[#8B5CF6]/30 !bg-[#8B5CF6]/10 !px-4 !py-2 !text-sm !font-semibold !text-[#8B5CF6] !shadow-none !transition-all !duration-200 hover:!border-[#8B5CF6]/50 hover:!bg-[#8B5CF6]/20"
-                >
-                  <Avatar className="h-5 w-5" />
-                  <Name className="max-w-[120px] truncate" />
-                </ConnectWallet>
-                <WalletDropdown>
-                  <Identity
-                    className="px-4 pb-2 pt-3"
-                    hasCopyAddressOnClick={true}
-                    schemaId="0xf8b05c79f090979bf4a80270aba232dff11a10d9ca55c4f88de95317970f0de9"
-                  >
-                    <Avatar className="h-10 w-10" />
-                    <Name className="text-sm font-semibold" />
-                    <Address className="text-xs text-gray-400" />
-                  </Identity>
-                  <WalletDropdownDisconnect className="text-sm text-red-400 hover:text-red-300" />
-                </WalletDropdown>
-              </Wallet>
+              {/* Reown AppKit Wallet Button */}
+              {/* @ts-ignore */}
+              <appkit-button />
+
 
               {/* Mobile hamburger button */}
               <button
