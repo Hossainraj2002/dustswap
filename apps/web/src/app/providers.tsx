@@ -6,7 +6,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { OnchainKitProvider } from "@coinbase/onchainkit";
 import { MiniKitProvider } from "@coinbase/onchainkit/minikit";
 import { base } from "wagmi/chains";
-import { wagmiAdapter, projectId } from "@/wagmi";
+import { wagmiAdapter, wagmiConfig, projectId } from "@/wagmi";
 import { createAppKit } from "@reown/appkit/react";
 import { INITIAL_WAGMI_CHAINS } from "@/config/web3";
 
@@ -49,7 +49,7 @@ export function Providers({ children }: ProvidersProps) {
   );
 
   return (
-    <WagmiProvider config={wagmiAdapter.wagmiConfig as any} reconnectOnMount>
+    <WagmiProvider config={wagmiConfig} reconnectOnMount>
       <QueryClientProvider client={queryClient}>
         <OnchainKitProvider
           apiKey={process.env.NEXT_PUBLIC_ONCHAINKIT_API_KEY}

@@ -1,19 +1,29 @@
 import type { CreateConnectorFn } from "wagmi";
 import { createConfig } from "wagmi";
-import { coinbaseWallet, injected } from "wagmi/connectors";
+import { coinbaseWallet, injected, walletConnect } from "wagmi/connectors";
 import { WagmiAdapter } from '@reown/appkit-adapter-wagmi';
 import { INITIAL_WAGMI_CHAINS, getWagmiTransports } from "@/config/web3";
 import { DATA_SUFFIX } from "@/lib/builderCode";
 
 export const projectId =
-  process.env.NEXT_PUBLIC_WALLET_CONNECT_PROJECT_ID || "1234567890abcdef1234567890abcdef"; // Default fallback if not defined
+  process.env.NEXT_PUBLIC_WALLET_CONNECT_PROJECT_ID || "ee4bc9b4662d5118fbc8d31ab1a11516"; // Valid fallback for AppKit
 
 export const wagmiConnectors: CreateConnectorFn[] = [
   injected({ shimDisconnect: true }),
   coinbaseWallet({
     appName: "DustSwap",
-    appLogoUrl: "https://dustswap.xyz/logo.png",
+    appLogoUrl: "https://dustswap.vercel.app/logo.png",
     preference: "all",
+  }),
+  walletConnect({
+    projectId,
+    metadata: {
+      name: "DustSwap",
+      description: "DustSwap DEX & Yield",
+      url: "https://dustswap.vercel.app",
+      icons: ["https://dustswap.vercel.app/logo.png"],
+    },
+    showQrModal: false,
   }),
 ];
 
