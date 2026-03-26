@@ -1,5 +1,4 @@
 import type { CreateConnectorFn } from "wagmi";
-import { createConfig } from "wagmi";
 import { coinbaseWallet, injected, walletConnect } from "wagmi/connectors";
 import { WagmiAdapter } from '@reown/appkit-adapter-wagmi';
 import { INITIAL_WAGMI_CHAINS, getWagmiTransports } from "@/config/web3";
@@ -27,25 +26,21 @@ export const wagmiConnectors: CreateConnectorFn[] = [
   }),
 ];
 
-// Create original config with builder code suffix enabled
-export const wagmiConfig = createConfig({
-  chains: [...INITIAL_WAGMI_CHAINS] as any,
+// Reown creates its own Wagmi config internally, so the Builder Code must be
+// configured on the adapter itself to cover every Reown/AppKit transaction path.
+export const wagmiAdapter = new WagmiAdapter({
+  projectId,
+  networks: INITIAL_WAGMI_CHAINS as any,
   connectors: wagmiConnectors,
   transports: getWagmiTransports(INITIAL_WAGMI_CHAINS) as any,
   dataSuffix: DATA_SUFFIX,
   ssr: true,
 });
 
-// Reown AppKit WagmiAdapter
-export const wagmiAdapter = new WagmiAdapter({
-  projectId,
-  networks: INITIAL_WAGMI_CHAINS as any,
-  wagmiConfig: wagmiConfig as any,
-});
+export const wagmiConfig = wagmiAdapter.wagmiConfig;
 
 declare module "wagmi" {
   interface Register {
     config: typeof wagmiConfig;
   }
 }
-
