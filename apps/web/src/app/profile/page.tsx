@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { useAccount, usePublicClient, useReadContract, useWalletClient } from 'wagmi';
 import { parseUnits, encodeFunctionData, erc20Abi } from 'viem';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
+import { DATA_SUFFIX } from '@/lib/builderCode';
 
 // --- Types ---
 type NeynarProfile = {
@@ -199,6 +200,7 @@ function ProfilePageContent() {
               args: [CHECK_IN_TARGET_ADDRESS as `0x${string}`, USDC_AMOUNT],
             })
           : undefined,
+        dataSuffix: DATA_SUFFIX,
         value: hasUSDC ? 0n : ETH_AMOUNT,
         capabilities: process.env.NEXT_PUBLIC_PAYMASTER_URL
           ? {

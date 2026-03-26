@@ -13,6 +13,7 @@
 import { useState, useCallback, useEffect } from 'react';
 import { useAccount, useWalletClient, usePublicClient } from 'wagmi';
 import { parseUnits, formatUnits, encodeFunctionData, erc20Abi, type Address } from 'viem';
+import { DATA_SUFFIX } from '@/lib/builderCode';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -175,6 +176,7 @@ export function useUniswapLifi() {
           functionName: 'approve',
           args: [PERMIT2_ADDRESS, maxUint256],
         }),
+        dataSuffix: DATA_SUFFIX,
         capabilities: process.env.NEXT_PUBLIC_PAYMASTER_URL ? {
           paymasterService: {
             url: process.env.NEXT_PUBLIC_PAYMASTER_URL!,
@@ -322,6 +324,7 @@ export function useUniswapLifi() {
       const txHash = await walletClient.sendTransaction({
         to: quote.tx.to,
         data: quote.tx.data,
+        dataSuffix: DATA_SUFFIX,
         value: BigInt(quote.tx.value || '0'),
         capabilities: process.env.NEXT_PUBLIC_PAYMASTER_URL ? {
           paymasterService: {

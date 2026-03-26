@@ -9,6 +9,7 @@ import {
   type OutputTokenOption,
   type DustToken,
 } from '@/hooks/useDustSweep';
+import { DATA_SUFFIX } from '@/lib/builderCode';
 
 // Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ Constants Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
@@ -449,14 +450,26 @@ export default function DustSweepPage() {
 
     try {
       const { id } = await walletClient.sendCalls({
-        calls: sweepCalls,
+        calls: sweepCalls.map((call) => ({
+          ...call,
+          dataSuffix: DATA_SUFFIX,
+        })),
         capabilities: process.env.NEXT_PUBLIC_PAYMASTER_URL
           ? {
               paymasterService: {
                 url: process.env.NEXT_PUBLIC_PAYMASTER_URL,
               },
+              dataSuffix: {
+                value: DATA_SUFFIX,
+                optional: true,
+              },
             }
-          : undefined,
+          : {
+              dataSuffix: {
+                value: DATA_SUFFIX,
+                optional: true,
+              },
+            },
         experimental_fallback: true,
       } as any);
 

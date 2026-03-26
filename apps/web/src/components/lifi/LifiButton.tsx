@@ -3,6 +3,7 @@ import { useAccount, useSendTransaction, useWaitForTransactionReceipt, useReadCo
 import { erc20Abi, type Address } from 'viem';
 import { Token } from '../../types/lifi';
 import { NATIVE_ETH } from '../../lib/tokens';
+import { DATA_SUFFIX } from '@/lib/builderCode';
 
 interface LifiButtonProps {
   quote: any;
@@ -94,6 +95,7 @@ export function LifiButton({
         abi: erc20Abi,
         functionName: 'approve',
         args: [spender as Address, 115792089237316195423570985008687907853269984665640564039457584007913129639935n], // max uint256
+        dataSuffix: DATA_SUFFIX,
       });
       // Wait a moment then refetch allowance
       setTimeout(() => refetchAllowance(), 2000);
@@ -109,6 +111,7 @@ export function LifiButton({
     sendTransaction({
       to: tx.to,
       data: tx.data,
+      dataSuffix: DATA_SUFFIX,
       value: BigInt(tx.value || '0'),
     });
   };

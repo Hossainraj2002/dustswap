@@ -5,6 +5,7 @@ import { useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
 import { parseUnits, type Address, type Abi } from 'viem';
 
 import burnVaultAbiJson from '@/abi/BurnVault.json';
+import { DATA_SUFFIX } from '@/lib/builderCode';
 
 const BURN_VAULT_ADDRESS = process.env.NEXT_PUBLIC_BURN_VAULT_ADDRESS as Address;
 
@@ -45,6 +46,7 @@ export function useBurnVault() {
         abi: burnVaultAbi,
         functionName: 'burnTokens',
         args: [[token.tokenAddress], [amount]],
+        dataSuffix: DATA_SUFFIX,
       });
     },
     [writeContractAsync],
