@@ -1,20 +1,9 @@
 'use client';
 
-import { useEffect, useState, useCallback, useMemo } from 'react';
-import { useAccount, useReadContract, useBalance } from 'wagmi';
+import { useEffect, useState, useCallback } from 'react';
+import { useAccount, usePublicClient, useReadContract, useWalletClient } from 'wagmi';
 import { parseUnits, encodeFunctionData, erc20Abi } from 'viem';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
-// @ts-ignore
-import { Attribution } from 'ox/erc8021';
-
-import {
-  Transaction,
-  TransactionButton,
-  TransactionStatus,
-  TransactionStatusAction,
-  TransactionStatusLabel,
-} from '@coinbase/onchainkit/transaction';
-import { ConnectWallet, Wallet } from '@coinbase/onchainkit/wallet';
 
 // --- Types ---
 type NeynarProfile = {
@@ -62,6 +51,8 @@ function shortAddress(address: string) {
 
 function ProfilePageContent() {
   const { address, isConnected } = useAccount();
+  const { data: walletClient } = useWalletClient();
+  const publicClient = usePublicClient();
   const [isMounted, setIsMounted] = useState(false);
 
   useEffect(() => {
@@ -76,6 +67,8 @@ function ProfilePageContent() {
   const [streak, setStreak] = useState(0);
   const [isCopied, setIsCopied] = useState(false);
   const [checkInDone, setCheckInDone] = useState(false);
+  const [isCheckingIn, setIsCheckingIn] = useState(false);
+  const [checkInError, setCheckInError] = useState<string | null>(null);
   
   // Wallet Balances for CheckIn Choice
   const { data: usdcBalanceRaw } = useReadContract({
@@ -163,32 +156,7 @@ function ProfilePageContent() {
     }
   }, [isConnected, fetchProfileData]);
 
-
-  // Check-In Tx Generation
   const hasUSDC = (usdcBalanceValue || BigInt(0)) >= USDC_AMOUNT;
-
-  const checkInCalls = useMemo(() => {
-    if (!address) return [];
-    
-    // Fallback: Use ETH if no USDC
-    if (!hasUSDC) {
-       return [{
-         to: CHECK_IN_TARGET_ADDRESS as `0x${string}`,
-         value: ETH_AMOUNT,
-         data: '0x' as `0x${string}`,
-       }];
-    }
-
-    // Default: Use USDC
-    return [{
-       to: USDC_ADDRESS as `0x${string}`,
-       data: encodeFunctionData({
-         abi: erc20Abi,
-         functionName: 'transfer',
-         args: [CHECK_IN_TARGET_ADDRESS as `0x${string}`, USDC_AMOUNT],
-       })
-    }];
-  }, [address, hasUSDC]);
 
   const onCheckInSuccess = useCallback(async () => {
     if (!address) return;
@@ -211,6 +179,50 @@ function ProfilePageContent() {
     }
   }, [address, stats]);
 
+  const handleCheckIn = useCallback(async () => {
+    if (!address || !walletClient || !publicClient || checkInDone) {
+      return;
+    }
+
+    setCheckInError(null);
+    setIsCheckingIn(true);
+
+    try {
+      const hash = await walletClient.sendTransaction({
+        to: hasUSDC
+          ? (USDC_ADDRESS as `0x${string}`)
+          : (CHECK_IN_TARGET_ADDRESS as `0x${string}`),
+        data: hasUSDC
+          ? encodeFunctionData({
+              abi: erc20Abi,
+              functionName: 'transfer',
+              args: [CHECK_IN_TARGET_ADDRESS as `0x${string}`, USDC_AMOUNT],
+            })
+          : undefined,
+        value: hasUSDC ? 0n : ETH_AMOUNT,
+        capabilities: process.env.NEXT_PUBLIC_PAYMASTER_URL
+          ? {
+              paymasterService: {
+                url: process.env.NEXT_PUBLIC_PAYMASTER_URL,
+              },
+            }
+          : undefined,
+      } as any);
+
+      const receipt = await publicClient.waitForTransactionReceipt({ hash });
+
+      if (receipt.status !== 'success') {
+        throw new Error('Transaction reverted');
+      }
+
+      await onCheckInSuccess();
+    } catch (err: any) {
+      setCheckInError(err.shortMessage || err.message || 'Check-in failed');
+    } finally {
+      setIsCheckingIn(false);
+    }
+  }, [address, walletClient, publicClient, checkInDone, hasUSDC, onCheckInSuccess]);
+
 
   // --- Render Unconnected / Unmounted ---
   if (!isMounted) return null;
@@ -227,9 +239,8 @@ function ProfilePageContent() {
           <h2 className="text-xl font-bold text-white mb-2">Connect your wallet to start your journey</h2>
           <p className="text-gray-400 text-sm mb-6">See your stats, earn points, and sweep your dust.</p>
           <div className="flex justify-center">
-            <Wallet>
-              <ConnectWallet />
-            </Wallet>
+            {/* @ts-ignore */}
+            <appkit-button />
           </div>
         </div>
       </div>
@@ -273,34 +284,28 @@ function ProfilePageContent() {
               <p className="text-white font-semibold text-sm">Daily Check-In</p>
               <p className="text-indigo-300 text-xs">Day {streak + (checkInDone ? 0 : 1)} of 30 • {checkInDone ? 'Earned 500 pts + 10% Boost!' : 'Earn 500 pts'}</p>
            </div>
-        </div>
-        
-        <div className="flex items-center px-3" onClick={(e) => e.stopPropagation()}>
-           {checkInDone ? (
-              <button disabled className="bg-gray-800 text-gray-400 font-bold text-sm px-6 py-2 rounded-xl shadow-md min-w-[120px] opacity-70 cursor-not-allowed">
-                 CHECKED IN
+         </div>
+         
+         <div className="flex items-center px-3" onClick={(e) => e.stopPropagation()}>
+            {checkInDone ? (
+               <button disabled className="bg-gray-800 text-gray-400 font-bold text-sm px-6 py-2 rounded-xl shadow-md min-w-[120px] opacity-70 cursor-not-allowed">
+                  CHECKED IN
+               </button>
+            ) : (
+              <button
+                type="button"
+                onClick={handleCheckIn}
+                disabled={isCheckingIn || !walletClient || !publicClient}
+                className="bg-indigo-600 px-6 py-2 text-sm font-bold text-white rounded-xl shadow-md shadow-indigo-500/20 transition hover:bg-indigo-500 disabled:cursor-wait disabled:opacity-70 min-w-[120px]"
+              >
+                {isCheckingIn ? 'CHECKING IN...' : 'CHECK IN'}
               </button>
-           ) : (
-             <Transaction
-                chainId={8453}
-                calls={checkInCalls as any}
-                capabilities={{
-                  paymasterService: { url: process.env.NEXT_PUBLIC_PAYMASTER_URL! },
-                  dataSuffix: {
-                    value: Attribution.toDataSuffix({ codes: [process.env.NEXT_PUBLIC_BUILDER_CODE || 'bc_ox7237gv'] }),
-                    optional: true
-                  }
-                } as any}
-                onSuccess={onCheckInSuccess}
-             >
-                <TransactionButton 
-                   text="CHECK IN"
-                   className="!bg-indigo-600 hover:!bg-indigo-500 !text-white !font-bold !text-sm !px-6 !py-2 !rounded-xl !shadow-md !shadow-indigo-500/20 w-auto min-w-[120px]"
-                />
-             </Transaction>
-           )}
-        </div>
-      </div>
+            )}
+         </div>
+       </div>
+      {checkInError ? (
+        <p className="text-sm text-red-400 -mt-3">{checkInError}</p>
+      ) : null}
 
       {/* SECTION 3: User Stats */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">

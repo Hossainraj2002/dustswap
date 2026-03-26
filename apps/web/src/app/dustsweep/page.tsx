@@ -1,22 +1,8 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useAccount } from 'wagmi';
+import { useAccount, useWalletClient } from 'wagmi';
 import { type Address } from 'viem';
-// @ts-ignore
-import { Attribution } from 'ox/erc8021';
-
-import {
-  Transaction,
-  TransactionButton,
-  TransactionStatus,
-  TransactionStatusAction,
-  TransactionStatusLabel,
-} from '@coinbase/onchainkit/transaction';
-import {
-  ConnectWallet,
-  Wallet,
-} from '@coinbase/onchainkit/wallet';
 import {
   useDustSweep,
   type ThresholdValue,
@@ -24,7 +10,7 @@ import {
   type DustToken,
 } from '@/hooks/useDustSweep';
 
-// ─── Constants ────────────────────────────────────────────────────────────────
+// Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ Constants Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
 const THRESHOLDS: { value: ThresholdValue; label: string }[] = [
   { value: 1,  label: 'Under $1'  },
@@ -34,15 +20,15 @@ const THRESHOLDS: { value: ThresholdValue; label: string }[] = [
 ];
 
 const OUTPUT_OPTIONS: { value: OutputTokenOption; label: string; icon: string; logoURI: string }[] = [
-  { value: 'ETH',  label: 'ETH',  icon: 'Ξ', logoURI: 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/info/logo.png' },
+  { value: 'ETH',  label: 'ETH',  icon: 'ÃŽÅ¾', logoURI: 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/info/logo.png' },
   { value: 'USDC', label: 'USDC', icon: '$', logoURI: 'https://basescan.org/token/images/centre-usdc_28.png' },
-  { value: 'WETH', label: 'WETH', icon: 'Ξ', logoURI: 'https://basescan.org/token/images/weth_28.png' },
+  { value: 'WETH', label: 'WETH', icon: 'ÃŽÅ¾', logoURI: 'https://basescan.org/token/images/weth_28.png' },
 ];
 
 const MAX_SELECTED = 10;
 const BASE_SCAN_URL = 'https://basescan.org/tx/';
 
-// ─── Confetti ─────────────────────────────────────────────────────────────────
+// Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ Confetti Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
 function ConfettiParticles() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -105,7 +91,7 @@ function ConfettiParticles() {
   );
 }
 
-// ─── Token Card ───────────────────────────────────────────────────────────────
+// Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ Token Card Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
 function TokenCard({
   token,
@@ -206,7 +192,7 @@ function TokenCard({
   );
 }
 
-// ─── Success Modal ────────────────────────────────────────────────────────────
+// Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ Success Modal Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
 function SuccessModal({
   data,
@@ -221,7 +207,7 @@ function SuccessModal({
       <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-40 p-4">
         <div className="bg-gray-900 border border-gray-700 rounded-2xl p-8 max-w-md w-full shadow-2xl shadow-purple-500/20">
           <div className="text-center mb-6">
-            <div className="text-6xl mb-3">🧹✨</div>
+            <div className="text-6xl mb-3">Ã°Å¸Â§Â¹Ã¢Å“Â¨</div>
             <h2 className="text-2xl font-bold text-white">Dust Swept!</h2>
             <p className="text-gray-400 mt-1">Your wallet is cleaner now</p>
           </div>
@@ -236,7 +222,7 @@ function SuccessModal({
             </div>
             <div className="flex justify-between items-center py-2">
               <span className="text-gray-400">Dust Particles</span>
-              <span className="text-purple-400 font-bold text-lg">+{data.particlesEarned} ✨</span>
+              <span className="text-purple-400 font-bold text-lg">+{data.particlesEarned} Ã¢Å“Â¨</span>
             </div>
           </div>
           <div className="space-y-3">
@@ -246,7 +232,7 @@ function SuccessModal({
               rel="noopener noreferrer"
               className="block w-full text-center py-3 px-4 rounded-xl bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 hover:text-white transition-colors text-sm"
             >
-              View on BaseScan ↗
+              View on BaseScan Ã¢â€ â€”
             </a>
             <button
               onClick={onClose}
@@ -261,7 +247,7 @@ function SuccessModal({
   );
 }
 
-// ─── Sticky Sweep Panel (FIX 5) ───────────────────────────────────────────────
+// Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ Sticky Sweep Panel (FIX 5) Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
 function StickySweepPanel({
   selectedCount,
@@ -271,8 +257,8 @@ function StickySweepPanel({
   isQuoting,
   quoteError,
   sweepCalls,
-  onTransactionSuccess,
-  onTransactionError,
+  isSending,
+  onSweep,
   getQuote,
 }: {
   selectedCount: number;
@@ -282,8 +268,8 @@ function StickySweepPanel({
   isQuoting: boolean;
   quoteError: string | null;
   sweepCalls: ReturnType<typeof useDustSweep>['sweepCalls'];
-  onTransactionSuccess: (r: { transactionReceipts: { transactionHash: string }[] }) => void;
-  onTransactionError: (e: { code: string; error: string; message: string }) => void;
+  isSending: boolean;
+  onSweep: () => void;
   getQuote: () => Promise<void>;
 }) {
   if (selectedCount === 0) return null;
@@ -296,7 +282,7 @@ function StickySweepPanel({
     <div className="fixed md:bottom-0 bottom-[calc(64px+env(safe-area-inset-bottom))] left-0 right-0 z-40 bg-gray-950/95 backdrop-blur border-t border-gray-800 shadow-2xl shadow-black/50">
       <div className="max-w-2xl mx-auto px-4 py-4">
 
-        {/* ── Partial liquidity warning ──────────────────────────────────── */}
+        {/* Ã¢â€â‚¬Ã¢â€â‚¬ Partial liquidity warning Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ */}
         {hasPartialTokens && (
           <div className="mb-3 flex items-start gap-2 text-xs text-amber-400 bg-amber-900/20 border border-amber-800/40 rounded-lg px-3 py-2">
             <svg className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
@@ -306,7 +292,7 @@ function StickySweepPanel({
           </div>
         )}
 
-        {/* ── Summary row ───────────────────────────────────────────────── */}
+        {/* Ã¢â€â‚¬Ã¢â€â‚¬ Summary row Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ */}
         <div className="flex items-center gap-4">
           {/* Left: token count + value */}
           <div className="flex-1 min-w-0">
@@ -322,7 +308,7 @@ function StickySweepPanel({
               ) : quote ? (
                 <>
                   ~${quote.totalDustValueUsd.toFixed(2)} dust
-                  {' → '}
+                  {' Ã¢â€ â€™ '}
                   <span className="text-purple-400 font-medium whitespace-nowrap">
                     ~{Number(quote.estimatedOutputFormatted).toLocaleString(undefined, { maximumFractionDigits: 6 })} {quote.outputTokenSymbol}
                   </span>
@@ -338,50 +324,36 @@ function StickySweepPanel({
           {/* Right: Sweep button */}
           <div className="flex-shrink-0">
             {sweepCalls.length > 0 && quote ? (
-              <Transaction
-                chainId={8453}
-                calls={sweepCalls}
-                capabilities={{
-                  paymasterService: { url: process.env.NEXT_PUBLIC_PAYMASTER_URL! },
-                  dataSuffix: {
-                    value: Attribution.toDataSuffix({ codes: [process.env.NEXT_PUBLIC_BUILDER_CODE || 'bc_ox7237gv'] }),
-                    optional: true
-                  }
-                } as any}
-                onSuccess={onTransactionSuccess}
-                onError={onTransactionError}
+              <button
+                type="button"
+                onClick={onSweep}
+                disabled={isSending}
+                className="bg-gradient-to-r from-purple-600 to-indigo-600 px-6 py-3 text-sm font-semibold text-white rounded-xl shadow-lg shadow-purple-500/25 transition-all duration-200 whitespace-nowrap hover:from-purple-500 hover:to-indigo-500 disabled:cursor-wait disabled:opacity-70"
               >
-                <TransactionButton
-                  text={`🧹 Sweep ${selectedCount}`}
-                  className="!bg-gradient-to-r !from-purple-600 !to-indigo-600 hover:!from-purple-500 hover:!to-indigo-500 !text-white !font-semibold !py-3 !px-6 !rounded-xl !text-sm !shadow-lg !shadow-purple-500/25 !transition-all !duration-200 !whitespace-nowrap"
-                />
-                <TransactionStatus>
-                  <TransactionStatusLabel className="text-xs text-gray-400 mt-1 text-right" />
-                  <TransactionStatusAction className="text-xs text-purple-400 mt-0.5 text-right" />
-                </TransactionStatus>
-              </Transaction>
+                {isSending ? 'Sweeping...' : `Sweep ${selectedCount}`}
+              </button>
             ) : (
               <button
                 onClick={getQuote}
                 disabled={isQuoting}
                 className="py-3 px-6 rounded-xl bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-400 hover:text-white font-semibold text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
               >
-                {isQuoting ? 'Getting quote...' : quoteError ? '↺ Retry Quote' : 'Get Quote'}
+                {isQuoting ? 'Getting quote...' : quoteError ? 'Ã¢â€ Âº Retry Quote' : 'Get Quote'}
               </button>
             )}
           </div>
         </div>
 
-        {/* ── Fee note ──────────────────────────────────────────────────── */}
+        {/* Ã¢â€â‚¬Ã¢â€â‚¬ Fee note Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ */}
         <p className="text-xs text-gray-600 mt-3 text-center">
-          DustSwap charges a 2% fee · Gas sponsored via Base Paymaster · Earn ✨ Dust Particles
+          DustSwap charges a 2% fee Ã‚Â· Gas sponsored via Base Paymaster Ã‚Â· Earn Ã¢Å“Â¨ Dust Particles
         </p>
       </div>
     </div>
   );
 }
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+// Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ Helpers Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
 function formatBalance(value: string): string {
   const num = parseFloat(value);
@@ -392,7 +364,7 @@ function formatBalance(value: string): string {
   return num.toLocaleString(undefined, { maximumFractionDigits: 2 });
 }
 
-// ─── Loading Skeleton ─────────────────────────────────────────────────────────
+// Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ Loading Skeleton Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
 function TokenSkeleton() {
   return (
@@ -413,10 +385,11 @@ function TokenSkeleton() {
   );
 }
 
-// ─── Main Page ────────────────────────────────────────────────────────────────
+// Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ Main Page Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
 export default function DustSweepPage() {
   const { isConnected } = useAccount();
+  const { data: walletClient } = useWalletClient();
   const {
     dustTokens,
     noLiquidityTokens,
@@ -441,6 +414,7 @@ export default function DustSweepPage() {
   } = useDustSweep();
 
   const [outputDropdownOpen, setOutputDropdownOpen] = useState(false);
+  const [isSendingSweep, setIsSendingSweep] = useState(false);
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -466,6 +440,49 @@ export default function DustSweepPage() {
     []
   );
 
+  const onSweep = useCallback(async () => {
+    if (!walletClient || sweepCalls.length === 0) {
+      return;
+    }
+
+    setIsSendingSweep(true);
+
+    try {
+      const { id } = await walletClient.sendCalls({
+        calls: sweepCalls,
+        capabilities: process.env.NEXT_PUBLIC_PAYMASTER_URL
+          ? {
+              paymasterService: {
+                url: process.env.NEXT_PUBLIC_PAYMASTER_URL,
+              },
+            }
+          : undefined,
+        experimental_fallback: true,
+      } as any);
+
+      const status = await walletClient.waitForCallsStatus({
+        id,
+        throwOnFailure: true,
+        timeout: 120_000,
+      });
+      const receipts = status.receipts ?? [];
+
+      onTransactionSuccess({
+        transactionReceipts: receipts.map((receipt) => ({
+          transactionHash: receipt.transactionHash,
+        })),
+      });
+    } catch (error: any) {
+      onTransactionError({
+        code: error.code || 'UNKNOWN',
+        error: error.name || 'Error',
+        message: error.shortMessage || error.message || 'Transaction failed',
+      });
+    } finally {
+      setIsSendingSweep(false);
+    }
+  }, [walletClient, sweepCalls, onTransactionSuccess, onTransactionError]);
+
   const allTokens = [...dustTokens, ...noLiquidityTokens];
   const selectedCount = selectedTokens.length;
   const isMaxSelected = selectedCount >= MAX_SELECTED;
@@ -474,41 +491,36 @@ export default function DustSweepPage() {
   // Total USD value of selected tokens (for sticky panel)
   const totalSelectedValueUsd = selectedTokens.reduce((sum, t) => sum + t.usdValue, 0);
 
-  // ── Not Connected ──────────────────────────────────────────────────────────
+  // Ã¢â€â‚¬Ã¢â€â‚¬ Not Connected Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
   if (!isConnected) {
     return (
       <div className="min-h-screen bg-gray-950 flex items-center justify-center p-4">
         <div className="text-center max-w-md">
-          <div className="text-7xl mb-6">🧹</div>
+          <div className="text-7xl mb-6">Ã°Å¸Â§Â¹</div>
           <h1 className="text-3xl font-bold text-white mb-3">Dust Sweep</h1>
           <p className="text-gray-400 mb-8">
             Connect your wallet to find and sweep dust tokens into one useful asset.
           </p>
-          <Wallet>
-            <ConnectWallet>
-              <span className="px-8 py-3 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-semibold rounded-xl transition-all">
-                Connect Wallet
-              </span>
-            </ConnectWallet>
-          </Wallet>
+          {/* @ts-ignore */}
+          <appkit-button />
         </div>
       </div>
     );
   }
 
-  // ── Main Render ────────────────────────────────────────────────────────────
+  // Ã¢â€â‚¬Ã¢â€â‚¬ Main Render Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
   return (
     <div className="min-h-screen bg-gray-950">
       {successData && <SuccessModal data={successData} onClose={clearSuccess} />}
 
-      {/* ── Add padding so sticky panel doesn't cover tokens, with extra room for mobile nav ── */}
+      {/* Ã¢â€â‚¬Ã¢â€â‚¬ Add padding so sticky panel doesn't cover tokens, with extra room for mobile nav Ã¢â€â‚¬Ã¢â€â‚¬ */}
       <div className={`max-w-2xl mx-auto px-4 py-8 sm:py-12 ${hasSelectedTokens ? 'pb-48 md:pb-40' : ''}`}>
 
         {/* Header */}
         <div className="text-center mb-8">
-          <h1 className="text-4xl sm:text-5xl font-bold text-white mb-2">🧹 Dust Sweep</h1>
+          <h1 className="text-4xl sm:text-5xl font-bold text-white mb-2">Ã°Å¸Â§Â¹ Dust Sweep</h1>
           <p className="text-gray-400 text-lg">Select your dust tokens and sweep them into one</p>
         </div>
 
@@ -662,7 +674,7 @@ export default function DustSweepPage() {
               </>
             ) : allTokens.length === 0 ? (
               <div className="text-center py-16">
-                <div className="text-6xl mb-4">✨</div>
+                <div className="text-6xl mb-4">Ã¢Å“Â¨</div>
                 <h3 className="text-xl font-semibold text-white mb-2">Your wallet is clean!</h3>
                 <p className="text-gray-400">
                   No dust tokens found under ${threshold}. Try increasing the threshold.
@@ -742,7 +754,7 @@ export default function DustSweepPage() {
 
       </div>
 
-      {/* ── FIX 5: Sticky bottom panel — always visible when tokens are selected ── */}
+      {/* Ã¢â€â‚¬Ã¢â€â‚¬ FIX 5: Sticky bottom panel Ã¢â‚¬â€ always visible when tokens are selected Ã¢â€â‚¬Ã¢â€â‚¬ */}
       <StickySweepPanel
         selectedCount={selectedCount}
         totalValueUsd={totalSelectedValueUsd}
@@ -751,8 +763,8 @@ export default function DustSweepPage() {
         isQuoting={isQuoting}
         quoteError={quoteError}
         sweepCalls={sweepCalls}
-        onTransactionSuccess={onTransactionSuccess}
-        onTransactionError={onTransactionError}
+        isSending={isSendingSweep}
+        onSweep={onSweep}
         getQuote={getQuote}
       />
     </div>

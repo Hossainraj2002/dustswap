@@ -4,19 +4,6 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useAccount } from "wagmi";
-import {
-  ConnectWallet,
-  Wallet,
-  WalletDropdown,
-  WalletDropdownDisconnect,
-} from "@coinbase/onchainkit/wallet";
-import {
-  Address,
-  Avatar,  
-  Name,
-  Identity,
-} from "@coinbase/onchainkit/identity";
-import { base } from "wagmi/chains";
 
 interface NavLink {
   href: string;

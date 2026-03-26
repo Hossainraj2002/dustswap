@@ -1,7 +1,5 @@
 import { useState, useCallback } from 'react';
-import { getSwapQuote } from '@coinbase/onchainkit/api';
 import { Token } from '../types/lifi';
-import { BASE_CHAIN_ID } from '../lib/tokens';
 
 export function useLifiQuote() {
   const [quote, setQuote] = useState<any>(null);
@@ -24,34 +22,19 @@ export function useLifiQuote() {
     setError(null);
 
     try {
-      const params = {
-        from: {
-          address: fromToken.address,
-          chainId: 8453,
-          decimals: fromToken.decimals,
-          name: fromToken.name,
-          symbol: fromToken.symbol,
-          image: fromToken.logoURI || ''
-        },
-        to: {
-          address: toToken.address,
-          chainId: 8453,
-          decimals: toToken.decimals,
-          name: toToken.name,
-          symbol: toToken.symbol,
-          image: toToken.logoURI || ''
-        },
-        amount: amountInStr, // BigInt string
-        chainId: 8453,
-        slippage: slippage, // 0.5% default or user selected
-        // Explicitly inject API key here just in case OnchainKitProvider context drops
-        projectId: process.env.NEXT_PUBLIC_ONCHAINKIT_API_KEY, 
-        apiKey: process.env.NEXT_PUBLIC_ONCHAINKIT_API_KEY
-      };
-      
-      const response = await getSwapQuote(params as any) as any;
+      const params = new URLSearchParams({
+        tokenIn: fromToken.address,
+        tokenOut: toToken.address,
+        amountIn: amountInStr,
+        decimalsIn: String(fromToken.decimals),
+        decimalsOut: String(toToken.decimals),
+        slippage: String(slippage),
+      });
 
-      if (response.error || !response.toAmount) {
+      const res = await fetch(`/api/lifi-quote?${params.toString()}`);
+      const response = await res.json();
+
+      if (!res.ok || response.error || !response.amountOutRaw) {
         setError(response.error?.message || response.error || 'Got invalid quote response');
         setQuote(null);
         return;

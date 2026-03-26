@@ -3,14 +3,9 @@
 import { type ReactNode, useState } from "react";
 import { WagmiProvider } from "wagmi";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { OnchainKitProvider } from "@coinbase/onchainkit";
-import { MiniKitProvider } from "@coinbase/onchainkit/minikit";
-import { base } from "viem/chains";
 import { wagmiAdapter, wagmiConfig, projectId } from "@/wagmi";
 import { createAppKit } from "@reown/appkit/react";
 import { INITIAL_WAGMI_CHAINS } from "@/config/web3";
-
-const BASE_ACCOUNT_WALLET_ID = 'fd20dc426fb37566d803205b19bbc1d4096b248ac04548e3cfb6b3a38bd033aa';
 
 export const modal = createAppKit({
   adapters: [wagmiAdapter],
@@ -53,22 +48,7 @@ export function Providers({ children }: ProvidersProps) {
   return (
     <WagmiProvider config={wagmiConfig} reconnectOnMount>
       <QueryClientProvider client={queryClient}>
-        <OnchainKitProvider
-          apiKey={process.env.NEXT_PUBLIC_ONCHAINKIT_API_KEY || ''}
-          projectId={process.env.NEXT_PUBLIC_ONCHAINKIT_API_KEY || ''}
-          chain={base}
-          config={{
-            appearance: {
-              mode: "dark",
-              theme: "cyberpunk",
-            },
-            paymaster: process.env.NEXT_PUBLIC_PAYMASTER_URL || null,
-          }}
-        >
-          <MiniKitProvider>
-            {children}
-          </MiniKitProvider>
-        </OnchainKitProvider>
+        {children}
       </QueryClientProvider>
     </WagmiProvider>
   );
