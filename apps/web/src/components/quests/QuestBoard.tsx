@@ -18,6 +18,14 @@ type SocialFilter = "all" | "x" | "base";
 type PendingState = Record<string, boolean>;
 type PostInputState = Record<string, string>;
 
+function getDisplayError(error: unknown) {
+  const message = (error as Error)?.message || "Request failed";
+  if (message === "Failed to fetch") {
+    return "Could not reach the quest API. Check NEXT_PUBLIC_API_URL and make sure it uses the Railway root URL without /api.";
+  }
+  return message;
+}
+
 function formatPoints(points: number) {
   return `${points.toLocaleString()} PP`;
 }
@@ -108,7 +116,7 @@ export function QuestBoard() {
 
       setBoard(data);
     } catch (loadError) {
-      setError((loadError as Error).message);
+      setError(getDisplayError(loadError));
     } finally {
       setIsLoading(false);
     }
@@ -202,7 +210,7 @@ export function QuestBoard() {
       window.open(questUrl);
       await refreshWithMessage("Quest opened. Come back when verify unlocks.");
     } catch (startError) {
-      setError((startError as Error).message);
+      setError(getDisplayError(startError));
     } finally {
       setPending((current) => ({ ...current, [quest.id]: false }));
     }
@@ -233,7 +241,7 @@ export function QuestBoard() {
 
       await loadBoard();
     } catch (verifyError) {
-      setError((verifyError as Error).message);
+      setError(getDisplayError(verifyError));
     } finally {
       setPending((current) => ({ ...current, [quest.id]: false }));
     }
@@ -264,7 +272,7 @@ export function QuestBoard() {
         `Post verified. You earned ${formatPoints(response.awardedPoints || 0)}.`
       );
     } catch (verifyError) {
-      setError((verifyError as Error).message);
+      setError(getDisplayError(verifyError));
     } finally {
       setPending((current) => ({ ...current, [quest.id]: false }));
     }
@@ -448,17 +456,27 @@ export function QuestBoard() {
                         Goal
                       </p>
                       <p className="text-sm font-semibold text-white">
-                        {quest.actionType === "swap_volume" ? `$${quest.targetValue.toLocaleString()}` : "1 action"}
+                        {quest.actionType === "swap_volume"
+                          ? `$${quest.targetValue.toLocaleString()}`
+                          : quest.actionType === "swap_count"
+                            ? `${quest.targetValue.toLocaleString()} swaps`
+                            : "1 action"}
                       </p>
                     </div>
                   </div>
 
-                  {quest.actionType === "swap_volume" ? (
+                  {quest.actionType === "swap_volume" || quest.actionType === "swap_count" ? (
                     <div className="mt-5 rounded-2xl border border-white/10 bg-black/20 p-4">
                       <div className="flex items-center justify-between text-sm">
-                        <span className="text-gray-400">Current volume</span>
+                        <span className="text-gray-400">
+                          {quest.actionType === "swap_count" ? "Current swaps" : "Current volume"}
+                        </span>
                         <span className="font-semibold text-white">
-                          ${progressValue.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                          {quest.actionType === "swap_count"
+                            ? progressValue.toLocaleString()
+                            : `$${progressValue.toLocaleString(undefined, {
+                                maximumFractionDigits: 2,
+                              })}`}
                         </span>
                       </div>
                       <div className="mt-3 h-2 overflow-hidden rounded-full bg-white/10">

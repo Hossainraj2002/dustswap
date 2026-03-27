@@ -24,7 +24,7 @@ const allowedOrigins = Array.from(
       "https://dustswap.vercel.app",
       "https://dustswap-web.vercel.app",
       process.env.NEXT_PUBLIC_APP_URL,
-    ].filter(Boolean)
+    ].filter((value): value is string => Boolean(value))
   )
 );
 

@@ -78,7 +78,7 @@ questsRoutes.delete("/admin/:id", async (c) => {
 
   try {
     const data = await questEngine.deleteQuest(c.req.param("id"));
-    return c.json({ success: true, ...data });
+    return c.json(data);
   } catch (error) {
     return c.json(
       { success: false, error: (error as Error).message },
@@ -158,7 +158,7 @@ questsRoutes.post("/activities/swap", async (c) => {
       metadata: body.metadata,
     });
 
-    return c.json({ success: true, ...data });
+    return c.json(data);
   } catch (error) {
     return c.json(
       { success: false, error: (error as Error).message },
