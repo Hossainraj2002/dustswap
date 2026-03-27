@@ -2,6 +2,7 @@ export type QuestCategory = "social" | "onchain";
 export type QuestPlatform = "x" | "base" | "dustswap";
 export type QuestActionType =
   | "swap_volume"
+  | "swap_count"
   | "post"
   | "follow"
   | "repost"

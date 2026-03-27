@@ -8,6 +8,7 @@ type QuestCategory = "social" | "onchain";
 type QuestPlatform = "x" | "base" | "dustswap";
 type QuestActionType =
   | "swap_volume"
+  | "swap_count"
   | "post"
   | "follow"
   | "repost"
@@ -442,7 +443,10 @@ export class QuestEngine {
       );
 
       for (const quest of quests) {
-        if (quest.category === "onchain" && quest.action_type === "swap_volume") {
+        if (
+          quest.category === "onchain" &&
+          (quest.action_type === "swap_volume" || quest.action_type === "swap_count")
+        ) {
           await this.syncSwapProgressForQuest(
             user.id,
             normalizeAddress(address),
@@ -920,8 +924,7 @@ export class QuestEngine {
       .from("quests")
       .select("*")
       .eq("category", "onchain")
-      .eq("action_type", "swap_volume")
-      .eq("verification_type", "swap_volume")
+      .in("action_type", ["swap_volume", "swap_count"])
       .eq("status", "published")
       .eq("is_active", true);
 
@@ -984,10 +987,13 @@ export class QuestEngine {
       throw new Error(`Failed to load swap activity: ${error.message}`);
     }
 
-    const progressValue = (data ?? []).reduce(
+    const volumeValue = (data ?? []).reduce(
       (sum, row) => sum + toNumber((row as { amount_usd: number }).amount_usd),
       0
     );
+    const countValue = (data ?? []).length;
+    const progressValue =
+      quest.action_type === "swap_count" ? countValue : volumeValue;
 
     const existing = await this.getProgress(userId, quest.id, cycleKey);
     const completedAlready = Boolean(existing?.completed_at);
@@ -1021,6 +1027,8 @@ export class QuestEngine {
         cycleKey,
         {
           eventType: "swap",
+          countValue,
+          volumeValue,
           progressValue,
         }
       );

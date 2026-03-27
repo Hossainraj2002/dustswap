@@ -14,6 +14,19 @@ import { pointsRoutes } from "./routes/points";
 import { questsRoutes } from "./routes/quests";
 
 const app = new Hono();
+const allowedOrigins = Array.from(
+  new Set(
+    [
+      "http://localhost:3000",
+      "http://localhost:5173",
+      "https://dustswap.xyz",
+      "https://www.dustswap.xyz",
+      "https://dustswap.vercel.app",
+      "https://dustswap-web.vercel.app",
+      process.env.NEXT_PUBLIC_APP_URL,
+    ].filter(Boolean)
+  )
+);
 
 // ─── Middleware ─────────────────────────────────────────────────────────────────
 
@@ -22,15 +35,8 @@ app.use("*", prettyJSON());
 app.use(
   "*",
   cors({
-    origin: [
-      "http://localhost:3000",
-      "http://localhost:5173",
-      "https://dustswap.xyz",
-      "https://www.dustswap.xyz",
-      "https://dustswap.vercel.app",
-      "https://dustswap-web.vercel.app",
-    ],
-    allowMethods: ["GET", "POST", "OPTIONS"],
+    origin: allowedOrigins,
+    allowMethods: ["GET", "POST", "DELETE", "OPTIONS"],
     allowHeaders: ["Content-Type", "Authorization", "x-admin-token"],
     maxAge: 86400,
   })
