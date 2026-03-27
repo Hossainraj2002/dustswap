@@ -1,17 +1,16 @@
-// apps/api/src/index.ts
-import lifiRoutes from "./routes/lifi";
 import dotenv from "dotenv";
 dotenv.config();
 
+import { serve } from "@hono/node-server";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { logger } from "hono/logger";
 import { prettyJSON } from "hono/pretty-json";
-import { serve } from "@hono/node-server";
-import tokens from "./routes/tokens";
-// ✅ Fixed: import and register points routes
+import lifiRoutes from "./routes/lifi";
 import { pointsRoutes } from "./routes/points";
 import { questsRoutes } from "./routes/quests";
+import tokens from "./routes/tokens";
+import { getSupabaseDiagnostics } from "./services/supabase";
 
 const app = new Hono();
 const allowedOrigins = Array.from(
@@ -28,8 +27,6 @@ const allowedOrigins = Array.from(
   )
 );
 
-// ─── Middleware ─────────────────────────────────────────────────────────────────
-
 app.use("*", logger());
 app.use("*", prettyJSON());
 app.use(
@@ -42,14 +39,11 @@ app.use(
   })
 );
 
-// ─── Routes ────────────────────────────────────────────────────────────────────
-
 app.route("/api/tokens", tokens);
-// ✅ Fixed: mount points routes
 app.route("/api/points", pointsRoutes);
 app.route("/api/quests", questsRoutes);
+app.route("/api/lifi", lifiRoutes);
 
-// Root health check
 app.get("/", (c) => {
   return c.json({
     name: "DustSwap API",
@@ -72,9 +66,6 @@ app.get("/", (c) => {
   });
 });
 
-app.route("/api/lifi", lifiRoutes);
-
-// 404 handler
 app.notFound((c) => {
   return c.json(
     {
@@ -86,7 +77,6 @@ app.notFound((c) => {
   );
 });
 
-// Error handler
 app.onError((err, c) => {
   console.error("[Unhandled Error]", err);
   return c.json(
@@ -99,14 +89,18 @@ app.onError((err, c) => {
   );
 });
 
-// ─── Start server ──────────────────────────────────────────────────────────────
-
 const port = parseInt(process.env.PORT ?? "3001", 10);
 serve({ fetch: app.fetch, port }, () => {
   console.log(`[DustSwap API] Listening on port ${port}`);
-  // Startup diagnostics — helps debug deployment env issues
-  const apiKey = process.env.ONCHAINKIT_API_KEY || process.env.NEXT_PUBLIC_ONCHAINKIT_API_KEY || "";
-  console.log(`[DustSwap API] ONCHAINKIT_API_KEY: ${apiKey ? `${apiKey.slice(0, 8)}...${apiKey.slice(-4)} (loaded)` : "⚠️  NOT SET — token routes will fail!"}`);
+  const apiKey =
+    process.env.ONCHAINKIT_API_KEY || process.env.NEXT_PUBLIC_ONCHAINKIT_API_KEY || "";
+  console.log(
+    `[DustSwap API] ONCHAINKIT_API_KEY: ${apiKey ? `${apiKey.slice(0, 8)}...${apiKey.slice(-4)} (loaded)` : "NOT SET"}`
+  );
+  const supabase = getSupabaseDiagnostics();
+  console.log(
+    `[DustSwap API] SUPABASE: urlRef=${supabase.urlRef}, keyEnv=${supabase.loadedEnv}, keyType=${supabase.keyType}`
+  );
 });
 
 export default app;
