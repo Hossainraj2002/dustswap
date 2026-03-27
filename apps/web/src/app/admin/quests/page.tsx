@@ -162,6 +162,10 @@ export default function AdminQuestsPage() {
 
       <section className="rounded-[28px] border border-white/10 bg-white/[0.04] p-5">
         <label className="block text-sm font-medium text-white">Admin token</label>
+        <p className="mt-2 text-sm leading-6 text-gray-300">
+          This first admin version uses <code className="rounded bg-black/30 px-1.5 py-0.5 text-xs text-sky-100">QUEST_ADMIN_TOKEN</code>{" "}
+          from the API env. Paste the same value here to manage quests.
+        </p>
         <div className="mt-3 flex flex-col gap-3 sm:flex-row">
           <input
             value={adminToken}
@@ -178,6 +182,9 @@ export default function AdminQuestsPage() {
             {isLoading ? "Loading..." : "Load Quests"}
           </button>
         </div>
+        <p className="mt-3 text-xs leading-5 text-gray-400">
+          We can replace this with wallet-whitelist auth later so you do not need to share a raw token.
+        </p>
       </section>
 
       {status ? (
