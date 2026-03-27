@@ -13,6 +13,7 @@ interface NavLink {
 }
 
 const NAV_LINKS: NavLink[] = [
+  { href: "/quests", label: "Quests", icon: "Q" },
   { href: "/", label: "Home", icon: "🏠" },
   { href: "/dust-sweep", label: "Dust Sweep", icon: "🧹" },
   { href: "/swap", label: "Swap", icon: "🔄" },

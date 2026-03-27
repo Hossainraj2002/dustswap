@@ -11,6 +11,7 @@ import { serve } from "@hono/node-server";
 import tokens from "./routes/tokens";
 // ✅ Fixed: import and register points routes
 import { pointsRoutes } from "./routes/points";
+import { questsRoutes } from "./routes/quests";
 
 const app = new Hono();
 
@@ -30,7 +31,7 @@ app.use(
       "https://dustswap-web.vercel.app",
     ],
     allowMethods: ["GET", "POST", "OPTIONS"],
-    allowHeaders: ["Content-Type", "Authorization"],
+    allowHeaders: ["Content-Type", "Authorization", "x-admin-token"],
     maxAge: 86400,
   })
 );
@@ -40,6 +41,7 @@ app.use(
 app.route("/api/tokens", tokens);
 // ✅ Fixed: mount points routes
 app.route("/api/points", pointsRoutes);
+app.route("/api/quests", questsRoutes);
 
 // Root health check
 app.get("/", (c) => {
@@ -58,6 +60,8 @@ app.get("/", (c) => {
       "GET /api/points/:address": "Get points balance",
       "POST /api/points/check-in": "Daily check-in",
       "POST /api/points/record-sweep": "Record sweep for points",
+      "GET /api/quests": "Get active quests and user progress",
+      "POST /api/quests/activities/swap": "Record swap activity for quest progress",
     },
   });
 });

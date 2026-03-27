@@ -1,9 +1,4 @@
-import { createClient } from '@supabase/supabase-js';
-
-const supabase = createClient(
-  process.env.SUPABASE_URL!,
-  process.env.SUPABASE_ANON_KEY!,
-);
+import { supabase } from "./supabase";
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 const CFG = {
@@ -79,6 +74,21 @@ export class PointsEngine {
       user_id: user.id, action, points: pts, multiplier: 1, total_awarded: pts, tx_hash: txHash, metadata: meta, season: 1,
     });
     await supabase.from('users').update({ total_points: user.total_points + pts, updated_at: new Date().toISOString() }).eq('id', user.id);
+  }
+
+  async awardCustomPoints(
+    address: string,
+    pts: number,
+    action: string,
+    meta?: unknown,
+    txHash?: string
+  ): Promise<number> {
+    if (pts <= 0) {
+      return 0;
+    }
+
+    await this.addPoints(address, pts, action, txHash, meta);
+    return pts;
   }
 
   private async todayPoints(address: string, action: string): Promise<number> {

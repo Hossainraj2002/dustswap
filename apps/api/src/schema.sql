@@ -1,6 +1,8 @@
 -- DustSweep Database Schema
 -- Run this in Supabase SQL Editor (supabase.com → SQL Editor → New query)
 
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
 -- Users
 CREATE TABLE IF NOT EXISTS users (
   id             SERIAL PRIMARY KEY,
@@ -89,3 +91,271 @@ CREATE POLICY "service_all_events"        ON point_events   FOR ALL USING (true)
 CREATE POLICY "service_all_checkins"      ON check_ins      FOR ALL USING (true);
 CREATE POLICY "service_all_referrals"     ON referrals      FOR ALL USING (true);
 CREATE POLICY "service_all_history"       ON sweep_history  FOR ALL USING (true);
+
+-- =========================================================
+-- Quest System
+-- =========================================================
+
+CREATE TABLE IF NOT EXISTS quests (
+  id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  slug              TEXT UNIQUE NOT NULL,
+  title             TEXT NOT NULL,
+  description       TEXT,
+  category          TEXT NOT NULL,
+  platform          TEXT NOT NULL,
+  action_type       TEXT NOT NULL,
+  verification_type TEXT NOT NULL,
+  progress_window   TEXT NOT NULL DEFAULT 'once',
+  reward_kind       TEXT NOT NULL DEFAULT 'particle_points',
+  reward_points     INTEGER NOT NULL DEFAULT 0,
+  target_value      DECIMAL(20,6) NOT NULL DEFAULT 1,
+  cta_label         TEXT,
+  cta_url           TEXT,
+  status            TEXT NOT NULL DEFAULT 'draft',
+  is_active         BOOLEAN NOT NULL DEFAULT true,
+  sort_order        INTEGER NOT NULL DEFAULT 0,
+  starts_at         TIMESTAMPTZ,
+  ends_at           TIMESTAMPTZ,
+  rules             JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS social_accounts (
+  id                BIGSERIAL PRIMARY KEY,
+  user_id           INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  platform          TEXT NOT NULL,
+  platform_user_id  TEXT NOT NULL,
+  username          TEXT,
+  display_name      TEXT,
+  profile_image_url TEXT,
+  access_token      TEXT,
+  refresh_token     TEXT,
+  scope             TEXT,
+  token_expires_at  TIMESTAMPTZ,
+  metadata          JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(user_id, platform),
+  UNIQUE(platform, platform_user_id)
+);
+
+CREATE TABLE IF NOT EXISTS quest_progress (
+  id                    BIGSERIAL PRIMARY KEY,
+  quest_id              UUID NOT NULL REFERENCES quests(id) ON DELETE CASCADE,
+  user_id               INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  cycle_key             TEXT NOT NULL DEFAULT 'global',
+  status                TEXT NOT NULL DEFAULT 'not_started',
+  progress              DECIMAL(20,6) NOT NULL DEFAULT 0,
+  target_value          DECIMAL(20,6) NOT NULL DEFAULT 0,
+  verification_attempts INTEGER NOT NULL DEFAULT 0,
+  fake_failures_served  INTEGER NOT NULL DEFAULT 0,
+  opened_at             TIMESTAMPTZ,
+  next_verification_at  TIMESTAMPTZ,
+  completed_at          TIMESTAMPTZ,
+  rewarded_at           TIMESTAMPTZ,
+  metadata              JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(user_id, quest_id, cycle_key)
+);
+
+CREATE TABLE IF NOT EXISTS quest_verification_logs (
+  id               BIGSERIAL PRIMARY KEY,
+  quest_id         UUID NOT NULL REFERENCES quests(id) ON DELETE CASCADE,
+  user_id          INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  cycle_key        TEXT NOT NULL DEFAULT 'global',
+  status           TEXT NOT NULL,
+  request_payload  JSONB NOT NULL DEFAULT '{}'::jsonb,
+  response_payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS activity_events (
+  id          BIGSERIAL PRIMARY KEY,
+  user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  event_type  TEXT NOT NULL,
+  source      TEXT NOT NULL,
+  chain_id    INTEGER,
+  tx_hash     VARCHAR(66),
+  amount_usd  DECIMAL(20,6) NOT NULL DEFAULT 0,
+  metadata    JSONB NOT NULL DEFAULT '{}'::jsonb,
+  occurred_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(tx_hash, event_type, source)
+);
+
+CREATE INDEX IF NOT EXISTS idx_quests_status          ON quests(status, is_active, sort_order);
+CREATE INDEX IF NOT EXISTS idx_social_accounts_user   ON social_accounts(user_id, platform);
+CREATE INDEX IF NOT EXISTS idx_quest_progress_user    ON quest_progress(user_id, quest_id, cycle_key);
+CREATE INDEX IF NOT EXISTS idx_quest_logs_user        ON quest_verification_logs(user_id, quest_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_activity_events_user   ON activity_events(user_id, event_type, occurred_at DESC);
+
+ALTER TABLE quests                   ENABLE ROW LEVEL SECURITY;
+ALTER TABLE social_accounts          ENABLE ROW LEVEL SECURITY;
+ALTER TABLE quest_progress           ENABLE ROW LEVEL SECURITY;
+ALTER TABLE quest_verification_logs  ENABLE ROW LEVEL SECURITY;
+ALTER TABLE activity_events          ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "service_all_quests"          ON quests                  FOR ALL USING (true);
+CREATE POLICY "service_all_social_accounts" ON social_accounts         FOR ALL USING (true);
+CREATE POLICY "service_all_quest_progress"  ON quest_progress          FOR ALL USING (true);
+CREATE POLICY "service_all_quest_logs"      ON quest_verification_logs FOR ALL USING (true);
+CREATE POLICY "service_all_activity_events" ON activity_events         FOR ALL USING (true);
+
+INSERT INTO quests (
+  slug,
+  title,
+  description,
+  category,
+  platform,
+  action_type,
+  verification_type,
+  progress_window,
+  reward_points,
+  target_value,
+  cta_label,
+  cta_url,
+  status,
+  is_active,
+  sort_order,
+  rules
+) VALUES
+  (
+    'swap-daily-10',
+    'Swap $10 Today',
+    'Swap at least $10 volume on DustSwap today.',
+    'onchain',
+    'dustswap',
+    'swap_volume',
+    'swap_volume',
+    'daily',
+    100,
+    10,
+    'Open Swap',
+    '/swap',
+    'published',
+    true,
+    10,
+    '{"source":"dustswap_swap"}'::jsonb
+  ),
+  (
+    'swap-daily-100',
+    'Swap $100 Today',
+    'Push your daily volume past $100 on DustSwap.',
+    'onchain',
+    'dustswap',
+    'swap_volume',
+    'swap_volume',
+    'daily',
+    300,
+    100,
+    'Open Swap',
+    '/swap',
+    'published',
+    true,
+    20,
+    '{"source":"dustswap_swap"}'::jsonb
+  ),
+  (
+    'swap-weekly-5000',
+    'Weekly $5,000 Volume',
+    'Accumulate $5,000 of swap volume this week.',
+    'onchain',
+    'dustswap',
+    'swap_volume',
+    'swap_volume',
+    'weekly',
+    1500,
+    5000,
+    'Open Swap',
+    '/swap',
+    'published',
+    true,
+    30,
+    '{"source":"dustswap_swap"}'::jsonb
+  ),
+  (
+    'x-post-proof',
+    'Post About DustSwap',
+    'Connect X, publish your post, and send the link for verification.',
+    'social',
+    'x',
+    'post',
+    'x_post_link',
+    'once',
+    250,
+    1,
+    'Open Composer',
+    'https://x.com/intent/tweet?text=Cleaning%20my%20wallet%20with%20%40dustswap%20%23DustSwap%20https%3A%2F%2Fdustswap.xyz',
+    'published',
+    true,
+    40,
+    '{"requiredMention":"@dustswap","requiredHashtags":["#DustSwap"],"requiredLinks":["dustswap.xyz"],"composeText":"Cleaning my wallet with @dustswap #DustSwap https://dustswap.xyz"}'::jsonb
+  ),
+  (
+    'x-follow-soft',
+    'Follow DustSwap on X',
+    'Open the X profile, come back after 20 seconds, then verify.',
+    'social',
+    'x',
+    'follow',
+    'delay_gate_retry',
+    'once',
+    60,
+    1,
+    'Open X Profile',
+    'https://x.com/dustswap',
+    'published',
+    true,
+    50,
+    '{"delaySeconds":20,"fakeFailureCount":1,"externalUrl":"https://x.com/dustswap"}'::jsonb
+  ),
+  (
+    'x-repost-soft',
+    'Repost the Launch Post',
+    'Open the post, repost it, then verify after 20 seconds.',
+    'social',
+    'x',
+    'repost',
+    'delay_gate',
+    'once',
+    80,
+    1,
+    'Open X Post',
+    'https://x.com/dustswap',
+    'published',
+    true,
+    60,
+    '{"delaySeconds":20,"externalUrl":"https://x.com/dustswap"}'::jsonb
+  ),
+  (
+    'base-visit-soft',
+    'Visit DustSwap on Base App',
+    'Open the Base App page, come back after 20 seconds, then verify.',
+    'social',
+    'base',
+    'visit',
+    'delay_gate',
+    'once',
+    40,
+    1,
+    'Open Base App',
+    'https://base.app/',
+    'published',
+    true,
+    70,
+    '{"delaySeconds":20,"externalUrl":"https://base.app/"}'::jsonb
+  )
+ON CONFLICT (slug) DO UPDATE SET
+  title = EXCLUDED.title,
+  description = EXCLUDED.description,
+  reward_points = EXCLUDED.reward_points,
+  target_value = EXCLUDED.target_value,
+  cta_label = EXCLUDED.cta_label,
+  cta_url = EXCLUDED.cta_url,
+  status = EXCLUDED.status,
+  is_active = EXCLUDED.is_active,
+  sort_order = EXCLUDED.sort_order,
+  rules = EXCLUDED.rules,
+  updated_at = NOW();
