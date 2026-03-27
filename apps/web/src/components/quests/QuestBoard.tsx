@@ -14,9 +14,26 @@ import type { QuestItem } from "@/types/quests";
 
 type CategoryFilter = "social" | "onchain";
 type SocialFilter = "all" | "x" | "base";
-
 type PendingState = Record<string, boolean>;
 type PostInputState = Record<string, string>;
+
+const ONCHAIN_WINDOWS = [
+  {
+    key: "once",
+    label: "Once",
+    description: "One-time milestones that stay completed after you clear them.",
+  },
+  {
+    key: "daily",
+    label: "Daily",
+    description: "Resets every day so users can build a daily habit.",
+  },
+  {
+    key: "weekly",
+    label: "Weekly",
+    description: "Longer volume goals that stack across the current week.",
+  },
+] as const;
 
 function getDisplayError(error: unknown) {
   const message = (error as Error)?.message || "Request failed";
@@ -28,6 +45,16 @@ function getDisplayError(error: unknown) {
 
 function formatPoints(points: number) {
   return `${points.toLocaleString()} PP`;
+}
+
+function formatWindowLabel(windowType: QuestItem["progressWindow"]) {
+  if (windowType === "daily") {
+    return "Daily";
+  }
+  if (windowType === "weekly") {
+    return "Weekly";
+  }
+  return "Once";
 }
 
 function getCountdownLabel(nextVerificationAt?: string | null) {
@@ -76,9 +103,27 @@ function StatusPill({ quest }: { quest: QuestItem }) {
         : "bg-white/5 text-gray-300 border-white/10";
 
   return (
-    <span className={`rounded-full border px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.2em] ${classes}`}>
+    <span
+      className={`rounded-full border px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.2em] ${classes}`}
+    >
       {status === "completed" ? "Completed" : status === "retry_required" ? "Retry" : "Live"}
     </span>
+  );
+}
+
+function WindowPill({ quest }: { quest: QuestItem }) {
+  return (
+    <span className="rounded-full border border-sky-400/20 bg-sky-400/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-sky-100">
+      {formatWindowLabel(quest.progressWindow)}
+    </span>
+  );
+}
+
+function CompletedStamp() {
+  return (
+    <div className="pointer-events-none absolute inset-x-[-12%] top-10 rotate-[-12deg] border-y border-emerald-300/35 bg-emerald-500/10 py-2 text-center text-xs font-black tracking-[0.55em] text-emerald-200/90">
+      COMPLETED
+    </div>
   );
 }
 
@@ -98,14 +143,22 @@ export function QuestBoard() {
   const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>("social");
   const [socialFilter, setSocialFilter] = useState<SocialFilter>("all");
   const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [board, setBoard] = useState<Awaited<ReturnType<typeof fetchQuestBoard>> | null>(null);
   const [pending, setPending] = useState<PendingState>({});
   const [postInputs, setPostInputs] = useState<PostInputState>({});
 
-  async function loadBoard() {
-    setIsLoading(true);
+  async function loadBoard(options?: { silent?: boolean }) {
+    const silent = options?.silent ?? false;
+
+    if (silent) {
+      setIsRefreshing(true);
+    } else {
+      setIsLoading(true);
+    }
+
     setError(null);
 
     try {
@@ -118,7 +171,11 @@ export function QuestBoard() {
     } catch (loadError) {
       setError(getDisplayError(loadError));
     } finally {
-      setIsLoading(false);
+      if (silent) {
+        setIsRefreshing(false);
+      } else {
+        setIsLoading(false);
+      }
     }
   }
 
@@ -145,9 +202,13 @@ export function QuestBoard() {
       params.delete("x_username");
       params.delete("x_error");
       const nextQuery = params.toString();
-      window.history.replaceState({}, "", nextQuery ? `?${nextQuery}` : window.location.pathname);
+      window.history.replaceState(
+        {},
+        "",
+        nextQuery ? `?${nextQuery}` : window.location.pathname
+      );
       startTransition(() => {
-        void loadBoard();
+        void loadBoard({ silent: true });
       });
     }
   }, []);
@@ -160,6 +221,14 @@ export function QuestBoard() {
     return () => window.clearInterval(interval);
   }, []);
 
+  useEffect(() => {
+    const interval = window.setInterval(() => {
+      void loadBoard({ silent: true });
+    }, 30000);
+
+    return () => window.clearInterval(interval);
+  }, [address]);
+
   const filteredQuests = useMemo(() => {
     const quests = board?.quests || [];
     return quests.filter((quest) => {
@@ -167,7 +236,11 @@ export function QuestBoard() {
         return false;
       }
 
-      if (categoryFilter === "social" && socialFilter !== "all" && quest.platform !== socialFilter) {
+      if (
+        categoryFilter === "social" &&
+        socialFilter !== "all" &&
+        quest.platform !== socialFilter
+      ) {
         return false;
       }
 
@@ -175,7 +248,19 @@ export function QuestBoard() {
     });
   }, [board?.quests, categoryFilter, socialFilter]);
 
-  const completedCount = (board?.quests || []).filter((quest) => quest.progress?.completedAt).length;
+  const onchainSections = useMemo(() => {
+    return ONCHAIN_WINDOWS.map((section) => ({
+      ...section,
+      quests: filteredQuests.filter(
+        (quest) =>
+          quest.category === "onchain" && quest.progressWindow === section.key
+      ),
+    })).filter((section) => section.quests.length > 0);
+  }, [filteredQuests]);
+
+  const completedCount = (board?.quests || []).filter(
+    (quest) => quest.progress?.completedAt
+  ).length;
   const linkedXAccount = board?.linkedAccounts?.x;
 
   async function refreshWithMessage(nextMessage?: string) {
@@ -183,8 +268,12 @@ export function QuestBoard() {
       setMessage(nextMessage);
     }
     startTransition(() => {
-      void loadBoard();
+      void loadBoard({ silent: true });
     });
+  }
+
+  async function handleOnchainRefresh() {
+    await refreshWithMessage("Checking your latest swap progress...");
   }
 
   async function handleDelayQuestStart(quest: QuestItem) {
@@ -239,7 +328,7 @@ export function QuestBoard() {
         setMessage(`Quest completed. You earned ${formatPoints(response.awardedPoints || 0)}.`);
       }
 
-      await loadBoard();
+      await loadBoard({ silent: true });
     } catch (verifyError) {
       setError(getDisplayError(verifyError));
     } finally {
@@ -288,6 +377,189 @@ export function QuestBoard() {
     window.open(url);
   }
 
+  function renderQuestCard(quest: QuestItem) {
+    const questUrl = normalizeQuestUrl(quest);
+    const countdownLabel = getCountdownLabel(quest.progress?.nextVerificationAt);
+    const progressValue = Number(quest.progress?.value || 0);
+    const percent = getProgressPercent(progressValue, quest.targetValue);
+    const isDone = Boolean(quest.progress?.completedAt);
+    const isPending = Boolean(pending[quest.id]);
+    const canVerifyDelay =
+      quest.progress?.nextVerificationAt &&
+      new Date(quest.progress.nextVerificationAt).getTime() <= Date.now();
+    const isOnchain = quest.category === "onchain";
+
+    return (
+      <article
+        key={quest.id}
+        className="relative flex flex-col overflow-hidden rounded-[26px] border border-white/10 bg-[linear-gradient(180deg,rgba(18,22,34,0.96),rgba(8,10,16,0.96))] p-5 shadow-[0_16px_60px_rgba(0,0,0,0.28)]"
+      >
+        {isDone ? <CompletedStamp /> : null}
+
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-gray-400">
+              {quest.category} · {quest.platform}
+            </p>
+            <h2 className="mt-3 text-xl font-semibold text-white">{quest.title}</h2>
+          </div>
+
+          <div className="flex flex-wrap justify-end gap-2">
+            <WindowPill quest={quest} />
+            <StatusPill quest={quest} />
+          </div>
+        </div>
+
+        <p className="mt-3 min-h-[56px] text-sm leading-6 text-gray-300">
+          {quest.description}
+        </p>
+
+        <div className="mt-4 flex items-center justify-between gap-3">
+          <RewardBadge points={quest.rewardPoints} />
+          <div className="rounded-2xl border border-white/10 bg-white/[0.03] px-3 py-2 text-right">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-gray-500">
+              Goal
+            </p>
+            <p className="text-sm font-semibold text-white">
+              {quest.actionType === "swap_volume"
+                ? `$${quest.targetValue.toLocaleString()}`
+                : quest.actionType === "swap_count"
+                  ? `${quest.targetValue.toLocaleString()} swaps`
+                  : "1 action"}
+            </p>
+          </div>
+        </div>
+
+        {quest.actionType === "swap_volume" || quest.actionType === "swap_count" ? (
+          <div className="mt-5 rounded-2xl border border-white/10 bg-black/20 p-4">
+            <div className="flex items-center justify-between text-sm">
+              <span className="text-gray-400">
+                {quest.actionType === "swap_count" ? "Current swaps" : "Current volume"}
+              </span>
+              <span className="font-semibold text-white">
+                {quest.actionType === "swap_count"
+                  ? progressValue.toLocaleString()
+                  : `$${progressValue.toLocaleString(undefined, {
+                      maximumFractionDigits: 2,
+                    })}`}
+              </span>
+            </div>
+            <div className="mt-3 h-2 overflow-hidden rounded-full bg-white/10">
+              <div
+                className="h-full rounded-full bg-[linear-gradient(90deg,#0ea5e9,#38bdf8)]"
+                style={{ width: `${percent}%` }}
+              />
+            </div>
+            <p className="mt-3 text-xs text-gray-400">
+              Every confirmed DustSwap swap contributes to all matching onchain quests in this window.
+            </p>
+            <div className="mt-4 flex gap-3">
+              <Link
+                href={questUrl || "/swap"}
+                className="inline-flex flex-1 items-center justify-center rounded-2xl bg-white px-4 py-3 text-sm font-semibold text-[#030305] transition hover:bg-sky-100"
+              >
+                {isDone ? "View Swap Page" : quest.ctaLabel || "Open Swap"}
+              </Link>
+              <button
+                type="button"
+                onClick={() => void handleOnchainRefresh()}
+                disabled={isRefreshing}
+                className="rounded-2xl border border-white/10 px-4 py-3 text-xs font-semibold uppercase tracking-[0.18em] text-white transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                {isRefreshing ? "Checking" : "Verify"}
+              </button>
+            </div>
+          </div>
+        ) : quest.verificationType === "x_post_link" ? (
+          <div className="mt-5 rounded-2xl border border-white/10 bg-black/20 p-4">
+            <div className="space-y-3">
+              {quest.rules.composeText ? (
+                <p className="rounded-2xl border border-white/10 bg-white/[0.04] px-3 py-3 text-xs leading-6 text-gray-300">
+                  {quest.rules.composeText}
+                </p>
+              ) : null}
+              <button
+                type="button"
+                onClick={() => {
+                  if (questUrl) {
+                    window.open(questUrl);
+                  }
+                }}
+                disabled={!linkedXAccount?.username || !questUrl}
+                className="w-full rounded-2xl border border-sky-400/20 bg-sky-400/10 px-4 py-3 text-sm font-semibold text-sky-100 transition hover:bg-sky-400/15 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                {linkedXAccount?.username
+                  ? quest.ctaLabel || "Open Composer"
+                  : "Connect X First"}
+              </button>
+              <input
+                value={postInputs[quest.id] || ""}
+                onChange={(event) =>
+                  setPostInputs((current) => ({
+                    ...current,
+                    [quest.id]: event.target.value,
+                  }))
+                }
+                placeholder="Paste your X post link"
+                className="w-full rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3 text-sm text-white outline-none placeholder:text-gray-500 focus:border-sky-400/40"
+              />
+              <button
+                type="button"
+                onClick={() => void handleVerifyPost(quest)}
+                disabled={!linkedXAccount?.username || isPending || isDone}
+                className="w-full rounded-2xl bg-white px-4 py-3 text-sm font-semibold text-[#030305] transition hover:bg-sky-100 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {isDone ? "Verified" : isPending ? "Verifying..." : "Verify Post"}
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="mt-5 rounded-2xl border border-white/10 bg-black/20 p-4">
+            <p className="text-xs uppercase tracking-[0.24em] text-gray-500">
+              Soft Verification
+            </p>
+            <p className="mt-2 text-sm leading-6 text-gray-300">
+              Open the destination, do the task, wait 20 seconds, then come back to verify.
+            </p>
+            <div className="mt-4 grid gap-3">
+              <button
+                type="button"
+                onClick={() => void handleDelayQuestStart(quest)}
+                disabled={!questUrl || isPending || isDone}
+                className="w-full rounded-2xl border border-white/10 bg-white/[0.06] px-4 py-3 text-sm font-semibold text-white transition hover:bg-white/[0.12] disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {isDone ? "Task Completed" : isPending ? "Opening..." : quest.ctaLabel || "Open Task"}
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleDelayVerify(quest)}
+                disabled={!canVerifyDelay || isPending || isDone}
+                className="w-full rounded-2xl bg-white px-4 py-3 text-sm font-semibold text-[#030305] transition hover:bg-sky-100 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                {isDone
+                  ? "Verified"
+                  : isPending
+                    ? "Checking..."
+                    : countdownLabel || "Verify"}
+              </button>
+              {quest.progress?.status === "retry_required" ? (
+                <p className="text-xs text-amber-200">
+                  One more revisit is needed for this task before it clears.
+                </p>
+              ) : null}
+            </div>
+          </div>
+        )}
+
+        {isOnchain ? (
+          <p className="mt-4 text-[11px] uppercase tracking-[0.22em] text-gray-500">
+            {formatWindowLabel(quest.progressWindow)} window
+          </p>
+        ) : null}
+      </article>
+    );
+  }
+
   return (
     <div className="mx-auto flex w-full max-w-6xl flex-col gap-5 px-4 py-5 sm:px-6 sm:py-8">
       <section className="overflow-hidden rounded-[28px] border border-white/10 bg-[radial-gradient(circle_at_top_left,rgba(59,130,246,0.24),transparent_38%),linear-gradient(180deg,rgba(11,16,32,0.96),rgba(5,7,14,0.96))]">
@@ -331,7 +603,7 @@ export function QuestBoard() {
                   : "Connect your wallet to sync quest progress and rewards."}
               </p>
               <p className="mt-1 text-xs text-gray-400">
-                X uses one-time login plus one-call post verification. Base App and soft X tasks use mobile-friendly delay gates.
+                Onchain quests auto-refresh every 30 seconds. If you just swapped, tap verify once to pull the latest progress immediately.
               </p>
             </div>
 
@@ -395,7 +667,16 @@ export function QuestBoard() {
                 </button>
               ))}
             </div>
-          ) : null}
+          ) : (
+            <button
+              type="button"
+              onClick={() => void handleOnchainRefresh()}
+              disabled={isRefreshing}
+              className="inline-flex items-center justify-center rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              {isRefreshing ? "Verifying..." : "Verify Progress"}
+            </button>
+          )}
         </div>
 
         {isLoading ? (
@@ -417,165 +698,31 @@ export function QuestBoard() {
           <div className="rounded-[26px] border border-dashed border-white/10 bg-white/[0.03] p-8 text-center text-sm text-gray-400">
             No quests match this filter yet.
           </div>
+        ) : categoryFilter === "onchain" ? (
+          <div className="space-y-6">
+            {onchainSections.map((section) => (
+              <section key={section.key} className="space-y-4">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+                  <div>
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.32em] text-sky-200/75">
+                      {section.label}
+                    </p>
+                    <p className="mt-2 text-sm text-gray-400">{section.description}</p>
+                  </div>
+                  <p className="text-xs uppercase tracking-[0.22em] text-gray-500">
+                    {section.quests.length} quest{section.quests.length === 1 ? "" : "s"}
+                  </p>
+                </div>
+
+                <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+                  {section.quests.map((quest) => renderQuestCard(quest))}
+                </div>
+              </section>
+            ))}
+          </div>
         ) : (
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-            {filteredQuests.map((quest) => {
-              const questUrl = normalizeQuestUrl(quest);
-              const countdownLabel = getCountdownLabel(quest.progress?.nextVerificationAt);
-              const progressValue = Number(quest.progress?.value || 0);
-              const percent = getProgressPercent(progressValue, quest.targetValue);
-              const isDone = Boolean(quest.progress?.completedAt);
-              const isPending = Boolean(pending[quest.id]);
-              const canVerifyDelay =
-                quest.progress?.nextVerificationAt &&
-                new Date(quest.progress.nextVerificationAt).getTime() <= Date.now();
-
-              return (
-                <article
-                  key={quest.id}
-                  className="flex flex-col rounded-[26px] border border-white/10 bg-[linear-gradient(180deg,rgba(18,22,34,0.96),rgba(8,10,16,0.96))] p-5 shadow-[0_16px_60px_rgba(0,0,0,0.28)]"
-                >
-                  <div className="flex items-start justify-between gap-4">
-                    <div>
-                      <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-gray-400">
-                        {quest.category} · {quest.platform}
-                      </p>
-                      <h2 className="mt-3 text-xl font-semibold text-white">{quest.title}</h2>
-                    </div>
-                    <StatusPill quest={quest} />
-                  </div>
-
-                  <p className="mt-3 min-h-[56px] text-sm leading-6 text-gray-300">
-                    {quest.description}
-                  </p>
-
-                  <div className="mt-4 flex items-center justify-between gap-3">
-                    <RewardBadge points={quest.rewardPoints} />
-                    <div className="rounded-2xl border border-white/10 bg-white/[0.03] px-3 py-2 text-right">
-                      <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-gray-500">
-                        Goal
-                      </p>
-                      <p className="text-sm font-semibold text-white">
-                        {quest.actionType === "swap_volume"
-                          ? `$${quest.targetValue.toLocaleString()}`
-                          : quest.actionType === "swap_count"
-                            ? `${quest.targetValue.toLocaleString()} swaps`
-                            : "1 action"}
-                      </p>
-                    </div>
-                  </div>
-
-                  {quest.actionType === "swap_volume" || quest.actionType === "swap_count" ? (
-                    <div className="mt-5 rounded-2xl border border-white/10 bg-black/20 p-4">
-                      <div className="flex items-center justify-between text-sm">
-                        <span className="text-gray-400">
-                          {quest.actionType === "swap_count" ? "Current swaps" : "Current volume"}
-                        </span>
-                        <span className="font-semibold text-white">
-                          {quest.actionType === "swap_count"
-                            ? progressValue.toLocaleString()
-                            : `$${progressValue.toLocaleString(undefined, {
-                                maximumFractionDigits: 2,
-                              })}`}
-                        </span>
-                      </div>
-                      <div className="mt-3 h-2 overflow-hidden rounded-full bg-white/10">
-                        <div
-                          className="h-full rounded-full bg-[linear-gradient(90deg,#0ea5e9,#38bdf8)]"
-                          style={{ width: `${percent}%` }}
-                        />
-                      </div>
-                      <p className="mt-3 text-xs text-gray-400">
-                        Swap on DustSwap and this card updates automatically after successful route execution.
-                      </p>
-                      <Link
-                        href={questUrl || "/swap"}
-                        className="mt-4 inline-flex w-full items-center justify-center rounded-2xl bg-white px-4 py-3 text-sm font-semibold text-[#030305] transition hover:bg-sky-100"
-                      >
-                        {isDone ? "View Swap Page" : quest.ctaLabel || "Open Swap"}
-                      </Link>
-                    </div>
-                  ) : quest.verificationType === "x_post_link" ? (
-                    <div className="mt-5 rounded-2xl border border-white/10 bg-black/20 p-4">
-                      <div className="space-y-3">
-                        {quest.rules.composeText ? (
-                          <p className="rounded-2xl border border-white/10 bg-white/[0.04] px-3 py-3 text-xs leading-6 text-gray-300">
-                            {quest.rules.composeText}
-                          </p>
-                        ) : null}
-                        <button
-                          type="button"
-                          onClick={() => {
-                            if (questUrl) {
-                              window.open(questUrl);
-                            }
-                          }}
-                          disabled={!linkedXAccount?.username || !questUrl}
-                          className="w-full rounded-2xl border border-sky-400/20 bg-sky-400/10 px-4 py-3 text-sm font-semibold text-sky-100 transition hover:bg-sky-400/15 disabled:cursor-not-allowed disabled:opacity-40"
-                        >
-                          {linkedXAccount?.username ? quest.ctaLabel || "Open Composer" : "Connect X First"}
-                        </button>
-                        <input
-                          value={postInputs[quest.id] || ""}
-                          onChange={(event) =>
-                            setPostInputs((current) => ({
-                              ...current,
-                              [quest.id]: event.target.value,
-                            }))
-                          }
-                          placeholder="Paste your X post link"
-                          className="w-full rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3 text-sm text-white outline-none placeholder:text-gray-500 focus:border-sky-400/40"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => void handleVerifyPost(quest)}
-                          disabled={!linkedXAccount?.username || isPending || isDone}
-                          className="w-full rounded-2xl bg-white px-4 py-3 text-sm font-semibold text-[#030305] transition hover:bg-sky-100 disabled:cursor-not-allowed disabled:opacity-50"
-                        >
-                          {isDone ? "Verified" : isPending ? "Verifying..." : "Verify Post"}
-                        </button>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="mt-5 rounded-2xl border border-white/10 bg-black/20 p-4">
-                      <p className="text-xs uppercase tracking-[0.24em] text-gray-500">
-                        Soft Verification
-                      </p>
-                      <p className="mt-2 text-sm leading-6 text-gray-300">
-                        Open the destination, do the task, wait 20 seconds, then come back to verify.
-                      </p>
-                      <div className="mt-4 grid gap-3">
-                        <button
-                          type="button"
-                          onClick={() => void handleDelayQuestStart(quest)}
-                          disabled={!questUrl || isPending || isDone}
-                          className="w-full rounded-2xl border border-white/10 bg-white/[0.06] px-4 py-3 text-sm font-semibold text-white transition hover:bg-white/[0.12] disabled:cursor-not-allowed disabled:opacity-50"
-                        >
-                          {isDone ? "Task Completed" : isPending ? "Opening..." : quest.ctaLabel || "Open Task"}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => void handleDelayVerify(quest)}
-                          disabled={!canVerifyDelay || isPending || isDone}
-                          className="w-full rounded-2xl bg-white px-4 py-3 text-sm font-semibold text-[#030305] transition hover:bg-sky-100 disabled:cursor-not-allowed disabled:opacity-40"
-                        >
-                          {isDone
-                            ? "Verified"
-                            : isPending
-                              ? "Checking..."
-                              : countdownLabel || "Verify"}
-                        </button>
-                        {quest.progress?.status === "retry_required" ? (
-                          <p className="text-xs text-amber-200">
-                            One more revisit is needed for this task before it clears.
-                          </p>
-                        ) : null}
-                      </div>
-                    </div>
-                  )}
-                </article>
-              );
-            })}
+            {filteredQuests.map((quest) => renderQuestCard(quest))}
           </div>
         )}
       </section>

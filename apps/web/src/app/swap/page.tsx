@@ -3,7 +3,6 @@
 import dynamic from 'next/dynamic';
 import { useAppKit } from '@reown/appkit/react';
 import { useMemo } from 'react';
-import { QuestSwapTracker } from '@/components/QuestSwapTracker';
 
 const OpenOceanWidget = dynamic<{ integrator: string; config: any }>(
   () => import('@openocean.finance/widget').then((mod) => mod.OpenOceanWidget as any),
@@ -78,7 +77,6 @@ export default function SwapPage() {
 
   return (
     <main className="min-h-screen bg-transparent px-4 py-8 flex flex-col items-center justify-center">
-      <QuestSwapTracker />
       <div className="w-full max-w-lg mx-auto">
         <OpenOceanWidget integrator="DustSwap" config={config as any} />
       </div>

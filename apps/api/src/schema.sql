@@ -86,6 +86,11 @@ ALTER TABLE referrals      ENABLE ROW LEVEL SECURITY;
 ALTER TABLE sweep_history  ENABLE ROW LEVEL SECURITY;
 
 -- Allow service-role access (backend uses service key)
+DROP POLICY IF EXISTS "service_all_users"      ON users;
+DROP POLICY IF EXISTS "service_all_events"     ON point_events;
+DROP POLICY IF EXISTS "service_all_checkins"   ON check_ins;
+DROP POLICY IF EXISTS "service_all_referrals"  ON referrals;
+DROP POLICY IF EXISTS "service_all_history"    ON sweep_history;
 CREATE POLICY "service_all_users"         ON users          FOR ALL USING (true);
 CREATE POLICY "service_all_events"        ON point_events   FOR ALL USING (true);
 CREATE POLICY "service_all_checkins"      ON check_ins      FOR ALL USING (true);
@@ -197,6 +202,11 @@ ALTER TABLE quest_progress           ENABLE ROW LEVEL SECURITY;
 ALTER TABLE quest_verification_logs  ENABLE ROW LEVEL SECURITY;
 ALTER TABLE activity_events          ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "service_all_quests"           ON quests;
+DROP POLICY IF EXISTS "service_all_social_accounts"  ON social_accounts;
+DROP POLICY IF EXISTS "service_all_quest_progress"   ON quest_progress;
+DROP POLICY IF EXISTS "service_all_quest_logs"       ON quest_verification_logs;
+DROP POLICY IF EXISTS "service_all_activity_events"  ON activity_events;
 CREATE POLICY "service_all_quests"          ON quests                  FOR ALL USING (true);
 CREATE POLICY "service_all_social_accounts" ON social_accounts         FOR ALL USING (true);
 CREATE POLICY "service_all_quest_progress"  ON quest_progress          FOR ALL USING (true);
