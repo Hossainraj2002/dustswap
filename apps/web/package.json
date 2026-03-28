@@ -10,6 +10,7 @@
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
+    "@base-org/account": "2.4.0",
     "@bigmi/client": "^0.7.1",
     "@bigmi/core": "^0.7.1",
     "@bigmi/react": "^0.7.1",

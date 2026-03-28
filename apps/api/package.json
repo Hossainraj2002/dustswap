@@ -10,6 +10,7 @@
     "lint": "eslint src --ext .ts"
   },
   "dependencies": {
+    "@base-org/account": "2.4.0",
     "@hono/node-server": "^1.13.7",
     "@lifi/sdk": "^3.16.2",
     "@supabase/supabase-js": "^2.39.0",

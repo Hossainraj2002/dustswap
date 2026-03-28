@@ -6,6 +6,7 @@ import {
   http,
 } from "viem";
 import { base } from "viem/chains";
+import { getPaymentStatus } from "@base-org/account/payment";
 import { supabase } from "./supabase";
 
 const CFG = {
@@ -74,6 +75,12 @@ type DailyAssetPriceRecord = {
   price_usd: number;
   source: string;
   metadata: Record<string, unknown> | null;
+};
+
+type PriceFeedQuote = {
+  priceUsd: number;
+  source: string;
+  metadata?: Record<string, unknown>;
 };
 
 type StreakStatus = "ready" | "active" | "checked_in" | "broken";
@@ -238,6 +245,11 @@ function getUsdcUnitsForUsd(usdAmount: number) {
   return BigInt(Math.round(usdAmount * 1_000_000));
 }
 
+function parseUsdAmount(value: string | number | null | undefined) {
+  const normalized = typeof value === "number" ? value : Number.parseFloat(String(value ?? ""));
+  return Number.isFinite(normalized) && normalized > 0 ? normalized : null;
+}
+
 function calculateEthWeiFromUsd(usdAmount: number, ethPriceUsd: number) {
   const usdScaled = BigInt(Math.round(usdAmount * PRICE_SCALE));
   const ethPriceScaled = BigInt(Math.round(ethPriceUsd * PRICE_SCALE));
@@ -300,32 +312,84 @@ export class PointsEngine {
     return nu as UserRecord;
   }
 
-  private async fetchCurrentEthPriceUsd() {
-    const response = await fetch(
-      "https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd",
-      {
-        headers: {
-          Accept: "application/json",
-        },
+  private async fetchCurrentEthPriceUsd(): Promise<PriceFeedQuote> {
+    const sources: Array<() => Promise<PriceFeedQuote>> = [
+      async () => {
+        const response = await fetch("https://api.coinbase.com/v2/prices/ETH-USD/spot", {
+          headers: {
+            Accept: "application/json",
+          },
+        });
+
+        if (!response.ok) {
+          throw new Error(`Coinbase ETH price request failed with ${response.status}`);
+        }
+
+        const payload = (await response.json()) as {
+          data?: {
+            amount?: string;
+            base?: string;
+            currency?: string;
+          };
+        };
+
+        const priceUsd = parseUsdAmount(payload.data?.amount);
+        if (!priceUsd) {
+          throw new Error("Coinbase ETH price feed returned an invalid value");
+        }
+
+        return {
+          priceUsd,
+          source: "coinbase_spot",
+          metadata: {
+            base: payload.data?.base ?? "ETH",
+            currency: payload.data?.currency ?? "USD",
+          },
+        };
+      },
+      async () => {
+        const response = await fetch(
+          "https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd",
+          {
+            headers: {
+              Accept: "application/json",
+            },
+          }
+        );
+
+        if (!response.ok) {
+          throw new Error(`CoinGecko ETH price request failed with ${response.status}`);
+        }
+
+        const payload = (await response.json()) as {
+          ethereum?: {
+            usd?: number;
+          };
+        };
+
+        const priceUsd = parseUsdAmount(payload.ethereum?.usd);
+        if (!priceUsd) {
+          throw new Error("CoinGecko ETH price feed returned an invalid value");
+        }
+
+        return {
+          priceUsd,
+          source: "coingecko",
+        };
+      },
+    ];
+
+    let lastError: Error | null = null;
+
+    for (const source of sources) {
+      try {
+        return await source();
+      } catch (error) {
+        lastError = error as Error;
       }
-    );
-
-    if (!response.ok) {
-      throw new Error(`ETH price request failed with ${response.status}`);
     }
 
-    const payload = (await response.json()) as {
-      ethereum?: {
-        usd?: number;
-      };
-    };
-
-    const priceUsd = Number(payload.ethereum?.usd || 0);
-    if (!Number.isFinite(priceUsd) || priceUsd <= 0) {
-      throw new Error("ETH price feed returned an invalid value");
-    }
-
-    return priceUsd;
+    throw lastError ?? new Error("ETH price feed is unavailable");
   }
 
   private async getLatestEthPriceSnapshot() {
@@ -361,10 +425,6 @@ export class PointsEngine {
       throw new Error(`Failed to load ETH price snapshot: ${error.message}`);
     }
 
-    if (data) {
-      return normalizeDailyPriceRow(data);
-    }
-
     const upsertRow = async (
       priceUsd: number,
       source: string,
@@ -395,9 +455,30 @@ export class PointsEngine {
       return normalizeDailyPriceRow(inserted);
     };
 
+    if (data) {
+      const existing = normalizeDailyPriceRow(data);
+
+      if (existing.source.startsWith("fallback_")) {
+        try {
+          const liveQuote = await this.fetchCurrentEthPriceUsd();
+          return upsertRow(liveQuote.priceUsd, liveQuote.source, {
+            ...(liveQuote.metadata ?? {}),
+            replacedFallbackSource: existing.source,
+            replacedFallbackDate: existing.price_date,
+            syncedAt: new Date().toISOString(),
+          });
+        } catch {
+          return existing;
+        }
+      }
+
+      return existing;
+    }
+
     try {
-      const livePriceUsd = await this.fetchCurrentEthPriceUsd();
-      return upsertRow(livePriceUsd, "coingecko", {
+      const liveQuote = await this.fetchCurrentEthPriceUsd();
+      return upsertRow(liveQuote.priceUsd, liveQuote.source, {
+        ...(liveQuote.metadata ?? {}),
         syncedAt: new Date().toISOString(),
       });
     } catch {
@@ -533,6 +614,44 @@ export class PointsEngine {
     );
   }
 
+  private async verifyBasePayPayment(
+    normalizedAddress: string,
+    paymentId: string,
+    usdTarget: number,
+    priceSnapshot: DailyAssetPriceRecord
+  ): Promise<VerifiedPayment> {
+    const status = await getPaymentStatus({
+      id: paymentId,
+      testnet: false,
+      telemetry: false,
+    });
+
+    if (status.status !== "completed") {
+      throw new Error(status.message || "Base Pay payment is not completed");
+    }
+
+    if (!status.sender || status.sender.toLowerCase() !== normalizedAddress) {
+      throw new Error("Base Pay sender does not match this wallet");
+    }
+
+    if (!status.recipient || status.recipient.toLowerCase() !== STREAK_SAVE_RECIPIENT.toLowerCase()) {
+      throw new Error("Base Pay recipient does not match the check-in wallet");
+    }
+
+    const amountUsd = parseUsdAmount(status.amount);
+    if (!amountUsd || amountUsd + Number.EPSILON < usdTarget) {
+      throw new Error("Base Pay amount is below the required amount");
+    }
+
+    return {
+      asset: "usdc",
+      amount: getUsdcUnitsForUsd(amountUsd).toString(),
+      amountUsd,
+      priceDate: priceSnapshot.price_date,
+      ethPriceUsd: priceSnapshot.price_usd,
+    };
+  }
+
   private async verifyFeeTransaction(
     normalizedAddress: string,
     txHash: string,
@@ -542,6 +661,19 @@ export class PointsEngine {
     const priceSnapshot = await this.getDailyEthPriceSnapshot();
     const ethRequiredWei = calculateEthWeiFromUsd(usdTarget, priceSnapshot.price_usd);
     const usdcRequiredUnits = getUsdcUnitsForUsd(usdTarget);
+
+    if (asset !== "eth") {
+      try {
+        return await this.verifyBasePayPayment(
+          normalizedAddress,
+          txHash,
+          usdTarget,
+          priceSnapshot
+        );
+      } catch {
+        // Fall through to raw on-chain inspection for normal EOA/ERC-20 payments.
+      }
+    }
 
     const [transaction, receipt] = await Promise.all([
       baseClient.getTransaction({ hash: txHash as `0x${string}` }),

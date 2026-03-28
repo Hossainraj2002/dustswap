@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { pay } from "@base-org/account/payment";
 import { useAccount, usePublicClient, useReadContract, useWalletClient } from "wagmi";
 import { encodeFunctionData, erc20Abi } from "viem";
 import { DailyCheckInModule } from "@/components/profile/DailyCheckInModule";
@@ -42,6 +43,26 @@ type CelebrationState =
 
 type FlowStage = "idle" | "wallet" | "verifying";
 type FeeConfig = NonNullable<PointsBalance["checkInConfig"]>;
+
+function getErrorMessage(error: unknown) {
+  if (error instanceof Error && error.message) {
+    return error.message;
+  }
+
+  return String(error ?? "Unknown error");
+}
+
+function isCoinbaseConnector(
+  connector: {
+    id?: string | null;
+    name?: string | null;
+  } | null | undefined
+) {
+  const id = connector?.id?.toLowerCase() ?? "";
+  const name = connector?.name?.toLowerCase() ?? "";
+
+  return id.includes("coinbase") || name.includes("coinbase") || name.includes("base account");
+}
 
 function shortAddress(address: string) {
   return `${address.slice(0, 6)}...${address.slice(-4)}`;
@@ -93,7 +114,7 @@ function MiniMetric({
 }
 
 function ProfilePageContent() {
-  const { address, isConnected, chainId } = useAccount();
+  const { address, isConnected, chainId, connector } = useAccount();
   const { data: walletClient } = useWalletClient();
   const publicClient = usePublicClient();
 
@@ -142,6 +163,10 @@ function ProfilePageContent() {
     const requiredUsdc = BigInt(balance.saveConfig.usdcAmountUnits);
     return requiredUsdc > 0n && usdcBalance >= requiredUsdc ? "usdc" : "eth";
   }, [balance, usdcBalance]);
+
+  const usesBasePay = useMemo(() => isCoinbaseConnector(connector), [connector]);
+  const displayCheckInAsset = usesBasePay ? "usdc" : preferredCheckInAsset;
+  const displaySaveAsset = usesBasePay ? "usdc" : preferredSaveAsset;
 
   const fetchProfileData = useCallback(async () => {
     if (!address) {
@@ -297,6 +322,55 @@ function ProfilePageContent() {
     [chainId, publicClient, walletClient]
   );
 
+  const sendBasePayTransaction = useCallback(async (config: FeeConfig) => {
+    const payment = await pay({
+      amount: config.usdcAmount,
+      to: config.recipient,
+      testnet: false,
+      telemetry: false,
+    });
+
+    if (!payment?.id) {
+      throw new Error("Base Pay did not return a payment id");
+    }
+
+    return payment.id as `0x${string}`;
+  }, []);
+
+  const sendCheckInPayment = useCallback(
+    async (config: FeeConfig) => {
+      if (usesBasePay) {
+        return {
+          hash: await sendBasePayTransaction(config),
+          asset: "usdc" as const,
+        };
+      }
+
+      return {
+        hash: await sendFeeTransaction(config, preferredCheckInAsset),
+        asset: preferredCheckInAsset,
+      };
+    },
+    [preferredCheckInAsset, sendBasePayTransaction, sendFeeTransaction, usesBasePay]
+  );
+
+  const sendSavePayment = useCallback(
+    async (config: FeeConfig) => {
+      if (usesBasePay) {
+        return {
+          hash: await sendBasePayTransaction(config),
+          asset: "usdc" as const,
+        };
+      }
+
+      return {
+        hash: await sendFeeTransaction(config, preferredSaveAsset),
+        asset: preferredSaveAsset,
+      };
+    },
+    [preferredSaveAsset, sendBasePayTransaction, sendFeeTransaction, usesBasePay]
+  );
+
   const handleCheckIn = useCallback(async () => {
     if (!address || !balance) {
       setToast({ kind: "error", message: "Connect your wallet first." });
@@ -307,8 +381,7 @@ function ProfilePageContent() {
     setCheckInStage("wallet");
 
     try {
-      const asset = preferredCheckInAsset;
-      const hash = await sendFeeTransaction(balance.checkInConfig, asset);
+      const { asset, hash } = await sendCheckInPayment(balance.checkInConfig);
       setCheckInStage("verifying");
 
       const result = await performDailyCheckIn({
@@ -334,13 +407,15 @@ function ProfilePageContent() {
       console.error(error);
       setToast({
         kind: "error",
-        message: "Check-in transaction failed. Try again.",
+        message: usesBasePay
+          ? getErrorMessage(error) || "Base Pay check-in failed. Try again."
+          : "Check-in transaction failed. Try again.",
       });
     } finally {
       setCheckInStage("idle");
       setIsCheckingIn(false);
     }
-  }, [address, balance, preferredCheckInAsset, sendFeeTransaction, updateBalanceAndStats]);
+  }, [address, balance, sendCheckInPayment, updateBalanceAndStats, usesBasePay]);
 
   const handleReset = useCallback(async () => {
     if (!address) {
@@ -386,8 +461,7 @@ function ProfilePageContent() {
     setRecoveryStage("wallet");
 
     try {
-      const asset = preferredSaveAsset;
-      const hash = await sendFeeTransaction(balance.saveConfig, asset);
+      const { asset, hash } = await sendSavePayment(balance.saveConfig);
       setRecoveryStage("verifying");
 
       const result = await saveBrokenStreak({
@@ -410,13 +484,15 @@ function ProfilePageContent() {
       console.error(error);
       setToast({
         kind: "error",
-        message: "Transaction failed. Try again to save your streak.",
+        message: usesBasePay
+          ? getErrorMessage(error) || "Base Pay recovery failed. Try again."
+          : "Transaction failed. Try again to save your streak.",
       });
     } finally {
       setRecoveryStage("idle");
       setIsSaving(false);
     }
-  }, [address, balance, preferredSaveAsset, sendFeeTransaction, updateBalanceAndStats]);
+  }, [address, balance, sendSavePayment, updateBalanceAndStats, usesBasePay]);
 
   if (!isMounted) {
     return null;
@@ -526,8 +602,8 @@ function ProfilePageContent() {
           recoveryStage={recoveryStage}
           celebration={celebration}
           walletReady={Boolean(address)}
-          preferredCheckInAsset={preferredCheckInAsset}
-          preferredSaveAsset={preferredSaveAsset}
+          preferredCheckInAsset={displayCheckInAsset}
+          preferredSaveAsset={displaySaveAsset}
           onCheckIn={() => void handleCheckIn()}
           onSave={() => void handleSave()}
           onReset={() => void handleReset()}
