@@ -565,15 +565,25 @@ function ProfilePageContent() {
   if (!isConnected) {
     return (
       <div className="mx-auto flex min-h-[70vh] max-w-3xl items-center justify-center px-4 py-8">
-        <div className="w-full rounded-[30px] border border-white/70 bg-[radial-gradient(circle_at_top_left,rgba(56,189,248,0.14),transparent_34%),linear-gradient(180deg,#fffdf8,#f5fbff)] p-6 text-center shadow-[0_22px_70px_rgba(15,23,42,0.08)]">
+        <div className="w-full rounded-[30px] border border-white/70 bg-[radial-gradient(circle_at_top_left,rgba(56,189,248,0.14),transparent_34%),linear-gradient(180deg,#fffdf8,#f5fbff)] p-6 text-center shadow-[0_22px_70px_rgba(15,23,42,0.08)] [&>div:first-child]:hidden">
           <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full border border-sky-200 bg-[radial-gradient(circle,rgba(56,189,248,0.18),transparent_70%)] text-3xl">
             ✨
           </div>
+          <div className="mx-auto mt-1 flex w-fit items-center gap-2 rounded-full border border-sky-200/80 bg-white/85 px-3 py-2 shadow-[0_10px_30px_rgba(37,99,235,0.12)]">
+            <span className="flex h-10 w-10 items-center justify-center rounded-[14px] bg-[linear-gradient(180deg,#1d4ed8,#2563eb)] text-2xl font-black leading-none text-white shadow-[0_10px_20px_rgba(37,99,235,0.22)]">
+              D
+            </span>
+            <span className="bg-[linear-gradient(180deg,#1d4ed8,#2563eb)] bg-clip-text text-[1.7rem] font-black tracking-tight text-transparent">
+              DustSwap
+            </span>
+          </div>
           <h2 className="mt-5 text-2xl font-black tracking-tight text-slate-950">
-            Connect your wallet to start the streak
+            Connect your wallet to start your journey at DustSwap
           </h2>
           <p className="mx-auto mt-3 max-w-md text-sm leading-6 text-slate-600">
-            Daily check-ins are paid onchain in this miniapp, with automatic USDC or ETH fallback.
+            Use <span aria-hidden="true">&bull;</span> Contribute{" "}
+            <span aria-hidden="true">&bull;</span> Earn{" "}
+            <span aria-hidden="true">&bull;</span> Repeat.
           </p>
           <div className="mt-6 flex justify-center">
             {/* @ts-ignore */}
