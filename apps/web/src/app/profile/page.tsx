@@ -486,7 +486,13 @@ function ProfilePageContent() {
             </div>
           </div>
 
-          <div className="mt-4 grid grid-cols-3 gap-2.5">
+          <div className="mt-4 grid grid-cols-2 gap-2.5">
+            <MiniMetric
+              label="Total PP"
+              value={`${formatNumber(balance?.totalPoints || 0)} PP`}
+              accent="sky"
+              isLoading={isLoading}
+            />
             <MiniMetric
               label="Rank"
               value={`#${balance?.rank || "--"}`}
