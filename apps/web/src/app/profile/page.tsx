@@ -164,9 +164,12 @@ function ProfilePageContent() {
     return requiredUsdc > 0n && usdcBalance >= requiredUsdc ? "usdc" : "eth";
   }, [balance, usdcBalance]);
 
-  const usesBasePay = useMemo(() => isCoinbaseConnector(connector), [connector]);
-  const displayCheckInAsset = usesBasePay ? "usdc" : preferredCheckInAsset;
-  const displaySaveAsset = usesBasePay ? "usdc" : preferredSaveAsset;
+  const isCoinbaseWallet = useMemo(() => isCoinbaseConnector(connector), [connector]);
+  const usesBasePayForCheckIn =
+    isCoinbaseWallet && preferredCheckInAsset === "usdc";
+  const usesBasePayForSave = isCoinbaseWallet && preferredSaveAsset === "usdc";
+  const displayCheckInAsset = usesBasePayForCheckIn ? "usdc" : preferredCheckInAsset;
+  const displaySaveAsset = usesBasePayForSave ? "usdc" : preferredSaveAsset;
 
   const fetchProfileData = useCallback(async () => {
     if (!address) {
@@ -339,7 +342,7 @@ function ProfilePageContent() {
 
   const sendCheckInPayment = useCallback(
     async (config: FeeConfig) => {
-      if (usesBasePay) {
+      if (usesBasePayForCheckIn) {
         return {
           hash: await sendBasePayTransaction(config),
           asset: "usdc" as const,
@@ -351,12 +354,17 @@ function ProfilePageContent() {
         asset: preferredCheckInAsset,
       };
     },
-    [preferredCheckInAsset, sendBasePayTransaction, sendFeeTransaction, usesBasePay]
+    [
+      preferredCheckInAsset,
+      sendBasePayTransaction,
+      sendFeeTransaction,
+      usesBasePayForCheckIn,
+    ]
   );
 
   const sendSavePayment = useCallback(
     async (config: FeeConfig) => {
-      if (usesBasePay) {
+      if (usesBasePayForSave) {
         return {
           hash: await sendBasePayTransaction(config),
           asset: "usdc" as const,
@@ -368,7 +376,7 @@ function ProfilePageContent() {
         asset: preferredSaveAsset,
       };
     },
-    [preferredSaveAsset, sendBasePayTransaction, sendFeeTransaction, usesBasePay]
+    [preferredSaveAsset, sendBasePayTransaction, sendFeeTransaction, usesBasePayForSave]
   );
 
   const handleCheckIn = useCallback(async () => {
@@ -407,7 +415,7 @@ function ProfilePageContent() {
       console.error(error);
       setToast({
         kind: "error",
-        message: usesBasePay
+        message: usesBasePayForCheckIn
           ? getErrorMessage(error) || "Base Pay check-in failed. Try again."
           : "Check-in transaction failed. Try again.",
       });
@@ -415,7 +423,7 @@ function ProfilePageContent() {
       setCheckInStage("idle");
       setIsCheckingIn(false);
     }
-  }, [address, balance, sendCheckInPayment, updateBalanceAndStats, usesBasePay]);
+  }, [address, balance, sendCheckInPayment, updateBalanceAndStats, usesBasePayForCheckIn]);
 
   const handleReset = useCallback(async () => {
     if (!address) {
@@ -484,7 +492,7 @@ function ProfilePageContent() {
       console.error(error);
       setToast({
         kind: "error",
-        message: usesBasePay
+        message: usesBasePayForSave
           ? getErrorMessage(error) || "Base Pay recovery failed. Try again."
           : "Transaction failed. Try again to save your streak.",
       });
@@ -492,7 +500,7 @@ function ProfilePageContent() {
       setRecoveryStage("idle");
       setIsSaving(false);
     }
-  }, [address, balance, sendSavePayment, updateBalanceAndStats, usesBasePay]);
+  }, [address, balance, sendSavePayment, updateBalanceAndStats, usesBasePayForSave]);
 
   if (!isMounted) {
     return null;
