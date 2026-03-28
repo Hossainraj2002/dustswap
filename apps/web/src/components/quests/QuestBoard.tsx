@@ -16,6 +16,8 @@ type CategoryFilter = "social" | "onchain";
 type SocialFilter = "all" | "x" | "base";
 type PendingState = Record<string, boolean>;
 type PostInputState = Record<string, string>;
+const SYNC_NOW_EVENT = "dustswap:quest-sync-now";
+const SWAP_RECORDED_EVENT = "dustswap:quest-swap-recorded";
 
 const ONCHAIN_WINDOWS = [
   {
@@ -229,6 +231,17 @@ export function QuestBoard() {
     return () => window.clearInterval(interval);
   }, [address]);
 
+  useEffect(() => {
+    const handleSwapRecorded = () => {
+      startTransition(() => {
+        void loadBoard({ silent: true });
+      });
+    };
+
+    window.addEventListener(SWAP_RECORDED_EVENT, handleSwapRecorded);
+    return () => window.removeEventListener(SWAP_RECORDED_EVENT, handleSwapRecorded);
+  }, [address]);
+
   const filteredQuests = useMemo(() => {
     const quests = board?.quests || [];
     return quests.filter((quest) => {
@@ -273,7 +286,13 @@ export function QuestBoard() {
   }
 
   async function handleOnchainRefresh() {
-    await refreshWithMessage("Checking your latest swap progress...");
+    setMessage("Checking your latest swap progress...");
+    window.dispatchEvent(new Event(SYNC_NOW_EVENT));
+    window.setTimeout(() => {
+      startTransition(() => {
+        void loadBoard({ silent: true });
+      });
+    }, 1200);
   }
 
   async function handleDelayQuestStart(quest: QuestItem) {

@@ -327,6 +327,31 @@ function listUrlCandidates(tweet: any): string[] {
     .map((value) => String(value).toLowerCase());
 }
 
+function getSwapAmountUsdFallback(
+  amountUsd: number,
+  metadata?: Record<string, unknown>
+) {
+  if (amountUsd > 0) {
+    return amountUsd;
+  }
+
+  const candidates = [
+    metadata?.fromAmountUSD,
+    metadata?.toAmountUSD,
+    metadata?.fromAmountUsd,
+    metadata?.toAmountUsd,
+  ];
+
+  for (const candidate of candidates) {
+    const parsed = toNumber(candidate, -1);
+    if (parsed > 0) {
+      return parsed;
+    }
+  }
+
+  return 0;
+}
+
 export class QuestEngine {
   async listAdminQuests() {
     const { data, error } = await supabase
@@ -893,6 +918,10 @@ export class QuestEngine {
       throw new Error("Swap transaction is not confirmed");
     }
 
+    const normalizedAmountUsd = getSwapAmountUsdFallback(
+      input.amountUsd,
+      input.metadata
+    );
     const user = await pointsEngine.getOrCreate(input.address);
     const { error } = await supabase
       .from("activity_events")
@@ -903,7 +932,7 @@ export class QuestEngine {
           source: "dustswap_swap",
           chain_id: input.chainId,
           tx_hash: input.txHash,
-          amount_usd: input.amountUsd,
+          amount_usd: normalizedAmountUsd,
           occurred_at: new Date().toISOString(),
           metadata: {
             inputToken: input.inputToken || null,
