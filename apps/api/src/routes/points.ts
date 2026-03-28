@@ -54,6 +54,45 @@ pointsRoutes.post("/check-in", async (c) => {
   }
 });
 
+// POST /api/points/check-in/reset
+pointsRoutes.post("/check-in/reset", async (c) => {
+  const body = await c.req.json<{ address?: string }>();
+  if (!body.address) {
+    return c.json({ error: "address required" }, 400);
+  }
+
+  try {
+    const result = await pointsEngine.resetBrokenStreak(body.address);
+    return c.json({ success: true, ...result });
+  } catch (e: unknown) {
+    return c.json({ success: false, error: (e as Error).message }, 400);
+  }
+});
+
+// POST /api/points/check-in/save
+pointsRoutes.post("/check-in/save", async (c) => {
+  const body = await c.req.json<{
+    address?: string;
+    txHash?: string;
+    asset?: "eth" | "usdc";
+  }>();
+
+  if (!body.address || !body.txHash) {
+    return c.json({ error: "address and txHash required" }, 400);
+  }
+
+  try {
+    const result = await pointsEngine.recoverBrokenStreak(
+      body.address,
+      body.txHash,
+      body.asset
+    );
+    return c.json({ success: true, ...result });
+  } catch (e: unknown) {
+    return c.json({ success: false, error: (e as Error).message }, 400);
+  }
+});
+
 // POST /api/points/record-sweep
 pointsRoutes.post("/record-sweep", async (c) => {
   const body = await c.req.json<{

@@ -81,12 +81,75 @@
   to { transform: translateY(0); opacity: 1; }
 }
 
+@keyframes checkin-burst {
+  0% {
+    transform: translateY(0) scale(0.4);
+    opacity: 0;
+  }
+  20% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(-140px) scale(1.15) rotate(18deg);
+    opacity: 0;
+  }
+}
+
+@keyframes float-up {
+  0% {
+    transform: translateY(18px) scale(0.96);
+    opacity: 0;
+  }
+  20% {
+    opacity: 1;
+  }
+  80% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(-26px) scale(1.02);
+    opacity: 0;
+  }
+}
+
+@keyframes radar-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@keyframes radar-ring {
+  0% {
+    transform: scale(0.65);
+    opacity: 0.75;
+  }
+  100% {
+    transform: scale(1.08);
+    opacity: 0;
+  }
+}
+
 .animate-fade-in {
   animation: fade-in 0.2s ease-out;
 }
 
 .animate-slide-up {
   animation: slide-up 0.3s ease-out;
+}
+
+.animate-checkin-burst {
+  animation: checkin-burst 1.2s ease-out forwards;
+}
+
+.animate-float-up {
+  animation: float-up 2s ease-out forwards;
+}
+
+.animate-radar-spin {
+  animation: radar-spin 1.8s linear infinite;
+}
+
+.animate-radar-ring {
+  animation: radar-ring 1.8s ease-out infinite;
 }
 
 /* ===== CUSTOM SCROLLBAR ===== */

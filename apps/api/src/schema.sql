@@ -42,6 +42,21 @@ CREATE TABLE IF NOT EXISTS check_ins (
   UNIQUE(user_id, check_in_date)
 );
 
+-- Paid streak recovery history
+CREATE TABLE IF NOT EXISTS streak_recovery_events (
+  id               SERIAL PRIMARY KEY,
+  user_id          INTEGER REFERENCES users(id),
+  tx_hash          VARCHAR(66) UNIQUE NOT NULL,
+  asset_symbol     VARCHAR(10) NOT NULL,
+  asset_address    VARCHAR(42),
+  amount           TEXT NOT NULL,
+  amount_usd       DECIMAL(20,6) NOT NULL DEFAULT 1,
+  previous_streak  INTEGER NOT NULL,
+  restored_streak  INTEGER NOT NULL,
+  status           VARCHAR(20) NOT NULL DEFAULT 'confirmed',
+  created_at       TIMESTAMP DEFAULT NOW()
+);
+
 -- Referrals
 CREATE TABLE IF NOT EXISTS referrals (
   id                   SERIAL PRIMARY KEY,
@@ -77,11 +92,13 @@ CREATE INDEX IF NOT EXISTS idx_events_action  ON point_events(action);
 CREATE INDEX IF NOT EXISTS idx_users_points   ON users(total_points DESC);
 CREATE INDEX IF NOT EXISTS idx_users_refcode  ON users(referral_code);
 CREATE INDEX IF NOT EXISTS idx_history_user   ON sweep_history(user_id);
+CREATE INDEX IF NOT EXISTS idx_recovery_user  ON streak_recovery_events(user_id, created_at DESC);
 
 -- Enable Row Level Security
 ALTER TABLE users          ENABLE ROW LEVEL SECURITY;
 ALTER TABLE point_events   ENABLE ROW LEVEL SECURITY;
 ALTER TABLE check_ins      ENABLE ROW LEVEL SECURITY;
+ALTER TABLE streak_recovery_events ENABLE ROW LEVEL SECURITY;
 ALTER TABLE referrals      ENABLE ROW LEVEL SECURITY;
 ALTER TABLE sweep_history  ENABLE ROW LEVEL SECURITY;
 
@@ -89,11 +106,13 @@ ALTER TABLE sweep_history  ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "service_all_users"      ON users;
 DROP POLICY IF EXISTS "service_all_events"     ON point_events;
 DROP POLICY IF EXISTS "service_all_checkins"   ON check_ins;
+DROP POLICY IF EXISTS "service_all_recoveries" ON streak_recovery_events;
 DROP POLICY IF EXISTS "service_all_referrals"  ON referrals;
 DROP POLICY IF EXISTS "service_all_history"    ON sweep_history;
 CREATE POLICY "service_all_users"         ON users          FOR ALL USING (true);
 CREATE POLICY "service_all_events"        ON point_events   FOR ALL USING (true);
 CREATE POLICY "service_all_checkins"      ON check_ins      FOR ALL USING (true);
+CREATE POLICY "service_all_recoveries"    ON streak_recovery_events FOR ALL USING (true);
 CREATE POLICY "service_all_referrals"     ON referrals      FOR ALL USING (true);
 CREATE POLICY "service_all_history"       ON sweep_history  FOR ALL USING (true);
 
