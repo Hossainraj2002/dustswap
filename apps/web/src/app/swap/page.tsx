@@ -4,6 +4,10 @@ import dynamic from 'next/dynamic';
 import { useAppKit } from '@reown/appkit/react';
 import { useMemo } from 'react';
 
+const OPENOCEAN_REFERRER_ADDRESS =
+  process.env.NEXT_PUBLIC_OPENOCEAN_REFERRER_ADDRESS ||
+  "0x0fd79f3ceaE7ddA5cFC15b35188E67EFAc542573";
+
 const OpenOceanWidget = dynamic<{ integrator: string; config: any }>(
   () => import('@openocean.finance/widget').then((mod) => mod.OpenOceanWidget as any),
   { ssr: false }
@@ -17,7 +21,7 @@ export default function SwapPage() {
     subvariant: "default",
     appearance: "light",
     referrer: {
-      address: "0x0fd79f3ceaE7ddA5cFC15b35188E67EFAc542573",
+      address: OPENOCEAN_REFERRER_ADDRESS,
       fee: ".25"
     },
     slippage: 0.005,

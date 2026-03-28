@@ -6,6 +6,7 @@ import { useAccount } from "wagmi";
 import {
   buildXConnectUrl,
   fetchQuestBoard,
+  syncSwapQuestActivity,
   startQuest,
   verifyDelayQuest,
   verifyXPost,
@@ -225,11 +226,20 @@ export function QuestBoard() {
 
   useEffect(() => {
     const interval = window.setInterval(() => {
+      if (address && categoryFilter === "onchain") {
+        void syncSwapQuestActivity(address)
+          .catch(() => null)
+          .finally(() => {
+            void loadBoard({ silent: true });
+          });
+        return;
+      }
+
       void loadBoard({ silent: true });
     }, 30000);
 
     return () => window.clearInterval(interval);
-  }, [address]);
+  }, [address, categoryFilter]);
 
   useEffect(() => {
     const handleSwapRecorded = () => {
@@ -286,13 +296,30 @@ export function QuestBoard() {
   }
 
   async function handleOnchainRefresh() {
+    if (!address) {
+      setError("Connect your wallet first");
+      return;
+    }
+
+    setIsRefreshing(true);
     setMessage("Checking your latest swap progress...");
     window.dispatchEvent(new Event(SYNC_NOW_EVENT));
-    window.setTimeout(() => {
-      startTransition(() => {
-        void loadBoard({ silent: true });
-      });
-    }, 1200);
+    let syncIssue: string | null = null;
+
+    try {
+      const response = await syncSwapQuestActivity(address);
+      if (!response.success) {
+        throw new Error(response.error || "Failed to sync recent swaps");
+      }
+    } catch (syncError) {
+      syncIssue = getDisplayError(syncError);
+    } finally {
+      await loadBoard({ silent: true });
+      if (syncIssue) {
+        setError(syncIssue);
+      }
+      setIsRefreshing(false);
+    }
   }
 
   async function handleDelayQuestStart(quest: QuestItem) {

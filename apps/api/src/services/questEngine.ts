@@ -124,11 +124,40 @@ export type SwapActivityInput = {
   metadata?: Record<string, unknown>;
 };
 
+type OpenOceanWalletTransaction = {
+  txHash?: string;
+  tradeTime?: string;
+  inAmount?: string;
+  outAmount?: string;
+  inToken?: string;
+  outToken?: string;
+};
+
+type OpenOceanTransactionDetail = {
+  tx_hash?: string;
+  sender?: string;
+  receiver?: string;
+  referrer?: string;
+  usd_valuation?: number | string;
+  create_at?: string;
+  update_at?: string;
+  in_token_symbol?: string;
+  out_token_symbol?: string;
+  in_amount_value?: string;
+  out_amount_value?: string;
+};
+
 const X_SCOPES = ["tweet.read", "users.read", "offline.access"];
 const BASE_RPC_URL =
   process.env.BASE_RPC_URL ||
   process.env.NEXT_PUBLIC_BASE_RPC_URL ||
   "https://mainnet.base.org";
+const OPENOCEAN_API_BASE =
+  process.env.OPENOCEAN_API_BASE || "https://open-api.openocean.finance/v3";
+const OPENOCEAN_REFERRER_ADDRESS =
+  process.env.OPENOCEAN_REFERRER_ADDRESS ||
+  process.env.NEXT_PUBLIC_OPENOCEAN_REFERRER_ADDRESS ||
+  "0x0fd79f3ceaE7ddA5cFC15b35188E67EFAc542573";
 
 const baseClient = createPublicClient({
   chain: base,
@@ -350,6 +379,31 @@ function getSwapAmountUsdFallback(
   }
 
   return 0;
+}
+
+async function fetchOpenOceanData<T>(path: string) {
+  const response = await fetch(`${OPENOCEAN_API_BASE}${path}`, {
+    headers: {
+      Accept: "application/json",
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(`OpenOcean request failed with ${response.status}`);
+  }
+
+  const payload = (await response.json()) as {
+    code?: number;
+    data?: T;
+    error?: string;
+    msg?: string;
+  };
+
+  if (payload.code && payload.code !== 200) {
+    throw new Error(payload.error || payload.msg || "OpenOcean request failed");
+  }
+
+  return payload.data as T;
 }
 
 export class QuestEngine {
@@ -901,6 +955,95 @@ export class QuestEngine {
     };
   }
 
+  async syncRecentSwapActivity(address: string) {
+    if (!isAddress(address)) {
+      throw new Error("A valid wallet address is required");
+    }
+
+    const normalizedAddress = normalizeAddress(address);
+    const user = await pointsEngine.getOrCreate(normalizedAddress);
+    const knownHashes = await this.getKnownSwapAmounts(user.id);
+
+    const params = new URLSearchParams({
+      account: normalizedAddress,
+      pageSize: "15",
+    });
+
+    const history = await fetchOpenOceanData<OpenOceanWalletTransaction[]>(
+      `/base/getTxs?${params.toString()}`
+    );
+
+    const importedHashes: string[] = [];
+    const expectedReferrer = OPENOCEAN_REFERRER_ADDRESS.toLowerCase();
+
+    for (const item of history ?? []) {
+      const txHash = item.txHash;
+      if (!txHash) {
+        continue;
+      }
+
+      const knownAmount = knownHashes.get(txHash) ?? -1;
+      if (knownAmount > 0) {
+        continue;
+      }
+
+      try {
+        const detail = await fetchOpenOceanData<OpenOceanTransactionDetail>(
+          `/base/getTransaction?hash=${encodeURIComponent(txHash)}`
+        );
+
+        const resolvedHash = detail.tx_hash || txHash;
+        const sender = String(detail.sender || detail.receiver || "").toLowerCase();
+        if (sender && sender !== normalizedAddress) {
+          continue;
+        }
+
+        const referrer = String(detail.referrer || "").toLowerCase();
+        if (!referrer || referrer !== expectedReferrer) {
+          continue;
+        }
+
+        const amountUsd = toNumber(detail.usd_valuation, 0);
+        await this.upsertSwapActivityEvent({
+          userId: user.id,
+          chainId: base.id,
+          txHash: resolvedHash,
+          amountUsd,
+          inputToken: detail.in_token_symbol || item.inToken || null,
+          outputToken: detail.out_token_symbol || item.outToken || null,
+          occurredAt:
+            detail.update_at ||
+            detail.create_at ||
+            item.tradeTime ||
+            new Date().toISOString(),
+          metadata: {
+            source: "openocean_history_sync",
+            referrer: detail.referrer || null,
+            inAmountValue: detail.in_amount_value || item.inAmount || null,
+            outAmountValue: detail.out_amount_value || item.outAmount || null,
+            tradeTime: detail.update_at || detail.create_at || item.tradeTime || null,
+          },
+        });
+
+        importedHashes.push(resolvedHash);
+        knownHashes.set(resolvedHash, amountUsd);
+      } catch {
+        // Ignore individual lookup failures so one bad tx does not block all sync.
+      }
+    }
+
+    const completedQuests = await this.syncPublishedSwapQuests(
+      user.id,
+      normalizedAddress
+    );
+
+    return {
+      success: true,
+      importedHashes,
+      completedQuests,
+    };
+  }
+
   async recordSwapActivity(input: SwapActivityInput) {
     if (!isAddress(input.address)) {
       throw new Error("A valid wallet address is required");
@@ -922,33 +1065,86 @@ export class QuestEngine {
       input.amountUsd,
       input.metadata
     );
+    const normalizedAddress = normalizeAddress(input.address);
     const user = await pointsEngine.getOrCreate(input.address);
-    const { error } = await supabase
+    await this.upsertSwapActivityEvent({
+      userId: user.id,
+      chainId: input.chainId,
+      txHash: input.txHash,
+      amountUsd: normalizedAmountUsd,
+      inputToken: input.inputToken,
+      outputToken: input.outputToken,
+      occurredAt: new Date().toISOString(),
+      metadata: input.metadata,
+    });
+
+    const completedQuests = await this.syncPublishedSwapQuests(
+      user.id,
+      normalizedAddress
+    );
+
+    return {
+      success: true,
+      completedQuests,
+    };
+  }
+
+  private async getKnownSwapAmounts(userId: number) {
+    const { data, error } = await supabase
       .from("activity_events")
-      .upsert(
-        {
-          user_id: user.id,
-          event_type: "swap",
-          source: "dustswap_swap",
-          chain_id: input.chainId,
-          tx_hash: input.txHash,
-          amount_usd: normalizedAmountUsd,
-          occurred_at: new Date().toISOString(),
-          metadata: {
-            inputToken: input.inputToken || null,
-            outputToken: input.outputToken || null,
-            ...(input.metadata || {}),
-          },
+      .select("tx_hash, amount_usd")
+      .eq("user_id", userId)
+      .eq("event_type", "swap")
+      .eq("source", "dustswap_swap");
+
+    if (error) {
+      throw new Error(`Failed to load existing swap activity: ${error.message}`);
+    }
+
+    return new Map(
+      (data ?? []).map((row) => [
+        String((row as { tx_hash: string }).tx_hash),
+        toNumber((row as { amount_usd: number }).amount_usd),
+      ])
+    );
+  }
+
+  private async upsertSwapActivityEvent(args: {
+    userId: number;
+    chainId: number;
+    txHash: string;
+    amountUsd: number;
+    inputToken?: string | null;
+    outputToken?: string | null;
+    occurredAt?: string | null;
+    metadata?: Record<string, unknown>;
+  }) {
+    const { error } = await supabase.from("activity_events").upsert(
+      {
+        user_id: args.userId,
+        event_type: "swap",
+        source: "dustswap_swap",
+        chain_id: args.chainId,
+        tx_hash: args.txHash,
+        amount_usd: args.amountUsd,
+        occurred_at: args.occurredAt || new Date().toISOString(),
+        metadata: {
+          inputToken: args.inputToken || null,
+          outputToken: args.outputToken || null,
+          ...(args.metadata || {}),
         },
-        {
-          onConflict: "tx_hash,event_type,source",
-        }
-      );
+      },
+      {
+        onConflict: "tx_hash,event_type,source",
+      }
+    );
 
     if (error) {
       throw new Error(`Failed to record swap activity: ${error.message}`);
     }
+  }
 
+  private async syncPublishedSwapQuests(userId: number, address: string) {
     const { data: questsData, error: questsError } = await supabase
       .from("quests")
       .select("*")
@@ -968,11 +1164,7 @@ export class QuestEngine {
     }> = [];
 
     for (const quest of (questsData ?? []) as QuestRecord[]) {
-      const progress = await this.syncSwapProgressForQuest(
-        user.id,
-        normalizeAddress(input.address),
-        quest
-      );
+      const progress = await this.syncSwapProgressForQuest(userId, address, quest);
 
       if (progress?.completedAt && progress.awardedPoints > 0) {
         completedQuests.push({
@@ -983,10 +1175,7 @@ export class QuestEngine {
       }
     }
 
-    return {
-      success: true,
-      completedQuests,
-    };
+    return completedQuests;
   }
 
   private async syncSwapProgressForQuest(

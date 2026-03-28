@@ -119,6 +119,23 @@ export async function recordSwapQuestActivity(input: {
   }>(response);
 }
 
+export async function syncSwapQuestActivity(address: string) {
+  const response = await fetch(getQuestsApiUrl("/activities/swap/sync"), {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ address }),
+  });
+
+  return parseJson<{
+    success: boolean;
+    importedHashes?: string[];
+    completedQuests?: Array<{ questId: string; slug: string; awardedPoints: number }>;
+    error?: string;
+  }>(response);
+}
+
 export function buildXConnectUrl(address: string, returnTo: string) {
   const url = new URL(getQuestsApiUrl("/x/connect"));
   url.searchParams.set("address", address);

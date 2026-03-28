@@ -167,6 +167,24 @@ questsRoutes.post("/activities/swap", async (c) => {
   }
 });
 
+questsRoutes.post("/activities/swap/sync", async (c) => {
+  try {
+    const body = (await c.req.json()) as { address?: string };
+
+    if (!body.address) {
+      return c.json({ success: false, error: "address is required" }, 400);
+    }
+
+    const data = await questEngine.syncRecentSwapActivity(body.address);
+    return c.json(data);
+  } catch (error) {
+    return c.json(
+      { success: false, error: (error as Error).message },
+      400
+    );
+  }
+});
+
 questsRoutes.post("/:id/start", async (c) => {
   try {
     const body = (await c.req.json()) as { address?: string };
