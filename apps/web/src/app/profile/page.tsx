@@ -6,19 +6,17 @@ import { encodeFunctionData, erc20Abi } from "viem";
 import { DailyCheckInModule } from "@/components/profile/DailyCheckInModule";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import {
-  fetchLeaderboard,
   fetchPointsBalance,
   fetchReferralStats,
   fetchUserStats,
   performDailyCheckIn,
   resetBrokenStreak,
   saveBrokenStreak,
-  type LeaderboardEntry,
   type PointsBalance,
   type ReferralStats,
   type UserStats,
 } from "@/lib/points";
-import { USDC_ADDRESS } from "@/lib/tokens";
+import { BASE_CHAIN_ID, USDC_ADDRESS } from "@/lib/tokens";
 import { DATA_SUFFIX } from "@/lib/builderCode";
 
 type NeynarProfile = {
@@ -42,9 +40,8 @@ type CelebrationState =
     }
   | null;
 
-type RecoveryStage = "idle" | "wallet" | "verifying";
-
-const SAVE_USDC_AMOUNT = 1_000_000n;
+type FlowStage = "idle" | "wallet" | "verifying";
+type FeeConfig = NonNullable<PointsBalance["checkInConfig"]>;
 
 function shortAddress(address: string) {
   return `${address.slice(0, 6)}...${address.slice(-4)}`;
@@ -66,8 +63,37 @@ function getDisplayName(profile: NeynarProfile | null, address: string | undefin
   return address ? shortAddress(address) : "Anonymous";
 }
 
+function MiniMetric({
+  label,
+  value,
+  accent,
+  isLoading,
+}: {
+  label: string;
+  value: string;
+  accent: "sky" | "amber" | "emerald";
+  isLoading?: boolean;
+}) {
+  const accents = {
+    sky: "border-sky-200 bg-sky-50 text-sky-800",
+    amber: "border-amber-200 bg-amber-50 text-amber-800",
+    emerald: "border-emerald-200 bg-emerald-50 text-emerald-800",
+  };
+
+  return (
+    <div className={`rounded-[20px] border px-3 py-3 ${accents[accent]}`}>
+      <p className="text-[10px] font-black uppercase tracking-[0.22em] opacity-70">
+        {label}
+      </p>
+      <p className="mt-1.5 text-lg font-black tracking-tight">
+        {isLoading ? <span className="animate-pulse opacity-50">...</span> : value}
+      </p>
+    </div>
+  );
+}
+
 function ProfilePageContent() {
-  const { address, isConnected } = useAccount();
+  const { address, isConnected, chainId } = useAccount();
   const { data: walletClient } = useWalletClient();
   const publicClient = usePublicClient();
 
@@ -77,7 +103,6 @@ function ProfilePageContent() {
   const [balance, setBalance] = useState<PointsBalance | null>(null);
   const [stats, setStats] = useState<UserStats | null>(null);
   const [referral, setReferral] = useState<ReferralStats | null>(null);
-  const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
   const [toast, setToast] = useState<ToastState>(null);
   const [celebration, setCelebration] = useState<CelebrationState>(null);
   const [isCopied, setIsCopied] = useState(false);
@@ -85,7 +110,8 @@ function ProfilePageContent() {
   const [isCheckingIn, setIsCheckingIn] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isResetting, setIsResetting] = useState(false);
-  const [recoveryStage, setRecoveryStage] = useState<RecoveryStage>("idle");
+  const [checkInStage, setCheckInStage] = useState<FlowStage>("idle");
+  const [recoveryStage, setRecoveryStage] = useState<FlowStage>("idle");
 
   const { data: usdcBalanceRaw } = useReadContract({
     address: USDC_ADDRESS,
@@ -98,29 +124,30 @@ function ProfilePageContent() {
   });
 
   const usdcBalance = (usdcBalanceRaw as bigint | undefined) ?? 0n;
-  const preferredSaveAsset = useMemo<"eth" | "usdc">(
-    () => (usdcBalance >= SAVE_USDC_AMOUNT ? "usdc" : "eth"),
-    [usdcBalance]
-  );
 
-  const refreshLeaderboard = useCallback(async () => {
-    if (!address) {
-      setLeaderboard([]);
-      return;
+  const preferredCheckInAsset = useMemo<"eth" | "usdc">(() => {
+    if (!balance) {
+      return "eth";
     }
 
-    const leaderboardData = await fetchLeaderboard(50);
-    if (leaderboardData.success) {
-      setLeaderboard(leaderboardData.data || []);
+    const requiredUsdc = BigInt(balance.checkInConfig.usdcAmountUnits);
+    return requiredUsdc > 0n && usdcBalance >= requiredUsdc ? "usdc" : "eth";
+  }, [balance, usdcBalance]);
+
+  const preferredSaveAsset = useMemo<"eth" | "usdc">(() => {
+    if (!balance) {
+      return "eth";
     }
-  }, [address]);
+
+    const requiredUsdc = BigInt(balance.saveConfig.usdcAmountUnits);
+    return requiredUsdc > 0n && usdcBalance >= requiredUsdc ? "usdc" : "eth";
+  }, [balance, usdcBalance]);
 
   const fetchProfileData = useCallback(async () => {
     if (!address) {
       setBalance(null);
       setStats(null);
       setReferral(null);
-      setLeaderboard([]);
       setProfile(null);
       setIsLoading(false);
       return;
@@ -129,29 +156,22 @@ function ProfilePageContent() {
     setIsLoading(true);
 
     try {
-      const [balanceData, statsData, referralData, leaderboardData] = await Promise.all([
+      const [balanceData, statsData, referralData] = await Promise.all([
         fetchPointsBalance(address),
         fetchUserStats(address),
         fetchReferralStats(address),
-        fetchLeaderboard(50),
       ]);
 
-      if (balanceData.success) {
-        setBalance(balanceData);
-      } else {
+      if (!balanceData.success) {
         throw new Error(balanceData.error || "Failed to load check-in status");
       }
 
+      setBalance(balanceData);
       if (statsData.success) {
         setStats(statsData);
       }
-
       if (referralData.success) {
         setReferral(referralData);
-      }
-
-      if (leaderboardData.success) {
-        setLeaderboard(leaderboardData.data || []);
       }
 
       fetch(`/api/neynar/user?address=${address}`)
@@ -204,7 +224,7 @@ function ProfilePageContent() {
 
     const timeout = window.setTimeout(() => {
       setToast(null);
-    }, 4500);
+    }, 4200);
 
     return () => window.clearTimeout(timeout);
   }, [toast]);
@@ -221,51 +241,106 @@ function ProfilePageContent() {
     return () => window.clearTimeout(timeout);
   }, [celebration]);
 
-  const updateBalanceAndStats = useCallback(
-    (nextBalance: PointsBalance) => {
-      setBalance(nextBalance);
-      setStats((current) =>
-        current
+  const updateBalanceAndStats = useCallback((nextBalance: PointsBalance) => {
+    setBalance(nextBalance);
+    setStats((current) =>
+      current
+        ? {
+            ...current,
+            totalPoints: nextBalance.totalPoints,
+          }
+        : current
+    );
+  }, []);
+
+  const sendFeeTransaction = useCallback(
+    async (config: FeeConfig, asset: "eth" | "usdc") => {
+      if (!walletClient || !publicClient) {
+        throw new Error("Wallet is not ready");
+      }
+
+      if (chainId !== BASE_CHAIN_ID) {
+        throw new Error("Switch your wallet to Base before sending this check-in transaction");
+      }
+
+      const hash = await walletClient.sendTransaction({
+        to:
+          asset === "usdc"
+            ? (config.usdcAddress as `0x${string}`)
+            : (config.recipient as `0x${string}`),
+        data:
+          asset === "usdc"
+            ? encodeFunctionData({
+                abi: erc20Abi,
+                functionName: "transfer",
+                args: [config.recipient as `0x${string}`, BigInt(config.usdcAmountUnits)],
+              })
+            : undefined,
+        dataSuffix: DATA_SUFFIX,
+        value: asset === "usdc" ? 0n : BigInt(config.ethAmountWei),
+        capabilities: process.env.NEXT_PUBLIC_PAYMASTER_URL
           ? {
-              ...current,
-              totalPoints: nextBalance.totalPoints,
+              paymasterService: {
+                url: process.env.NEXT_PUBLIC_PAYMASTER_URL,
+              },
             }
-          : current
-      );
+          : undefined,
+      } as any);
+
+      const receipt = await publicClient.waitForTransactionReceipt({ hash });
+      if (receipt.status !== "success") {
+        throw new Error("Transaction reverted");
+      }
+
+      return hash;
     },
-    []
+    [chainId, publicClient, walletClient]
   );
 
   const handleCheckIn = useCallback(async () => {
-    if (!address) {
+    if (!address || !balance) {
       setToast({ kind: "error", message: "Connect your wallet first." });
       return;
     }
 
     setIsCheckingIn(true);
+    setCheckInStage("wallet");
 
     try {
-      const result = await performDailyCheckIn(address);
+      const asset = preferredCheckInAsset;
+      const hash = await sendFeeTransaction(balance.checkInConfig, asset);
+      setCheckInStage("verifying");
+
+      const result = await performDailyCheckIn({
+        address,
+        txHash: hash,
+        asset,
+      });
+
       if (!result.success) {
-        throw new Error(result.error || "Check-in failed");
+        throw new Error(result.error || "Onchain check-in failed");
       }
 
       updateBalanceAndStats(result);
       setCelebration({ kind: "checkin", id: Date.now() });
       setToast({
         kind: "success",
-        message: `Checked in successfully. ${result.pointsAwarded} PP added.`,
+        message:
+          asset === "usdc"
+            ? `Onchain check-in complete with ${balance.checkInConfig.usdcAmount} USDC.`
+            : `Onchain check-in complete with $${balance.checkInConfig.usdTarget.toFixed(2)} in ETH.`,
       });
-      void refreshLeaderboard();
     } catch (error) {
+      console.error(error);
       setToast({
         kind: "error",
-        message: (error as Error).message || "Check-in failed",
+        message: "Check-in transaction failed. Try again.",
       });
     } finally {
+      setCheckInStage("idle");
       setIsCheckingIn(false);
     }
-  }, [address, refreshLeaderboard, updateBalanceAndStats]);
+  }, [address, balance, preferredCheckInAsset, sendFeeTransaction, updateBalanceAndStats]);
 
   const handleReset = useCallback(async () => {
     if (!address) {
@@ -288,7 +363,6 @@ function ProfilePageContent() {
           ? "Streak reset. You can start again today."
           : "There was no broken streak to reset.",
       });
-      void refreshLeaderboard();
     } catch (error) {
       setToast({
         kind: "error",
@@ -297,10 +371,10 @@ function ProfilePageContent() {
     } finally {
       setIsResetting(false);
     }
-  }, [address, refreshLeaderboard, updateBalanceAndStats]);
+  }, [address, updateBalanceAndStats]);
 
   const handleSave = useCallback(async () => {
-    if (!address || !balance || !walletClient || !publicClient) {
+    if (!address || !balance) {
       setToast({
         kind: "error",
         message: "Connect your wallet to save this streak.",
@@ -308,46 +382,18 @@ function ProfilePageContent() {
       return;
     }
 
-    const saveAsset = preferredSaveAsset;
     setIsSaving(true);
     setRecoveryStage("wallet");
 
     try {
-      const hash = await walletClient.sendTransaction({
-        to:
-          saveAsset === "usdc"
-            ? (balance.saveConfig.usdcAddress as `0x${string}`)
-            : (balance.saveConfig.recipient as `0x${string}`),
-        data:
-          saveAsset === "usdc"
-            ? encodeFunctionData({
-                abi: erc20Abi,
-                functionName: "transfer",
-                args: [balance.saveConfig.recipient as `0x${string}`, SAVE_USDC_AMOUNT],
-              })
-            : undefined,
-        dataSuffix: DATA_SUFFIX,
-        value: saveAsset === "usdc" ? 0n : BigInt(balance.saveConfig.ethAmountWei),
-        capabilities: process.env.NEXT_PUBLIC_PAYMASTER_URL
-          ? {
-              paymasterService: {
-                url: process.env.NEXT_PUBLIC_PAYMASTER_URL,
-              },
-            }
-          : undefined,
-      } as any);
-
+      const asset = preferredSaveAsset;
+      const hash = await sendFeeTransaction(balance.saveConfig, asset);
       setRecoveryStage("verifying");
-
-      const receipt = await publicClient.waitForTransactionReceipt({ hash });
-      if (receipt.status !== "success") {
-        throw new Error("Recovery transaction reverted");
-      }
 
       const result = await saveBrokenStreak({
         address,
         txHash: hash,
-        asset: saveAsset,
+        asset,
       });
 
       if (!result.success) {
@@ -360,7 +406,6 @@ function ProfilePageContent() {
         kind: "success",
         message: "Streak Saved!",
       });
-      void refreshLeaderboard();
     } catch (error) {
       console.error(error);
       setToast({
@@ -371,7 +416,7 @@ function ProfilePageContent() {
       setRecoveryStage("idle");
       setIsSaving(false);
     }
-  }, [address, balance, preferredSaveAsset, publicClient, refreshLeaderboard, updateBalanceAndStats, walletClient]);
+  }, [address, balance, preferredSaveAsset, sendFeeTransaction, updateBalanceAndStats]);
 
   if (!isMounted) {
     return null;
@@ -379,18 +424,18 @@ function ProfilePageContent() {
 
   if (!isConnected) {
     return (
-      <div className="mx-auto flex min-h-[70vh] max-w-3xl items-center justify-center px-4 py-10">
-        <div className="w-full rounded-[36px] border border-white/70 bg-[radial-gradient(circle_at_top_left,rgba(56,189,248,0.14),transparent_34%),linear-gradient(180deg,#fffdf8,#f5fbff)] p-8 text-center shadow-[0_26px_80px_rgba(15,23,42,0.08)]">
-          <div className="mx-auto flex h-20 w-20 items-center justify-center rounded-full border border-sky-200 bg-[radial-gradient(circle,rgba(56,189,248,0.18),transparent_70%)] text-4xl">
+      <div className="mx-auto flex min-h-[70vh] max-w-3xl items-center justify-center px-4 py-8">
+        <div className="w-full rounded-[30px] border border-white/70 bg-[radial-gradient(circle_at_top_left,rgba(56,189,248,0.14),transparent_34%),linear-gradient(180deg,#fffdf8,#f5fbff)] p-6 text-center shadow-[0_22px_70px_rgba(15,23,42,0.08)]">
+          <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full border border-sky-200 bg-[radial-gradient(circle,rgba(56,189,248,0.18),transparent_70%)] text-3xl">
             ✨
           </div>
-          <h2 className="mt-6 text-3xl font-black tracking-tight text-slate-950">
+          <h2 className="mt-5 text-2xl font-black tracking-tight text-slate-950">
             Connect your wallet to start the streak
           </h2>
-          <p className="mx-auto mt-4 max-w-lg text-sm leading-7 text-slate-600 sm:text-base">
-            Unlock daily check-ins, protect your multiplier, and climb the leaderboard with your wallet-linked profile.
+          <p className="mx-auto mt-3 max-w-md text-sm leading-6 text-slate-600">
+            Daily check-ins are paid onchain in this miniapp, with automatic USDC or ETH fallback.
           </p>
-          <div className="mt-8 flex justify-center">
+          <div className="mt-6 flex justify-center">
             {/* @ts-ignore */}
             <appkit-button />
           </div>
@@ -400,11 +445,11 @@ function ProfilePageContent() {
   }
 
   return (
-    <div className="min-h-[calc(100vh-4rem)] bg-[radial-gradient(circle_at_top_left,rgba(56,189,248,0.16),transparent_28%),radial-gradient(circle_at_top_right,rgba(251,191,36,0.14),transparent_26%),linear-gradient(180deg,#f8fafc,#fef7ed_45%,#eff6ff)] px-4 py-6 pb-20 sm:px-6 sm:py-8">
-      <div className="mx-auto flex w-full max-w-6xl flex-col gap-5">
+    <div className="min-h-[calc(100vh-4rem)] bg-[radial-gradient(circle_at_top_left,rgba(56,189,248,0.14),transparent_28%),radial-gradient(circle_at_top_right,rgba(251,191,36,0.12),transparent_22%),linear-gradient(180deg,#f8fafc,#fef7ed_45%,#eff6ff)] px-3 py-4 pb-16 sm:px-6 sm:py-8">
+      <div className="mx-auto flex w-full max-w-4xl flex-col gap-3 sm:gap-5">
         {toast ? (
           <div
-            className={`rounded-[22px] border px-4 py-3 text-sm shadow-[0_18px_40px_rgba(15,23,42,0.08)] ${
+            className={`rounded-[18px] border px-4 py-3 text-sm shadow-[0_16px_36px_rgba(15,23,42,0.08)] ${
               toast.kind === "success"
                 ? "border-emerald-200 bg-emerald-50 text-emerald-800"
                 : "border-rose-200 bg-rose-50 text-rose-700"
@@ -414,46 +459,55 @@ function ProfilePageContent() {
           </div>
         ) : null}
 
-        <section className="rounded-[34px] border border-white/70 bg-white/80 p-5 shadow-[0_28px_90px_rgba(15,23,42,0.08)] backdrop-blur sm:p-7">
-          <div className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
-            <div className="flex items-center gap-4">
-              {profile?.pfp_url ? (
-                <img
-                  src={profile.pfp_url}
-                  alt="Profile"
-                  className="h-16 w-16 rounded-[22px] border border-white/70 object-cover shadow-[0_14px_34px_rgba(56,189,248,0.18)]"
-                />
-              ) : (
-                <div className="flex h-16 w-16 items-center justify-center rounded-[22px] border border-sky-200 bg-[linear-gradient(135deg,#38bdf8,#0ea5e9)] text-xl font-black text-white shadow-[0_14px_34px_rgba(14,165,233,0.22)]">
-                  {address?.slice(2, 4)}
-                </div>
-              )}
-
-              <div>
-                <p className="text-[11px] font-black uppercase tracking-[0.34em] text-slate-500">
-                  Profile Hub
-                </p>
-                <h1 className="mt-2 text-3xl font-black tracking-tight text-slate-950">
-                  {getDisplayName(profile, address)}
-                </h1>
-                <p className="mt-2 text-sm text-slate-600">
-                  {profile?.username ? `@${profile.username}` : shortAddress(address || "")}
-                </p>
+        <section className="rounded-[28px] border border-white/70 bg-white/82 p-4 shadow-[0_20px_70px_rgba(15,23,42,0.08)] backdrop-blur sm:p-6">
+          <div className="flex items-center gap-3">
+            {profile?.pfp_url ? (
+              <img
+                src={profile.pfp_url}
+                alt="Profile"
+                className="h-14 w-14 rounded-[18px] border border-white/70 object-cover shadow-[0_10px_28px_rgba(56,189,248,0.18)]"
+              />
+            ) : (
+              <div className="flex h-14 w-14 items-center justify-center rounded-[18px] border border-sky-200 bg-[linear-gradient(135deg,#38bdf8,#0ea5e9)] text-lg font-black text-white shadow-[0_10px_28px_rgba(14,165,233,0.22)]">
+                {address?.slice(2, 4)}
               </div>
-            </div>
+            )}
 
-            <div className="grid grid-cols-2 gap-3">
-              <MetricTile
-                label="Particle Points"
-                value={`${formatNumber(balance?.totalPoints || 0)} PP`}
-                accent="sky"
-              />
-              <MetricTile
-                label="Leaderboard Rank"
-                value={`#${balance?.rank || "--"}`}
-                accent="amber"
-              />
+            <div className="min-w-0">
+              <p className="text-[10px] font-black uppercase tracking-[0.32em] text-slate-500">
+                Profile Hub
+              </p>
+              <h1 className="mt-1 truncate text-2xl font-black tracking-tight text-slate-950">
+                {getDisplayName(profile, address)}
+              </h1>
+              <p className="mt-1 truncate text-sm text-slate-600">
+                {profile?.username ? `@${profile.username}` : shortAddress(address || "")}
+              </p>
             </div>
+          </div>
+
+          <div className="mt-4 grid grid-cols-3 gap-2.5">
+            <MiniMetric
+              label="Rank"
+              value={`#${balance?.rank || "--"}`}
+              accent="amber"
+              isLoading={isLoading}
+            />
+            <MiniMetric
+              label="All-Time Volume"
+              value={`$${(stats?.swapVolume || 0).toLocaleString(undefined, {
+                minimumFractionDigits: 0,
+                maximumFractionDigits: 0,
+              })}`}
+              accent="sky"
+              isLoading={isLoading}
+            />
+            <MiniMetric
+              label="Total Referrals"
+              value={String(referral?.friendsJoined || 0)}
+              accent="emerald"
+              isLoading={isLoading}
+            />
           </div>
         </section>
 
@@ -462,239 +516,69 @@ function ProfilePageContent() {
           isCheckingIn={isCheckingIn}
           isSaving={isSaving}
           isResetting={isResetting}
+          checkInStage={checkInStage}
           recoveryStage={recoveryStage}
           celebration={celebration}
           walletReady={Boolean(address)}
+          preferredCheckInAsset={preferredCheckInAsset}
           preferredSaveAsset={preferredSaveAsset}
           onCheckIn={() => void handleCheckIn()}
           onSave={() => void handleSave()}
           onReset={() => void handleReset()}
         />
 
-        <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-          <StatCard
-            title="Particle Points"
-            value={`${formatNumber(stats?.totalPoints || 0)} PP`}
-            icon="⚡"
-            tone="sky"
-            isLoading={isLoading}
-          />
-          <StatCard
-            title="Dust Swept"
-            value={formatNumber(stats?.dustSwept || 0)}
-            icon="🧹"
-            tone="emerald"
-            isLoading={isLoading}
-          />
-          <StatCard
-            title="Swap Volume"
-            value={`$${(stats?.swapVolume || 0).toLocaleString(undefined, {
-              minimumFractionDigits: 2,
-              maximumFractionDigits: 2,
-            })}`}
-            icon="💱"
-            tone="amber"
-            isLoading={isLoading}
-          />
-          <StatCard
-            title="Tokens Burned"
-            value={formatNumber(stats?.tokensBurned || 0)}
-            icon="🔥"
-            tone="rose"
-            isLoading={isLoading}
-          />
-        </section>
+        <section className="rounded-[28px] border border-white/70 bg-white/82 p-4 shadow-[0_20px_70px_rgba(15,23,42,0.08)] sm:p-6">
+          <p className="text-[10px] font-black uppercase tracking-[0.32em] text-slate-500">
+            Referral Vault
+          </p>
+          <h2 className="mt-2 text-2xl font-black tracking-tight text-slate-950">
+            Invite friends and stack the network
+          </h2>
+          <p className="mt-2 text-sm leading-6 text-slate-600">
+            Referral rewards stay separate from your streak boost, so your own grind still matters.
+          </p>
 
-        <section className="grid gap-5 xl:grid-cols-[0.95fr_1.05fr]">
-          <div className="rounded-[34px] border border-white/70 bg-white/80 p-5 shadow-[0_28px_90px_rgba(15,23,42,0.08)] sm:p-7">
-            <p className="text-[11px] font-black uppercase tracking-[0.34em] text-slate-500">
-              Referral Loop
-            </p>
-            <h2 className="mt-3 text-3xl font-black tracking-tight text-slate-950">
-              Bring in friends, keep your own streak climbing
-            </h2>
-            <p className="mt-3 max-w-xl text-sm leading-7 text-slate-600">
-              Both sides get a signup boost, but your streak multiplier still applies only to the points you earn yourself.
-            </p>
-
-            <div className="mt-6 grid gap-3 sm:grid-cols-2">
-              <MetricTile
-                label="Friends Joined"
-                value={String(referral?.friendsJoined || 0)}
-                accent="sky"
-              />
-              <MetricTile
-                label="Referral Points"
-                value={`${formatNumber(referral?.pointsEarned || 0)} PP`}
-                accent="emerald"
-              />
-            </div>
-
-            <div className="mt-6 rounded-[26px] border border-slate-200 bg-[#f8fbff] p-4">
-              <p className="text-[11px] font-black uppercase tracking-[0.28em] text-slate-500">
-                Your Link
-              </p>
-              <div className="mt-3 flex flex-col gap-3 sm:flex-row">
-                <div className="flex-1 rounded-[20px] border border-slate-200 bg-white px-4 py-3 font-mono text-sm font-semibold tracking-[0.18em] text-sky-700">
-                  {referral?.code || "LOADING..."}
-                </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (!referral?.code) {
-                      return;
-                    }
-                    navigator.clipboard.writeText(`https://dustswap.app/ref/${referral.code}`);
-                    setIsCopied(true);
-                    setToast({ kind: "success", message: "Referral link copied." });
-                    window.setTimeout(() => setIsCopied(false), 1800);
-                  }}
-                  className="rounded-[20px] bg-[linear-gradient(135deg,#0ea5e9,#22c55e)] px-5 py-3 text-sm font-black text-white shadow-[0_16px_40px_rgba(14,165,233,0.2)] transition hover:-translate-y-0.5"
-                >
-                  {isCopied ? "Copied!" : "Copy Link"}
-                </button>
-              </div>
-            </div>
+          <div className="mt-4 grid grid-cols-2 gap-2.5">
+            <MiniMetric
+              label="Friends Joined"
+              value={String(referral?.friendsJoined || 0)}
+              accent="sky"
+              isLoading={isLoading}
+            />
+            <MiniMetric
+              label="Referral Points"
+              value={`${formatNumber(referral?.pointsEarned || 0)} PP`}
+              accent="emerald"
+              isLoading={isLoading}
+            />
           </div>
 
-          <div className="rounded-[34px] border border-white/70 bg-white/80 p-5 shadow-[0_28px_90px_rgba(15,23,42,0.08)] sm:p-7">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <p className="text-[11px] font-black uppercase tracking-[0.34em] text-slate-500">
-                  Leaderboard
-                </p>
-                <h2 className="mt-3 text-3xl font-black tracking-tight text-slate-950">
-                  Top 50 Wallets
-                </h2>
+          <div className="mt-4 rounded-[22px] border border-slate-200 bg-[#f8fbff] p-3">
+            <p className="text-[10px] font-black uppercase tracking-[0.24em] text-slate-500">
+              Your Link
+            </p>
+            <div className="mt-2 flex flex-col gap-2 sm:flex-row">
+              <div className="flex-1 rounded-[16px] border border-slate-200 bg-white px-3 py-3 font-mono text-xs font-semibold tracking-[0.16em] text-sky-700">
+                {referral?.code || "LOADING..."}
               </div>
               <button
                 type="button"
-                onClick={() => void refreshLeaderboard()}
-                className="rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-black uppercase tracking-[0.24em] text-slate-600 transition hover:bg-slate-50"
+                onClick={() => {
+                  if (!referral?.code) {
+                    return;
+                  }
+                  navigator.clipboard.writeText(`https://dustswap.app/ref/${referral.code}`);
+                  setIsCopied(true);
+                  setToast({ kind: "success", message: "Referral link copied." });
+                  window.setTimeout(() => setIsCopied(false), 1800);
+                }}
+                className="rounded-[16px] bg-[linear-gradient(135deg,#0ea5e9,#22c55e)] px-4 py-3 text-sm font-black text-white shadow-[0_14px_32px_rgba(14,165,233,0.18)] transition hover:-translate-y-0.5"
               >
-                Refresh
+                {isCopied ? "Copied!" : "Copy Link"}
               </button>
-            </div>
-
-            <div className="mt-6 overflow-hidden rounded-[26px] border border-slate-200">
-              <div className="grid grid-cols-[0.75fr_1.6fr_1fr_0.9fr] bg-[#f8fafc] px-4 py-3 text-[11px] font-black uppercase tracking-[0.26em] text-slate-500">
-                <span>Rank</span>
-                <span>User</span>
-                <span className="text-right">Points</span>
-                <span className="text-right">Streak</span>
-              </div>
-
-              <div className="divide-y divide-slate-200 bg-white">
-                {leaderboard.length > 0 ? (
-                  leaderboard.map((entry) => {
-                    const isYou =
-                      Boolean(address) &&
-                      entry.address.toLowerCase() === address?.toLowerCase();
-
-                    return (
-                      <div
-                        key={entry.address}
-                        className={`grid grid-cols-[0.75fr_1.6fr_1fr_0.9fr] items-center gap-3 px-4 py-4 text-sm ${
-                          isYou ? "bg-sky-50" : "bg-white"
-                        }`}
-                      >
-                        <span className="font-black text-slate-700">
-                          {entry.rank === 1
-                            ? "🥇"
-                            : entry.rank === 2
-                              ? "🥈"
-                              : entry.rank === 3
-                                ? "🥉"
-                                : `#${entry.rank}`}
-                        </span>
-                        <div className="min-w-0">
-                          <p className={`truncate font-semibold ${isYou ? "text-sky-700" : "text-slate-800"}`}>
-                            {isYou ? `${shortAddress(entry.address)} (You)` : shortAddress(entry.address)}
-                          </p>
-                          <p className="mt-1 text-xs text-slate-500">
-                            {entry.boostPercent ? `Boost +${entry.boostPercent}%` : "Boost +0%"}
-                          </p>
-                        </div>
-                        <span className="text-right font-black text-slate-900">
-                          {formatNumber(entry.points)}
-                        </span>
-                        <span className="text-right font-semibold text-slate-600">
-                          {entry.streak} 🔥
-                        </span>
-                      </div>
-                    );
-                  })
-                ) : (
-                  <div className="px-4 py-12 text-center text-sm text-slate-500">
-                    No users on the leaderboard yet.
-                  </div>
-                )}
-              </div>
             </div>
           </div>
         </section>
-      </div>
-    </div>
-  );
-}
-
-function MetricTile({
-  label,
-  value,
-  accent,
-}: {
-  label: string;
-  value: string;
-  accent: "sky" | "amber" | "emerald";
-}) {
-  const accents = {
-    sky: "border-sky-200 bg-sky-50 text-sky-800",
-    amber: "border-amber-200 bg-amber-50 text-amber-800",
-    emerald: "border-emerald-200 bg-emerald-50 text-emerald-800",
-  };
-
-  return (
-    <div className={`rounded-[24px] border px-4 py-4 ${accents[accent]}`}>
-      <p className="text-[11px] font-black uppercase tracking-[0.24em] opacity-70">{label}</p>
-      <p className="mt-2 text-2xl font-black tracking-tight">{value}</p>
-    </div>
-  );
-}
-
-function StatCard({
-  title,
-  value,
-  icon,
-  tone,
-  isLoading,
-}: {
-  title: string;
-  value: string;
-  icon: string;
-  tone: "sky" | "emerald" | "amber" | "rose";
-  isLoading: boolean;
-}) {
-  const tones = {
-    sky: "from-sky-100 to-sky-50 border-sky-200",
-    emerald: "from-emerald-100 to-emerald-50 border-emerald-200",
-    amber: "from-amber-100 to-amber-50 border-amber-200",
-    rose: "from-rose-100 to-rose-50 border-rose-200",
-  };
-
-  return (
-    <div className={`rounded-[30px] border bg-[linear-gradient(180deg,var(--tw-gradient-from),var(--tw-gradient-to))] p-5 shadow-[0_18px_50px_rgba(15,23,42,0.06)] ${tones[tone]}`}>
-      <div className="flex items-center gap-3">
-        <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-white/80 text-xl shadow-[inset_0_1px_0_rgba(255,255,255,0.75)]">
-          {icon}
-        </div>
-        <div>
-          <p className="text-[11px] font-black uppercase tracking-[0.28em] text-slate-500">
-            {title}
-          </p>
-          <p className="mt-2 text-2xl font-black tracking-tight text-slate-950">
-            {isLoading ? <span className="animate-pulse text-slate-400">...</span> : value}
-          </p>
-        </div>
       </div>
     </div>
   );

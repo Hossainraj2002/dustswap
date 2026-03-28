@@ -616,10 +616,10 @@ export function QuestBoard() {
                 Quest Board
               </p>
               <h1 className="mt-3 text-3xl font-semibold tracking-tight text-white sm:text-4xl">
-                Social and onchain quests that stay editable from admin.
+                Social and onchain quests.
               </h1>
               <p className="mt-3 max-w-xl text-sm leading-6 text-gray-300 sm:text-base">
-                Start with swap volume, X login and post verification, then keep adding new tasks from the admin manager instead of shipping code every time.
+                Start completing quests and earn Particle Points PP from every action. PP reflects your contribution to dustswap.
               </p>
             </div>
 

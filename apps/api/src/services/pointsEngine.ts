@@ -4,8 +4,6 @@ import {
   erc20Abi,
   formatUnits,
   http,
-  isAddress,
-  parseEther,
 } from "viem";
 import { base } from "viem/chains";
 import { supabase } from "./supabase";
@@ -32,6 +30,9 @@ const CFG = {
   STREAK_LENGTH: 30,
   STREAK_BOOST_STEP_PERCENT: 10,
   MAX_STREAK_BOOST_PERCENT: 300,
+
+  CHECK_IN_FEE_USD: 0.01,
+  STREAK_RESTORE_FEE_USD: 1,
 } as const;
 
 const BASE_RPC_URL =
@@ -46,11 +47,9 @@ const STREAK_SAVE_USDC_ADDRESS =
   process.env.STREAK_SAVE_USDC_ADDRESS ||
   process.env.NEXT_PUBLIC_STREAK_SAVE_USDC_ADDRESS ||
   "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
-const STREAK_SAVE_USDC_AMOUNT = BigInt(1_000_000);
-const STREAK_SAVE_ETH_AMOUNT_WEI =
-  process.env.STREAK_SAVE_ETH_AMOUNT_WEI
-    ? BigInt(process.env.STREAK_SAVE_ETH_AMOUNT_WEI)
-    : parseEther("0.0003");
+const DEFAULT_ETH_PRICE_USD = Number(process.env.DEFAULT_ETH_PRICE_USD || "3500");
+const PRICE_SCALE = 100_000_000;
+const WEI_PER_ETH = 10n ** 18n;
 
 const baseClient = createPublicClient({
   chain: base,
@@ -68,6 +67,15 @@ type UserRecord = {
   last_check_in: string | null;
 };
 
+type DailyAssetPriceRecord = {
+  id: number;
+  asset_symbol: string;
+  price_date: string;
+  price_usd: number;
+  source: string;
+  metadata: Record<string, unknown> | null;
+};
+
 type StreakStatus = "ready" | "active" | "checked_in" | "broken";
 type SaveAsset = "eth" | "usdc";
 
@@ -82,6 +90,27 @@ type StreakSnapshot = {
   recoverableBoostPercent: number;
   todayEndsAt: string;
   nextCheckInAt: string;
+};
+
+type FeeConfig = {
+  chainId: number;
+  recipient: string;
+  usdcAddress: string;
+  usdTarget: number;
+  usdcAmount: string;
+  usdcAmountUnits: string;
+  ethAmountWei: string;
+  ethAmountDisplay: string;
+  ethPriceUsd: number;
+  priceDate: string;
+};
+
+type VerifiedPayment = {
+  asset: SaveAsset;
+  amount: string;
+  amountUsd: number;
+  priceDate: string;
+  ethPriceUsd: number;
 };
 
 function genCode(): string {
@@ -146,7 +175,10 @@ function safeMetadata(meta: unknown, extra: Record<string, unknown>) {
   };
 }
 
-function buildStreakSnapshot(user: Pick<UserRecord, "current_streak" | "last_check_in">, now = new Date()): StreakSnapshot {
+function buildStreakSnapshot(
+  user: Pick<UserRecord, "current_streak" | "last_check_in">,
+  now = new Date()
+): StreakSnapshot {
   const todayKey = getUtcDayKey(now);
   const yesterdayKey = getYesterdayUtcKey(now);
   const lastCheckInKey = getUtcDayKey(user.last_check_in);
@@ -188,6 +220,53 @@ function isBoostEligibleAction(action: string) {
   ].includes(action);
 }
 
+function normalizeDailyPriceRow(row: any): DailyAssetPriceRecord {
+  return {
+    id: Number(row.id),
+    asset_symbol: String(row.asset_symbol),
+    price_date: String(row.price_date),
+    price_usd: Number(row.price_usd),
+    source: String(row.source),
+    metadata:
+      row.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata)
+        ? (row.metadata as Record<string, unknown>)
+        : {},
+  };
+}
+
+function getUsdcUnitsForUsd(usdAmount: number) {
+  return BigInt(Math.round(usdAmount * 1_000_000));
+}
+
+function calculateEthWeiFromUsd(usdAmount: number, ethPriceUsd: number) {
+  const usdScaled = BigInt(Math.round(usdAmount * PRICE_SCALE));
+  const ethPriceScaled = BigInt(Math.round(ethPriceUsd * PRICE_SCALE));
+
+  if (usdScaled <= 0n || ethPriceScaled <= 0n) {
+    throw new Error("Invalid ETH price snapshot");
+  }
+
+  return (usdScaled * WEI_PER_ETH + ethPriceScaled - 1n) / ethPriceScaled;
+}
+
+function buildFeeConfig(snapshot: DailyAssetPriceRecord, usdTarget: number): FeeConfig {
+  const usdcUnits = getUsdcUnitsForUsd(usdTarget);
+  const ethWei = calculateEthWeiFromUsd(usdTarget, snapshot.price_usd);
+
+  return {
+    chainId: base.id,
+    recipient: STREAK_SAVE_RECIPIENT,
+    usdcAddress: STREAK_SAVE_USDC_ADDRESS,
+    usdTarget,
+    usdcAmount: usdTarget.toFixed(2),
+    usdcAmountUnits: usdcUnits.toString(),
+    ethAmountWei: ethWei.toString(),
+    ethAmountDisplay: formatUnits(ethWei, 18),
+    ethPriceUsd: snapshot.price_usd,
+    priceDate: snapshot.price_date,
+  };
+}
+
 export class PointsEngine {
   async getOrCreate(address: string): Promise<UserRecord> {
     const norm = address.toLowerCase();
@@ -213,14 +292,134 @@ export class PointsEngine {
       })
       .select()
       .single();
+
     if (error) {
       throw new Error(`Create user: ${error.message}`);
     }
+
     return nu as UserRecord;
+  }
+
+  private async fetchCurrentEthPriceUsd() {
+    const response = await fetch(
+      "https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd",
+      {
+        headers: {
+          Accept: "application/json",
+        },
+      }
+    );
+
+    if (!response.ok) {
+      throw new Error(`ETH price request failed with ${response.status}`);
+    }
+
+    const payload = (await response.json()) as {
+      ethereum?: {
+        usd?: number;
+      };
+    };
+
+    const priceUsd = Number(payload.ethereum?.usd || 0);
+    if (!Number.isFinite(priceUsd) || priceUsd <= 0) {
+      throw new Error("ETH price feed returned an invalid value");
+    }
+
+    return priceUsd;
+  }
+
+  private async getLatestEthPriceSnapshot() {
+    const { data, error } = await supabase
+      .from("daily_asset_prices")
+      .select("*")
+      .eq("asset_symbol", "ETH")
+      .order("price_date", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (error) {
+      throw new Error(`Failed to load latest ETH snapshot: ${error.message}`);
+    }
+
+    return data ? normalizeDailyPriceRow(data) : null;
+  }
+
+  private async getDailyEthPriceSnapshot(date = new Date()) {
+    const dateKey = getUtcDayKey(date);
+    if (!dateKey) {
+      throw new Error("Could not resolve a UTC date for the ETH price snapshot");
+    }
+
+    const { data, error } = await supabase
+      .from("daily_asset_prices")
+      .select("*")
+      .eq("asset_symbol", "ETH")
+      .eq("price_date", dateKey)
+      .maybeSingle();
+
+    if (error) {
+      throw new Error(`Failed to load ETH price snapshot: ${error.message}`);
+    }
+
+    if (data) {
+      return normalizeDailyPriceRow(data);
+    }
+
+    const upsertRow = async (
+      priceUsd: number,
+      source: string,
+      metadata: Record<string, unknown>
+    ) => {
+      const { data: inserted, error: upsertError } = await supabase
+        .from("daily_asset_prices")
+        .upsert(
+          {
+            asset_symbol: "ETH",
+            price_date: dateKey,
+            price_usd: priceUsd,
+            source,
+            metadata,
+            updated_at: new Date().toISOString(),
+          },
+          {
+            onConflict: "asset_symbol,price_date",
+          }
+        )
+        .select("*")
+        .single();
+
+      if (upsertError) {
+        throw new Error(`Failed to save ETH price snapshot: ${upsertError.message}`);
+      }
+
+      return normalizeDailyPriceRow(inserted);
+    };
+
+    try {
+      const livePriceUsd = await this.fetchCurrentEthPriceUsd();
+      return upsertRow(livePriceUsd, "coingecko", {
+        syncedAt: new Date().toISOString(),
+      });
+    } catch {
+      const latest = await this.getLatestEthPriceSnapshot();
+      if (latest) {
+        return upsertRow(latest.price_usd, "fallback_cached", {
+          fallbackFromDate: latest.price_date,
+        });
+      }
+
+      return upsertRow(DEFAULT_ETH_PRICE_USD, "fallback_default", {
+        fallbackReason: "price_feed_unavailable",
+      });
+    }
   }
 
   private async buildBalance(user: UserRecord) {
     const snapshot = buildStreakSnapshot(user);
+    const priceSnapshot = await this.getDailyEthPriceSnapshot();
+    const checkInConfig = buildFeeConfig(priceSnapshot, CFG.CHECK_IN_FEE_USD);
+    const saveConfig = buildFeeConfig(priceSnapshot, CFG.STREAK_RESTORE_FEE_USD);
+
     const { count } = await supabase
       .from("users")
       .select("*", { count: "exact", head: true })
@@ -248,14 +447,8 @@ export class PointsEngine {
       boostAppliesTo:
         "Self-earned points get the boost. Referral points stay unchanged.",
       streakLength: CFG.STREAK_LENGTH,
-      saveConfig: {
-        chainId: base.id,
-        recipient: STREAK_SAVE_RECIPIENT,
-        usdcAddress: STREAK_SAVE_USDC_ADDRESS,
-        usdcAmount: formatUnits(STREAK_SAVE_USDC_AMOUNT, 6),
-        ethAmountWei: STREAK_SAVE_ETH_AMOUNT_WEI.toString(),
-        ethAmountDisplay: formatUnits(STREAK_SAVE_ETH_AMOUNT_WEI, 18),
-      },
+      checkInConfig,
+      saveConfig,
     };
   }
 
@@ -340,13 +533,152 @@ export class PointsEngine {
     );
   }
 
-  async dailyCheckIn(address: string) {
-    const user = await this.getOrCreate(address);
+  private async verifyFeeTransaction(
+    normalizedAddress: string,
+    txHash: string,
+    usdTarget: number,
+    asset?: SaveAsset
+  ): Promise<VerifiedPayment> {
+    const priceSnapshot = await this.getDailyEthPriceSnapshot();
+    const ethRequiredWei = calculateEthWeiFromUsd(usdTarget, priceSnapshot.price_usd);
+    const usdcRequiredUnits = getUsdcUnitsForUsd(usdTarget);
+
+    const [transaction, receipt] = await Promise.all([
+      baseClient.getTransaction({ hash: txHash as `0x${string}` }),
+      baseClient.getTransactionReceipt({ hash: txHash as `0x${string}` }),
+    ]);
+
+    if (receipt.status !== "success") {
+      throw new Error("Payment transaction is not confirmed");
+    }
+
+    if (transaction.from.toLowerCase() !== normalizedAddress) {
+      throw new Error("Payment transaction sender does not match this wallet");
+    }
+
+    if (asset === "usdc") {
+      const result = this.verifyUsdcPayment(
+        receipt.logs,
+        normalizedAddress,
+        usdcRequiredUnits
+      );
+
+      return {
+        ...result,
+        amountUsd: usdTarget,
+        priceDate: priceSnapshot.price_date,
+        ethPriceUsd: priceSnapshot.price_usd,
+      };
+    }
+
+    if (asset === "eth") {
+      const result = this.verifyEthPayment(transaction.to, transaction.value, ethRequiredWei);
+
+      return {
+        ...result,
+        amountUsd: usdTarget,
+        priceDate: priceSnapshot.price_date,
+        ethPriceUsd: priceSnapshot.price_usd,
+      };
+    }
+
+    try {
+      const usdcPayment = this.verifyUsdcPayment(
+        receipt.logs,
+        normalizedAddress,
+        usdcRequiredUnits
+      );
+
+      return {
+        ...usdcPayment,
+        amountUsd: usdTarget,
+        priceDate: priceSnapshot.price_date,
+        ethPriceUsd: priceSnapshot.price_usd,
+      };
+    } catch {
+      const ethPayment = this.verifyEthPayment(transaction.to, transaction.value, ethRequiredWei);
+      return {
+        ...ethPayment,
+        amountUsd: usdTarget,
+        priceDate: priceSnapshot.price_date,
+        ethPriceUsd: priceSnapshot.price_usd,
+      };
+    }
+  }
+
+  private verifyEthPayment(to: string | null, value: bigint, requiredWei: bigint) {
+    if (!to || to.toLowerCase() !== STREAK_SAVE_RECIPIENT.toLowerCase()) {
+      throw new Error("ETH payment was not sent to the check-in wallet");
+    }
+
+    if (value < requiredWei) {
+      throw new Error("ETH payment is below the required amount");
+    }
+
+    return {
+      asset: "eth" as const,
+      amount: value.toString(),
+    };
+  }
+
+  private verifyUsdcPayment(
+    logs: readonly any[],
+    normalizedAddress: string,
+    requiredAmount: bigint
+  ) {
+    for (const log of logs) {
+      if (String(log.address).toLowerCase() !== STREAK_SAVE_USDC_ADDRESS.toLowerCase()) {
+        continue;
+      }
+
+      try {
+        const decoded = decodeEventLog({
+          abi: erc20Abi,
+          data: log.data,
+          topics: log.topics,
+        });
+
+        if (decoded.eventName !== "Transfer") {
+          continue;
+        }
+
+        const from = String(decoded.args.from || "").toLowerCase();
+        const to = String(decoded.args.to || "").toLowerCase();
+        const value = BigInt(decoded.args.value || 0);
+
+        if (
+          from === normalizedAddress &&
+          to === STREAK_SAVE_RECIPIENT.toLowerCase() &&
+          value >= requiredAmount
+        ) {
+          return {
+            asset: "usdc" as const,
+            amount: value.toString(),
+          };
+        }
+      } catch {
+        continue;
+      }
+    }
+
+    throw new Error("USDC payment was not found in this transaction");
+  }
+
+  async dailyCheckIn(address: string, txHash: string, asset?: SaveAsset) {
+    const normalizedAddress = address.toLowerCase();
+    const user = await this.getOrCreate(normalizedAddress);
     const snapshot = buildStreakSnapshot(user);
 
     if (snapshot.checkedInToday) {
       throw new Error("Already checked in today");
     }
+
+    const payment = await this.verifyFeeTransaction(
+      normalizedAddress,
+      txHash,
+      CFG.CHECK_IN_FEE_USD,
+      asset
+    );
 
     const nextStreak = snapshot.status === "active" ? user.current_streak + 1 : 1;
     const pointsAwarded = CFG.CHECK_IN;
@@ -358,6 +690,11 @@ export class PointsEngine {
       check_in_date: checkInDate,
       points_earned: pointsAwarded,
       streak_day: nextStreak,
+      payment_tx_hash: txHash,
+      payment_asset: payment.asset,
+      payment_amount: payment.amount,
+      payment_amount_usd: payment.amountUsd,
+      price_snapshot_date: payment.priceDate,
     });
 
     await supabase.from("point_events").insert({
@@ -366,10 +703,16 @@ export class PointsEngine {
       points: pointsAwarded,
       multiplier: 1,
       total_awarded: pointsAwarded,
+      tx_hash: txHash,
       metadata: {
         streakDay: nextStreak,
         unlockedBoostPercent: getBoostPercent(nextStreak),
         boostAppliesTo: "self_earned_only",
+        paymentAsset: payment.asset,
+        paymentAmount: payment.amount,
+        paymentAmountUsd: payment.amountUsd,
+        priceSnapshotDate: payment.priceDate,
+        ethPriceUsd: payment.ethPriceUsd,
       },
       season: 1,
     });
@@ -396,6 +739,8 @@ export class PointsEngine {
     return {
       points: pointsAwarded,
       pointsAwarded,
+      paymentAsset: payment.asset,
+      paymentAmountUsd: payment.amountUsd,
       unlockedBoostPercent: getBoostPercent(nextStreak),
       ...(await this.buildBalance(nextUser)),
     };
@@ -450,20 +795,20 @@ export class PointsEngine {
       throw new Error("That recovery transaction has already been used");
     }
 
-    const verification = await this.verifyRecoveryTransaction(
+    const payment = await this.verifyFeeTransaction(
       normalizedAddress,
       txHash,
+      CFG.STREAK_RESTORE_FEE_USD,
       asset
     );
 
     await supabase.from("streak_recovery_events").insert({
       user_id: user.id,
       tx_hash: txHash,
-      asset_symbol: verification.asset.toUpperCase(),
-      asset_address:
-        verification.asset === "usdc" ? STREAK_SAVE_USDC_ADDRESS : null,
-      amount: verification.amount,
-      amount_usd: 1,
+      asset_symbol: payment.asset.toUpperCase(),
+      asset_address: payment.asset === "usdc" ? STREAK_SAVE_USDC_ADDRESS : null,
+      amount: payment.amount,
+      amount_usd: payment.amountUsd,
       previous_streak: snapshot.recoverableStreak,
       restored_streak: snapshot.recoverableStreak,
       status: "confirmed",
@@ -486,96 +831,10 @@ export class PointsEngine {
     return {
       restored: true,
       txHash,
-      asset: verification.asset,
+      asset: payment.asset,
+      paymentAmountUsd: payment.amountUsd,
       ...(await this.buildBalance(nextUser)),
     };
-  }
-
-  private async verifyRecoveryTransaction(
-    normalizedAddress: string,
-    txHash: string,
-    asset?: SaveAsset
-  ) {
-    const [transaction, receipt] = await Promise.all([
-      baseClient.getTransaction({ hash: txHash as `0x${string}` }),
-      baseClient.getTransactionReceipt({ hash: txHash as `0x${string}` }),
-    ]);
-
-    if (receipt.status !== "success") {
-      throw new Error("Recovery transaction is not confirmed");
-    }
-
-    if (transaction.from.toLowerCase() !== normalizedAddress) {
-      throw new Error("Recovery transaction sender does not match this wallet");
-    }
-
-    if (asset === "usdc") {
-      return this.verifyUsdcRecovery(receipt.logs, normalizedAddress);
-    }
-
-    if (asset === "eth") {
-      return this.verifyEthRecovery(transaction.to, transaction.value);
-    }
-
-    try {
-      return this.verifyUsdcRecovery(receipt.logs, normalizedAddress);
-    } catch {
-      return this.verifyEthRecovery(transaction.to, transaction.value);
-    }
-  }
-
-  private verifyEthRecovery(to: string | null, value: bigint) {
-    if (!to || to.toLowerCase() !== STREAK_SAVE_RECIPIENT.toLowerCase()) {
-      throw new Error("ETH recovery payment was not sent to the save wallet");
-    }
-
-    if (value < STREAK_SAVE_ETH_AMOUNT_WEI) {
-      throw new Error("ETH recovery payment is below the required amount");
-    }
-
-    return {
-      asset: "eth" as const,
-      amount: value.toString(),
-    };
-  }
-
-  private verifyUsdcRecovery(logs: readonly any[], normalizedAddress: string) {
-    for (const log of logs) {
-      if (String(log.address).toLowerCase() !== STREAK_SAVE_USDC_ADDRESS.toLowerCase()) {
-        continue;
-      }
-
-      try {
-        const decoded = decodeEventLog({
-          abi: erc20Abi,
-          data: log.data,
-          topics: log.topics,
-        });
-
-        if (decoded.eventName !== "Transfer") {
-          continue;
-        }
-
-        const from = String(decoded.args.from || "").toLowerCase();
-        const to = String(decoded.args.to || "").toLowerCase();
-        const value = BigInt(decoded.args.value || 0);
-
-        if (
-          from === normalizedAddress &&
-          to === STREAK_SAVE_RECIPIENT.toLowerCase() &&
-          value >= STREAK_SAVE_USDC_AMOUNT
-        ) {
-          return {
-            asset: "usdc" as const,
-            amount: value.toString(),
-          };
-        }
-      } catch {
-        continue;
-      }
-    }
-
-    throw new Error("USDC recovery payment was not found in this transaction");
   }
 
   async recordSweep(
@@ -641,6 +900,7 @@ export class PointsEngine {
       sourceChain,
       volumeUsd,
     });
+
     return award.totalAwarded;
   }
 
@@ -785,7 +1045,10 @@ export class PointsEngine {
       throw new Error("Cannot self-refer");
     }
 
-    await supabase.from("users").update({ referred_by: (referrer as UserRecord).id }).eq("id", user.id);
+    await supabase
+      .from("users")
+      .update({ referred_by: (referrer as UserRecord).id })
+      .eq("id", user.id);
     await supabase.from("referrals").insert({
       referrer_id: (referrer as UserRecord).id,
       referee_id: user.id,

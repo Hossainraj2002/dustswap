@@ -38,8 +38,32 @@ CREATE TABLE IF NOT EXISTS check_ins (
   check_in_date  DATE     NOT NULL,
   points_earned  INTEGER  NOT NULL,
   streak_day     INTEGER  NOT NULL,
+  payment_tx_hash VARCHAR(66),
+  payment_asset   VARCHAR(10),
+  payment_amount  TEXT,
+  payment_amount_usd DECIMAL(20,6),
+  price_snapshot_date DATE,
   created_at     TIMESTAMP DEFAULT NOW(),
   UNIQUE(user_id, check_in_date)
+);
+
+ALTER TABLE check_ins ADD COLUMN IF NOT EXISTS payment_tx_hash VARCHAR(66);
+ALTER TABLE check_ins ADD COLUMN IF NOT EXISTS payment_asset VARCHAR(10);
+ALTER TABLE check_ins ADD COLUMN IF NOT EXISTS payment_amount TEXT;
+ALTER TABLE check_ins ADD COLUMN IF NOT EXISTS payment_amount_usd DECIMAL(20,6);
+ALTER TABLE check_ins ADD COLUMN IF NOT EXISTS price_snapshot_date DATE;
+
+-- Daily price snapshots for ETH fallback fee calculations
+CREATE TABLE IF NOT EXISTS daily_asset_prices (
+  id            SERIAL PRIMARY KEY,
+  asset_symbol  VARCHAR(20) NOT NULL,
+  price_date    DATE NOT NULL,
+  price_usd     DECIMAL(20,8) NOT NULL,
+  source        VARCHAR(40) NOT NULL DEFAULT 'coingecko',
+  metadata      JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at    TIMESTAMP DEFAULT NOW(),
+  updated_at    TIMESTAMP DEFAULT NOW(),
+  UNIQUE(asset_symbol, price_date)
 );
 
 -- Paid streak recovery history
@@ -93,11 +117,13 @@ CREATE INDEX IF NOT EXISTS idx_users_points   ON users(total_points DESC);
 CREATE INDEX IF NOT EXISTS idx_users_refcode  ON users(referral_code);
 CREATE INDEX IF NOT EXISTS idx_history_user   ON sweep_history(user_id);
 CREATE INDEX IF NOT EXISTS idx_recovery_user  ON streak_recovery_events(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_daily_asset_prices_symbol_date ON daily_asset_prices(asset_symbol, price_date DESC);
 
 -- Enable Row Level Security
 ALTER TABLE users          ENABLE ROW LEVEL SECURITY;
 ALTER TABLE point_events   ENABLE ROW LEVEL SECURITY;
 ALTER TABLE check_ins      ENABLE ROW LEVEL SECURITY;
+ALTER TABLE daily_asset_prices ENABLE ROW LEVEL SECURITY;
 ALTER TABLE streak_recovery_events ENABLE ROW LEVEL SECURITY;
 ALTER TABLE referrals      ENABLE ROW LEVEL SECURITY;
 ALTER TABLE sweep_history  ENABLE ROW LEVEL SECURITY;
@@ -106,12 +132,14 @@ ALTER TABLE sweep_history  ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "service_all_users"      ON users;
 DROP POLICY IF EXISTS "service_all_events"     ON point_events;
 DROP POLICY IF EXISTS "service_all_checkins"   ON check_ins;
+DROP POLICY IF EXISTS "service_all_daily_prices" ON daily_asset_prices;
 DROP POLICY IF EXISTS "service_all_recoveries" ON streak_recovery_events;
 DROP POLICY IF EXISTS "service_all_referrals"  ON referrals;
 DROP POLICY IF EXISTS "service_all_history"    ON sweep_history;
 CREATE POLICY "service_all_users"         ON users          FOR ALL USING (true);
 CREATE POLICY "service_all_events"        ON point_events   FOR ALL USING (true);
 CREATE POLICY "service_all_checkins"      ON check_ins      FOR ALL USING (true);
+CREATE POLICY "service_all_daily_prices"  ON daily_asset_prices FOR ALL USING (true);
 CREATE POLICY "service_all_recoveries"    ON streak_recovery_events FOR ALL USING (true);
 CREATE POLICY "service_all_referrals"     ON referrals      FOR ALL USING (true);
 CREATE POLICY "service_all_history"       ON sweep_history  FOR ALL USING (true);

@@ -38,12 +38,20 @@ pointsRoutes.get("/:address/referrals", async (c) => {
 
 // POST /api/points/check-in
 pointsRoutes.post("/check-in", async (c) => {
-  const body = await c.req.json<{ address?: string }>();
-  if (!body.address) {
-    return c.json({ error: "address required" }, 400);
+  const body = await c.req.json<{
+    address?: string;
+    txHash?: string;
+    asset?: "eth" | "usdc";
+  }>();
+  if (!body.address || !body.txHash) {
+    return c.json({ error: "address and txHash required" }, 400);
   }
   try {
-    const result = await pointsEngine.dailyCheckIn(body.address);
+    const result = await pointsEngine.dailyCheckIn(
+      body.address,
+      body.txHash,
+      body.asset
+    );
     return c.json({ success: true, ...result });
   } catch (e: unknown) {
     const msg = (e as Error).message;

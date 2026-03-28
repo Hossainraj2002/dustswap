@@ -39,13 +39,29 @@ export type PointsBalance = {
   boostStepPercent: number;
   boostAppliesTo: string;
   streakLength: number;
+  checkInConfig: {
+    chainId: number;
+    recipient: string;
+    usdcAddress: string;
+    usdTarget: number;
+    usdcAmount: string;
+    usdcAmountUnits: string;
+    ethAmountWei: string;
+    ethAmountDisplay: string;
+    ethPriceUsd: number;
+    priceDate: string;
+  };
   saveConfig: {
     chainId: number;
     recipient: string;
     usdcAddress: string;
+    usdTarget: number;
     usdcAmount: string;
+    usdcAmountUnits: string;
     ethAmountWei: string;
     ethAmountDisplay: string;
+    ethPriceUsd: number;
+    priceDate: string;
   };
   error?: string;
 };
@@ -131,19 +147,25 @@ export async function fetchLeaderboard(limit = 50) {
   return parseJson<LeaderboardResponse>(response);
 }
 
-export async function performDailyCheckIn(address: string) {
+export async function performDailyCheckIn(input: {
+  address: string;
+  txHash: string;
+  asset: "eth" | "usdc";
+}) {
   const response = await fetch(getPointsApiUrl("/check-in"), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ address }),
+    body: JSON.stringify(input),
   });
 
   return parseJson<
     PointsBalance & {
       points: number;
       pointsAwarded: number;
+      paymentAsset: "eth" | "usdc";
+      paymentAmountUsd: number;
       unlockedBoostPercent: number;
     }
   >(response);
