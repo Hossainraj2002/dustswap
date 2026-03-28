@@ -136,6 +136,22 @@ export async function fetchReferralStats(address: string) {
   return parseJson<ReferralStats>(response);
 }
 
+export async function applyReferralCode(address: string, referralCode: string) {
+  const response = await fetch(getPointsApiUrl("/referral/apply"), {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ address, referralCode }),
+  });
+
+  return parseJson<{
+    success: boolean;
+    message?: string;
+    error?: string;
+  }>(response);
+}
+
 export async function fetchLeaderboard(limit = 50) {
   const response = await fetch(getPointsApiUrl(`/leaderboard?limit=${limit}`), {
     headers: {

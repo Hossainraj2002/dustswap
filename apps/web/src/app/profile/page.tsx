@@ -7,6 +7,7 @@ import { encodeFunctionData, erc20Abi } from "viem";
 import { DailyCheckInModule } from "@/components/profile/DailyCheckInModule";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import {
+  applyReferralCode,
   fetchPointsBalance,
   fetchReferralStats,
   fetchUserStats,
@@ -17,6 +18,12 @@ import {
   type ReferralStats,
   type UserStats,
 } from "@/lib/points";
+import {
+  buildReferralLink,
+  clearPendingReferralCode,
+  getPendingReferralCode,
+  isTerminalReferralError,
+} from "@/lib/referrals";
 import { BASE_CHAIN_ID, USDC_ADDRESS } from "@/lib/tokens";
 import { DATA_SUFFIX } from "@/lib/builderCode";
 
@@ -127,6 +134,7 @@ function ProfilePageContent() {
   const [toast, setToast] = useState<ToastState>(null);
   const [celebration, setCelebration] = useState<CelebrationState>(null);
   const [isCopied, setIsCopied] = useState(false);
+  const [pendingReferralCode, setPendingReferralCode] = useState<string | null>(null);
 
   const [isCheckingIn, setIsCheckingIn] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -170,6 +178,10 @@ function ProfilePageContent() {
   const usesBasePayForSave = isCoinbaseWallet && preferredSaveAsset === "usdc";
   const displayCheckInAsset = usesBasePayForCheckIn ? "usdc" : preferredCheckInAsset;
   const displaySaveAsset = usesBasePayForSave ? "usdc" : preferredSaveAsset;
+  const referralLink = useMemo(
+    () => (referral?.code ? buildReferralLink(referral.code) : ""),
+    [referral?.code]
+  );
 
   const fetchProfileData = useCallback(async () => {
     if (!address) {
@@ -222,6 +234,7 @@ function ProfilePageContent() {
 
   useEffect(() => {
     setIsMounted(true);
+    setPendingReferralCode(getPendingReferralCode());
   }, []);
 
   useEffect(() => {
@@ -244,6 +257,49 @@ function ProfilePageContent() {
 
     return () => window.clearInterval(interval);
   }, [address, fetchProfileData]);
+
+  useEffect(() => {
+    if (!address || !pendingReferralCode) {
+      return;
+    }
+
+    let cancelled = false;
+
+    const run = async () => {
+      const codeToApply = pendingReferralCode;
+      setPendingReferralCode(null);
+
+      const result = await applyReferralCode(address, codeToApply);
+      if (cancelled) {
+        return;
+      }
+
+      if (result.success) {
+        clearPendingReferralCode();
+        setToast({
+          kind: "success",
+          message: "Referral linked successfully. Your inviter now earns 20% of your points.",
+        });
+        await fetchProfileData();
+        return;
+      }
+
+      if (isTerminalReferralError(result.error)) {
+        clearPendingReferralCode();
+      }
+
+      setToast({
+        kind: "error",
+        message: result.error || "Referral could not be applied.",
+      });
+    };
+
+    void run();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [address, fetchProfileData, pendingReferralCode]);
 
   useEffect(() => {
     if (!toast) {
@@ -625,7 +681,7 @@ function ProfilePageContent() {
             Invite friends and stack the network
           </h2>
           <p className="mt-2 text-sm leading-6 text-slate-600">
-            Referral rewards stay separate from your streak boost, so your own grind still matters.
+            Share your Base App link and earn 20% of your friends&apos; self-earned points.
           </p>
 
           <div className="mt-4 grid grid-cols-2 gap-2.5">
@@ -648,16 +704,16 @@ function ProfilePageContent() {
               Your Link
             </p>
             <div className="mt-2 flex flex-col gap-2 sm:flex-row">
-              <div className="flex-1 rounded-[16px] border border-slate-200 bg-white px-3 py-3 font-mono text-xs font-semibold tracking-[0.16em] text-sky-700">
-                {referral?.code || "LOADING..."}
+              <div className="flex-1 break-all rounded-[16px] border border-slate-200 bg-white px-3 py-3 font-mono text-[11px] font-semibold leading-5 text-sky-700">
+                {referralLink || "LOADING..."}
               </div>
               <button
                 type="button"
                 onClick={() => {
-                  if (!referral?.code) {
+                  if (!referralLink) {
                     return;
                   }
-                  navigator.clipboard.writeText(`https://dustswap.app/ref/${referral.code}`);
+                  navigator.clipboard.writeText(referralLink);
                   setIsCopied(true);
                   setToast({ kind: "success", message: "Referral link copied." });
                   window.setTimeout(() => setIsCopied(false), 1800);

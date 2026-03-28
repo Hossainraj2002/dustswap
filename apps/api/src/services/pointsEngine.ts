@@ -28,7 +28,7 @@ const CFG = {
   CAP_BURN: 2_000,
 
   REFERRAL_SIGNUP: 500,
-  REFERRAL_COMMISSION_PCT: 10,
+  REFERRAL_COMMISSION_PCT: Number(process.env.REFERRAL_COMMISSION_PCT || "20"),
 
   STREAK_LENGTH: 30,
   STREAK_BOOST_STEP_PERCENT: 10,
@@ -37,6 +37,17 @@ const CFG = {
   CHECK_IN_FEE_USD: 0.01,
   STREAK_RESTORE_FEE_USD: 1,
 } as const;
+
+const REFERRAL_FOUNDER_PASS_CONTRACT =
+  process.env.REFERRAL_FOUNDER_PASS_CONTRACT || "";
+const REFERRAL_FOUNDER_PASS_BONUS_PCT = Number(
+  process.env.REFERRAL_FOUNDER_PASS_BONUS_PCT || "60"
+);
+const REFERRAL_COFOUNDER_PASS_CONTRACT =
+  process.env.REFERRAL_COFOUNDER_PASS_CONTRACT || "";
+const REFERRAL_COFOUNDER_PASS_BONUS_PCT = Number(
+  process.env.REFERRAL_COFOUNDER_PASS_BONUS_PCT || "30"
+);
 
 const BASE_RPC_URL =
   process.env.BASE_RPC_URL ||
@@ -231,6 +242,14 @@ function buildStreakSnapshot(
 function isBoostEligibleAction(action: string) {
   return ![
     "daily_check_in",
+    "referral_commission",
+    "referral_new_user",
+    "referral_welcome",
+  ].includes(action);
+}
+
+function isReferralCommissionEligibleAction(action: string) {
+  return ![
     "referral_commission",
     "referral_new_user",
     "referral_welcome",
@@ -543,6 +562,102 @@ export class PointsEngine {
     };
   }
 
+  private async updateReferralLedger(
+    referrerId: number,
+    refereeId: number,
+    pointsAwarded: number,
+    options?: { markFirstSweep?: boolean }
+  ) {
+    const { data: existingReferral } = await supabase
+      .from("referrals")
+      .select("id, referrer_earned, referee_first_sweep")
+      .eq("referrer_id", referrerId)
+      .eq("referee_id", refereeId)
+      .maybeSingle();
+
+    if (!existingReferral) {
+      await supabase.from("referrals").insert({
+        referrer_id: referrerId,
+        referee_id: refereeId,
+        referrer_earned: pointsAwarded,
+        referee_first_sweep: Boolean(options?.markFirstSweep),
+      });
+      return;
+    }
+
+    await supabase
+      .from("referrals")
+      .update({
+        referrer_earned: Number(existingReferral.referrer_earned || 0) + pointsAwarded,
+        referee_first_sweep:
+          Boolean(existingReferral.referee_first_sweep) || Boolean(options?.markFirstSweep),
+      })
+      .eq("id", Number(existingReferral.id));
+  }
+
+  private async awardReferralCommission(
+    sourceUser: UserRecord,
+    sourceAddress: string,
+    sourceAction: string,
+    sourcePointsAwarded: number,
+    txHash?: string
+  ) {
+    if (
+      !sourceUser.referred_by ||
+      sourcePointsAwarded <= 0 ||
+      !isReferralCommissionEligibleAction(sourceAction)
+    ) {
+      return 0;
+    }
+
+    const { data: referrer } = await supabase
+      .from("users")
+      .select("id, address")
+      .eq("id", sourceUser.referred_by)
+      .maybeSingle();
+
+    if (!referrer) {
+      return 0;
+    }
+
+    const commissionBasePoints = Math.floor(
+      (sourcePointsAwarded * CFG.REFERRAL_COMMISSION_PCT) / 100
+    );
+
+    if (commissionBasePoints <= 0) {
+      return 0;
+    }
+
+    const referralAward = await this.addPoints(
+      String((referrer as { address: string }).address),
+      commissionBasePoints,
+      "referral_commission",
+      txHash,
+      {
+        sourceAction,
+        sourceAddress: sourceAddress.toLowerCase(),
+        sourcePointsAwarded,
+        commissionPct: CFG.REFERRAL_COMMISSION_PCT,
+        founderPassContract: REFERRAL_FOUNDER_PASS_CONTRACT || null,
+        founderPassBonusPct: REFERRAL_FOUNDER_PASS_BONUS_PCT,
+        cofounderPassContract: REFERRAL_COFOUNDER_PASS_CONTRACT || null,
+        cofounderPassBonusPct: REFERRAL_COFOUNDER_PASS_BONUS_PCT,
+      },
+      { applyStreakBoost: false }
+    );
+
+    await this.updateReferralLedger(
+      Number((referrer as { id: number }).id),
+      sourceUser.id,
+      referralAward.totalAwarded,
+      {
+        markFirstSweep: sourceAction === "dust_sweep",
+      }
+    );
+
+    return referralAward.totalAwarded;
+  }
+
   private async addPoints(
     address: string,
     pts: number,
@@ -580,6 +695,8 @@ export class PointsEngine {
         updated_at: new Date().toISOString(),
       })
       .eq("id", user.id);
+
+    await this.awardReferralCommission(user, address, action, totalAwarded, txHash);
 
     return {
       user: {
@@ -969,6 +1086,17 @@ export class PointsEngine {
       })
       .eq("id", user.id);
 
+    await this.awardReferralCommission(
+      {
+        ...nextUser,
+        referred_by: user.referred_by,
+      } as UserRecord,
+      normalizedAddress,
+      "daily_check_in",
+      pointsAwarded,
+      txHash
+    );
+
     return {
       points: pointsAwarded,
       pointsAwarded,
@@ -1087,29 +1215,6 @@ export class PointsEngine {
       tokenCount,
       volumeUsd,
     });
-
-    const user = award.user;
-    if (user.referred_by) {
-      const { data: ref } = await supabase
-        .from("users")
-        .select("address")
-        .eq("id", user.referred_by)
-        .single();
-
-      if (ref) {
-        await this.addPoints(
-          String((ref as { address: string }).address),
-          Math.floor((award.totalAwarded * CFG.REFERRAL_COMMISSION_PCT) / 100),
-          "referral_commission",
-          txHash,
-          {
-            sourceAction: "dust_sweep",
-            sourceAddress: address.toLowerCase(),
-          },
-          { applyStreakBoost: false }
-        );
-      }
-    }
 
     return award.totalAwarded;
   }
@@ -1265,10 +1370,12 @@ export class PointsEngine {
       throw new Error("Already referred");
     }
 
+    const normalizedCode = code.trim().toUpperCase();
+
     const { data: referrer } = await supabase
       .from("users")
       .select("*")
-      .eq("referral_code", code)
+      .eq("referral_code", normalizedCode)
       .single();
 
     if (!referrer) {
@@ -1295,13 +1402,20 @@ export class PointsEngine {
       undefined,
       { applyStreakBoost: false }
     );
-    await this.addPoints(
+
+    const referrerAward = await this.addPoints(
       (referrer as UserRecord).address,
       CFG.REFERRAL_SIGNUP,
       "referral_new_user",
       undefined,
       undefined,
       { applyStreakBoost: false }
+    );
+
+    await this.updateReferralLedger(
+      (referrer as UserRecord).id,
+      user.id,
+      referrerAward.totalAwarded
     );
   }
 }
