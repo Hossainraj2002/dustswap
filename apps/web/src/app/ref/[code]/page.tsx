@@ -135,15 +135,7 @@ export default function ReferralPage({ params }: ReferralPageProps) {
           <div className="mt-5 flex flex-col gap-3">
             {!isConnected ? (
               <div className="rounded-[22px] border border-slate-200 bg-[#fffdf7] p-4 text-center">
-                <p className="text-sm font-semibold text-slate-700">
-                  This code can only be attached to the first wallet connected
-                  on this page.
-                </p>
-                <p className="mt-2 text-sm font-semibold text-slate-700">
-                  Use the wallet that should own this referral and receive the
-                  reward.
-                </p>
-                <div className="mt-4 flex justify-center">
+                <div className="flex justify-center">
                   {/* @ts-ignore */}
                   <appkit-button />
                 </div>
