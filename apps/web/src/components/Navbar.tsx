@@ -1,29 +1,66 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type ComponentType,
+  type SVGProps,
+} from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useAccount } from "wagmi";
+import {
+  BridgeIcon,
+  DustSweepIcon,
+  HomeIcon,
+  LeaderboardIcon,
+  ParticlesIcon,
+  QuestsIcon,
+  SwapIcon,
+} from "@/components/NavIcons";
 
 interface NavLink {
   href: string;
   label: string;
   badge?: string;
-  icon: string;
+  icon: ComponentType<SVGProps<SVGSVGElement>>;
 }
 
 const NAV_LINKS: NavLink[] = [
-  { href: "/quests", label: "Quests", icon: "Q" },
-  { href: "/", label: "Home", icon: "🏠" },
-  { href: "/dust-sweep", label: "Dust Sweep", icon: "🧹" },
-  { href: "/swap", label: "Swap", icon: "🔄" },
-  { href: "/burn", label: "Burn", icon: "🔥" },
-  { href: "/dust-bridge", label: "Bridge", icon: "🌉", badge: "Soon" },
-  { href: "/particles", label: "Particles", icon: "✨" },
+  { href: "/quests", label: "Quests", icon: QuestsIcon },
+  { href: "/", label: "Home", icon: HomeIcon },
+  { href: "/dustsweep", label: "Dust Sweep", icon: DustSweepIcon },
+  { href: "/swap", label: "Swap", icon: SwapIcon },
+  { href: "/leaderboard", label: "Leaderboard", icon: LeaderboardIcon },
+  { href: "/dust-bridge", label: "Bridge", icon: BridgeIcon, badge: "Soon" },
+  { href: "/particles", label: "Particles", icon: ParticlesIcon },
 ];
 
 interface PointsData {
   totalPoints: number;
+}
+
+function NavBadgeIcon({
+  Icon,
+  active,
+}: {
+  Icon: ComponentType<SVGProps<SVGSVGElement>>;
+  active?: boolean;
+}) {
+  return (
+    <span
+      className={`flex h-8 w-8 items-center justify-center rounded-xl border ${
+        active
+          ? "border-[#8B5CF6]/25 bg-[#8B5CF6]/10 text-[#8B5CF6]"
+          : "border-white/10 bg-white/5 text-gray-400"
+      }`}
+      aria-hidden="true"
+    >
+      <Icon className="h-4 w-4" />
+    </span>
+  );
 }
 
 export function Navbar() {
@@ -101,6 +138,7 @@ export function Navbar() {
 
     document.addEventListener("mousedown", handleClickOutside);
     document.addEventListener("keydown", handleEscape);
+
     return () => {
       document.removeEventListener("mousedown", handleClickOutside);
       document.removeEventListener("keydown", handleEscape);
@@ -108,11 +146,8 @@ export function Navbar() {
   }, [mobileMenuOpen]);
 
   useEffect(() => {
-    if (mobileMenuOpen) {
-      document.body.style.overflow = "hidden";
-    } else {
-      document.body.style.overflow = "";
-    }
+    document.body.style.overflow = mobileMenuOpen ? "hidden" : "";
+
     return () => {
       document.body.style.overflow = "";
     };
@@ -122,6 +157,7 @@ export function Navbar() {
     if (href === "/") {
       return pathname === "/";
     }
+
     return pathname.startsWith(href);
   }
 
@@ -129,9 +165,11 @@ export function Navbar() {
     if (num >= 1_000_000) {
       return `${(num / 1_000_000).toFixed(1)}M`;
     }
+
     if (num >= 1_000) {
       return num.toLocaleString("en-US");
     }
+
     return num.toString();
   }
 
@@ -144,24 +182,19 @@ export function Navbar() {
       >
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
           <div className="flex h-16 items-center justify-between">
-            {/* Logo */}
             <Link
               href="/"
               className="group flex shrink-0 items-center gap-2 transition-opacity duration-200 hover:opacity-80"
               aria-label="DustSwap home"
             >
-              <span
-                className="text-2xl transition-transform duration-300 group-hover:rotate-12 group-hover:scale-110"
-                aria-hidden="true"
-              >
-                ✨
+              <span className="flex h-9 w-9 items-center justify-center rounded-2xl border border-white/10 bg-white/5 text-[#8B5CF6] transition-transform duration-300 group-hover:scale-105">
+                <ParticlesIcon className="h-4 w-4" aria-hidden="true" />
               </span>
               <span className="bg-gradient-to-r from-[#8B5CF6] to-[#6366F1] bg-clip-text text-xl font-bold text-transparent">
                 DustSwap
               </span>
             </Link>
 
-            {/* Desktop navigation links */}
             <div className="hidden items-center gap-1 lg:flex">
               {NAV_LINKS.map((link) => {
                 const active = isActive(link.href);
@@ -171,12 +204,10 @@ export function Navbar() {
                   return (
                     <span
                       key={link.href}
-                      className="relative flex cursor-not-allowed items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium text-gray-600 transition-colors duration-200"
+                      className="relative flex cursor-not-allowed items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium text-gray-600"
                       title="Coming soon"
                     >
-                      <span className="text-sm" aria-hidden="true">
-                        {link.icon}
-                      </span>
+                      <NavBadgeIcon Icon={link.icon} />
                       <span>{link.label}</span>
                       <span className="ml-1 rounded-full bg-[#8B5CF6]/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-[#8B5CF6]">
                         Soon
@@ -196,21 +227,15 @@ export function Navbar() {
                     }`}
                     aria-current={active ? "page" : undefined}
                   >
-                    <span className="text-sm" aria-hidden="true">
-                      {link.icon}
-                    </span>
+                    <NavBadgeIcon Icon={link.icon} active={active} />
                     <span>{link.label}</span>
 
-                    {/* Particles link: show count when connected */}
-                    {link.href === "/particles" &&
-                      isConnected &&
-                      !pointsLoading && (
-                        <span className="ml-1 rounded-full bg-[#8B5CF6]/15 px-1.5 py-0.5 text-[10px] font-semibold text-[#8B5CF6]">
-                          {formatNumber(particleCount)}
-                        </span>
-                      )}
+                    {link.href === "/particles" && isConnected && !pointsLoading && (
+                      <span className="ml-1 rounded-full bg-[#8B5CF6]/15 px-1.5 py-0.5 text-[10px] font-semibold text-[#8B5CF6]">
+                        {formatNumber(particleCount)}
+                      </span>
+                    )}
 
-                    {/* Active indicator underline */}
                     {active && (
                       <span
                         className="absolute bottom-0 left-3 right-3 h-0.5 rounded-full bg-[#8B5CF6]"
@@ -222,16 +247,14 @@ export function Navbar() {
               })}
             </div>
 
-            {/* Right section: particle count + wallet + hamburger */}
             <div className="flex items-center gap-3">
-              {/* Particle balance pill (desktop) */}
               {isConnected && (
                 <Link
                   href="/particles"
                   className="hidden items-center gap-1.5 rounded-full border border-[#8B5CF6]/20 bg-[#8B5CF6]/10 px-3 py-1.5 text-sm font-medium text-[#8B5CF6] transition-all duration-200 hover:border-[#8B5CF6]/40 hover:bg-[#8B5CF6]/20 sm:flex"
                   title="Your Dust Particles"
                 >
-                  <span aria-hidden="true">✨</span>
+                  <ParticlesIcon className="h-4 w-4" aria-hidden="true" />
                   {pointsLoading ? (
                     <span className="inline-block h-3.5 w-8 animate-pulse rounded bg-[#8B5CF6]/20" />
                   ) : (
@@ -240,12 +263,9 @@ export function Navbar() {
                 </Link>
               )}
 
-              {/* Reown AppKit Wallet Button */}
               {/* @ts-ignore */}
               <appkit-button />
 
-
-              {/* Mobile hamburger button */}
               <button
                 ref={hamburgerRef}
                 type="button"
@@ -282,7 +302,6 @@ export function Navbar() {
         </div>
       </nav>
 
-      {/* Mobile menu overlay */}
       <div
         className={`fixed inset-0 z-40 bg-black/60 backdrop-blur-sm transition-opacity duration-300 lg:hidden ${
           mobileMenuOpen
@@ -293,7 +312,6 @@ export function Navbar() {
         onClick={() => setMobileMenuOpen(false)}
       />
 
-      {/* Mobile slide-out panel */}
       <div
         ref={mobileMenuRef}
         id="mobile-menu"
@@ -304,11 +322,16 @@ export function Navbar() {
           mobileMenuOpen ? "translate-x-0" : "translate-x-full"
         }`}
       >
-        {/* Mobile menu header */}
         <div className="flex h-16 items-center justify-between border-b border-gray-800 px-4">
-          <span className="bg-gradient-to-r from-[#8B5CF6] to-[#6366F1] bg-clip-text text-lg font-bold text-transparent">
-            ✨ DustSwap
-          </span>
+          <div className="flex items-center gap-2">
+            <span className="flex h-9 w-9 items-center justify-center rounded-2xl border border-white/10 bg-white/5 text-[#8B5CF6]">
+              <ParticlesIcon className="h-4 w-4" aria-hidden="true" />
+            </span>
+            <span className="bg-gradient-to-r from-[#8B5CF6] to-[#6366F1] bg-clip-text text-lg font-bold text-transparent">
+              DustSwap
+            </span>
+          </div>
+
           <button
             type="button"
             onClick={() => setMobileMenuOpen(false)}
@@ -332,7 +355,6 @@ export function Navbar() {
           </button>
         </div>
 
-        {/* Particle balance card (mobile) */}
         {isConnected && (
           <div className="border-b border-gray-800 px-4 py-3">
             <Link
@@ -341,8 +363,8 @@ export function Navbar() {
               className="flex items-center justify-between rounded-xl border border-[#8B5CF6]/20 bg-[#8B5CF6]/5 px-4 py-3 transition-colors duration-200 hover:bg-[#8B5CF6]/10"
             >
               <div className="flex items-center gap-2">
-                <span className="text-lg" aria-hidden="true">
-                  ✨
+                <span className="flex h-9 w-9 items-center justify-center rounded-xl border border-[#8B5CF6]/20 bg-[#8B5CF6]/10 text-[#8B5CF6]">
+                  <ParticlesIcon className="h-4 w-4" aria-hidden="true" />
                 </span>
                 <span className="text-sm font-medium text-gray-300">
                   Dust Particles
@@ -359,7 +381,6 @@ export function Navbar() {
           </div>
         )}
 
-        {/* Mobile navigation links */}
         <nav className="flex-1 overflow-y-auto px-3 py-4" aria-label="Mobile navigation">
           <ul className="flex flex-col gap-1">
             {NAV_LINKS.map((link) => {
@@ -370,8 +391,8 @@ export function Navbar() {
                 <li key={link.href}>
                   {isDisabled ? (
                     <span className="flex cursor-not-allowed items-center gap-3 rounded-xl px-4 py-3 text-sm font-medium text-gray-600">
-                      <span className="text-base" aria-hidden="true">
-                        {link.icon}
+                      <span className="flex h-10 w-10 items-center justify-center rounded-xl border border-white/10 bg-white/5 text-gray-500">
+                        <link.icon className="h-4 w-4" aria-hidden="true" />
                       </span>
                       <span className="flex-1">{link.label}</span>
                       <span className="rounded-full bg-[#8B5CF6]/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-[#8B5CF6]">
@@ -389,18 +410,22 @@ export function Navbar() {
                       }`}
                       aria-current={active ? "page" : undefined}
                     >
-                      <span className="text-base" aria-hidden="true">
-                        {link.icon}
+                      <span
+                        className={`flex h-10 w-10 items-center justify-center rounded-xl border ${
+                          active
+                            ? "border-[#8B5CF6]/25 bg-[#8B5CF6]/10 text-[#8B5CF6]"
+                            : "border-white/10 bg-white/5 text-gray-400"
+                        }`}
+                      >
+                        <link.icon className="h-4 w-4" aria-hidden="true" />
                       </span>
                       <span className="flex-1">{link.label}</span>
 
-                      {link.href === "/particles" &&
-                        isConnected &&
-                        !pointsLoading && (
-                          <span className="rounded-full bg-[#8B5CF6]/15 px-2 py-0.5 text-[10px] font-semibold text-[#8B5CF6]">
-                            {formatNumber(particleCount)}
-                          </span>
-                        )}
+                      {link.href === "/particles" && isConnected && !pointsLoading && (
+                        <span className="rounded-full bg-[#8B5CF6]/15 px-2 py-0.5 text-[10px] font-semibold text-[#8B5CF6]">
+                          {formatNumber(particleCount)}
+                        </span>
+                      )}
 
                       {active && (
                         <span
@@ -416,10 +441,9 @@ export function Navbar() {
           </ul>
         </nav>
 
-        {/* Mobile menu footer */}
         <div className="border-t border-gray-800 px-4 py-4">
           <div className="text-center text-xs text-gray-600">
-            Built on Base · Powered by Coinbase Smart Wallet
+            Built on Base | Powered by Coinbase Smart Wallet
           </div>
         </div>
       </div>

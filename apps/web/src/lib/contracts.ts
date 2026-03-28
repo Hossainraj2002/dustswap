@@ -19,7 +19,6 @@ export const BASE_CHAIN = {
 
 export const DUSTSWAP_CONTRACTS = {
   DustSweepRouter: process.env.NEXT_PUBLIC_DUST_SWEEP_ROUTER_ADDRESS as `0x${string}`,
-  BurnVault: process.env.NEXT_PUBLIC_BURN_VAULT_ADDRESS as `0x${string}`,
   FeeCollector: process.env.NEXT_PUBLIC_FEE_COLLECTOR_ADDRESS as `0x${string}`,
 } as const;
 
@@ -73,9 +72,6 @@ export const FEES = {
 
   /** Fee deducted on singleSwap (0.1%) */
   SWAP_FEE_BPS: 10,
-
-  /** Tax deducted when reclaiming a burned token from BurnVault (10%) */
-  RECLAIM_TAX_BPS: 1000,
 
   /** Basis-point denominator */
   BPS_DENOMINATOR: 10_000,

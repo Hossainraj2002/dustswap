@@ -2,7 +2,7 @@
 @tailwind components;
 @tailwind utilities;
 
-/* ===== BASE LAYER: Dark theme defaults ===== */
+/* ===== BASE LAYER ===== */
 @layer base {
   :root {
     --dust-purple: #8b5cf6;
@@ -21,11 +21,11 @@
 
   html {
     @apply scroll-smooth antialiased;
-    color-scheme: dark;
+    color-scheme: light;
   }
 
   body {
-    @apply bg-[#030305] text-white min-h-screen;
+    @apply min-h-screen;
     font-feature-settings: "rlig" 1, "calt" 1;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
