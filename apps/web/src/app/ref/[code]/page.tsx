@@ -26,7 +26,7 @@ export default function ReferralPage({ params }: ReferralPageProps) {
   const [referralCode, setReferralCode] = useState("");
   const [state, setState] = useState<ApplyState>("idle");
   const [message, setMessage] = useState(
-    "Connect your wallet to lock this referral to your account."
+    "Connect your wallet to activate this referral code."
   );
   const [attempt, setAttempt] = useState(0);
 
@@ -106,18 +106,22 @@ export default function ReferralPage({ params }: ReferralPageProps) {
       <div className="mx-auto flex w-full max-w-xl flex-col gap-3">
         <section className="rounded-[28px] border border-white/70 bg-white/88 p-5 shadow-[0_24px_70px_rgba(15,23,42,0.08)]">
           <p className="text-[10px] font-black uppercase tracking-[0.32em] text-slate-500">
-            Referral Unlock
+            REFERRAL UNLOCK
           </p>
           <h1 className="mt-2 text-3xl font-black tracking-tight text-slate-950">
-            Join DustSwap with a live invite
+            You&apos;ve been invited to join DustSwap
           </h1>
           <p className="mt-2 text-sm leading-6 text-slate-600">
-            This referral code will attach to the first wallet you connect here.
+            Connect your wallet to activate this referral code.
+          </p>
+          <p className="mt-2 text-sm leading-6 text-slate-600">
+            When the invite is linked successfully, both you and the person who
+            referred you receive 500 PP.
           </p>
 
           <div className="mt-4 rounded-[22px] border border-slate-200 bg-[#f8fbff] p-4">
             <p className="text-[10px] font-black uppercase tracking-[0.24em] text-slate-500">
-              Referral Code
+              INVITE CODE
             </p>
             <p className="mt-2 break-all font-mono text-lg font-black tracking-[0.18em] text-sky-700">
               {referralCode || "LOADING..."}
@@ -132,7 +136,12 @@ export default function ReferralPage({ params }: ReferralPageProps) {
             {!isConnected ? (
               <div className="rounded-[22px] border border-slate-200 bg-[#fffdf7] p-4 text-center">
                 <p className="text-sm font-semibold text-slate-700">
-                  Connect the wallet that should receive the invite.
+                  This code can only be attached to the first wallet connected
+                  on this page.
+                </p>
+                <p className="mt-2 text-sm font-semibold text-slate-700">
+                  Use the wallet that should own this referral and receive the
+                  reward.
                 </p>
                 <div className="mt-4 flex justify-center">
                   {/* @ts-ignore */}
