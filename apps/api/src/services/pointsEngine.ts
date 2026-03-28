@@ -1,9 +1,11 @@
 import {
   createPublicClient,
+  decodeFunctionData,
   decodeEventLog,
   erc20Abi,
   formatUnits,
   http,
+  parseAbi,
 } from "viem";
 import { base } from "viem/chains";
 import { getPaymentStatus } from "@base-org/account/payment";
@@ -48,9 +50,17 @@ const STREAK_SAVE_USDC_ADDRESS =
   process.env.STREAK_SAVE_USDC_ADDRESS ||
   process.env.NEXT_PUBLIC_STREAK_SAVE_USDC_ADDRESS ||
   "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+const ENTRY_POINT_V06_ADDRESS = "0x5ff137d4b0fdcd49dca30c7cf57e578a026d2789";
 const DEFAULT_ETH_PRICE_USD = Number(process.env.DEFAULT_ETH_PRICE_USD || "3500");
 const PRICE_SCALE = 100_000_000;
 const WEI_PER_ETH = 10n ** 18n;
+const ENTRY_POINT_HANDLE_OPS_ABI = parseAbi([
+  "function handleOps((address sender,uint256 nonce,bytes initCode,bytes callData,uint256 callGasLimit,uint256 verificationGasLimit,uint256 preVerificationGas,uint256 maxFeePerGas,uint256 maxPriorityFeePerGas,bytes paymasterAndData,bytes signature)[] ops,address beneficiary)",
+]);
+const SMART_WALLET_EXECUTION_ABI = parseAbi([
+  "function execute(address target,uint256 value,bytes data)",
+  "function executeBatch((address target,uint256 value,bytes data)[] calls)",
+]);
 
 const baseClient = createPublicClient({
   chain: base,
@@ -652,6 +662,74 @@ export class PointsEngine {
     };
   }
 
+  private verifySmartWalletEthPayment(
+    normalizedAddress: string,
+    transaction: Awaited<ReturnType<typeof baseClient.getTransaction>>,
+    requiredWei: bigint
+  ) {
+    if (
+      !transaction.to ||
+      transaction.to.toLowerCase() !== ENTRY_POINT_V06_ADDRESS ||
+      transaction.value > 0n ||
+      !transaction.input ||
+      transaction.input === "0x"
+    ) {
+      return null;
+    }
+
+    try {
+      const decodedEntryPointCall = decodeFunctionData({
+        abi: ENTRY_POINT_HANDLE_OPS_ABI,
+        data: transaction.input,
+      });
+
+      if (decodedEntryPointCall.functionName !== "handleOps") {
+        return null;
+      }
+
+      const matchingOperation = decodedEntryPointCall.args[0].find(
+        (operation) => operation.sender.toLowerCase() === normalizedAddress
+      );
+
+      if (!matchingOperation) {
+        return null;
+      }
+
+      const decodedWalletCall = decodeFunctionData({
+        abi: SMART_WALLET_EXECUTION_ABI,
+        data: matchingOperation.callData,
+      });
+
+      const calls =
+        decodedWalletCall.functionName === "execute"
+          ? [
+              {
+                target: decodedWalletCall.args[0],
+                value: decodedWalletCall.args[1],
+                data: decodedWalletCall.args[2],
+              },
+            ]
+          : decodedWalletCall.args[0];
+
+      const matchingCall = calls.find(
+        (call) =>
+          call.target.toLowerCase() === STREAK_SAVE_RECIPIENT.toLowerCase() &&
+          call.value >= requiredWei
+      );
+
+      if (!matchingCall) {
+        throw new Error("Smart wallet ETH payment is below the required amount");
+      }
+
+      return {
+        asset: "eth" as const,
+        amount: matchingCall.value.toString(),
+      };
+    } catch {
+      return null;
+    }
+  }
+
   private async verifyFeeTransaction(
     normalizedAddress: string,
     txHash: string,
@@ -684,11 +762,11 @@ export class PointsEngine {
       throw new Error("Payment transaction is not confirmed");
     }
 
-    if (transaction.from.toLowerCase() !== normalizedAddress) {
-      throw new Error("Payment transaction sender does not match this wallet");
-    }
-
     if (asset === "usdc") {
+      if (transaction.from.toLowerCase() !== normalizedAddress) {
+        throw new Error("Payment transaction sender does not match this wallet");
+      }
+
       const result = this.verifyUsdcPayment(
         receipt.logs,
         normalizedAddress,
@@ -704,6 +782,25 @@ export class PointsEngine {
     }
 
     if (asset === "eth") {
+      const smartWalletPayment = this.verifySmartWalletEthPayment(
+        normalizedAddress,
+        transaction,
+        ethRequiredWei
+      );
+
+      if (smartWalletPayment) {
+        return {
+          ...smartWalletPayment,
+          amountUsd: usdTarget,
+          priceDate: priceSnapshot.price_date,
+          ethPriceUsd: priceSnapshot.price_usd,
+        };
+      }
+
+      if (transaction.from.toLowerCase() !== normalizedAddress) {
+        throw new Error("Payment transaction sender does not match this wallet");
+      }
+
       const result = this.verifyEthPayment(transaction.to, transaction.value, ethRequiredWei);
 
       return {
@@ -715,6 +812,10 @@ export class PointsEngine {
     }
 
     try {
+      if (transaction.from.toLowerCase() !== normalizedAddress) {
+        throw new Error("Payment transaction sender does not match this wallet");
+      }
+
       const usdcPayment = this.verifyUsdcPayment(
         receipt.logs,
         normalizedAddress,
