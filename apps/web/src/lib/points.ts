@@ -124,6 +124,10 @@ export type LeaderboardHubResponse = {
   success: boolean;
   type: LeaderboardBoardType;
   limit: number;
+  page: number;
+  pageSize: number;
+  totalEntries: number;
+  totalPages: number;
   totalUserCount: number;
   totalParticlePoints: number;
   viewer: LeaderboardHubEntry | null;
@@ -197,12 +201,20 @@ export async function fetchLeaderboard(limit = 50) {
 
 export async function fetchLeaderboardHub(
   type: LeaderboardBoardType,
-  limit = 50,
-  viewerAddress?: string
+  options?: {
+    page?: number;
+    pageSize?: number;
+    viewerAddress?: string;
+  }
 ) {
+  const page = options?.page ?? 1;
+  const pageSize = options?.pageSize ?? 10;
+  const viewerAddress = options?.viewerAddress;
+
   const searchParams = new URLSearchParams({
     type,
-    limit: String(limit),
+    page: String(page),
+    pageSize: String(pageSize),
   });
 
   if (viewerAddress) {

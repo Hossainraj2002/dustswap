@@ -19,7 +19,7 @@ type NeynarProfile = {
   pfp_url: string;
 };
 
-const BOARD_LIMIT = 50;
+const BOARD_PAGE_SIZE = 10;
 
 const BOARD_OPTIONS: Array<{
   id: LeaderboardBoardType;
@@ -142,6 +142,32 @@ function getBoardHeaders(type: LeaderboardBoardType) {
   return ["Rank", "User", "Total PP"];
 }
 
+function getVisiblePages(currentPage: number, totalPages: number) {
+  if (totalPages <= 7) {
+    return Array.from({ length: totalPages }, (_, index) => index + 1);
+  }
+
+  const visiblePages: Array<number | "ellipsis"> = [1];
+  const start = Math.max(2, currentPage - 1);
+  const end = Math.min(totalPages - 1, currentPage + 1);
+
+  if (start > 2) {
+    visiblePages.push("ellipsis");
+  }
+
+  for (let page = start; page <= end; page += 1) {
+    visiblePages.push(page);
+  }
+
+  if (end < totalPages - 1) {
+    visiblePages.push("ellipsis");
+  }
+
+  visiblePages.push(totalPages);
+
+  return visiblePages;
+}
+
 function Avatar({
   src,
   label,
@@ -255,6 +281,7 @@ function TableCellValue({
 export default function LeaderboardPage() {
   const { address } = useAccount();
   const [selectedBoard, setSelectedBoard] = useState<LeaderboardBoardType>("particle_points");
+  const [currentPage, setCurrentPage] = useState(1);
   const [leaderboard, setLeaderboard] = useState<LeaderboardHubResponse | null>(null);
   const [profile, setProfile] = useState<NeynarProfile | null>(null);
   const [isLoadingBoard, setIsLoadingBoard] = useState(true);
@@ -269,20 +296,9 @@ export default function LeaderboardPage() {
   const viewerAvatar = getViewerAvatar(profile, viewerProfile);
   const boardColumns = getBoardColumns(selectedBoard);
   const boardHeaders = getBoardHeaders(selectedBoard);
-
-  const tableEntries = (() => {
-    const entries = leaderboard?.entries ?? [];
-
-    if (!viewer || !normalizedAddress) {
-      return entries;
-    }
-
-    const withoutViewer = entries.filter(
-      (entry) => entry.address.toLowerCase() !== normalizedAddress
-    );
-
-    return [viewer, ...withoutViewer];
-  })();
+  const tableEntries = leaderboard?.entries ?? [];
+  const totalPages = leaderboard?.totalPages ?? 1;
+  const visiblePages = getVisiblePages(currentPage, totalPages);
 
   useEffect(() => {
     let cancelled = false;
@@ -292,7 +308,11 @@ export default function LeaderboardPage() {
       setError(null);
 
       try {
-        const response = await fetchLeaderboardHub(selectedBoard, BOARD_LIMIT, normalizedAddress);
+        const response = await fetchLeaderboardHub(selectedBoard, {
+          page: currentPage,
+          pageSize: BOARD_PAGE_SIZE,
+          viewerAddress: normalizedAddress,
+        });
 
         if (!response.success) {
           throw new Error(response.error || "Failed to load leaderboard");
@@ -300,6 +320,7 @@ export default function LeaderboardPage() {
 
         if (!cancelled) {
           setLeaderboard(response);
+          setCurrentPage(response.page);
         }
       } catch (loadError) {
         if (!cancelled) {
@@ -318,7 +339,11 @@ export default function LeaderboardPage() {
     return () => {
       cancelled = true;
     };
-  }, [normalizedAddress, selectedBoard]);
+  }, [currentPage, normalizedAddress, selectedBoard]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [selectedBoard]);
 
   useEffect(() => {
     if (!normalizedAddress) {
@@ -358,9 +383,14 @@ export default function LeaderboardPage() {
   useEffect(() => {
     const intervalId = window.setInterval(async () => {
       try {
-        const response = await fetchLeaderboardHub(selectedBoard, BOARD_LIMIT, normalizedAddress);
+        const response = await fetchLeaderboardHub(selectedBoard, {
+          page: currentPage,
+          pageSize: BOARD_PAGE_SIZE,
+          viewerAddress: normalizedAddress,
+        });
         if (response.success) {
           setLeaderboard(response);
+          setCurrentPage(response.page);
         }
       } catch {
         return;
@@ -368,7 +398,7 @@ export default function LeaderboardPage() {
     }, 60000);
 
     return () => window.clearInterval(intervalId);
-  }, [normalizedAddress, selectedBoard]);
+  }, [currentPage, normalizedAddress, selectedBoard]);
 
   return (
     <main className="min-h-screen bg-[#f3f7fb] px-3 py-3 sm:px-4 sm:py-4 md:px-8 md:py-8">
@@ -461,7 +491,10 @@ export default function LeaderboardPage() {
                 <button
                   key={option.id}
                   type="button"
-                  onClick={() => setSelectedBoard(option.id)}
+                  onClick={() => {
+                    setSelectedBoard(option.id);
+                    setCurrentPage(1);
+                  }}
                   className={`flex h-8 items-center justify-center rounded-full border px-3 text-[11px] font-semibold transition-all duration-200 ${
                     active
                       ? "border-slate-900 bg-slate-950 text-white shadow-[0_12px_28px_rgba(15,23,42,0.16)]"
@@ -485,7 +518,7 @@ export default function LeaderboardPage() {
                 </p>
               </div>
               <div className="rounded-full border border-sky-100 bg-sky-50/90 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-sky-700">
-                Top {BOARD_LIMIT}
+                Page {leaderboard?.page ?? currentPage}/{totalPages}
               </div>
             </div>
 
@@ -563,6 +596,52 @@ export default function LeaderboardPage() {
                 </div>
               ) : null}
             </div>
+
+            {!isLoadingBoard && !error && totalPages > 1 ? (
+              <div className="mt-3 flex flex-wrap items-center justify-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => setCurrentPage((page) => Math.max(1, page - 1))}
+                  disabled={currentPage <= 1}
+                  className="flex h-8 items-center justify-center rounded-full border border-slate-200/90 bg-white/88 px-3 text-[11px] font-semibold text-slate-700 shadow-[0_8px_22px_rgba(148,163,184,0.08)] disabled:cursor-not-allowed disabled:opacity-45"
+                >
+                  Prev
+                </button>
+
+                {visiblePages.map((page, index) =>
+                  page === "ellipsis" ? (
+                    <span
+                      key={`ellipsis-${index}`}
+                      className="flex h-8 w-8 items-center justify-center text-[11px] font-semibold text-slate-400"
+                    >
+                      ...
+                    </span>
+                  ) : (
+                    <button
+                      key={page}
+                      type="button"
+                      onClick={() => setCurrentPage(page)}
+                      className={`flex h-8 w-8 items-center justify-center rounded-full border text-[11px] font-semibold ${
+                        page === currentPage
+                          ? "border-slate-900 bg-slate-950 text-white shadow-[0_12px_28px_rgba(15,23,42,0.16)]"
+                          : "border-slate-200/90 bg-white/88 text-slate-700 shadow-[0_8px_22px_rgba(148,163,184,0.08)]"
+                      }`}
+                    >
+                      {page}
+                    </button>
+                  )
+                )}
+
+                <button
+                  type="button"
+                  onClick={() => setCurrentPage((page) => Math.min(totalPages, page + 1))}
+                  disabled={currentPage >= totalPages}
+                  className="flex h-8 items-center justify-center rounded-full border border-slate-200/90 bg-white/88 px-3 text-[11px] font-semibold text-slate-700 shadow-[0_8px_22px_rgba(148,163,184,0.08)] disabled:cursor-not-allowed disabled:opacity-45"
+                >
+                  Next
+                </button>
+              </div>
+            ) : null}
           </div>
         </div>
       </section>

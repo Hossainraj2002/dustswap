@@ -13,11 +13,19 @@ pointsRoutes.get("/leaderboards", async (c) => {
     rawType === "referral" || rawType === "volume" || rawType === "particle_points"
       ? rawType
       : "particle_points";
-  const limit = Math.min(100, Math.max(1, parseInt(c.req.query("limit") ?? "50", 10)));
+  const page = Math.max(1, parseInt(c.req.query("page") ?? "1", 10));
+  const pageSize = Math.min(
+    50,
+    Math.max(1, parseInt(c.req.query("pageSize") ?? c.req.query("limit") ?? "10", 10))
+  );
   const viewer = c.req.query("viewer") ?? undefined;
 
   try {
-    const data = await pointsEngine.getLeaderboardHub(type, limit, viewer);
+    const data = await pointsEngine.getLeaderboardHub(type, {
+      page,
+      pageSize,
+      viewerAddress: viewer,
+    });
     return c.json({ success: true, ...data });
   } catch (e: unknown) {
     return c.json({ success: false, error: (e as Error).message }, 500);

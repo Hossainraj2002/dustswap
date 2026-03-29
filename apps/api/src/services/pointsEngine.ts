@@ -126,6 +126,10 @@ type LeaderboardEntry = LeaderboardMetricRow & {
 type LeaderboardHubResponse = {
   type: LeaderboardKind;
   limit: number;
+  page: number;
+  pageSize: number;
+  totalEntries: number;
+  totalPages: number;
   totalUserCount: number;
   totalParticlePoints: number;
   viewer: LeaderboardEntry | null;
@@ -721,6 +725,24 @@ export class PointsEngine {
     return users;
   }
 
+  private async fetchAllLeaderboardUsers() {
+    const rows = await this.fetchAllPages<
+      Pick<UserRecord, "id" | "address" | "total_points">
+    >(async (from, to) =>
+      await supabase
+        .from("users")
+        .select("id, address, total_points")
+        .order("id", { ascending: true })
+        .range(from, to)
+    );
+
+    return rows.map((row) => ({
+      id: Number(row.id),
+      address: String(row.address),
+      total_points: Number(row.total_points || 0),
+    }));
+  }
+
   private async countUsers() {
     const { count, error } = await supabase
       .from("users")
@@ -834,6 +856,7 @@ export class PointsEngine {
       referralPointsByUser?: Map<number, number>;
       referredUsersByUser?: Map<number, number>;
       swapVolumeByUser?: Map<number, number>;
+      rankByUserId?: Map<number, number>;
     }
   ): Promise<LeaderboardEntry | null> {
     if (!viewerAddress) {
@@ -860,15 +883,19 @@ export class PointsEngine {
         context?.referralPointsByUser?.get(user.id) ?? referralStats.pointsEarned ?? 0;
       const allScores = [...(context?.referralPointsByUser?.values() ?? [])];
       rank = allScores.filter((value) => value > viewerReferralPoints).length + 1;
-    } else {
-      const viewerSwapVolume = context?.swapVolumeByUser?.get(user.id) ?? userStats.swapVolume ?? 0;
-      const allScores = [...(context?.swapVolumeByUser?.values() ?? [])];
-      rank = allScores.filter((value) => value > viewerSwapVolume).length + 1;
-    }
+      } else {
+        const viewerSwapVolume = context?.swapVolumeByUser?.get(user.id) ?? userStats.swapVolume ?? 0;
+        const allScores = [...(context?.swapVolumeByUser?.values() ?? [])];
+        rank = allScores.filter((value) => value > viewerSwapVolume).length + 1;
+      }
 
-    return {
-      rank,
-      userId: user.id,
+      if (context?.rankByUserId?.has(user.id)) {
+        rank = context.rankByUserId.get(user.id) || rank;
+      }
+
+      return {
+        rank,
+        userId: user.id,
       address: user.address,
       totalPoints: Number(user.total_points || 0),
       referralPoints:
@@ -1788,21 +1815,31 @@ export class PointsEngine {
 
   async getLeaderboardHub(
     type: LeaderboardKind,
-    limit = 50,
-    viewerAddress?: string
+    options?: {
+      page?: number;
+      pageSize?: number;
+      viewerAddress?: string;
+    }
   ): Promise<LeaderboardHubResponse> {
-    const safeLimit = Math.max(1, Math.min(100, limit));
+    const requestedPageSize = options?.pageSize ?? 10;
+    const viewerAddress = options?.viewerAddress;
+    const safeLimit = Math.max(1, Math.min(50, requestedPageSize));
     const [totalUserCount, totalParticlePoints] = await Promise.all([
       this.countUsers(),
       this.sumTotalPoints(),
     ]);
+    const totalEntries = totalUserCount;
+    const totalPages = Math.max(1, Math.ceil(totalEntries / safeLimit));
+    const currentPage = Math.min(Math.max(1, options?.page ?? 1), totalPages);
+    const offset = (currentPage - 1) * safeLimit;
 
     if (type === "particle_points") {
       const { data, error } = await supabase
         .from("users")
         .select("id,address,total_points")
         .order("total_points", { ascending: false })
-        .range(0, safeLimit - 1);
+        .order("id", { ascending: true })
+        .range(offset, offset + safeLimit - 1);
 
       if (error) {
         throw new Error(`Load particle point leaderboard: ${error.message}`);
@@ -1815,11 +1852,15 @@ export class PointsEngine {
       return {
         type,
         limit: safeLimit,
+        page: currentPage,
+        pageSize: safeLimit,
+        totalEntries,
+        totalPages,
         totalUserCount,
         totalParticlePoints,
         viewer,
         entries: topUsers.map((user, index) => ({
-          rank: index + 1,
+          rank: offset + index + 1,
           userId: Number(user.id),
           address: String(user.address),
           totalPoints: Number(user.total_points || 0),
@@ -1833,56 +1874,63 @@ export class PointsEngine {
 
     if (type === "referral") {
       const { referredUsersByUser, referralPointsByUser } = await this.getReferralAggregateMaps();
-      const sortedUserIds = [...new Set([...referredUsersByUser.keys(), ...referralPointsByUser.keys()])].sort(
-        (left, right) => {
-          const pointDelta =
-            (referralPointsByUser.get(right) || 0) - (referralPointsByUser.get(left) || 0);
-          if (pointDelta !== 0) {
-            return pointDelta;
-          }
-
-          const countDelta =
-            (referredUsersByUser.get(right) || 0) - (referredUsersByUser.get(left) || 0);
-          if (countDelta !== 0) {
-            return countDelta;
-          }
-
-          return left - right;
+      const allUsers = await this.fetchAllLeaderboardUsers();
+      const sortedUsers = [...allUsers].sort((left, right) => {
+        const pointDelta =
+          (referralPointsByUser.get(right.id) || 0) - (referralPointsByUser.get(left.id) || 0);
+        if (pointDelta !== 0) {
+          return pointDelta;
         }
-      );
 
-      const topIds = sortedUserIds.slice(0, safeLimit);
-      const [usersById, profiles, viewer] = await Promise.all([
-        this.fetchUsersByIds(topIds),
-        this.fetchCachedProfiles(topIds),
+        const countDelta =
+          (referredUsersByUser.get(right.id) || 0) - (referredUsersByUser.get(left.id) || 0);
+        if (countDelta !== 0) {
+          return countDelta;
+        }
+
+        const totalPointDelta =
+          Number(right.total_points || 0) - Number(left.total_points || 0);
+        if (totalPointDelta !== 0) {
+          return totalPointDelta;
+        }
+
+        return left.id - right.id;
+      });
+      const rankByUserId = new Map<number, number>();
+      sortedUsers.forEach((user, index) => {
+        rankByUserId.set(Number(user.id), index + 1);
+      });
+      const pageUsers = sortedUsers.slice(offset, offset + safeLimit);
+      const [profiles, viewer] = await Promise.all([
+        this.fetchCachedProfiles(pageUsers.map((user) => Number(user.id))),
         this.buildViewerEntry(type, viewerAddress, {
           referralPointsByUser,
           referredUsersByUser,
+          rankByUserId,
         }),
       ]);
 
       return {
         type,
         limit: safeLimit,
+        page: currentPage,
+        pageSize: safeLimit,
+        totalEntries,
+        totalPages,
         totalUserCount,
         totalParticlePoints,
         viewer,
-        entries: topIds
-          .map((userId, index) => {
-            const user = usersById.get(userId);
-            if (!user) {
-              return null;
-            }
-
+        entries: pageUsers
+          .map((user) => {
             return {
-              rank: index + 1,
-              userId,
-              address: user.address,
+              rank: rankByUserId.get(Number(user.id)) || 1,
+              userId: Number(user.id),
+              address: String(user.address),
               totalPoints: Number(user.total_points || 0),
-              referralPoints: referralPointsByUser.get(userId) || 0,
-              referredUsers: referredUsersByUser.get(userId) || 0,
+              referralPoints: referralPointsByUser.get(Number(user.id)) || 0,
+              referredUsers: referredUsersByUser.get(Number(user.id)) || 0,
               swapVolume: 0,
-              profile: profiles.get(userId) ?? null,
+              profile: profiles.get(Number(user.id)) ?? null,
             } satisfies LeaderboardEntry;
           })
           .filter((entry): entry is LeaderboardEntry => Boolean(entry)),
@@ -1890,45 +1938,56 @@ export class PointsEngine {
     }
 
     const swapVolumeByUser = await this.getSwapVolumeMap();
-    const sortedUserIds = [...swapVolumeByUser.keys()].sort((left, right) => {
-      const volumeDelta = (swapVolumeByUser.get(right) || 0) - (swapVolumeByUser.get(left) || 0);
+    const allUsers = await this.fetchAllLeaderboardUsers();
+    const sortedUsers = [...allUsers].sort((left, right) => {
+      const volumeDelta =
+        (swapVolumeByUser.get(right.id) || 0) - (swapVolumeByUser.get(left.id) || 0);
       if (volumeDelta !== 0) {
         return volumeDelta;
       }
 
-      return left - right;
+      const totalPointDelta =
+        Number(right.total_points || 0) - Number(left.total_points || 0);
+      if (totalPointDelta !== 0) {
+        return totalPointDelta;
+      }
+
+      return left.id - right.id;
     });
-    const topIds = sortedUserIds.slice(0, safeLimit);
-    const [usersById, profiles, viewer] = await Promise.all([
-      this.fetchUsersByIds(topIds),
-      this.fetchCachedProfiles(topIds),
+    const rankByUserId = new Map<number, number>();
+    sortedUsers.forEach((user, index) => {
+      rankByUserId.set(Number(user.id), index + 1);
+    });
+    const pageUsers = sortedUsers.slice(offset, offset + safeLimit);
+    const [profiles, viewer] = await Promise.all([
+      this.fetchCachedProfiles(pageUsers.map((user) => Number(user.id))),
       this.buildViewerEntry(type, viewerAddress, {
         swapVolumeByUser,
+        rankByUserId,
       }),
     ]);
 
     return {
       type,
       limit: safeLimit,
+      page: currentPage,
+      pageSize: safeLimit,
+      totalEntries,
+      totalPages,
       totalUserCount,
       totalParticlePoints,
       viewer,
-      entries: topIds
-        .map((userId, index) => {
-          const user = usersById.get(userId);
-          if (!user) {
-            return null;
-          }
-
+      entries: pageUsers
+        .map((user) => {
           return {
-            rank: index + 1,
-            userId,
-            address: user.address,
+            rank: rankByUserId.get(Number(user.id)) || 1,
+            userId: Number(user.id),
+            address: String(user.address),
             totalPoints: Number(user.total_points || 0),
             referralPoints: 0,
             referredUsers: 0,
-            swapVolume: swapVolumeByUser.get(userId) || 0,
-            profile: profiles.get(userId) ?? null,
+            swapVolume: swapVolumeByUser.get(Number(user.id)) || 0,
+            profile: profiles.get(Number(user.id)) ?? null,
           } satisfies LeaderboardEntry;
         })
         .filter((entry): entry is LeaderboardEntry => Boolean(entry)),
