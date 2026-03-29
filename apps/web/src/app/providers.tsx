@@ -6,6 +6,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { wagmiAdapter, wagmiConfig, projectId } from "@/wagmi";
 import { createAppKit } from "@reown/appkit/react";
 import { INITIAL_WAGMI_CHAINS } from "@/config/web3";
+import { useSwapCapture } from "@/hooks/useSwapCapture";
 
 export const modal = createAppKit({
   adapters: [wagmiAdapter],
@@ -31,6 +32,8 @@ interface ProvidersProps {
 }
 
 export function Providers({ children }: ProvidersProps) {
+  useSwapCapture();
+
   const [queryClient] = useState(
     () =>
       new QueryClient({

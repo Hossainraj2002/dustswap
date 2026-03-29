@@ -3,7 +3,6 @@
 import dynamic from 'next/dynamic';
 import { useAppKit } from '@reown/appkit/react';
 import { useMemo } from 'react';
-import { useSwapCapture } from '@/hooks/useSwapCapture';
 
 const OPENOCEAN_REFERRER_ADDRESS =
   process.env.NEXT_PUBLIC_OPENOCEAN_REFERRER_ADDRESS ||
@@ -15,7 +14,6 @@ const OpenOceanWidget = dynamic<{ integrator: string; config: any }>(
 );
 
 export default function SwapPage() {
-  useSwapCapture();
   const { open } = useAppKit();
 
   const config = useMemo(() => ({

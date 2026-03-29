@@ -43,7 +43,8 @@ const PRICE_SCALE = 8;
 const USD_SCALE = 6;
 const MEMORY_PRICE_TTL_MS = 60 * 60 * 1000;
 const RECEIPT_RETRY_DELAY_MS = 1500;
-const RECEIPT_MAX_ATTEMPTS = 10;
+const RECEIPT_MAX_ATTEMPTS = 20;
+const DEFAULT_ETH_PRICE_USD = Number(process.env.DEFAULT_ETH_PRICE_USD || "3500");
 
 const baseClient = createPublicClient({
   chain: base,
@@ -587,6 +588,35 @@ async function getCachedDailyPrice(address: string, dayKey: string) {
   return entry;
 }
 
+async function getLatestCachedPrice(address: string) {
+  const assetKey = getAssetPriceKey(address);
+  const { data, error } = await supabase
+    .from("daily_asset_prices")
+    .select("price_usd, source, metadata")
+    .eq("asset_symbol", assetKey)
+    .order("price_date", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`Load fallback token price: ${error.message}`);
+  }
+
+  if (!data) {
+    return null;
+  }
+
+  const row = data as DailyAssetPriceRow;
+  return {
+    priceScaled: parseScaledDecimal(row.price_usd, PRICE_SCALE),
+    source: row.source || "cached_fallback",
+    metadata:
+      row.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata)
+        ? row.metadata
+        : {},
+  };
+}
+
 async function fetchCoinGeckoPrice(address: string) {
   const normalizedAddress = normalizeAddress(address);
   const coinId = getCoinGeckoId(normalizedAddress);
@@ -656,30 +686,82 @@ async function getTokenPriceUsd(address: string, dayKey: string) {
     return cached;
   }
 
-  const fresh = await fetchCoinGeckoPrice(assetKey);
-  const { error } = await supabase.from("daily_asset_prices").upsert(
-    {
-      asset_symbol: assetKey,
-      price_date: dayKey,
-      price_usd: formatScaledDecimal(fresh.priceScaled, PRICE_SCALE),
-      source: fresh.source,
-      metadata: fresh.metadata,
-      updated_at: new Date().toISOString(),
-    },
-    { onConflict: "asset_symbol,price_date" }
-  );
+  const persistPriceEntry = async (entryInput: {
+    priceScaled: bigint;
+    source: string;
+    metadata: Record<string, unknown>;
+  }) => {
+    const { error } = await supabase.from("daily_asset_prices").upsert(
+      {
+        asset_symbol: assetKey,
+        price_date: dayKey,
+        price_usd: formatScaledDecimal(entryInput.priceScaled, PRICE_SCALE),
+        source: entryInput.source,
+        metadata: entryInput.metadata,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "asset_symbol,price_date" }
+    );
 
-  if (error) {
-    throw new Error(`Store token price cache: ${error.message}`);
-  }
+    if (error) {
+      throw new Error(`Store token price cache: ${error.message}`);
+    }
 
-  const entry: PriceCacheEntry = {
-    ...fresh,
-    expiresAt: Date.now() + MEMORY_PRICE_TTL_MS,
+    const entry: PriceCacheEntry = {
+      ...entryInput,
+      expiresAt: Date.now() + MEMORY_PRICE_TTL_MS,
+    };
+
+    priceCache.set(cacheKey, entry);
+    return entry;
   };
 
-  priceCache.set(cacheKey, entry);
-  return entry;
+  if (assetKey === USDC_BASE) {
+    return persistPriceEntry({
+      priceScaled: parseScaledDecimal("1", PRICE_SCALE),
+      source: "hardcoded_usdc",
+      metadata: {
+        chain: "base",
+        tokenAddress: assetKey,
+      },
+    });
+  }
+
+  try {
+    const fresh = await fetchCoinGeckoPrice(assetKey);
+    return persistPriceEntry(fresh);
+  } catch {
+    const fallback = await getLatestCachedPrice(assetKey);
+    if (fallback) {
+      return persistPriceEntry({
+        priceScaled: fallback.priceScaled,
+        source: `fallback_${fallback.source}`,
+        metadata: {
+          ...fallback.metadata,
+          fallback: true,
+          tokenAddress: assetKey,
+        },
+      });
+    }
+
+    if (
+      assetKey === ETH_PLACEHOLDER ||
+      assetKey === ZERO_ADDRESS ||
+      assetKey === WETH_BASE
+    ) {
+      return persistPriceEntry({
+        priceScaled: parseScaledDecimal(DEFAULT_ETH_PRICE_USD, PRICE_SCALE),
+        source: "fallback_default_eth",
+        metadata: {
+          chain: "base",
+          tokenAddress: assetKey,
+          fallback: true,
+        },
+      });
+    }
+
+    throw new Error("Token USD price is unavailable");
+  }
 }
 
 async function upsertDailyVolumeFallback(

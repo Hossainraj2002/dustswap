@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { useAccount } from "wagmi";
+import { useConnection } from "wagmi";
 
 const STORAGE_KEY = "dustswap.swap.capture.queue";
 const CALLS_STORAGE_KEY = "dustswap.swap.capture.calls.queue";
@@ -11,6 +11,9 @@ const MAX_QUEUE_ITEMS = 50;
 const MAX_CALL_QUEUE_ITEMS = 25;
 const MAX_ITEM_AGE_MS = 24 * 60 * 60 * 1000;
 const FLUSH_INTERVAL_MS = 2000;
+const MAX_RETRY_DELAY_MS = 10000;
+const CONNECTOR_PROVIDER_KEY = "connector";
+const WINDOW_PROVIDER_KEY = "window";
 const OPENOCEAN_ROUTER_ADDRESSES = new Set([
   "0x6352a56caadc4f1e25cd6c75970fa768a3304e64",
   "0x6dd434082eab5cd134628d4b9a6e4d0813ef8b07",
@@ -29,6 +32,7 @@ type CaptureQueueItem = {
 type SmartWalletCallQueueItem = {
   address: string;
   callId: string;
+  providerKey: string;
   chainId: number;
   queuedAt: number;
   attempts: number;
@@ -67,6 +71,17 @@ type RequestError = Error & {
   code?: string;
   status?: number;
   permanent?: boolean;
+};
+
+type RequestCapableProvider = {
+  chainId?: string | number;
+  request: (args: EthereumRequestArguments) => Promise<unknown>;
+};
+
+type WrappedProviderRecord = {
+  key: string;
+  provider: RequestCapableProvider;
+  originalRequest: (args: EthereumRequestArguments) => Promise<unknown>;
 };
 
 function isTxHash(value: unknown): value is string {
@@ -110,7 +125,7 @@ function getRetryDelay(attempt: number, errorCode?: string, status?: number) {
     return FLUSH_INTERVAL_MS;
   }
 
-  return Math.min(60000, FLUSH_INTERVAL_MS * 2 ** Math.max(0, attempt - 1));
+  return Math.min(MAX_RETRY_DELAY_MS, FLUSH_INTERVAL_MS * 2 ** Math.max(0, attempt - 1));
 }
 
 function getErrorMessage(error: unknown) {
@@ -189,9 +204,10 @@ function pruneCallQueue(queue: SmartWalletCallQueueItem[]) {
       continue;
     }
 
-    deduped.set(callId, {
+    deduped.set(`${item.providerKey}:${callId}`, {
       address: normalizeAddress(item.address),
       callId,
+      providerKey: item.providerKey || CONNECTOR_PROVIDER_KEY,
       chainId: resolveChainId(item.chainId),
       queuedAt: Number(item.queuedAt || Date.now()),
       attempts: Number(item.attempts || 0),
@@ -312,6 +328,27 @@ function getCallsStatusTxHashes(result: WalletCallsStatusResult | null) {
   return Array.from(txHashes);
 }
 
+function getProviderCandidates(
+  windowProvider: RequestCapableProvider | null,
+  connectorProvider: RequestCapableProvider | null
+) {
+  const candidates: Array<{ key: string; provider: RequestCapableProvider }> = [];
+
+  if (connectorProvider && typeof connectorProvider.request === "function") {
+    candidates.push({ key: CONNECTOR_PROVIDER_KEY, provider: connectorProvider });
+  }
+
+  if (
+    windowProvider &&
+    typeof windowProvider.request === "function" &&
+    windowProvider !== connectorProvider
+  ) {
+    candidates.push({ key: WINDOW_PROVIDER_KEY, provider: windowProvider });
+  }
+
+  return candidates;
+}
+
 async function postSwapRecord(item: CaptureQueueItem) {
   const response = await fetch("/api/swaps/record", {
     method: "POST",
@@ -332,7 +369,9 @@ async function postSwapRecord(item: CaptureQueueItem) {
     : {};
 
   if (!response.ok || !payload.success) {
-    const error = new Error(payload.error || `Swap record request failed with ${response.status}`) as RequestError;
+    const error = new Error(
+      payload.error || `Swap record request failed with ${response.status}`
+    ) as RequestError;
     error.code = payload.code;
     error.status = response.status;
     error.permanent = isPermanentRecordFailure(response.status);
@@ -343,7 +382,10 @@ async function postSwapRecord(item: CaptureQueueItem) {
 }
 
 export function useSwapCapture() {
-  const { address, chainId } = useAccount();
+  const connection = useConnection();
+  const address = connection.address;
+  const chainId = connection.chainId;
+  const connector = connection.connector;
   const queueRef = useRef<CaptureQueueItem[]>([]);
   const callQueueRef = useRef<SmartWalletCallQueueItem[]>([]);
   const isFlushingRef = useRef(false);
@@ -354,6 +396,10 @@ export function useSwapCapture() {
     if (typeof window === "undefined") {
       return;
     }
+
+    let cancelled = false;
+    const providerRecords = new Map<string, WrappedProviderRecord>();
+    const providerRestorers: Array<() => void> = [];
 
     queueRef.current = pruneCaptureQueue(readStoredItems<CaptureQueueItem>(STORAGE_KEY));
     callQueueRef.current = pruneCallQueue(
@@ -380,21 +426,30 @@ export function useSwapCapture() {
         attempts: 0,
         nextRetryAt: 0,
       };
-      const filtered = queueRef.current.filter((candidate) => candidate.txHash !== normalizedItem.txHash);
+      const filtered = queueRef.current.filter(
+        (candidate) => candidate.txHash !== normalizedItem.txHash
+      );
       updateQueue([normalizedItem, ...filtered]);
       void flushQueue(true);
     };
 
-    const enqueueSmartWalletCall = (item: Omit<SmartWalletCallQueueItem, "attempts" | "nextRetryAt">) => {
+    const enqueueSmartWalletCall = (
+      item: Omit<SmartWalletCallQueueItem, "attempts" | "nextRetryAt">
+    ) => {
       const normalizedItem: SmartWalletCallQueueItem = {
         ...item,
         address: normalizeAddress(item.address),
         callId: normalizeCallId(item.callId),
+        providerKey: item.providerKey || CONNECTOR_PROVIDER_KEY,
         attempts: 0,
         nextRetryAt: 0,
       };
       const filtered = callQueueRef.current.filter(
-        (candidate) => candidate.callId !== normalizedItem.callId
+        (candidate) =>
+          !(
+            candidate.callId === normalizedItem.callId &&
+            candidate.providerKey === normalizedItem.providerKey
+          )
       );
       updateCallQueue([normalizedItem, ...filtered]);
       void flushCallQueue(true);
@@ -402,13 +457,19 @@ export function useSwapCapture() {
 
     const handleCallsStatusResult = (
       callId: string,
+      providerKey: string,
       result: WalletCallsStatusResult | null
     ) => {
       const txHashes = getCallsStatusTxHashes(result);
-      const state = getCallsStatusState(result);
-      const queueItem = callQueueRef.current.find((candidate) => candidate.callId === callId);
+      const queueItem = callQueueRef.current.find(
+        (candidate) => candidate.callId === callId && candidate.providerKey === providerKey
+      );
 
-      if (queueItem && txHashes.length) {
+      if (!queueItem) {
+        return;
+      }
+
+      if (txHashes.length) {
         for (const txHash of txHashes) {
           enqueueCapture({
             address: queueItem.address,
@@ -417,14 +478,16 @@ export function useSwapCapture() {
             queuedAt: Date.now(),
           });
         }
-      }
 
-      if (!queueItem) {
-        return;
-      }
-
-      if (txHashes.length || state === "failure" || state === "success") {
-        updateCallQueue(callQueueRef.current.filter((candidate) => candidate.callId !== callId));
+        updateCallQueue(
+          callQueueRef.current.filter(
+            (candidate) =>
+              !(
+                candidate.callId === queueItem.callId &&
+                candidate.providerKey === queueItem.providerKey
+              )
+          )
+        );
       }
     };
 
@@ -477,21 +540,20 @@ export function useSwapCapture() {
       }
     };
 
-    const ethereum = (window as Window & { ethereum?: any }).ethereum;
-    const originalRequest =
-      ethereum && typeof ethereum.request === "function" ? ethereum.request : null;
+    const requestCallsStatus = async (item: SmartWalletCallQueueItem) => {
+      const providerRecord =
+        providerRecords.get(item.providerKey) ||
+        providerRecords.get(CONNECTOR_PROVIDER_KEY) ||
+        providerRecords.get(WINDOW_PROVIDER_KEY);
 
-    const requestCallsStatus = async (callId: string) => {
-      if (!ethereum || !originalRequest) {
+      if (!providerRecord) {
         return null;
       }
 
-      const result = await Reflect.apply(originalRequest, ethereum, [
-        {
-          method: "wallet_getCallsStatus",
-          params: [callId],
-        } satisfies EthereumRequestArguments,
-      ]);
+      const result = await providerRecord.originalRequest({
+        method: "wallet_getCallsStatus",
+        params: [item.callId],
+      });
 
       return getCallsStatusResult(result);
     };
@@ -512,7 +574,7 @@ export function useSwapCapture() {
           }
 
           try {
-            const statusResult = await requestCallsStatus(item.callId);
+            const statusResult = await requestCallsStatus(item);
             const state = getCallsStatusState(statusResult);
             const txHashes = getCallsStatusTxHashes(statusResult);
 
@@ -526,28 +588,43 @@ export function useSwapCapture() {
                 });
               }
 
-              nextQueue = nextQueue.filter((candidate) => candidate.callId !== item.callId);
+              nextQueue = nextQueue.filter(
+                (candidate) =>
+                  !(
+                    candidate.callId === item.callId &&
+                    candidate.providerKey === item.providerKey
+                  )
+              );
               continue;
             }
 
-            if (state === "failure" || state === "success") {
-              nextQueue = nextQueue.filter((candidate) => candidate.callId !== item.callId);
+            if (state === "failure") {
+              nextQueue = nextQueue.filter(
+                (candidate) =>
+                  !(
+                    candidate.callId === item.callId &&
+                    candidate.providerKey === item.providerKey
+                  )
+              );
               continue;
             }
 
             nextQueue = nextQueue.map((candidate) =>
-              candidate.callId === item.callId
+              candidate.callId === item.callId && candidate.providerKey === item.providerKey
                 ? {
                     ...candidate,
                     attempts: candidate.attempts + 1,
                     nextRetryAt: Date.now() + FLUSH_INTERVAL_MS,
-                    lastError: candidate.lastError,
+                    lastError:
+                      state === "success"
+                        ? "wallet_getCallsStatus succeeded without receipts yet"
+                        : candidate.lastError,
                   }
                 : candidate
             );
           } catch (error) {
             nextQueue = nextQueue.map((candidate) =>
-              candidate.callId === item.callId
+              candidate.callId === item.callId && candidate.providerKey === item.providerKey
                 ? {
                     ...candidate,
                     attempts: candidate.attempts + 1,
@@ -565,9 +642,14 @@ export function useSwapCapture() {
       }
     };
 
-    if (ethereum && originalRequest) {
+    const wrapProvider = (providerKey: string, provider: RequestCapableProvider) => {
+      if (!provider || typeof provider.request !== "function") {
+        return;
+      }
+
+      const originalRequest = provider.request.bind(provider);
       const wrappedRequest = async (args: EthereumRequestArguments) => {
-        const result = await Reflect.apply(originalRequest, ethereum, [args]);
+        const result = await originalRequest(args);
 
         try {
           const method = args?.method;
@@ -577,7 +659,12 @@ export function useSwapCapture() {
             const to = String(request.to || "").toLowerCase();
             const txHash = typeof result === "string" ? result.toLowerCase() : "";
             const resolvedAddress = normalizeAddress(String(request.from || address || ""));
-            const resolvedChainId = resolveChainId(request.chainId, chainId, ethereum.chainId);
+            const resolvedChainId = resolveChainId(
+              request.chainId,
+              chainId,
+              provider.chainId,
+              (window as Window & { ethereum?: RequestCapableProvider }).ethereum?.chainId
+            );
 
             if (
               isTxHash(txHash) &&
@@ -597,7 +684,12 @@ export function useSwapCapture() {
           if (method === "wallet_sendCalls") {
             const request = getWalletSendCallsRequest(args);
             const resolvedAddress = normalizeAddress(String(request.from || address || ""));
-            const resolvedChainId = resolveChainId(request.chainId, chainId, ethereum.chainId);
+            const resolvedChainId = resolveChainId(
+              request.chainId,
+              chainId,
+              provider.chainId,
+              (window as Window & { ethereum?: RequestCapableProvider }).ethereum?.chainId
+            );
             const callId = resolveCallsId(result);
 
             if (
@@ -609,6 +701,7 @@ export function useSwapCapture() {
               enqueueSmartWalletCall({
                 address: resolvedAddress,
                 callId,
+                providerKey,
                 chainId: resolvedChainId,
                 queuedAt: Date.now(),
               });
@@ -621,7 +714,7 @@ export function useSwapCapture() {
             const callId = typeof rawCallId === "string" ? normalizeCallId(rawCallId) : "";
 
             if (callId) {
-              handleCallsStatusResult(callId, getCallsStatusResult(result));
+              handleCallsStatusResult(callId, providerKey, getCallsStatusResult(result));
             }
           }
         } catch {
@@ -631,47 +724,85 @@ export function useSwapCapture() {
         return result;
       };
 
-      ethereum.request = wrappedRequest;
+      provider.request = wrappedRequest;
+      providerRecords.set(providerKey, {
+        key: providerKey,
+        provider,
+        originalRequest,
+      });
 
-      intervalRef.current = window.setInterval(() => {
-        void flushCallQueue();
-        void flushQueue();
-      }, FLUSH_INTERVAL_MS);
+      providerRestorers.push(() => {
+        if (provider.request === wrappedRequest) {
+          provider.request = originalRequest;
+        }
+      });
+    };
+
+    const setupProviders = async () => {
+      const windowProvider =
+        ((window as Window & { ethereum?: RequestCapableProvider }).ethereum as
+          | RequestCapableProvider
+          | undefined) || null;
+      const connectorProvider =
+        connector && typeof connector.getProvider === "function"
+          ? (((await connector.getProvider({ chainId })) as RequestCapableProvider | undefined) ??
+            null)
+          : null;
+
+      if (cancelled) {
+        return;
+      }
+
+      for (const candidate of getProviderCandidates(windowProvider, connectorProvider)) {
+        wrapProvider(candidate.key, candidate.provider);
+      }
 
       void flushCallQueue(true);
       void flushQueue(true);
+    };
 
-      return () => {
-        if (ethereum.request === wrappedRequest) {
-          ethereum.request = originalRequest;
-        }
+    const flushNow = () => {
+      void flushCallQueue(true);
+      void flushQueue(true);
+    };
 
-        if (intervalRef.current) {
-          window.clearInterval(intervalRef.current);
-          intervalRef.current = null;
-        }
+    const handleVisibilityChange = () => {
+      if (!document.hidden) {
+        flushNow();
+      }
+    };
 
-        writeStoredItems(STORAGE_KEY, queueRef.current);
-        writeStoredItems(CALLS_STORAGE_KEY, callQueueRef.current);
-      };
-    }
+    window.addEventListener("focus", flushNow);
+    window.addEventListener("online", flushNow);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
 
     intervalRef.current = window.setInterval(() => {
       void flushCallQueue();
       void flushQueue();
     }, FLUSH_INTERVAL_MS);
 
+    void setupProviders();
     void flushCallQueue(true);
     void flushQueue(true);
 
     return () => {
+      cancelled = true;
+
+      window.removeEventListener("focus", flushNow);
+      window.removeEventListener("online", flushNow);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+
       if (intervalRef.current) {
         window.clearInterval(intervalRef.current);
         intervalRef.current = null;
       }
 
+      for (const restore of providerRestorers.reverse()) {
+        restore();
+      }
+
       writeStoredItems(STORAGE_KEY, queueRef.current);
       writeStoredItems(CALLS_STORAGE_KEY, callQueueRef.current);
     };
-  }, [address, chainId]);
+  }, [address, chainId, connector]);
 }
