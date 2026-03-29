@@ -1,5 +1,5 @@
 import { type Address } from 'viem';
-import { type Token } from '../types/lifi';
+import { type Token } from '../types/swap';
 
 export const BASE_CHAIN_ID = 8453;
 export const NATIVE_ETH = '0x0000000000000000000000000000000000000000' as Address;

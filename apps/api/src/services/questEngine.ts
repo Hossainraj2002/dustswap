@@ -1024,6 +1024,14 @@ export class QuestEngine {
             tradeTime: detail.update_at || detail.create_at || item.tradeTime || null,
           },
         });
+        await pointsEngine.recordSwap(normalizedAddress, {
+          txHash: resolvedHash,
+          chainId: base.id,
+          inputToken: detail.in_token_symbol || item.inToken || null,
+          outputToken: detail.out_token_symbol || item.outToken || null,
+          volumeUsd: amountUsd,
+          awardPoints: false,
+        });
 
         importedHashes.push(resolvedHash);
         knownHashes.set(resolvedHash, amountUsd);
@@ -1076,6 +1084,14 @@ export class QuestEngine {
       outputToken: input.outputToken,
       occurredAt: new Date().toISOString(),
       metadata: input.metadata,
+    });
+    await pointsEngine.recordSwap(normalizedAddress, {
+      txHash: input.txHash,
+      chainId: input.chainId,
+      inputToken: input.inputToken,
+      outputToken: input.outputToken,
+      volumeUsd: normalizedAmountUsd,
+      awardPoints: false,
     });
 
     const completedQuests = await this.syncPublishedSwapQuests(

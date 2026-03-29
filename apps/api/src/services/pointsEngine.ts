@@ -89,6 +89,48 @@ type UserRecord = {
   last_check_in: string | null;
 };
 
+type SocialAccountRecord = {
+  user_id: number;
+  platform: string;
+  platform_user_id: string;
+  username: string | null;
+  display_name: string | null;
+  profile_image_url: string | null;
+  updated_at?: string | null;
+};
+
+type CachedFarcasterProfile = {
+  fid: string | null;
+  username: string | null;
+  displayName: string | null;
+  pfpUrl: string | null;
+  updatedAt: string | null;
+};
+
+type LeaderboardKind = "particle_points" | "referral" | "volume";
+
+type LeaderboardMetricRow = {
+  userId: number;
+  address: string;
+  totalPoints: number;
+  referralPoints: number;
+  referredUsers: number;
+  swapVolume: number;
+};
+
+type LeaderboardEntry = LeaderboardMetricRow & {
+  rank: number;
+  profile: CachedFarcasterProfile | null;
+};
+
+type LeaderboardHubResponse = {
+  type: LeaderboardKind;
+  limit: number;
+  totalUserCount: number;
+  viewer: LeaderboardEntry | null;
+  entries: LeaderboardEntry[];
+};
+
 type DailyAssetPriceRecord = {
   id: number;
   asset_symbol: string;
@@ -560,6 +602,305 @@ export class PointsEngine {
       checkInConfig,
       saveConfig,
     };
+  }
+
+  private async fetchAllPages<T>(
+    fetchPage: (
+      from: number,
+      to: number
+    ) => Promise<{ data: T[] | null; error: { message: string } | null }>
+  ) {
+    const pageSize = 1000;
+    const rows: T[] = [];
+    let from = 0;
+
+    while (true) {
+      const { data, error } = await fetchPage(from, from + pageSize - 1);
+      if (error) {
+        throw new Error(error.message);
+      }
+
+      const pageRows = data ?? [];
+      if (!pageRows.length) {
+        break;
+      }
+
+      rows.push(...pageRows);
+      if (pageRows.length < pageSize) {
+        break;
+      }
+
+      from += pageSize;
+    }
+
+    return rows;
+  }
+
+  private normalizeCachedProfile(
+    record: Pick<
+      SocialAccountRecord,
+      "platform_user_id" | "username" | "display_name" | "profile_image_url" | "updated_at"
+    > | null
+  ): CachedFarcasterProfile | null {
+    if (!record) {
+      return null;
+    }
+
+    return {
+      fid: record.platform_user_id || null,
+      username: record.username || null,
+      displayName: record.display_name || null,
+      pfpUrl: record.profile_image_url || null,
+      updatedAt: record.updated_at || null,
+    };
+  }
+
+  private async fetchCachedProfiles(userIds: number[]) {
+    const uniqueUserIds = [...new Set(userIds.filter((value) => Number.isFinite(value)))];
+    const profiles = new Map<number, CachedFarcasterProfile>();
+
+    if (!uniqueUserIds.length) {
+      return profiles;
+    }
+
+    const { data, error } = await supabase
+      .from("social_accounts")
+      .select(
+        "user_id, platform_user_id, username, display_name, profile_image_url, updated_at"
+      )
+      .eq("platform", "farcaster")
+      .in("user_id", uniqueUserIds);
+
+    if (error) {
+      throw new Error(`Fetch social profiles: ${error.message}`);
+    }
+
+    for (const row of (data ?? []) as Array<
+      Pick<
+        SocialAccountRecord,
+        "user_id" | "platform_user_id" | "username" | "display_name" | "profile_image_url" | "updated_at"
+      >
+    >) {
+      const normalized = this.normalizeCachedProfile(row);
+      if (normalized) {
+        profiles.set(Number(row.user_id), normalized);
+      }
+    }
+
+    return profiles;
+  }
+
+  private async fetchUsersByIds(userIds: number[]) {
+    const uniqueUserIds = [...new Set(userIds.filter((value) => Number.isFinite(value)))];
+    const users = new Map<number, Pick<UserRecord, "id" | "address" | "total_points">>();
+
+    if (!uniqueUserIds.length) {
+      return users;
+    }
+
+    const { data, error } = await supabase
+      .from("users")
+      .select("id, address, total_points")
+      .in("id", uniqueUserIds);
+
+    if (error) {
+      throw new Error(`Fetch leaderboard users: ${error.message}`);
+    }
+
+    for (const row of (data ?? []) as Array<
+      Pick<UserRecord, "id" | "address" | "total_points">
+    >) {
+      users.set(Number(row.id), {
+        id: Number(row.id),
+        address: String(row.address),
+        total_points: Number(row.total_points || 0),
+      });
+    }
+
+    return users;
+  }
+
+  private async countUsers() {
+    const { count, error } = await supabase
+      .from("users")
+      .select("*", { count: "exact", head: true });
+
+    if (error) {
+      throw new Error(`Count users: ${error.message}`);
+    }
+
+    return count ?? 0;
+  }
+
+  private async getReferralAggregateMaps() {
+    const referralRows = await this.fetchAllPages<{ referrer_id: number | null }>(
+      async (from, to) =>
+        await supabase
+          .from("referrals")
+          .select("referrer_id")
+          .not("referrer_id", "is", null)
+          .range(from, to)
+    );
+
+    const referralPointRows = await this.fetchAllPages<{
+      user_id: number | null;
+      total_awarded: number | null;
+    }>(
+      async (from, to) =>
+        await supabase
+          .from("point_events")
+          .select("user_id,total_awarded")
+          .in("action", ["referral_commission", "referral_new_user"])
+          .not("user_id", "is", null)
+          .range(from, to)
+    );
+
+    const referredUsersByUser = new Map<number, number>();
+    for (const row of referralRows) {
+      const userId = Number(row.referrer_id);
+      if (!Number.isFinite(userId)) {
+        continue;
+      }
+
+      referredUsersByUser.set(userId, (referredUsersByUser.get(userId) || 0) + 1);
+    }
+
+    const referralPointsByUser = new Map<number, number>();
+    for (const row of referralPointRows) {
+      const userId = Number(row.user_id);
+      if (!Number.isFinite(userId)) {
+        continue;
+      }
+
+      referralPointsByUser.set(
+        userId,
+        (referralPointsByUser.get(userId) || 0) + Number(row.total_awarded || 0)
+      );
+    }
+
+    return {
+      referredUsersByUser,
+      referralPointsByUser,
+    };
+  }
+
+  private async getSwapVolumeMap() {
+    const swapRows = await this.fetchAllPages<{
+      user_id: number | null;
+      output_value_usd: number | string | null;
+    }>(
+      async (from, to) =>
+        await supabase
+          .from("sweep_history")
+          .select("user_id,output_value_usd")
+          .eq("type", "swap")
+          .not("user_id", "is", null)
+          .range(from, to)
+    );
+
+    const swapVolumeByUser = new Map<number, number>();
+    for (const row of swapRows) {
+      const userId = Number(row.user_id);
+      if (!Number.isFinite(userId)) {
+        continue;
+      }
+
+      swapVolumeByUser.set(
+        userId,
+        (swapVolumeByUser.get(userId) || 0) + Number(row.output_value_usd || 0)
+      );
+    }
+
+    return swapVolumeByUser;
+  }
+
+  private async buildViewerEntry(
+    type: LeaderboardKind,
+    viewerAddress?: string,
+    context?: {
+      referralPointsByUser?: Map<number, number>;
+      referredUsersByUser?: Map<number, number>;
+      swapVolumeByUser?: Map<number, number>;
+    }
+  ): Promise<LeaderboardEntry | null> {
+    if (!viewerAddress) {
+      return null;
+    }
+
+    const user = await this.getOrCreate(viewerAddress);
+    const [profiles, userStats, referralStats] = await Promise.all([
+      this.fetchCachedProfiles([user.id]),
+      this.getUserStats(user.address),
+      this.getReferralStats(user.address),
+    ]);
+
+    let rank = 1;
+
+    if (type === "particle_points") {
+      const { count } = await supabase
+        .from("users")
+        .select("*", { count: "exact", head: true })
+        .gt("total_points", user.total_points);
+      rank = (count ?? 0) + 1;
+    } else if (type === "referral") {
+      const viewerReferralPoints =
+        context?.referralPointsByUser?.get(user.id) ?? referralStats.pointsEarned ?? 0;
+      const allScores = [...(context?.referralPointsByUser?.values() ?? [])];
+      rank = allScores.filter((value) => value > viewerReferralPoints).length + 1;
+    } else {
+      const viewerSwapVolume = context?.swapVolumeByUser?.get(user.id) ?? userStats.swapVolume ?? 0;
+      const allScores = [...(context?.swapVolumeByUser?.values() ?? [])];
+      rank = allScores.filter((value) => value > viewerSwapVolume).length + 1;
+    }
+
+    return {
+      rank,
+      userId: user.id,
+      address: user.address,
+      totalPoints: Number(user.total_points || 0),
+      referralPoints:
+        context?.referralPointsByUser?.get(user.id) ?? Number(referralStats.pointsEarned || 0),
+      referredUsers:
+        context?.referredUsersByUser?.get(user.id) ?? Number(referralStats.friendsJoined || 0),
+      swapVolume: context?.swapVolumeByUser?.get(user.id) ?? Number(userStats.swapVolume || 0),
+      profile: profiles.get(user.id) ?? null,
+    };
+  }
+
+  async cacheFarcasterProfile(
+    address: string,
+    profile: {
+      fid: string;
+      username?: string | null;
+      displayName?: string | null;
+      pfpUrl?: string | null;
+    }
+  ) {
+    const user = await this.getOrCreate(address);
+    const { error } = await supabase
+      .from("social_accounts")
+      .upsert(
+        {
+          user_id: user.id,
+          platform: "farcaster",
+          platform_user_id: profile.fid,
+          username: profile.username || null,
+          display_name: profile.displayName || null,
+          profile_image_url: profile.pfpUrl || null,
+          metadata: {
+            source: "neynar",
+            cachedAt: new Date().toISOString(),
+          },
+          updated_at: new Date().toISOString(),
+        },
+        {
+          onConflict: "user_id,platform",
+        }
+      );
+
+    if (error) {
+      throw new Error(`Save Farcaster profile: ${error.message}`);
+    }
   }
 
   private async updateReferralLedger(
@@ -1256,14 +1597,82 @@ export class PointsEngine {
     return award.totalAwarded;
   }
 
-  async recordSwap(address: string, txHash: string): Promise<number> {
-    const today = await this.todayBasePoints(address, "swap");
-    const capped = Math.max(0, Math.min(CFG.SWAP, CFG.CAP_SWAP - today));
-    if (capped <= 0) {
-      return 0;
+  async recordSwap(
+    address: string,
+    input: {
+      txHash?: string | null;
+      orderId?: string | null;
+      chainId?: number | null;
+      inputToken?: string | null;
+      outputToken?: string | null;
+      amountIn?: string | null;
+      amountOut?: string | null;
+      volumeUsd?: number | null;
+      awardPoints?: boolean;
+    }
+  ): Promise<number> {
+    const user = await this.getOrCreate(address);
+    const historyKey = input.txHash || input.orderId;
+    const shouldAwardPoints = input.awardPoints ?? true;
+
+    if (!historyKey) {
+      throw new Error("Swap transaction id required");
     }
 
-    const award = await this.addPoints(address, capped, "swap", txHash);
+    const { data: existingHistory, error: historyLookupError } = await supabase
+      .from("sweep_history")
+      .select("points_earned")
+      .eq("tx_hash", historyKey)
+      .maybeSingle();
+
+    if (historyLookupError) {
+      throw new Error(`Check swap history: ${historyLookupError.message}`);
+    }
+
+    if (existingHistory) {
+      return Number((existingHistory as { points_earned?: number | null }).points_earned || 0);
+    }
+
+    const today = shouldAwardPoints ? await this.todayBasePoints(address, "swap") : 0;
+    const capped = shouldAwardPoints
+      ? Math.max(0, Math.min(CFG.SWAP, CFG.CAP_SWAP - today))
+      : 0;
+    const award =
+      shouldAwardPoints && capped > 0
+        ? await this.addPoints(address, capped, "swap", historyKey, {
+            orderId: input.orderId || null,
+            inputToken: input.inputToken || null,
+            outputToken: input.outputToken || null,
+            amountIn: input.amountIn || null,
+            amountOut: input.amountOut || null,
+            volumeUsd: parseUsdAmount(input.volumeUsd ?? null),
+          })
+        : { totalAwarded: 0 };
+
+    const { error } = await supabase.from("sweep_history").insert({
+      user_id: user.id,
+      tx_hash: historyKey,
+      chain_id: input.chainId || base.id,
+      input_tokens: [
+        {
+          token: input.inputToken || "0x0000000000000000000000000000000000000000",
+          amount: input.amountIn || "0",
+        },
+      ],
+      output_token: input.outputToken || "0x0000000000000000000000000000000000000000",
+      output_amount: input.amountOut || "0",
+      output_value_usd: parseUsdAmount(input.volumeUsd ?? null),
+      fee_amount: null,
+      token_count: 1,
+      type: "swap",
+      status: input.txHash ? "confirmed" : "pending",
+      points_earned: award.totalAwarded,
+    });
+
+    if (error) {
+      throw new Error(`Record swap history: ${error.message}`);
+    }
+
     return award.totalAwarded;
   }
 
@@ -1362,6 +1771,149 @@ export class PointsEngine {
         };
       }
     );
+  }
+
+  async getLeaderboardHub(
+    type: LeaderboardKind,
+    limit = 50,
+    viewerAddress?: string
+  ): Promise<LeaderboardHubResponse> {
+    const safeLimit = Math.max(1, Math.min(100, limit));
+    const totalUserCount = await this.countUsers();
+
+    if (type === "particle_points") {
+      const { data, error } = await supabase
+        .from("users")
+        .select("id,address,total_points")
+        .order("total_points", { ascending: false })
+        .range(0, safeLimit - 1);
+
+      if (error) {
+        throw new Error(`Load particle point leaderboard: ${error.message}`);
+      }
+
+      const topUsers = (data ?? []) as Array<Pick<UserRecord, "id" | "address" | "total_points">>;
+      const profiles = await this.fetchCachedProfiles(topUsers.map((user) => Number(user.id)));
+      const viewer = await this.buildViewerEntry(type, viewerAddress);
+
+      return {
+        type,
+        limit: safeLimit,
+        totalUserCount,
+        viewer,
+        entries: topUsers.map((user, index) => ({
+          rank: index + 1,
+          userId: Number(user.id),
+          address: String(user.address),
+          totalPoints: Number(user.total_points || 0),
+          referralPoints: 0,
+          referredUsers: 0,
+          swapVolume: 0,
+          profile: profiles.get(Number(user.id)) ?? null,
+        })),
+      };
+    }
+
+    if (type === "referral") {
+      const { referredUsersByUser, referralPointsByUser } = await this.getReferralAggregateMaps();
+      const sortedUserIds = [...new Set([...referredUsersByUser.keys(), ...referralPointsByUser.keys()])].sort(
+        (left, right) => {
+          const pointDelta =
+            (referralPointsByUser.get(right) || 0) - (referralPointsByUser.get(left) || 0);
+          if (pointDelta !== 0) {
+            return pointDelta;
+          }
+
+          const countDelta =
+            (referredUsersByUser.get(right) || 0) - (referredUsersByUser.get(left) || 0);
+          if (countDelta !== 0) {
+            return countDelta;
+          }
+
+          return left - right;
+        }
+      );
+
+      const topIds = sortedUserIds.slice(0, safeLimit);
+      const [usersById, profiles, viewer] = await Promise.all([
+        this.fetchUsersByIds(topIds),
+        this.fetchCachedProfiles(topIds),
+        this.buildViewerEntry(type, viewerAddress, {
+          referralPointsByUser,
+          referredUsersByUser,
+        }),
+      ]);
+
+      return {
+        type,
+        limit: safeLimit,
+        totalUserCount,
+        viewer,
+        entries: topIds
+          .map((userId, index) => {
+            const user = usersById.get(userId);
+            if (!user) {
+              return null;
+            }
+
+            return {
+              rank: index + 1,
+              userId,
+              address: user.address,
+              totalPoints: Number(user.total_points || 0),
+              referralPoints: referralPointsByUser.get(userId) || 0,
+              referredUsers: referredUsersByUser.get(userId) || 0,
+              swapVolume: 0,
+              profile: profiles.get(userId) ?? null,
+            } satisfies LeaderboardEntry;
+          })
+          .filter((entry): entry is LeaderboardEntry => Boolean(entry)),
+      };
+    }
+
+    const swapVolumeByUser = await this.getSwapVolumeMap();
+    const sortedUserIds = [...swapVolumeByUser.keys()].sort((left, right) => {
+      const volumeDelta = (swapVolumeByUser.get(right) || 0) - (swapVolumeByUser.get(left) || 0);
+      if (volumeDelta !== 0) {
+        return volumeDelta;
+      }
+
+      return left - right;
+    });
+    const topIds = sortedUserIds.slice(0, safeLimit);
+    const [usersById, profiles, viewer] = await Promise.all([
+      this.fetchUsersByIds(topIds),
+      this.fetchCachedProfiles(topIds),
+      this.buildViewerEntry(type, viewerAddress, {
+        swapVolumeByUser,
+      }),
+    ]);
+
+    return {
+      type,
+      limit: safeLimit,
+      totalUserCount,
+      viewer,
+      entries: topIds
+        .map((userId, index) => {
+          const user = usersById.get(userId);
+          if (!user) {
+            return null;
+          }
+
+          return {
+            rank: index + 1,
+            userId,
+            address: user.address,
+            totalPoints: Number(user.total_points || 0),
+            referralPoints: 0,
+            referredUsers: 0,
+            swapVolume: swapVolumeByUser.get(userId) || 0,
+            profile: profiles.get(userId) ?? null,
+          } satisfies LeaderboardEntry;
+        })
+        .filter((entry): entry is LeaderboardEntry => Boolean(entry)),
+    };
   }
 
   async applyReferral(userAddress: string, code: string): Promise<void> {

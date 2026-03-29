@@ -14,7 +14,7 @@ const inter = Inter({
 export const metadata: Metadata = {
   title: "DustSwap - Cross-Chain Swaps",
   description: "Swap and bridge tokens across chains with zero gas fees",
-  keywords: ["DustSwap", "Swap", "Bridge", "Cross-chain", "LI.FI", "Base"],
+  keywords: ["DustSwap", "Swap", "Bridge", "Cross-chain", "Base"],
   authors: [{ name: "DustSwap Team" }],
   icons: {
     icon: "/logo.svg",

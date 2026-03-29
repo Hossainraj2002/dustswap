@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react';
-import { Token } from '../types/lifi';
+import { Token } from '../types/swap';
 import { DEFAULT_TOKENS } from '../lib/tokens';
 
 export function useTokenSearch() {

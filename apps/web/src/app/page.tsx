@@ -15,7 +15,7 @@ export default function Home() {
           </h1>
           <p className="text-xl md:text-2xl text-gray-400 max-w-2xl mx-auto font-medium" style={{ fontFamily: 'DM Sans, sans-serif' }}>
             Swap and bridge tokens across 20+ chains with zero gas fees. 
-            Powered by LI.FI Protocol and the Base Builder Program.
+            Built for DustSwap on Base with fast, simple cross-chain routing.
           </p>
         </div>
 

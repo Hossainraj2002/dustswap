@@ -656,34 +656,6 @@
 
 /* ─── Quote Info ────────────────────────────────────────────────────────────── */
 
-.lifi-quote-info {
-  background: rgba(19, 26, 42, 0.6);
-  border-radius: 12px;
-  padding: 0.75rem;
-  font-size: 0.875rem;
-  font-family: 'DM Sans', sans-serif;
-}
-
-.lifi-quote-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 0.25rem 0;
-  color: #6b7280;
-}
-
-.lifi-quote-row .value {
-  color: #9ca3af;
-}
-
-.lifi-quote-row .warning {
-  color: #f87171;
-}
-
-.lifi-quote-row .success {
-  color: #4ade80;
-}
-
 /* ─── Percentage Buttons ────────────────────────────────────────────────────── */
 
 .swap-percentage-button {
@@ -1095,10 +1067,6 @@
     font-size: 1rem;
   }
   
-  .lifi-quote-info {
-    font-size: 0.75rem;
-  }
-  
   .swap-modal {
     max-height: 90vh;
     border-radius: 20px 20px 0 0;
@@ -1147,4 +1115,24 @@
 ::-moz-selection {
   background: rgba(59, 130, 246, 0.3);
   color: white;
+}
+
+@keyframes leaderboard-beam {
+  from {
+    transform: translateX(-140%);
+  }
+  to {
+    transform: translateX(240%);
+  }
+}
+
+@keyframes leaderboard-row-in {
+  from {
+    opacity: 0;
+    transform: translate3d(-18px, 0, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
 }

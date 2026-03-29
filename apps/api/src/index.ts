@@ -6,7 +6,6 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { logger } from "hono/logger";
 import { prettyJSON } from "hono/pretty-json";
-import lifiRoutes from "./routes/lifi";
 import { pointsRoutes } from "./routes/points";
 import { questsRoutes } from "./routes/quests";
 import tokens from "./routes/tokens";
@@ -42,7 +41,6 @@ app.use(
 app.route("/api/tokens", tokens);
 app.route("/api/points", pointsRoutes);
 app.route("/api/quests", questsRoutes);
-app.route("/api/lifi", lifiRoutes);
 
 app.get("/", (c) => {
   return c.json({

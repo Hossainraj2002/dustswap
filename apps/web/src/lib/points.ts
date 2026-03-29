@@ -99,6 +99,37 @@ export type LeaderboardResponse = {
   error?: string;
 };
 
+export type LeaderboardBoardType = "particle_points" | "referral" | "volume";
+
+export type CachedLeaderboardProfile = {
+  fid: string | null;
+  username: string | null;
+  displayName: string | null;
+  pfpUrl: string | null;
+  updatedAt: string | null;
+};
+
+export type LeaderboardHubEntry = {
+  rank: number;
+  userId: number;
+  address: string;
+  totalPoints: number;
+  referralPoints: number;
+  referredUsers: number;
+  swapVolume: number;
+  profile: CachedLeaderboardProfile | null;
+};
+
+export type LeaderboardHubResponse = {
+  success: boolean;
+  type: LeaderboardBoardType;
+  limit: number;
+  totalUserCount: number;
+  viewer: LeaderboardHubEntry | null;
+  entries: LeaderboardHubEntry[];
+  error?: string;
+};
+
 export function getPointsApiUrl(path = "") {
   return `${getApiOrigin()}/api/points${path}`;
 }
@@ -161,6 +192,30 @@ export async function fetchLeaderboard(limit = 50) {
   });
 
   return parseJson<LeaderboardResponse>(response);
+}
+
+export async function fetchLeaderboardHub(
+  type: LeaderboardBoardType,
+  limit = 50,
+  viewerAddress?: string
+) {
+  const searchParams = new URLSearchParams({
+    type,
+    limit: String(limit),
+  });
+
+  if (viewerAddress) {
+    searchParams.set("viewer", viewerAddress);
+  }
+
+  const response = await fetch(getPointsApiUrl(`/leaderboards?${searchParams.toString()}`), {
+    headers: {
+      "Content-Type": "application/json",
+    },
+    cache: "no-store",
+  });
+
+  return parseJson<LeaderboardHubResponse>(response);
 }
 
 export async function performDailyCheckIn(input: {

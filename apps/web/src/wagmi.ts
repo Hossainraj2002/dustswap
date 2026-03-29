@@ -74,3 +74,4 @@ declare module "wagmi" {
     config: typeof wagmiConfig;
   }
 }
+

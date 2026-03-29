@@ -4,7 +4,7 @@ import { http } from "wagmi";
 
 export const DEFAULT_SOURCE_CHAIN_ID = base.id;
 
-// Seed the app with a stable starter set, then sync the full LI.FI EVM list at runtime.
+// Seed the app with a stable starter set for wallet/network support.
 export const INITIAL_WAGMI_CHAINS = [
   base,
   mainnet,
@@ -37,16 +37,6 @@ const rpcUrlByChainId: Record<number, string | undefined> = {
 
 export function getRpcUrlForChain(chainId: number) {
   return rpcUrlByChainId[chainId];
-}
-
-export function getLifiRpcUrls() {
-  const rpcEntries = Object.entries(rpcUrlByChainId).flatMap(
-    ([chainId, rpcUrl]) => (rpcUrl ? [[Number(chainId), [rpcUrl] as string[]]] : [])
-  );
-
-  return rpcEntries.length
-    ? (Object.fromEntries(rpcEntries) as Record<number, string[]>)
-    : undefined;
 }
 
 export function getWagmiTransports(chains: readonly Chain[]) {

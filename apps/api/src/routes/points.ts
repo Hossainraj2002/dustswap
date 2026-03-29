@@ -6,6 +6,51 @@ import { pointsEngine } from "../services/pointsEngine";
 
 const pointsRoutes = new Hono();
 
+// GET /api/points/leaderboards
+pointsRoutes.get("/leaderboards", async (c) => {
+  const rawType = c.req.query("type") ?? "particle_points";
+  const type =
+    rawType === "referral" || rawType === "volume" || rawType === "particle_points"
+      ? rawType
+      : "particle_points";
+  const limit = Math.min(100, Math.max(1, parseInt(c.req.query("limit") ?? "50", 10)));
+  const viewer = c.req.query("viewer") ?? undefined;
+
+  try {
+    const data = await pointsEngine.getLeaderboardHub(type, limit, viewer);
+    return c.json({ success: true, ...data });
+  } catch (e: unknown) {
+    return c.json({ success: false, error: (e as Error).message }, 500);
+  }
+});
+
+// POST /api/points/profile-cache
+pointsRoutes.post("/profile-cache", async (c) => {
+  const body = await c.req.json<{
+    address?: string;
+    fid?: string;
+    username?: string | null;
+    displayName?: string | null;
+    pfpUrl?: string | null;
+  }>();
+
+  if (!body.address || !body.fid) {
+    return c.json({ error: "address and fid required" }, 400);
+  }
+
+  try {
+    await pointsEngine.cacheFarcasterProfile(body.address, {
+      fid: body.fid,
+      username: body.username,
+      displayName: body.displayName,
+      pfpUrl: body.pfpUrl,
+    });
+    return c.json({ success: true });
+  } catch (e: unknown) {
+    return c.json({ success: false, error: (e as Error).message }, 500);
+  }
+});
+
 // GET /api/points/:address
 pointsRoutes.get("/:address", async (c) => {
   try {
@@ -175,12 +220,29 @@ pointsRoutes.post("/record-burn", async (c) => {
 
 // POST /api/points/record-swap
 pointsRoutes.post("/record-swap", async (c) => {
-  const body = await c.req.json<{ address?: string; txHash?: string }>();
-  if (!body.address || !body.txHash) {
-    return c.json({ error: "Missing fields" }, 400);
+  const body = await c.req.json<{
+    address?: string;
+    txHash?: string | null;
+    orderId?: string | null;
+    inputToken?: string | null;
+    outputToken?: string | null;
+    amountIn?: string | null;
+    amountOut?: string | null;
+    volumeUsd?: number | null;
+  }>();
+  if (!body.address || (!body.txHash && !body.orderId)) {
+    return c.json({ error: "address and txHash or orderId required" }, 400);
   }
   try {
-    const pts = await pointsEngine.recordSwap(body.address, body.txHash);
+    const pts = await pointsEngine.recordSwap(body.address, {
+      txHash: body.txHash,
+      orderId: body.orderId,
+      inputToken: body.inputToken,
+      outputToken: body.outputToken,
+      amountIn: body.amountIn,
+      amountOut: body.amountOut,
+      volumeUsd: body.volumeUsd,
+    });
     return c.json({ success: true, pointsAwarded: pts });
   } catch (e: unknown) {
     return c.json({ success: false, error: (e as Error).message }, 500);

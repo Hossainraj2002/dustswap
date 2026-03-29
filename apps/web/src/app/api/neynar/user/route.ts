@@ -1,5 +1,15 @@
 import { NextResponse } from 'next/server';
 
+const DEFAULT_API_URL = "http://localhost:3001";
+
+function getPointsApiUrl(path = "") {
+  const baseUrl = (process.env.NEXT_PUBLIC_API_URL || DEFAULT_API_URL)
+    .replace(/\/+$/, "")
+    .replace(/\/api$/, "");
+
+  return `${baseUrl}/api/points${path}`;
+}
+
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const address = searchParams.get('address');
@@ -32,6 +42,24 @@ export async function GET(request: Request) {
     if (!profile) {
        return NextResponse.json({ error: 'User not found' }, { status: 404 });
     }
+
+    await fetch(getPointsApiUrl("/profile-cache"), {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        address,
+        fid: String(profile.fid ?? ""),
+        username: profile.username ?? null,
+        displayName: profile.display_name ?? null,
+        pfpUrl: profile.pfp_url ?? null,
+      }),
+      cache: "no-store",
+    }).catch((cacheError) => {
+      console.error("Failed to cache Neynar profile:", cacheError);
+      return null;
+    });
 
     return NextResponse.json(profile);
   } catch (error) {
