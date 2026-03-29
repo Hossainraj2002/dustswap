@@ -1,5 +1,6 @@
 import {
   createPublicClient,
+  decodeFunctionData,
   decodeEventLog,
   erc20Abi,
   http,
@@ -23,8 +24,20 @@ const USDC_BASE = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913";
 const WETH_BASE = "0x4200000000000000000000000000000000000006";
 const OPENOCEAN_EXCHANGE_V2 = "0x6352a56caadc4f1e25cd6c75970fa768a3304e64";
 const OPENOCEAN_AGGREGATION_ROUTER = "0x6dd434082eab5cd134628d4b9a6e4d0813ef8b07";
+const ENTRY_POINT_V06_ADDRESS = "0x5ff137d4b0fdcd49dca30c7cf57e578a026d2789";
+const OPENOCEAN_ROUTER_ADDRESSES = new Set([
+  OPENOCEAN_EXCHANGE_V2,
+  OPENOCEAN_AGGREGATION_ROUTER,
+]);
 const SWAP_EVENT_ABI = parseAbi([
   "event Swapped(address indexed sender, address indexed srcToken, address indexed dstToken, address dstReceiver, uint256 amount, uint256 spentAmount, uint256 returnAmount, uint256 minReturnAmount, uint256 guaranteedAmount, address referrer)",
+]);
+const ENTRY_POINT_HANDLE_OPS_ABI = parseAbi([
+  "function handleOps((address sender,uint256 nonce,bytes initCode,bytes callData,uint256 callGasLimit,uint256 verificationGasLimit,uint256 preVerificationGas,uint256 maxFeePerGas,uint256 maxPriorityFeePerGas,bytes paymasterAndData,bytes signature)[] ops,address beneficiary)",
+]);
+const SMART_WALLET_EXECUTION_ABI = parseAbi([
+  "function execute(address target,uint256 value,bytes data)",
+  "function executeBatch((address target,uint256 value,bytes data)[] calls)",
 ]);
 const PRICE_SCALE = 8;
 const USD_SCALE = 6;
@@ -103,6 +116,31 @@ type DecodedSwapEvent = {
   referrer: string;
   logIndex: number;
   emitterAddress: string;
+};
+
+type TransactionRecord = Awaited<ReturnType<typeof baseClient.getTransaction>>;
+type TransactionReceiptRecord = Awaited<ReturnType<typeof baseClient.getTransactionReceipt>>;
+
+type SmartWalletExecutionCall = {
+  target: string;
+  value: bigint;
+  data: Hex;
+};
+
+type ResolvedSubmittedTransaction = {
+  submittedHash: string;
+  submittedKind: "transaction" | "user_operation";
+  resolvedTxHash: string;
+  userOperationHash: string | null;
+  transaction: TransactionRecord;
+  receipt: TransactionReceiptRecord;
+};
+
+type SwapRoutingContext = {
+  routerAddress: string;
+  senderAddress: string;
+  viaSmartWallet: boolean;
+  userOperationHash: string | null;
 };
 
 const priceCache = new Map<string, PriceCacheEntry>();
@@ -248,17 +286,76 @@ async function getUserByAddress(address: string) {
   return (data as UserRow | null) ?? null;
 }
 
-async function waitForReceipt(txHash: Hex) {
+async function getTransactionContextByHash(txHash: Hex) {
+  const [transaction, receipt] = await Promise.all([
+    baseClient.getTransaction({ hash: txHash }),
+    baseClient.getTransactionReceipt({ hash: txHash }),
+  ]);
+
+  return {
+    transaction,
+    receipt,
+  };
+}
+
+async function resolveUserOperationTransactionHash(userOperationHash: Hex) {
+  try {
+    const response = (await baseClient.request({
+      method: "eth_getUserOperationReceipt" as never,
+      params: [userOperationHash] as never,
+    })) as
+      | {
+          receipt?: {
+            transactionHash?: string | null;
+          } | null;
+          transactionHash?: string | null;
+        }
+      | null;
+
+    const resolvedHash = response?.receipt?.transactionHash || response?.transactionHash;
+    return resolvedHash && isTxHash(resolvedHash) ? normalizeTxHash(resolvedHash) : null;
+  } catch {
+    return null;
+  }
+}
+
+async function waitForResolvedTransaction(submittedHash: Hex): Promise<ResolvedSubmittedTransaction> {
   let lastError: Error | null = null;
 
   for (let attempt = 0; attempt < RECEIPT_MAX_ATTEMPTS; attempt += 1) {
     try {
-      return await baseClient.getTransactionReceipt({ hash: txHash });
+      const direct = await getTransactionContextByHash(submittedHash);
+      return {
+        submittedHash,
+        submittedKind: "transaction",
+        resolvedTxHash: submittedHash,
+        userOperationHash: null,
+        transaction: direct.transaction,
+        receipt: direct.receipt,
+      };
     } catch (error) {
       lastError = error as Error;
-      if (attempt < RECEIPT_MAX_ATTEMPTS - 1) {
-        await sleep(RECEIPT_RETRY_DELAY_MS);
+    }
+
+    const resolvedUserOperationHash = await resolveUserOperationTransactionHash(submittedHash);
+    if (resolvedUserOperationHash) {
+      try {
+        const resolved = await getTransactionContextByHash(resolvedUserOperationHash as Hex);
+        return {
+          submittedHash,
+          submittedKind: "user_operation",
+          resolvedTxHash: resolvedUserOperationHash,
+          userOperationHash: submittedHash,
+          transaction: resolved.transaction,
+          receipt: resolved.receipt,
+        };
+      } catch (error) {
+        lastError = error as Error;
       }
+    }
+
+    if (attempt < RECEIPT_MAX_ATTEMPTS - 1) {
+      await sleep(RECEIPT_RETRY_DELAY_MS);
     }
   }
 
@@ -267,7 +364,7 @@ async function waitForReceipt(txHash: Hex) {
   );
 }
 
-function decodeSwapEvent(receipt: Awaited<ReturnType<typeof baseClient.getTransactionReceipt>>) {
+function decodeSwapEvent(receipt: TransactionReceiptRecord) {
   for (const log of receipt.logs) {
     try {
       const decoded = decodeEventLog({
@@ -309,6 +406,111 @@ function decodeSwapEvent(receipt: Awaited<ReturnType<typeof baseClient.getTransa
   }
 
   throw new UnprocessableSwapError("Swapped event not found in transaction receipt");
+}
+
+function decodeSmartWalletCalls(callData: Hex): SmartWalletExecutionCall[] {
+  const decodedWalletCall = decodeFunctionData({
+    abi: SMART_WALLET_EXECUTION_ABI,
+    data: callData,
+  });
+
+  if (decodedWalletCall.functionName === "execute") {
+    return [
+      {
+        target: normalizeAddress(decodedWalletCall.args[0]),
+        value: decodedWalletCall.args[1],
+        data: decodedWalletCall.args[2],
+      },
+    ];
+  }
+
+  return decodedWalletCall.args[0].map((call) => ({
+    target: normalizeAddress(call.target),
+    value: call.value,
+    data: call.data,
+  }));
+}
+
+function resolveSwapRoutingContext(args: {
+  expectedAddress: string;
+  transaction: TransactionRecord;
+  decodedSwap: DecodedSwapEvent;
+  resolvedTransaction: ResolvedSubmittedTransaction;
+}): SwapRoutingContext {
+  const normalizedExpectedAddress = normalizeAddress(args.expectedAddress);
+  const transactionTo = args.transaction.to ? normalizeAddress(args.transaction.to) : "";
+  const transactionFrom = normalizeAddress(args.transaction.from);
+
+  if (OPENOCEAN_ROUTER_ADDRESSES.has(transactionTo)) {
+    if (
+      transactionFrom !== normalizedExpectedAddress &&
+      args.decodedSwap.sender !== normalizedExpectedAddress
+    ) {
+      throw new UnprocessableSwapError("Swap transaction does not belong to this wallet");
+    }
+
+    return {
+      routerAddress: transactionTo,
+      senderAddress: args.decodedSwap.sender,
+      viaSmartWallet: false,
+      userOperationHash: args.resolvedTransaction.userOperationHash,
+    };
+  }
+
+  if (
+    transactionTo !== ENTRY_POINT_V06_ADDRESS ||
+    !args.transaction.input ||
+    args.transaction.input === "0x"
+  ) {
+    throw new UnprocessableSwapError("Transaction was not sent through a supported OpenOcean router");
+  }
+
+  try {
+    const decodedEntryPointCall = decodeFunctionData({
+      abi: ENTRY_POINT_HANDLE_OPS_ABI,
+      data: args.transaction.input,
+    });
+
+    if (decodedEntryPointCall.functionName !== "handleOps") {
+      throw new UnprocessableSwapError("Unsupported smart wallet transaction format");
+    }
+
+    const matchingOperation = decodedEntryPointCall.args[0].find(
+      (operation) => normalizeAddress(operation.sender) === normalizedExpectedAddress
+    );
+
+    if (!matchingOperation) {
+      throw new UnprocessableSwapError("Smart wallet operation does not belong to this wallet");
+    }
+
+    const walletCalls = decodeSmartWalletCalls(matchingOperation.callData);
+    const matchingRouterCall = walletCalls.find(
+      (call) =>
+        OPENOCEAN_ROUTER_ADDRESSES.has(call.target) &&
+        call.target === args.decodedSwap.emitterAddress
+    );
+
+    if (!matchingRouterCall) {
+      throw new UnprocessableSwapError("Smart wallet operation did not execute an OpenOcean swap");
+    }
+
+    if (args.decodedSwap.sender !== normalizedExpectedAddress) {
+      throw new UnprocessableSwapError("Swap event sender does not match the connected wallet");
+    }
+
+    return {
+      routerAddress: matchingRouterCall.target,
+      senderAddress: normalizeAddress(matchingOperation.sender),
+      viaSmartWallet: true,
+      userOperationHash: args.resolvedTransaction.userOperationHash,
+    };
+  } catch (error) {
+    if (error instanceof UnprocessableSwapError) {
+      throw error;
+    }
+
+    throw new UnprocessableSwapError("Unable to decode smart wallet swap transaction");
+  }
 }
 
 async function getTokenMetadata(address: string): Promise<TokenMetadata> {
@@ -715,24 +917,38 @@ export async function recordSwap(input: {
   }
 
   const user = await pointsEngine.getOrCreate(normalizedAddress);
-  const receipt = await waitForReceipt(normalizedTxHash as Hex);
+  const resolvedTransaction = await waitForResolvedTransaction(normalizedTxHash as Hex);
+  const existingResolvedSwap =
+    resolvedTransaction.resolvedTxHash !== normalizedTxHash
+      ? await getExistingSwap(resolvedTransaction.resolvedTxHash)
+      : null;
+
+  if (existingResolvedSwap) {
+    return {
+      txHash: existingResolvedSwap.tx_hash,
+      amountUsd: Number(existingResolvedSwap.amount_usd || 0),
+      dayKey: existingResolvedSwap.day_key,
+      weekKey: existingResolvedSwap.week_key,
+      isNew: false,
+    };
+  }
+
+  const receipt = resolvedTransaction.receipt;
   if (receipt.status !== "success") {
     throw new UnprocessableSwapError("Swap transaction reverted");
   }
 
-  const [transaction, block] = await Promise.all([
-    baseClient.getTransaction({ hash: normalizedTxHash as Hex }),
-    baseClient.getBlock({ blockNumber: receipt.blockNumber }),
-  ]);
+  const transaction = resolvedTransaction.transaction;
+  const block = await baseClient.getBlock({ blockNumber: receipt.blockNumber });
 
   const decodedSwap = decodeSwapEvent(receipt);
-  const routerAddress = normalizeAddress(transaction.to || decodedSwap.emitterAddress);
-  if (
-    routerAddress !== OPENOCEAN_EXCHANGE_V2 &&
-    routerAddress !== OPENOCEAN_AGGREGATION_ROUTER
-  ) {
-    throw new UnprocessableSwapError("Transaction was not sent through a supported OpenOcean router");
-  }
+  const routingContext = resolveSwapRoutingContext({
+    expectedAddress: normalizedAddress,
+    transaction,
+    decodedSwap,
+    resolvedTransaction,
+  });
+  const routerAddress = routingContext.routerAddress;
 
   const [srcToken, dstToken] = await Promise.all([
     getTokenMetadata(decodedSwap.srcToken),
@@ -753,8 +969,13 @@ export async function recordSwap(input: {
   const metadata = {
     priceSource: outPrice.source,
     priceMetadata: outPrice.metadata,
+    submittedHash: normalizedTxHash,
+    submittedKind: resolvedTransaction.submittedKind,
+    resolvedTxHash: resolvedTransaction.resolvedTxHash,
+    userOperationHash: routingContext.userOperationHash,
+    viaSmartWallet: routingContext.viaSmartWallet,
     txFrom: transaction.from ? normalizeAddress(transaction.from) : null,
-    sender: decodedSwap.sender,
+    sender: routingContext.senderAddress,
     routerAddress,
     referrer: decodedSwap.referrer || null,
     spentAmount: decodedSwap.spentAmount.toString(),
@@ -768,10 +989,10 @@ export async function recordSwap(input: {
     {
       user_id: user.id,
       address: normalizedAddress,
-      tx_hash: normalizedTxHash,
+      tx_hash: resolvedTransaction.resolvedTxHash,
       chain_id: resolvedChainId,
       router_address: routerAddress,
-      sender_address: decodedSwap.sender,
+      sender_address: routingContext.senderAddress,
       src_token_address: srcToken.address,
       src_token_symbol: srcToken.symbol,
       src_token_decimals: srcToken.decimals,
@@ -808,7 +1029,7 @@ export async function recordSwap(input: {
   await mirrorSwapToActivityEvents({
     userId: user.id,
     chainId: resolvedChainId,
-    txHash: normalizedTxHash,
+    txHash: resolvedTransaction.resolvedTxHash,
     amountUsd,
     occurredAt: occurredAtIso,
     srcToken,
@@ -818,7 +1039,7 @@ export async function recordSwap(input: {
   await mirrorSwapToSweepHistory({
     userId: user.id,
     chainId: resolvedChainId,
-    txHash: normalizedTxHash,
+    txHash: resolvedTransaction.resolvedTxHash,
     srcToken,
     dstToken,
     spentAmount: decodedSwap.spentAmount,
@@ -827,7 +1048,7 @@ export async function recordSwap(input: {
   });
 
   return {
-    txHash: normalizedTxHash,
+    txHash: resolvedTransaction.resolvedTxHash,
     amountUsd: scaledDecimalToNumber(amountUsdScaled, USD_SCALE),
     dayKey,
     weekKey,
