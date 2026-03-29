@@ -31,9 +31,12 @@ interface ProvidersProps {
   children: ReactNode;
 }
 
-export function Providers({ children }: ProvidersProps) {
+function SwapCaptureBootstrap() {
   useSwapCapture();
+  return null;
+}
 
+export function Providers({ children }: ProvidersProps) {
   const [queryClient] = useState(
     () =>
       new QueryClient({
@@ -51,6 +54,7 @@ export function Providers({ children }: ProvidersProps) {
   return (
     <WagmiProvider config={wagmiConfig} reconnectOnMount>
       <QueryClientProvider client={queryClient}>
+        <SwapCaptureBootstrap />
         {children}
       </QueryClientProvider>
     </WagmiProvider>
