@@ -45,6 +45,7 @@ const MEMORY_PRICE_TTL_MS = 60 * 60 * 1000;
 const RECEIPT_RETRY_DELAY_MS = 1500;
 const RECEIPT_MAX_ATTEMPTS = 20;
 const DEFAULT_ETH_PRICE_USD = Number(process.env.DEFAULT_ETH_PRICE_USD || "3500");
+const TOKEN_PRICE_CACHE_TABLE = "token_price_cache_daily";
 
 const baseClient = createPublicClient({
   chain: base,
@@ -76,6 +77,12 @@ type DailyAssetPriceRow = {
   price_usd: string | number;
   source: string;
   metadata: Record<string, unknown> | null;
+};
+
+type SupabaseErrorLike = {
+  code?: string;
+  message?: string;
+  details?: string | null;
 };
 
 type PriceCacheEntry = {
@@ -221,6 +228,24 @@ function getAssetPriceKey(address: string) {
   return normalized === ZERO_ADDRESS ? ETH_PLACEHOLDER : normalized;
 }
 
+function getAssetPriceDbKey(address: string) {
+  const normalized = normalizeAddress(address);
+
+  if (
+    normalized === ETH_PLACEHOLDER ||
+    normalized === ZERO_ADDRESS ||
+    normalized === WETH_BASE
+  ) {
+    return "ETH";
+  }
+
+  if (normalized === USDC_BASE) {
+    return "USDC";
+  }
+
+  return null;
+}
+
 function getCoinGeckoId(address: string) {
   const normalized = normalizeAddress(address);
   if (normalized === ETH_PLACEHOLDER || normalized === ZERO_ADDRESS || normalized === WETH_BASE) {
@@ -234,6 +259,15 @@ function getCoinGeckoId(address: string) {
 
 function getPriceCacheKey(address: string, dayKey: string) {
   return `${getAssetPriceKey(address)}:${dayKey}`;
+}
+
+function isMissingTokenPriceCacheTable(error: SupabaseErrorLike | null | undefined) {
+  const message = `${error?.message || ""} ${error?.details || ""}`.toLowerCase();
+  return (
+    error?.code === "42P01" ||
+    error?.code === "PGRST205" ||
+    message.includes(TOKEN_PRICE_CACHE_TABLE)
+  );
 }
 
 function getRequestHeaders() {
@@ -553,15 +587,48 @@ async function getCachedDailyPrice(address: string, dayKey: string) {
   const assetKey = getAssetPriceKey(address);
   const cacheKey = getPriceCacheKey(assetKey, dayKey);
   const cached = priceCache.get(cacheKey);
+  const dbKey = getAssetPriceDbKey(address);
 
   if (cached && cached.expiresAt > Date.now()) {
     return cached;
   }
 
+  const { data: tokenPriceData, error: tokenPriceError } = await supabase
+    .from(TOKEN_PRICE_CACHE_TABLE)
+    .select("price_usd, source, metadata")
+    .eq("chain_id", base.id)
+    .eq("token_address", assetKey)
+    .eq("price_date", dayKey)
+    .maybeSingle();
+
+  if (tokenPriceError && !isMissingTokenPriceCacheTable(tokenPriceError as SupabaseErrorLike)) {
+    throw new Error(`Load token-address price cache: ${tokenPriceError.message}`);
+  }
+
+  if (tokenPriceData) {
+    const row = tokenPriceData as DailyAssetPriceRow;
+    const entry: PriceCacheEntry = {
+      priceScaled: parseScaledDecimal(row.price_usd, PRICE_SCALE),
+      expiresAt: Date.now() + MEMORY_PRICE_TTL_MS,
+      source: row.source || "coingecko",
+      metadata:
+        row.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata)
+          ? row.metadata
+          : {},
+    };
+
+    priceCache.set(cacheKey, entry);
+    return entry;
+  }
+
+  if (!dbKey) {
+    return null;
+  }
+
   const { data, error } = await supabase
     .from("daily_asset_prices")
     .select("price_usd, source, metadata")
-    .eq("asset_symbol", assetKey)
+    .eq("asset_symbol", dbKey)
     .eq("price_date", dayKey)
     .maybeSingle();
 
@@ -590,10 +657,41 @@ async function getCachedDailyPrice(address: string, dayKey: string) {
 
 async function getLatestCachedPrice(address: string) {
   const assetKey = getAssetPriceKey(address);
+  const dbKey = getAssetPriceDbKey(address);
+
+  const { data: tokenPriceData, error: tokenPriceError } = await supabase
+    .from(TOKEN_PRICE_CACHE_TABLE)
+    .select("price_usd, source, metadata")
+    .eq("chain_id", base.id)
+    .eq("token_address", assetKey)
+    .order("price_date", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (tokenPriceError && !isMissingTokenPriceCacheTable(tokenPriceError as SupabaseErrorLike)) {
+    throw new Error(`Load fallback token-address price: ${tokenPriceError.message}`);
+  }
+
+  if (tokenPriceData) {
+    const row = tokenPriceData as DailyAssetPriceRow;
+    return {
+      priceScaled: parseScaledDecimal(row.price_usd, PRICE_SCALE),
+      source: row.source || "cached_fallback",
+      metadata:
+        row.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata)
+          ? row.metadata
+          : {},
+    };
+  }
+
+  if (!dbKey) {
+    return null;
+  }
+
   const { data, error } = await supabase
     .from("daily_asset_prices")
     .select("price_usd, source, metadata")
-    .eq("asset_symbol", assetKey)
+    .eq("asset_symbol", dbKey)
     .order("price_date", { ascending: false })
     .limit(1)
     .maybeSingle();
@@ -679,6 +777,7 @@ async function fetchCoinGeckoPrice(address: string) {
 
 async function getTokenPriceUsd(address: string, dayKey: string) {
   const assetKey = getAssetPriceKey(address);
+  const dbKey = getAssetPriceDbKey(address);
   const cacheKey = getPriceCacheKey(assetKey, dayKey);
   const cached = await getCachedDailyPrice(assetKey, dayKey);
 
@@ -691,20 +790,46 @@ async function getTokenPriceUsd(address: string, dayKey: string) {
     source: string;
     metadata: Record<string, unknown>;
   }) => {
-    const { error } = await supabase.from("daily_asset_prices").upsert(
-      {
-        asset_symbol: assetKey,
-        price_date: dayKey,
-        price_usd: formatScaledDecimal(entryInput.priceScaled, PRICE_SCALE),
-        source: entryInput.source,
-        metadata: entryInput.metadata,
-        updated_at: new Date().toISOString(),
-      },
-      { onConflict: "asset_symbol,price_date" }
+    const tokenPricePayload = {
+      chain_id: base.id,
+      token_address: assetKey,
+      price_date: dayKey,
+      price_usd: formatScaledDecimal(entryInput.priceScaled, PRICE_SCALE),
+      source: entryInput.source,
+      metadata: entryInput.metadata,
+      updated_at: new Date().toISOString(),
+    };
+
+    let tokenPriceCacheAvailable = true;
+    const { error: tokenPriceError } = await supabase.from(TOKEN_PRICE_CACHE_TABLE).upsert(
+      tokenPricePayload,
+      { onConflict: "chain_id,token_address,price_date" }
     );
 
-    if (error) {
-      throw new Error(`Store token price cache: ${error.message}`);
+    if (tokenPriceError) {
+      if (isMissingTokenPriceCacheTable(tokenPriceError as SupabaseErrorLike)) {
+        tokenPriceCacheAvailable = false;
+      } else {
+        throw new Error(`Store token-address price cache: ${tokenPriceError.message}`);
+      }
+    }
+
+    if (!tokenPriceCacheAvailable && dbKey) {
+      const { error } = await supabase.from("daily_asset_prices").upsert(
+        {
+          asset_symbol: dbKey,
+          price_date: dayKey,
+          price_usd: formatScaledDecimal(entryInput.priceScaled, PRICE_SCALE),
+          source: entryInput.source,
+          metadata: entryInput.metadata,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "asset_symbol,price_date" }
+      );
+
+      if (error) {
+        throw new Error(`Store token price cache: ${error.message}`);
+      }
     }
 
     const entry: PriceCacheEntry = {
