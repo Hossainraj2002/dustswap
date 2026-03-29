@@ -125,6 +125,7 @@ export type LeaderboardHubResponse = {
   type: LeaderboardBoardType;
   limit: number;
   totalUserCount: number;
+  totalParticlePoints: number;
   viewer: LeaderboardHubEntry | null;
   entries: LeaderboardHubEntry[];
   error?: string;

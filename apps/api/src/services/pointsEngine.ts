@@ -127,6 +127,7 @@ type LeaderboardHubResponse = {
   type: LeaderboardKind;
   limit: number;
   totalUserCount: number;
+  totalParticlePoints: number;
   viewer: LeaderboardEntry | null;
   entries: LeaderboardEntry[];
 };
@@ -730,6 +731,18 @@ export class PointsEngine {
     }
 
     return count ?? 0;
+  }
+
+  private async sumTotalPoints() {
+    const rows = await this.fetchAllPages<{ total_points: number | null }>(
+      async (from, to) =>
+        await supabase.from("users").select("total_points").range(from, to)
+    );
+
+    return rows.reduce(
+      (sum, row) => sum + Number(row.total_points || 0),
+      0
+    );
   }
 
   private async getReferralAggregateMaps() {
@@ -1779,7 +1792,10 @@ export class PointsEngine {
     viewerAddress?: string
   ): Promise<LeaderboardHubResponse> {
     const safeLimit = Math.max(1, Math.min(100, limit));
-    const totalUserCount = await this.countUsers();
+    const [totalUserCount, totalParticlePoints] = await Promise.all([
+      this.countUsers(),
+      this.sumTotalPoints(),
+    ]);
 
     if (type === "particle_points") {
       const { data, error } = await supabase
@@ -1800,6 +1816,7 @@ export class PointsEngine {
         type,
         limit: safeLimit,
         totalUserCount,
+        totalParticlePoints,
         viewer,
         entries: topUsers.map((user, index) => ({
           rank: index + 1,
@@ -1848,6 +1865,7 @@ export class PointsEngine {
         type,
         limit: safeLimit,
         totalUserCount,
+        totalParticlePoints,
         viewer,
         entries: topIds
           .map((userId, index) => {
@@ -1893,6 +1911,7 @@ export class PointsEngine {
       type,
       limit: safeLimit,
       totalUserCount,
+      totalParticlePoints,
       viewer,
       entries: topIds
         .map((userId, index) => {

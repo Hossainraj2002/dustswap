@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useState, type CSSProperties } from "react";
 import { useAccount } from "wagmi";
 import { InteractiveLeaderboardBackground } from "@/components/leaderboard/InteractiveLeaderboardBackground";
 import {
@@ -20,26 +20,14 @@ type NeynarProfile = {
 };
 
 const BOARD_LIMIT = 50;
+
 const BOARD_OPTIONS: Array<{
   id: LeaderboardBoardType;
   label: string;
-  accent: string;
 }> = [
-  {
-    id: "particle_points",
-    label: "Particle Point",
-    accent: "from-sky-500/20 via-sky-300/15 to-white",
-  },
-  {
-    id: "referral",
-    label: "Referral",
-    accent: "from-slate-300/45 via-sky-100/40 to-white",
-  },
-  {
-    id: "volume",
-    label: "Volume",
-    accent: "from-cyan-300/25 via-sky-200/20 to-white",
-  },
+  { id: "particle_points", label: "Particle Point" },
+  { id: "referral", label: "Referral" },
+  { id: "volume", label: "Volume" },
 ];
 
 function shortAddress(address: string) {
@@ -57,7 +45,7 @@ function formatUsd(value: number) {
   })}`;
 }
 
-function getProfileName(
+function getViewerName(
   liveProfile: NeynarProfile | null,
   cachedProfile: CachedLeaderboardProfile | null,
   address?: string
@@ -66,22 +54,22 @@ function getProfileName(
     return liveProfile.display_name;
   }
 
-  if (cachedProfile?.displayName) {
-    return cachedProfile.displayName;
-  }
-
   if (liveProfile?.username) {
     return liveProfile.username;
+  }
+
+  if (cachedProfile?.displayName) {
+    return cachedProfile.displayName;
   }
 
   if (cachedProfile?.username) {
     return cachedProfile.username;
   }
 
-  return address ? shortAddress(address) : "Anonymous";
+  return address ? shortAddress(address) : "Wallet not connected";
 }
 
-function getProfileHandle(
+function getViewerSubtitle(
   liveProfile: NeynarProfile | null,
   cachedProfile: CachedLeaderboardProfile | null,
   address?: string
@@ -94,102 +82,136 @@ function getProfileHandle(
     return `@${cachedProfile.username}`;
   }
 
-  return address ? shortAddress(address) : "Wallet not connected";
+  return address ? shortAddress(address) : "No wallet linked";
 }
 
-function getAvatarUrl(
+function getViewerAvatar(
   liveProfile: NeynarProfile | null,
   cachedProfile: CachedLeaderboardProfile | null
 ) {
   return liveProfile?.pfp_url || cachedProfile?.pfpUrl || "";
 }
 
+function getRowUsername(profile: CachedLeaderboardProfile | null, address: string) {
+  if (profile?.username) {
+    return `@${profile.username}`;
+  }
+
+  return shortAddress(address);
+}
+
 function getInitials(label: string) {
-  const normalized = label
+  const letters = label
+    .replace(/@/g, "")
     .split(/\s+/)
     .filter(Boolean)
     .slice(0, 2)
-    .map((chunk) => chunk[0]?.toUpperCase() ?? "")
+    .map((part) => part[0]?.toUpperCase() ?? "")
     .join("");
 
-  return normalized || "DS";
+  return letters || "DS";
+}
+
+function getBoardColumns(type: LeaderboardBoardType): CSSProperties {
+  if (type === "referral") {
+    return {
+      gridTemplateColumns: "42px minmax(0,1fr) 60px 64px",
+    };
+  }
+
+  if (type === "volume") {
+    return {
+      gridTemplateColumns: "42px minmax(0,1fr) 84px",
+    };
+  }
+
+  return {
+    gridTemplateColumns: "42px minmax(0,1fr) 72px",
+  };
+}
+
+function getBoardHeaders(type: LeaderboardBoardType) {
+  if (type === "referral") {
+    return ["Rank", "User", "Refs", "PP"];
+  }
+
+  if (type === "volume") {
+    return ["Rank", "User", "Volume"];
+  }
+
+  return ["Rank", "User", "Total PP"];
 }
 
 function Avatar({
   src,
   label,
-  size = 48,
 }: {
   src?: string;
   label: string;
-  size?: number;
 }) {
   if (src) {
     return (
       <img
         src={src}
         alt={label}
-        className="rounded-full object-cover ring-1 ring-white/80"
-        style={{ width: size, height: size }}
+        className="h-9 w-9 rounded-full object-cover ring-1 ring-white/90"
         referrerPolicy="no-referrer"
       />
     );
   }
 
   return (
-    <div
-      className="flex items-center justify-center rounded-full bg-[radial-gradient(circle_at_30%_30%,#ffffff_0%,#dbeafe_48%,#cbd5e1_100%)] text-sm font-semibold text-slate-700 ring-1 ring-white/80"
-      style={{ width: size, height: size }}
-    >
+    <div className="flex h-9 w-9 items-center justify-center rounded-full bg-[radial-gradient(circle_at_30%_30%,#ffffff_0%,#dbeafe_46%,#cbd5e1_100%)] text-[11px] font-semibold text-slate-700 ring-1 ring-white/90">
       {getInitials(label)}
     </div>
   );
 }
 
-function RankBadge({ rank }: { rank: number }) {
-  const tone =
-    rank === 1
-      ? "border-amber-200 bg-amber-50 text-amber-700"
-      : rank === 2
-        ? "border-slate-200 bg-slate-100 text-slate-700"
-        : rank === 3
-          ? "border-orange-200 bg-orange-50 text-orange-700"
-          : "border-slate-200 bg-white text-slate-600";
-
-  return (
-    <div
-      className={`flex h-12 w-12 items-center justify-center rounded-2xl border text-sm font-semibold shadow-[0_12px_24px_rgba(148,163,184,0.08)] ${tone}`}
-    >
-      {rank <= 3 ? rank : `#${rank}`}
-    </div>
-  );
-}
-
-function StatCard({
+function CompactStatCard({
   label,
   value,
-  detail,
   isLoading,
 }: {
   label: string;
   value: string;
-  detail: string;
   isLoading?: boolean;
 }) {
   return (
-    <div className="rounded-[28px] border border-white/90 bg-white/82 px-5 py-5 shadow-[0_16px_50px_rgba(148,163,184,0.12)] backdrop-blur-xl">
-      <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-slate-400">
+    <div className="flex h-[84px] flex-col justify-between rounded-[22px] border border-white/90 bg-white/84 px-3 py-3 shadow-[0_14px_40px_rgba(148,163,184,0.10)] backdrop-blur-xl">
+      <p className="text-[9px] font-semibold uppercase tracking-[0.22em] text-slate-400">
         {label}
       </p>
-      <p className="mt-3 text-3xl font-semibold tracking-[-0.05em] text-slate-950">
+      <p className="text-lg font-semibold tracking-[-0.05em] text-slate-950 sm:text-[1.35rem]">
         {isLoading ? <span className="animate-pulse text-slate-300">...</span> : value}
       </p>
-      <p className="mt-2 text-sm text-slate-500">{detail}</p>
     </div>
   );
 }
 
-function RowValue({
+function SkeletonTable({ type }: { type: LeaderboardBoardType }) {
+  const columns = getBoardColumns(type);
+
+  return (
+    <div className="space-y-1.5">
+      {Array.from({ length: 6 }).map((_, index) => (
+        <div
+          key={index}
+          className="grid h-10 items-center rounded-[14px] border border-white/90 bg-white/80 px-3"
+          style={columns}
+        >
+          <div className="h-3 w-7 animate-pulse rounded-full bg-slate-200" />
+          <div className="h-3 w-20 animate-pulse rounded-full bg-slate-200" />
+          <div className="ml-auto h-3 w-12 animate-pulse rounded-full bg-slate-200" />
+          {type === "referral" ? (
+            <div className="ml-auto h-3 w-10 animate-pulse rounded-full bg-slate-200" />
+          ) : null}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function TableCellValue({
   type,
   entry,
 }: {
@@ -198,60 +220,28 @@ function RowValue({
 }) {
   if (type === "referral") {
     return (
-      <div className="text-right">
-        <p className="text-sm font-semibold text-slate-900">
-          {formatWhole(entry.referredUsers)} users
-        </p>
-        <p className="mt-1 text-xs font-medium uppercase tracking-[0.18em] text-sky-600">
-          {formatWhole(entry.referralPoints)} PP
-        </p>
-      </div>
+      <>
+        <div className="truncate text-right text-[11px] font-semibold text-slate-700">
+          {formatWhole(entry.referredUsers)}
+        </div>
+        <div className="truncate text-right text-[11px] font-semibold text-slate-950">
+          {formatWhole(entry.referralPoints)}
+        </div>
+      </>
     );
   }
 
   if (type === "volume") {
     return (
-      <div className="text-right">
-        <p className="text-sm font-semibold text-slate-900">{formatUsd(entry.swapVolume)}</p>
-        <p className="mt-1 text-xs font-medium uppercase tracking-[0.18em] text-slate-400">
-          swap volume
-        </p>
+      <div className="truncate text-right text-[11px] font-semibold text-slate-950">
+        {formatUsd(entry.swapVolume)}
       </div>
     );
   }
 
   return (
-    <div className="text-right">
-      <p className="text-sm font-semibold text-slate-900">{formatWhole(entry.totalPoints)} PP</p>
-      <p className="mt-1 text-xs font-medium uppercase tracking-[0.18em] text-slate-400">
-        total earned
-      </p>
-    </div>
-  );
-}
-
-function SkeletonRows() {
-  return (
-    <div className="space-y-3">
-      {Array.from({ length: 5 }).map((_, index) => (
-        <div
-          key={index}
-          className="grid grid-cols-[56px_minmax(0,1fr)_auto] items-center gap-3 rounded-[26px] border border-white/90 bg-white/72 px-4 py-4 shadow-[0_14px_36px_rgba(148,163,184,0.08)]"
-        >
-          <div className="h-12 w-12 animate-pulse rounded-2xl bg-slate-200/80" />
-          <div className="flex items-center gap-3">
-            <div className="h-12 w-12 animate-pulse rounded-full bg-slate-200/80" />
-            <div className="min-w-0 flex-1">
-              <div className="h-4 w-32 animate-pulse rounded-full bg-slate-200/80" />
-              <div className="mt-2 h-3 w-20 animate-pulse rounded-full bg-slate-100" />
-            </div>
-          </div>
-          <div className="w-20">
-            <div className="ml-auto h-4 w-16 animate-pulse rounded-full bg-slate-200/80" />
-            <div className="mt-2 ml-auto h-3 w-12 animate-pulse rounded-full bg-slate-100" />
-          </div>
-        </div>
-      ))}
+    <div className="truncate text-right text-[11px] font-semibold text-slate-950">
+      {formatWhole(entry.totalPoints)}
     </div>
   );
 }
@@ -268,40 +258,61 @@ export default function LeaderboardPage() {
   const normalizedAddress = address?.toLowerCase();
   const viewer = leaderboard?.viewer ?? null;
   const viewerProfile = viewer?.profile ?? null;
-  const viewerName = normalizedAddress
-    ? getProfileName(profile, viewerProfile, address)
-    : "Wallet not connected";
-  const viewerHandle = normalizedAddress
-    ? getProfileHandle(profile, viewerProfile, address)
-    : "Connect to see your rank";
-  const viewerAvatar = getAvatarUrl(profile, viewerProfile);
+  const viewerName = getViewerName(profile, viewerProfile, address);
+  const viewerSubtitle = getViewerSubtitle(profile, viewerProfile, address);
+  const viewerAvatar = getViewerAvatar(profile, viewerProfile);
+  const boardColumns = getBoardColumns(selectedBoard);
+  const boardHeaders = getBoardHeaders(selectedBoard);
 
-  const boardMeta = useMemo(
-    () => BOARD_OPTIONS.find((option) => option.id === selectedBoard) ?? BOARD_OPTIONS[0],
-    [selectedBoard]
-  );
+  const tableEntries = (() => {
+    const entries = leaderboard?.entries ?? [];
 
-  const loadLeaderboard = useCallback(async () => {
-    setIsLoadingBoard(true);
-    setError(null);
-
-    try {
-      const response = await fetchLeaderboardHub(selectedBoard, BOARD_LIMIT, normalizedAddress);
-      if (!response.success) {
-        throw new Error(response.error || "Failed to load leaderboard");
-      }
-
-      setLeaderboard(response);
-    } catch (loadError) {
-      setError((loadError as Error).message || "Failed to load leaderboard");
-    } finally {
-      setIsLoadingBoard(false);
+    if (!viewer || !normalizedAddress) {
+      return entries;
     }
-  }, [normalizedAddress, selectedBoard]);
+
+    const withoutViewer = entries.filter(
+      (entry) => entry.address.toLowerCase() !== normalizedAddress
+    );
+
+    return [viewer, ...withoutViewer];
+  })();
 
   useEffect(() => {
+    let cancelled = false;
+
+    async function loadLeaderboard() {
+      setIsLoadingBoard(true);
+      setError(null);
+
+      try {
+        const response = await fetchLeaderboardHub(selectedBoard, BOARD_LIMIT, normalizedAddress);
+
+        if (!response.success) {
+          throw new Error(response.error || "Failed to load leaderboard");
+        }
+
+        if (!cancelled) {
+          setLeaderboard(response);
+        }
+      } catch (loadError) {
+        if (!cancelled) {
+          setError((loadError as Error).message || "Failed to load leaderboard");
+          setLeaderboard(null);
+        }
+      } finally {
+        if (!cancelled) {
+          setIsLoadingBoard(false);
+        }
+      }
+    }
+
     void loadLeaderboard();
-  }, [loadLeaderboard]);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [normalizedAddress, selectedBoard]);
 
   useEffect(() => {
     if (!normalizedAddress) {
@@ -339,185 +350,188 @@ export default function LeaderboardPage() {
   }, [normalizedAddress]);
 
   useEffect(() => {
-    const intervalId = window.setInterval(() => {
-      void loadLeaderboard();
+    const intervalId = window.setInterval(async () => {
+      try {
+        const response = await fetchLeaderboardHub(selectedBoard, BOARD_LIMIT, normalizedAddress);
+        if (response.success) {
+          setLeaderboard(response);
+        }
+      } catch {
+        return;
+      }
     }, 60000);
 
     return () => window.clearInterval(intervalId);
-  }, [loadLeaderboard]);
+  }, [normalizedAddress, selectedBoard]);
 
   return (
-    <main className="min-h-screen bg-[#f3f7fb] px-4 py-4 md:px-8 md:py-8">
-      <section className="relative mx-auto flex min-h-[calc(100vh-2rem)] max-w-7xl flex-col overflow-hidden rounded-[32px] border border-white/80 bg-white/55 shadow-[0_30px_90px_rgba(148,163,184,0.20)] backdrop-blur-xl">
+    <main className="min-h-screen bg-[#f3f7fb] px-3 py-3 sm:px-4 sm:py-4 md:px-8 md:py-8">
+      <section className="relative mx-auto flex min-h-[calc(100vh-1.5rem)] max-w-6xl flex-col overflow-hidden rounded-[30px] border border-white/85 bg-white/58 shadow-[0_28px_90px_rgba(148,163,184,0.18)] backdrop-blur-xl">
         <InteractiveLeaderboardBackground />
 
-        <div className="relative z-10 flex min-h-[calc(100vh-2rem)] flex-col gap-5 px-4 py-4 sm:px-6 sm:py-6 lg:px-10 lg:py-8">
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-            <div className="rounded-[28px] border border-white/90 bg-white/82 px-5 py-4 shadow-[0_16px_50px_rgba(148,163,184,0.10)] backdrop-blur-xl">
+        <div className="relative z-10 flex min-h-[calc(100vh-1.5rem)] flex-col gap-3 px-3 py-3 sm:gap-4 sm:px-4 sm:py-4 md:px-8 md:py-8">
+          <div className="grid grid-cols-[132px_minmax(0,1fr)] gap-2 sm:grid-cols-[164px_minmax(0,1fr)]">
+            <div className="flex h-[84px] items-center rounded-[22px] border border-white/90 bg-white/84 px-3 shadow-[0_14px_40px_rgba(148,163,184,0.10)] backdrop-blur-xl">
               <Image
                 src="/longlogo.png"
                 alt="DustSwap"
-                width={182}
-                height={42}
+                width={170}
+                height={40}
                 priority
-                className="h-auto w-[150px] sm:w-[182px]"
+                className="h-auto w-full max-w-[128px] sm:max-w-[150px]"
               />
             </div>
 
-            <div className="flex items-center justify-between gap-4 rounded-[28px] border border-white/90 bg-white/84 px-4 py-4 shadow-[0_16px_50px_rgba(148,163,184,0.12)] backdrop-blur-xl sm:px-5">
-              <div className="flex min-w-0 items-center gap-3">
-                <Avatar src={viewerAvatar} label={viewerName} size={52} />
+            <div className="flex h-[84px] items-center justify-between gap-2 rounded-[22px] border border-white/90 bg-white/84 px-3 shadow-[0_14px_40px_rgba(148,163,184,0.10)] backdrop-blur-xl">
+              <div className="flex min-w-0 items-center gap-2.5">
+                <Avatar src={viewerAvatar} label={viewerName} />
                 <div className="min-w-0">
-                  <p className="truncate text-base font-semibold tracking-[-0.03em] text-slate-950">
+                  <p className="truncate text-sm font-semibold tracking-[-0.04em] text-slate-950">
                     {viewerName}
                   </p>
-                  <p className="truncate text-xs font-medium uppercase tracking-[0.18em] text-slate-400">
-                    {isLoadingProfile && normalizedAddress ? "Loading profile" : viewerHandle}
+                  <p className="truncate text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">
+                    {normalizedAddress
+                      ? isLoadingProfile
+                        ? "Loading"
+                        : viewerSubtitle
+                      : "Wallet not connected"}
                   </p>
                 </div>
               </div>
 
-              <div className="text-right">
-                <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-slate-400">
+              <div className="shrink-0 text-right">
+                <p className="text-[9px] font-semibold uppercase tracking-[0.22em] text-slate-400">
                   Total Earned
                 </p>
-                <p className="mt-2 text-xl font-semibold tracking-[-0.04em] text-slate-950 sm:text-2xl">
+                <p className="mt-1 text-base font-semibold tracking-[-0.05em] text-slate-950 sm:text-lg">
                   {formatWhole(viewer?.totalPoints || 0)} PP
                 </p>
               </div>
             </div>
           </div>
 
-          <div className="grid gap-3 md:grid-cols-2">
-            <StatCard
-              label="Your Particle Points"
-              value={`${formatWhole(viewer?.totalPoints || 0)} PP`}
-              detail={normalizedAddress ? "Total PP earned by this wallet" : "Connect wallet to see your total"}
+          <div className="grid grid-cols-2 gap-2">
+            <CompactStatCard
+              label="Total Particle Points"
+              value={`${formatWhole(leaderboard?.totalParticlePoints || 0)} PP`}
               isLoading={isLoadingBoard}
             />
-            <StatCard
+            <CompactStatCard
               label="Total Users"
               value={formatWhole(leaderboard?.totalUserCount || 0)}
-              detail="Wallets tracked across DustSwap"
               isLoading={isLoadingBoard}
             />
           </div>
 
-          <div className="relative overflow-hidden rounded-[30px] border border-white/90 bg-[linear-gradient(135deg,rgba(255,255,255,0.86),rgba(239,246,255,0.88),rgba(248,250,252,0.95))] p-4 shadow-[0_16px_50px_rgba(148,163,184,0.10)] backdrop-blur-xl">
-            <div className="absolute inset-y-0 left-[-35%] w-[45%] bg-[linear-gradient(90deg,rgba(255,255,255,0),rgba(125,211,252,0.72),rgba(255,255,255,0))] blur-[18px]" style={{ animation: "leaderboard-beam 7s linear infinite" }} />
-            <div className="relative z-10">
-              <div className="h-3 overflow-hidden rounded-full bg-white/80 ring-1 ring-sky-100">
-                <div
-                  className="h-full w-[34%] rounded-full bg-[linear-gradient(90deg,#38bdf8_0%,#60a5fa_48%,#bfdbfe_100%)] shadow-[0_0_28px_rgba(96,165,250,0.55)]"
-                  style={{ animation: "leaderboard-beam 9s linear infinite" }}
-                />
-              </div>
+          <div className="relative overflow-hidden rounded-[20px] border border-white/90 bg-[linear-gradient(135deg,rgba(255,255,255,0.86),rgba(239,246,255,0.9),rgba(248,250,252,0.96))] px-3 py-3 shadow-[0_14px_36px_rgba(148,163,184,0.10)] backdrop-blur-xl">
+            <div
+              className="absolute inset-y-0 left-[-45%] w-[55%] bg-[linear-gradient(90deg,rgba(255,255,255,0),rgba(96,165,250,0.7),rgba(255,255,255,0))] blur-[16px]"
+              style={{ animation: "leaderboard-beam 7s linear infinite" }}
+            />
+            <div className="relative z-10 h-3 overflow-hidden rounded-full bg-white/80 ring-1 ring-sky-100">
+              <div
+                className="h-full w-[38%] rounded-full bg-[linear-gradient(90deg,#7dd3fc_0%,#38bdf8_34%,#60a5fa_100%)] shadow-[0_0_28px_rgba(96,165,250,0.45)]"
+                style={{ animation: "leaderboard-beam 9s linear infinite" }}
+              />
             </div>
           </div>
 
-          <div className="flex items-center gap-3 overflow-x-auto pb-1">
-            <div className="shrink-0 rounded-full border border-slate-200/90 bg-white/88 px-4 py-2 text-sm font-semibold text-slate-700 shadow-[0_10px_30px_rgba(148,163,184,0.08)]">
-              {normalizedAddress ? `#${viewer?.rank || "--"}` : "Connect wallet"}
-            </div>
-
+          <div className="flex flex-wrap items-center justify-center gap-2">
             {BOARD_OPTIONS.map((option) => {
-              const isActive = option.id === selectedBoard;
+              const active = option.id === selectedBoard;
 
               return (
                 <button
                   key={option.id}
                   type="button"
                   onClick={() => setSelectedBoard(option.id)}
-                  className={`relative shrink-0 overflow-hidden rounded-full border px-4 py-2.5 text-sm font-semibold transition-all duration-200 ${
-                    isActive
-                      ? "border-slate-900 bg-slate-950 text-white shadow-[0_16px_38px_rgba(15,23,42,0.18)]"
-                      : "border-slate-200/90 bg-white/86 text-slate-600 shadow-[0_10px_30px_rgba(148,163,184,0.08)] hover:border-slate-300 hover:text-slate-900"
+                  className={`flex h-8 items-center justify-center rounded-full border px-3 text-[11px] font-semibold transition-all duration-200 ${
+                    active
+                      ? "border-slate-900 bg-slate-950 text-white shadow-[0_12px_28px_rgba(15,23,42,0.16)]"
+                      : "border-slate-200/90 bg-white/88 text-slate-600 shadow-[0_8px_22px_rgba(148,163,184,0.08)] hover:border-slate-300 hover:text-slate-900"
                   }`}
                 >
-                  {!isActive ? (
-                    <span className={`absolute inset-0 bg-gradient-to-r ${option.accent} opacity-90`} />
-                  ) : null}
-                  <span className="relative z-10">{option.label}</span>
+                  {option.label}
                 </button>
               );
             })}
           </div>
 
-          <div className="rounded-[30px] border border-white/90 bg-white/72 p-3 shadow-[0_18px_60px_rgba(148,163,184,0.14)] backdrop-blur-xl sm:p-4">
-            <div className="flex items-center justify-between gap-3 border-b border-slate-200/70 px-2 pb-3">
+          <div className="rounded-[22px] border border-white/90 bg-white/72 p-2.5 shadow-[0_16px_48px_rgba(148,163,184,0.12)] backdrop-blur-xl sm:p-3">
+            <div className="flex items-center justify-between gap-2 px-1 pb-2">
               <div>
-                <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-slate-400">
-                  {boardMeta.label}
+                <p className="text-[9px] font-semibold uppercase tracking-[0.22em] text-slate-400">
+                  Leaderboard
                 </p>
-                <p className="mt-2 text-sm font-medium text-slate-500">
-                  {selectedBoard === "referral"
-                    ? "Rank, Base App user, total referred, referral PP"
-                    : selectedBoard === "volume"
-                      ? "Rank, Base App user, total swap volume"
-                      : "Rank, Base App user, total particle points"}
+                <p className="mt-1 text-sm font-semibold tracking-[-0.03em] text-slate-950">
+                  {BOARD_OPTIONS.find((option) => option.id === selectedBoard)?.label}
                 </p>
               </div>
-              <div className="rounded-full border border-sky-100 bg-sky-50/90 px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-sky-700">
-                Live
+              <div className="rounded-full border border-sky-100 bg-sky-50/90 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-sky-700">
+                Top {BOARD_LIMIT}
               </div>
             </div>
 
-            <div className="mt-4">
-              {isLoadingBoard ? <SkeletonRows /> : null}
+            <div
+              className="grid h-9 items-center rounded-[14px] border border-slate-200/80 bg-white/86 px-3"
+              style={boardColumns}
+            >
+              {boardHeaders.map((header, index) => (
+                <div
+                  key={header}
+                  className={`truncate text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400 ${
+                    index === 0 ? "" : index === 1 ? "" : "text-right"
+                  }`}
+                >
+                  {header}
+                </div>
+              ))}
+            </div>
+
+            <div className="mt-1.5">
+              {isLoadingBoard ? <SkeletonTable type={selectedBoard} /> : null}
 
               {!isLoadingBoard && error ? (
-                <div className="rounded-[26px] border border-rose-100 bg-rose-50/90 px-4 py-5 text-sm text-rose-700">
+                <div className="rounded-[14px] border border-rose-100 bg-rose-50/90 px-3 py-3 text-sm text-rose-700">
                   {error}
                 </div>
               ) : null}
 
-              {!isLoadingBoard && !error && !(leaderboard?.entries.length) ? (
-                <div className="rounded-[26px] border border-slate-200/80 bg-white/84 px-4 py-8 text-center text-sm text-slate-500">
-                  No leaderboard data yet for this category.
+              {!isLoadingBoard && !error && !tableEntries.length ? (
+                <div className="rounded-[14px] border border-slate-200/80 bg-white/84 px-3 py-4 text-center text-sm text-slate-500">
+                  No leaderboard data yet.
                 </div>
               ) : null}
 
-              {!isLoadingBoard && !error && leaderboard?.entries.length ? (
-                <div className="space-y-3">
-                  {leaderboard.entries.map((entry, index) => {
+              {!isLoadingBoard && !error && tableEntries.length ? (
+                <div className="space-y-1.5">
+                  {tableEntries.map((entry, index) => {
                     const isViewer =
                       Boolean(normalizedAddress) &&
                       entry.address.toLowerCase() === normalizedAddress;
-                    const rowName = getProfileName(null, entry.profile, entry.address);
-                    const rowHandle = getProfileHandle(null, entry.profile, entry.address);
 
                     return (
                       <div
-                        key={`${selectedBoard}-${entry.userId}-${entry.rank}`}
-                        className={`grid grid-cols-[56px_minmax(0,1fr)_auto] items-center gap-3 rounded-[26px] border px-4 py-4 shadow-[0_14px_36px_rgba(148,163,184,0.08)] backdrop-blur-xl ${
+                        key={`${selectedBoard}-${entry.userId}-${entry.rank}-${index}`}
+                        className={`grid h-10 items-center rounded-[14px] border px-3 ${
                           isViewer
-                            ? "border-sky-200 bg-[linear-gradient(135deg,rgba(255,255,255,0.96),rgba(239,246,255,0.92))]"
+                            ? "border-sky-200 bg-[linear-gradient(135deg,rgba(255,255,255,0.96),rgba(239,246,255,0.94))]"
                             : "border-white/90 bg-white/82"
                         }`}
                         style={{
-                          animation: "leaderboard-row-in 520ms cubic-bezier(0.22,1,0.36,1) both",
-                          animationDelay: `${index * 45}ms`,
+                          ...boardColumns,
+                          animation:
+                            "leaderboard-row-in 480ms cubic-bezier(0.22,1,0.36,1) both",
+                          animationDelay: `${index * 40}ms`,
                         }}
                       >
-                        <RankBadge rank={entry.rank} />
-
-                        <div className="flex min-w-0 items-center gap-3">
-                          <Avatar
-                            src={entry.profile?.pfpUrl || ""}
-                            label={rowName}
-                            size={48}
-                          />
-                          <div className="min-w-0">
-                            <p className="truncate text-sm font-semibold text-slate-950 sm:text-base">
-                              {rowName}
-                            </p>
-                            <p className="truncate text-xs font-medium uppercase tracking-[0.16em] text-slate-400">
-                              {rowHandle}
-                            </p>
-                          </div>
+                        <div className="truncate text-[11px] font-semibold text-slate-700">
+                          #{entry.rank}
                         </div>
-
-                        <RowValue type={selectedBoard} entry={entry} />
+                        <div className="truncate text-[11px] font-semibold text-slate-950">
+                          {getRowUsername(entry.profile, entry.address)}
+                        </div>
+                        <TableCellValue type={selectedBoard} entry={entry} />
                       </div>
                     );
                   })}
