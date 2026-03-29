@@ -145,23 +145,29 @@ function getBoardHeaders(type: LeaderboardBoardType) {
 function Avatar({
   src,
   label,
+  sizeClass = "h-9 w-9",
+  textClass = "text-[11px]",
 }: {
   src?: string;
   label: string;
+  sizeClass?: string;
+  textClass?: string;
 }) {
   if (src) {
     return (
       <img
         src={src}
         alt={label}
-        className="h-9 w-9 rounded-full object-cover ring-1 ring-white/90"
+        className={`${sizeClass} rounded-full object-cover ring-1 ring-white/90`}
         referrerPolicy="no-referrer"
       />
     );
   }
 
   return (
-    <div className="flex h-9 w-9 items-center justify-center rounded-full bg-[radial-gradient(circle_at_30%_30%,#ffffff_0%,#dbeafe_46%,#cbd5e1_100%)] text-[11px] font-semibold text-slate-700 ring-1 ring-white/90">
+    <div
+      className={`flex ${sizeClass} items-center justify-center rounded-full bg-[radial-gradient(circle_at_30%_30%,#ffffff_0%,#dbeafe_46%,#cbd5e1_100%)] font-semibold text-slate-700 ring-1 ring-white/90 ${textClass}`}
+    >
       {getInitials(label)}
     </div>
   );
@@ -383,21 +389,32 @@ export default function LeaderboardPage() {
             </div>
 
             <div className="flex h-[84px] items-center justify-between gap-2 rounded-[22px] border border-white/90 bg-white/84 px-3 shadow-[0_14px_40px_rgba(148,163,184,0.10)] backdrop-blur-xl">
-              <div className="flex min-w-0 items-center gap-2.5">
-                <Avatar src={viewerAvatar} label={viewerName} />
-                <div className="min-w-0">
-                  <p className="truncate text-sm font-semibold tracking-[-0.04em] text-slate-950">
-                    {viewerName}
-                  </p>
-                  <p className="truncate text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">
-                    {normalizedAddress
-                      ? isLoadingProfile
-                        ? "Loading"
-                        : viewerSubtitle
-                      : "Wallet not connected"}
-                  </p>
+              {normalizedAddress ? (
+                <div className="flex min-w-0 items-center gap-2.5">
+                  <Avatar src={viewerAvatar} label={viewerName} />
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-semibold tracking-[-0.04em] text-slate-950">
+                      {viewerName}
+                    </p>
+                    <p className="truncate text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">
+                      {isLoadingProfile ? "Loading" : viewerSubtitle}
+                    </p>
+                  </div>
                 </div>
-              </div>
+              ) : (
+                <div className="min-w-0">
+                  <p className="text-[9px] font-semibold uppercase tracking-[0.22em] text-slate-400">
+                    Wallet
+                  </p>
+                  <p className="mt-1 truncate text-[11px] font-semibold text-slate-900">
+                    Connect to load your profile
+                  </p>
+                  <div className="mt-1.5 origin-left scale-[0.78] sm:scale-[0.84]">
+                    {/* @ts-ignore */}
+                    <appkit-button />
+                  </div>
+                </div>
+              )}
 
               <div className="shrink-0 text-right">
                 <p className="text-[9px] font-semibold uppercase tracking-[0.22em] text-slate-400">
@@ -528,8 +545,16 @@ export default function LeaderboardPage() {
                         <div className="truncate text-[11px] font-semibold text-slate-700">
                           #{entry.rank}
                         </div>
-                        <div className="truncate text-[11px] font-semibold text-slate-950">
-                          {getRowUsername(entry.profile, entry.address)}
+                        <div className="flex min-w-0 items-center gap-2">
+                          <Avatar
+                            src={entry.profile?.pfpUrl || ""}
+                            label={getRowUsername(entry.profile, entry.address)}
+                            sizeClass="h-[22px] w-[22px]"
+                            textClass="text-[8px]"
+                          />
+                          <div className="truncate text-[11px] font-semibold text-slate-950">
+                            {getRowUsername(entry.profile, entry.address)}
+                          </div>
                         </div>
                         <TableCellValue type={selectedBoard} entry={entry} />
                       </div>
