@@ -57,6 +57,10 @@ swapsRoutes.post("/record", async (c) => {
       return c.json({ success: false, error: error.message }, 400);
     }
 
+    if (error instanceof swapRecorderErrors.PendingTransactionError) {
+      return c.json({ success: false, error: error.message, code: "receipt_pending" }, 500);
+    }
+
     if (error instanceof swapRecorderErrors.UnprocessableSwapError) {
       return c.json({ success: false, error: error.message }, 422);
     }

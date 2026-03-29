@@ -29,8 +29,8 @@ const SWAP_EVENT_ABI = parseAbi([
 const PRICE_SCALE = 8;
 const USD_SCALE = 6;
 const MEMORY_PRICE_TTL_MS = 60 * 60 * 1000;
-const RECEIPT_RETRY_DELAY_MS = 2500;
-const RECEIPT_MAX_ATTEMPTS = 4;
+const RECEIPT_RETRY_DELAY_MS = 1500;
+const RECEIPT_MAX_ATTEMPTS = 10;
 
 const baseClient = createPublicClient({
   chain: base,

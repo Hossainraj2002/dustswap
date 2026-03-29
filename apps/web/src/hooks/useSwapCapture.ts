@@ -5,9 +5,10 @@ import { useAccount } from "wagmi";
 
 const STORAGE_KEY = "dustswap.swap.capture.queue";
 const SYNC_NOW_EVENT = "dustswap:quest-sync-now";
+const FAST_RETRY_CODE = "receipt_pending";
 const MAX_QUEUE_ITEMS = 50;
 const MAX_ITEM_AGE_MS = 24 * 60 * 60 * 1000;
-const FLUSH_INTERVAL_MS = 5000;
+const FLUSH_INTERVAL_MS = 2000;
 const OPENOCEAN_ROUTER_ADDRESSES = new Set([
   "0x6352a56caadc4f1e25cd6c75970fa768a3304e64",
   "0x6dd434082eab5cd134628d4b9a6e4d0813ef8b07",
@@ -36,7 +37,11 @@ function normalizeAddress(value: string) {
   return value.toLowerCase();
 }
 
-function getRetryDelay(attempt: number) {
+function getRetryDelay(attempt: number, errorCode?: string) {
+  if (errorCode === FAST_RETRY_CODE) {
+    return FLUSH_INTERVAL_MS;
+  }
+
   return Math.min(60000, FLUSH_INTERVAL_MS * 2 ** Math.max(0, attempt - 1));
 }
 
@@ -141,10 +146,16 @@ async function postSwapRecord(item: CaptureQueueItem) {
   });
 
   const text = await response.text();
-  const payload = text ? (JSON.parse(text) as { success?: boolean; error?: string }) : {};
+  const payload = text
+    ? (JSON.parse(text) as { success?: boolean; error?: string; code?: string })
+    : {};
 
   if (!response.ok || !payload.success) {
-    throw new Error(payload.error || `Swap record request failed with ${response.status}`);
+    const error = new Error(payload.error || `Swap record request failed with ${response.status}`) as Error & {
+      code?: string;
+    };
+    error.code = payload.code;
+    throw error;
   }
 
   return payload;
@@ -189,12 +200,16 @@ export function useSwapCapture() {
             nextQueue = nextQueue.filter((candidate) => candidate.txHash !== item.txHash);
             window.dispatchEvent(new Event(SYNC_NOW_EVENT));
           } catch (error) {
+            const errorCode =
+              error && typeof error === "object" && "code" in error
+                ? String((error as { code?: string }).code || "")
+                : "";
             nextQueue = nextQueue.map((candidate) =>
               candidate.txHash === item.txHash
                 ? {
                     ...candidate,
                     attempts: candidate.attempts + 1,
-                    nextRetryAt: Date.now() + getRetryDelay(candidate.attempts + 1),
+                    nextRetryAt: Date.now() + getRetryDelay(candidate.attempts + 1, errorCode),
                     lastError: getErrorMessage(error),
                   }
                 : candidate
