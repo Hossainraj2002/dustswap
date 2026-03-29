@@ -8,6 +8,7 @@ import { logger } from "hono/logger";
 import { prettyJSON } from "hono/pretty-json";
 import { pointsRoutes } from "./routes/points";
 import { questsRoutes } from "./routes/quests";
+import { swapsRoutes } from "./routes/swaps";
 import tokens from "./routes/tokens";
 import { getSupabaseDiagnostics } from "./services/supabase";
 
@@ -41,6 +42,7 @@ app.use(
 app.route("/api/tokens", tokens);
 app.route("/api/points", pointsRoutes);
 app.route("/api/quests", questsRoutes);
+app.route("/api/swaps", swapsRoutes);
 
 app.get("/", (c) => {
   return c.json({
@@ -60,6 +62,7 @@ app.get("/", (c) => {
       "POST /api/points/record-sweep": "Record sweep for points",
       "GET /api/quests": "Get active quests and user progress",
       "POST /api/quests/activities/swap": "Record swap activity for quest progress",
+      "POST /api/swaps/record": "Capture and decode an OpenOcean swap transaction",
     },
   });
 });
