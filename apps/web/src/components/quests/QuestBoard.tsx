@@ -1,6 +1,5 @@
 "use client";
 
-import { useOpenUrl } from "@coinbase/onchainkit/minikit";
 import Link from "next/link";
 import { startTransition, useEffect, useMemo, useState } from "react";
 import { useAccount } from "wagmi";
@@ -238,7 +237,6 @@ function SectionBadge({ label, count }: { label: string; count: number }) {
 
 export function QuestBoard() {
   const { address, isConnected } = useAccount();
-  const openUrl = useOpenUrl();
   const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>("onchain");
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -418,7 +416,14 @@ export function QuestBoard() {
   }
 
   function openExternal(url: string) {
-    openUrl(url);
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const opened = window.open(url, "_blank", "noopener,noreferrer");
+    if (!opened) {
+      window.location.assign(url);
+    }
   }
 
   function handleConnectX() {
@@ -449,6 +454,7 @@ export function QuestBoard() {
     }
 
     setPending((current) => ({ ...current, [quest.id]: true }));
+    openExternal(questUrl);
 
     try {
       const response = await startQuest(quest.id, address);
@@ -456,7 +462,6 @@ export function QuestBoard() {
         throw new Error(response.error || "Failed to start quest");
       }
 
-      openExternal(questUrl);
       await refreshWithMessage("Quest opened. Come back when verify unlocks.");
     } catch (startError) {
       setError(getDisplayError(startError));
@@ -675,15 +680,7 @@ export function QuestBoard() {
           </div>
         ) : (
           <div className="rounded-[20px] border border-slate-200/80 bg-white/88 p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.55)]">
-            <p className="text-[12px] leading-5 text-slate-600">
-              Open the task, finish it, wait 20 seconds, then verify.
-            </p>
-            {xLocked ? (
-              <p className="mt-2 text-[11px] text-slate-500">
-                Connect X first to unlock this quest.
-              </p>
-            ) : null}
-            <div className="mt-3 grid gap-2">
+            <div className="grid gap-2">
               <button
                 type="button"
                 onClick={() => void handleDelayQuestStart(quest)}

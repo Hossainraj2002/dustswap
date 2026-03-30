@@ -57,19 +57,78 @@ const EMPTY_FORM: AdminQuestInput = {
   rules: {},
 };
 
-function HelpLabel({ label, help }: { label: string; help: string }) {
+function getRulesExample(form: AdminQuestInput) {
+  if (form.verificationType === "x_post_link") {
+    return `{
+  "requiredMention": "@dustswap",
+  "requiredHashtags": ["#DustSwap"],
+  "requiredLinks": ["dustswap.xyz"],
+  "composeText": "Cleaning my wallet with @dustswap #DustSwap https://dustswap.xyz"
+}`;
+  }
+
+  if (form.verificationType === "delay_gate_retry") {
+    return `{
+  "delaySeconds": 20,
+  "fakeFailureCount": 1,
+  "externalUrl": "https://x.com/dustswap"
+}`;
+  }
+
+  if (form.verificationType === "delay_gate") {
+    return `{
+  "delaySeconds": 20,
+  "externalUrl": "${form.platform === "base" ? "https://base.app/" : "https://x.com/dustswap"}"
+}`;
+  }
+
+  if (form.actionType === "swap_volume" || form.actionType === "swap_count") {
+    return `{
+  "source": "dustswap_swap"
+}`;
+  }
+
+  return `{
+  "externalUrl": "https://example.com"
+}`;
+}
+
+function HelpLabel({
+  label,
+  help,
+  example,
+}: {
+  label: string;
+  help: string;
+  example?: string;
+}) {
+  const [isOpen, setIsOpen] = useState(false);
+
   return (
-    <span className="mb-2 flex items-center gap-2 text-sm font-medium text-white">
-      {label}
-      <button
-        type="button"
-        title={help}
-        aria-label={`${label} help`}
-        className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-sky-300/30 bg-sky-400/10 text-[11px] font-bold text-sky-100"
-      >
-        !
-      </button>
-    </span>
+    <div className="mb-2">
+      <div className="flex items-center gap-2 text-sm font-medium text-white">
+        <span>{label}</span>
+        <button
+          type="button"
+          onClick={() => setIsOpen((current) => !current)}
+          aria-expanded={isOpen}
+          aria-label={`${label} help`}
+          className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-sky-300/30 bg-sky-400/10 text-[11px] font-bold text-sky-100 transition hover:bg-sky-400/20"
+        >
+          !
+        </button>
+      </div>
+      {isOpen ? (
+        <div className="mt-2 rounded-2xl border border-sky-300/20 bg-sky-400/10 px-3 py-3 text-xs leading-6 text-sky-50/90">
+          <p>{help}</p>
+          {example ? (
+            <pre className="mt-2 overflow-x-auto whitespace-pre-wrap rounded-2xl border border-white/10 bg-black/20 px-3 py-3 text-[11px] leading-5 text-sky-100">
+              {example}
+            </pre>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -83,6 +142,7 @@ export default function AdminQuestsPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isUnlocked, setIsUnlocked] = useState(false);
+  const rulesExample = getRulesExample(form);
 
   async function loadQuests(tokenOverride?: string) {
     const tokenToUse = tokenOverride || adminToken;
@@ -305,7 +365,7 @@ export default function AdminQuestsPage() {
                 { key: "title", label: "Title", help: "Short headline users see on the quest card." },
                 { key: "description", label: "Description", help: "Explain clearly what the user needs to do to complete the quest." },
                 { key: "ctaLabel", label: "CTA label", help: "Button text on the quest card, like Open Swap or Connect X First." },
-                { key: "ctaUrl", label: "CTA URL", help: "Link opened by the quest button when this quest needs an external destination." },
+                { key: "ctaUrl", label: "CTA URL", help: "Main link opened by the quest button. For X and Base tasks this should usually be the exact post, profile, or app page the user needs." },
               ].map((field) => (
                 <label
                   key={field.key}
@@ -355,13 +415,13 @@ export default function AdminQuestsPage() {
                 {
                   key: "verificationType",
                   label: "Verification",
-                  help: "Defines how the backend confirms completion, such as swap tracking, post link checks, or delay gates.",
+                  help: "Defines how the backend confirms completion. swap_volume reads swap progress, x_post_link checks a pasted tweet URL, delay_gate waits 20 seconds, and delay_gate_retry adds the fake first failure behavior.",
                   options: ["swap_volume", "x_post_link", "delay_gate", "delay_gate_retry"],
                 },
                 {
                   key: "progressWindow",
                   label: "Window",
-                  help: "Once never resets, daily resets every day, and weekly resets every Monday-based weekly cycle.",
+                  help: "Once is a one-time quest and disappears after completion. Daily resets every day at 00:00 UTC. Weekly resets every Monday-based week at 00:00 UTC.",
                   options: ["once", "daily", "weekly"],
                 },
                 {
@@ -401,12 +461,12 @@ export default function AdminQuestsPage() {
                 {
                   key: "targetValue",
                   label: "Target value",
-                  help: "Use the goal number here: USD for swap_volume, swap count for swap_count, and usually 1 for social quests.",
+                  help: "Use the goal number here. Example: 10 means $10 for swap_volume, 10 swaps for swap_count, and 1 for most social quests.",
                 },
                 {
                   key: "sortOrder",
                   label: "Sort order",
-                  help: "Lower numbers appear earlier on the quest page. Example: 10 shows before 100.",
+                  help: "Controls display order on the quest page. Lower numbers show first, so 10 appears before 100.",
                 },
               ].map((field) => (
                 <label key={field.key}>
@@ -461,21 +521,25 @@ export default function AdminQuestsPage() {
                 />
               </label>
 
-              <label className="flex items-center gap-3 rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-sm text-white">
-                <input
-                  type="checkbox"
-                  checked={Boolean(form.isActive)}
-                  onChange={(event) =>
-                    setForm((current) => ({
-                      ...current,
-                      isActive: event.target.checked,
-                    }))
-                  }
+              <div>
+                <HelpLabel
+                  label="Active quest"
+                  help="Turn this off to hide the quest without deleting it. The normal live setup is status = published and Active quest = on."
                 />
-                <span title="Turn this off to hide the quest without deleting it. Published plus active is the normal live state.">
-                  Active quest
-                </span>
-              </label>
+                <label className="flex items-center gap-3 rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-sm text-white">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(form.isActive)}
+                    onChange={(event) =>
+                      setForm((current) => ({
+                        ...current,
+                        isActive: event.target.checked,
+                      }))
+                    }
+                  />
+                  <span>{form.isActive ? "Quest is live-ready" : "Quest is hidden"}</span>
+                </label>
+              </div>
             </div>
 
             <div className="mt-4 grid gap-3 rounded-2xl border border-white/10 bg-black/20 p-4 text-xs leading-6 text-gray-300 sm:grid-cols-2">
@@ -493,7 +557,8 @@ export default function AdminQuestsPage() {
             <label className="mt-4 block">
               <HelpLabel
                 label="Rules JSON"
-                help="Advanced per-quest config. Use this for delay seconds, fake failure count, required hashtags, required links, or external URLs."
+                help="Advanced per-quest config. Use this for delay seconds, fake failure count, required hashtags, required links, compose text, source filters, or external URLs. The example below changes automatically based on the current quest type."
+                example={rulesExample}
               />
               <textarea
                 value={rulesText}
@@ -502,6 +567,16 @@ export default function AdminQuestsPage() {
                 className="w-full rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-sm text-white outline-none placeholder:text-gray-500"
               />
             </label>
+
+            <div className="mt-3 rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-xs leading-6 text-gray-300">
+              <p className="font-semibold text-white">Quick rules guide</p>
+              <p className="mt-1">
+                <code>delaySeconds</code> controls the wait time before verify.
+                <code className="ml-1">fakeFailureCount</code> is only for the follow-style fake first failure.
+                <code className="ml-1">externalUrl</code> is the page users open.
+                <code className="ml-1">source</code> is used for onchain swap tracking.
+              </p>
+            </div>
 
             <button
               type="button"
