@@ -90,6 +90,7 @@ questsRoutes.delete("/admin/:id", async (c) => {
 questsRoutes.get("/x/connect", async (c) => {
   const address = c.req.query("address");
   const returnTo = c.req.query("returnTo") || `${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}/quests`;
+  const format = c.req.query("format");
 
   if (!address) {
     return c.json({ success: false, error: "address is required" }, 400);
@@ -97,6 +98,9 @@ questsRoutes.get("/x/connect", async (c) => {
 
   try {
     const authUrl = await questEngine.createXAuthUrl(address, returnTo);
+    if (format === "json") {
+      return c.json({ success: true, authUrl });
+    }
     return c.redirect(authUrl, 302);
   } catch (error) {
     return c.json(

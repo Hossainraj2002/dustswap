@@ -4,8 +4,8 @@ import Link from "next/link";
 import { startTransition, useEffect, useMemo, useState } from "react";
 import { useAccount } from "wagmi";
 import {
-  buildXConnectUrl,
   fetchQuestBoard,
+  fetchXConnectAuthUrl,
   syncSwapQuestActivity,
   startQuest,
   verifyDelayQuest,
@@ -426,14 +426,37 @@ export function QuestBoard() {
     }
   }
 
-  function handleConnectX() {
+  async function handleConnectX() {
     if (!address) {
       setError("Connect your wallet first");
       return;
     }
 
-    const url = buildXConnectUrl(address, `${window.location.origin}/quests`);
-    openExternal(url);
+    setError(null);
+    const popup =
+      typeof window !== "undefined" ? window.open("https://x.com", "_blank") : null;
+
+    try {
+      const response = await fetchXConnectAuthUrl(
+        address,
+        `${window.location.origin}/quests`
+      );
+
+      if (!response.success || !response.authUrl) {
+        throw new Error(response.error || "Failed to prepare X auth");
+      }
+
+      if (popup) {
+        popup.location.replace(response.authUrl);
+        popup.focus();
+        return;
+      }
+
+      openExternal(response.authUrl);
+    } catch (connectError) {
+      popup?.close();
+      setError(getDisplayError(connectError));
+    }
   }
 
   async function handleDelayQuestStart(quest: QuestItem) {
