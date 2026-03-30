@@ -729,6 +729,11 @@ export class QuestEngine {
     const quest = await this.getQuestById(questId);
     const rules = safeRules(quest.rules);
     const user = await pointsEngine.getOrCreate(address);
+
+    if (quest.platform === "x") {
+      await this.assertLinkedSocialAccount(user.id, "x");
+    }
+
     const delaySeconds = toNumber(rules.delaySeconds, 20);
     const now = getNow();
     const cycleKey = getCycleKey(quest.progress_window, now);
@@ -757,6 +762,11 @@ export class QuestEngine {
     const quest = await this.getQuestById(questId);
     const rules = safeRules(quest.rules);
     const user = await pointsEngine.getOrCreate(address);
+
+    if (quest.platform === "x") {
+      await this.assertLinkedSocialAccount(user.id, "x");
+    }
+
     const cycleKey = getCycleKey(quest.progress_window, getNow());
     const progress = await this.getProgress(user.id, quest.id, cycleKey);
 
@@ -1192,6 +1202,23 @@ export class QuestEngine {
     }
 
     return completedQuests;
+  }
+
+  private async assertLinkedSocialAccount(userId: number, platform: QuestPlatform) {
+    const { data, error } = await supabase
+      .from("social_accounts")
+      .select("id")
+      .eq("user_id", userId)
+      .eq("platform", platform)
+      .maybeSingle();
+
+    if (error) {
+      throw new Error(`Failed to check linked ${platform} account: ${error.message}`);
+    }
+
+    if (!data) {
+      throw new Error(`Connect your ${platform.toUpperCase()} account before starting this quest`);
+    }
   }
 
   private async syncSwapProgressForQuest(

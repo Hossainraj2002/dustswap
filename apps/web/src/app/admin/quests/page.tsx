@@ -57,6 +57,22 @@ const EMPTY_FORM: AdminQuestInput = {
   rules: {},
 };
 
+function HelpLabel({ label, help }: { label: string; help: string }) {
+  return (
+    <span className="mb-2 flex items-center gap-2 text-sm font-medium text-white">
+      {label}
+      <button
+        type="button"
+        title={help}
+        aria-label={`${label} help`}
+        className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-sky-300/30 bg-sky-400/10 text-[11px] font-bold text-sky-100"
+      >
+        !
+      </button>
+    </span>
+  );
+}
+
 export default function AdminQuestsPage() {
   const [adminToken, setAdminToken] = useState("");
   const [quests, setQuests] = useState<any[]>([]);
@@ -285,17 +301,17 @@ export default function AdminQuestsPage() {
 
             <div className="mt-5 grid gap-4 sm:grid-cols-2">
               {[
-                { key: "slug", label: "Slug" },
-                { key: "title", label: "Title" },
-                { key: "description", label: "Description" },
-                { key: "ctaLabel", label: "CTA label" },
-                { key: "ctaUrl", label: "CTA URL" },
+                { key: "slug", label: "Slug", help: "Unique id for the quest. Keep it stable once users start progressing." },
+                { key: "title", label: "Title", help: "Short headline users see on the quest card." },
+                { key: "description", label: "Description", help: "Explain clearly what the user needs to do to complete the quest." },
+                { key: "ctaLabel", label: "CTA label", help: "Button text on the quest card, like Open Swap or Connect X First." },
+                { key: "ctaUrl", label: "CTA URL", help: "Link opened by the quest button when this quest needs an external destination." },
               ].map((field) => (
                 <label
                   key={field.key}
                   className={field.key === "description" ? "sm:col-span-2" : ""}
                 >
-                  <span className="mb-2 block text-sm font-medium text-white">{field.label}</span>
+                  <HelpLabel label={field.label} help={field.help} />
                   <input
                     value={String((form as any)[field.key] || "")}
                     onChange={(event) =>
@@ -313,16 +329,19 @@ export default function AdminQuestsPage() {
                 {
                   key: "category",
                   label: "Category",
+                  help: "Choose social for X or Base App actions, and onchain for swap-based progress.",
                   options: ["social", "onchain"],
                 },
                 {
                   key: "platform",
                   label: "Platform",
+                  help: "Main place where the task happens, such as X, Base App, or DustSwap.",
                   options: ["x", "base", "dustswap"],
                 },
                 {
                   key: "actionType",
                   label: "Action",
+                  help: "The exact task users perform, like swap volume, follow, repost, or visit.",
                   options: [
                     "swap_volume",
                     "swap_count",
@@ -336,21 +355,24 @@ export default function AdminQuestsPage() {
                 {
                   key: "verificationType",
                   label: "Verification",
+                  help: "Defines how the backend confirms completion, such as swap tracking, post link checks, or delay gates.",
                   options: ["swap_volume", "x_post_link", "delay_gate", "delay_gate_retry"],
                 },
                 {
                   key: "progressWindow",
                   label: "Window",
+                  help: "Once never resets, daily resets every day, and weekly resets every Monday-based weekly cycle.",
                   options: ["once", "daily", "weekly"],
                 },
                 {
                   key: "status",
                   label: "Status",
+                  help: "Draft keeps it hidden. Published makes it eligible to appear if active and inside the time window.",
                   options: ["draft", "published"],
                 },
               ].map((field) => (
                 <label key={field.key}>
-                  <span className="mb-2 block text-sm font-medium text-white">{field.label}</span>
+                  <HelpLabel label={field.label} help={field.help} />
                   <select
                     value={String((form as any)[field.key] || field.options[0])}
                     onChange={(event) =>
@@ -371,12 +393,24 @@ export default function AdminQuestsPage() {
               ))}
 
               {[
-                { key: "rewardPoints", label: "Particle points" },
-                { key: "targetValue", label: "Target value" },
-                { key: "sortOrder", label: "Sort order" },
+                {
+                  key: "rewardPoints",
+                  label: "Particle points",
+                  help: "How many Particle Points the user gets when this quest completes.",
+                },
+                {
+                  key: "targetValue",
+                  label: "Target value",
+                  help: "Use the goal number here: USD for swap_volume, swap count for swap_count, and usually 1 for social quests.",
+                },
+                {
+                  key: "sortOrder",
+                  label: "Sort order",
+                  help: "Lower numbers appear earlier on the quest page. Example: 10 shows before 100.",
+                },
               ].map((field) => (
                 <label key={field.key}>
-                  <span className="mb-2 block text-sm font-medium text-white">{field.label}</span>
+                  <HelpLabel label={field.label} help={field.help} />
                   <input
                     type="number"
                     value={String((form as any)[field.key] ?? 0)}
@@ -392,7 +426,10 @@ export default function AdminQuestsPage() {
               ))}
 
               <label>
-                <span className="mb-2 block text-sm font-medium text-white">Starts at</span>
+                <HelpLabel
+                  label="Starts at"
+                  help="Optional opening time. Leave empty if the quest should start immediately when published."
+                />
                 <input
                   type="datetime-local"
                   value={toDateTimeLocalValue(form.startsAt)}
@@ -407,7 +444,10 @@ export default function AdminQuestsPage() {
               </label>
 
               <label>
-                <span className="mb-2 block text-sm font-medium text-white">Ends at</span>
+                <HelpLabel
+                  label="Ends at"
+                  help="Optional closing time. Leave empty if the quest should stay open until you turn it off."
+                />
                 <input
                   type="datetime-local"
                   value={toDateTimeLocalValue(form.endsAt)}
@@ -432,7 +472,9 @@ export default function AdminQuestsPage() {
                     }))
                   }
                 />
-                Active quest
+                <span title="Turn this off to hide the quest without deleting it. Published plus active is the normal live state.">
+                  Active quest
+                </span>
               </label>
             </div>
 
@@ -449,7 +491,10 @@ export default function AdminQuestsPage() {
             </div>
 
             <label className="mt-4 block">
-              <span className="mb-2 block text-sm font-medium text-white">Rules JSON</span>
+              <HelpLabel
+                label="Rules JSON"
+                help="Advanced per-quest config. Use this for delay seconds, fake failure count, required hashtags, required links, or external URLs."
+              />
               <textarea
                 value={rulesText}
                 onChange={(event) => setRulesText(event.target.value)}
@@ -484,14 +529,14 @@ export default function AdminQuestsPage() {
                     <div className="flex items-start justify-between gap-3">
                       <div>
                         <p className="text-[11px] uppercase tracking-[0.25em] text-gray-500">
-                          {quest.platform} · {quest.action_type}
+                          {quest.platform} / {quest.action_type}
                         </p>
                         <h3 className="mt-2 text-base font-semibold text-white">{quest.title}</h3>
                         <p className="mt-1 text-xs text-gray-400">
-                          {quest.slug} · {quest.reward_points} PP
+                          {quest.slug} / {quest.reward_points} PP
                         </p>
                         <p className="mt-1 text-xs text-gray-500">
-                          Target {quest.target_value} · Sort {quest.sort_order}
+                          Target {quest.target_value} / Sort {quest.sort_order}
                         </p>
                         {quest.starts_at ? (
                           <p className="mt-1 text-xs text-gray-500">
