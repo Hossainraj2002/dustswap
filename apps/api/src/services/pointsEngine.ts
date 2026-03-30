@@ -225,6 +225,12 @@ function getYesterdayUtcKey(date = new Date()) {
   return getUtcDayKey(yesterday);
 }
 
+function getYesterdayUtcDate(date = new Date()) {
+  const yesterday = getUtcStartOfDay(date);
+  yesterday.setUTCDate(yesterday.getUTCDate() - 1);
+  return yesterday;
+}
+
 function getBoostPercent(streak: number) {
   if (streak <= 0) {
     return 0;
@@ -234,6 +240,11 @@ function getBoostPercent(streak: number) {
     CFG.MAX_STREAK_BOOST_PERCENT,
     streak * CFG.STREAK_BOOST_STEP_PERCENT
   );
+}
+
+function getDailyCheckInPoints(streak: number) {
+  const multiplier = 1 + getBoostPercent(streak) / 100;
+  return Math.max(0, Math.floor(CFG.CHECK_IN * multiplier));
 }
 
 function safeMetadata(meta: unknown, extra: Record<string, unknown>) {
@@ -288,7 +299,6 @@ function buildStreakSnapshot(
 
 function isBoostEligibleAction(action: string) {
   return ![
-    "daily_check_in",
     "referral_commission",
     "referral_new_user",
     "referral_welcome",
@@ -532,23 +542,7 @@ export class PointsEngine {
     };
 
     if (data) {
-      const existing = normalizeDailyPriceRow(data);
-
-      if (existing.source.startsWith("fallback_")) {
-        try {
-          const liveQuote = await this.fetchCurrentEthPriceUsd();
-          return upsertRow(liveQuote.priceUsd, liveQuote.source, {
-            ...(liveQuote.metadata ?? {}),
-            replacedFallbackSource: existing.source,
-            replacedFallbackDate: existing.price_date,
-            syncedAt: new Date().toISOString(),
-          });
-        } catch {
-          return existing;
-        }
-      }
-
-      return existing;
+      return normalizeDailyPriceRow(data);
     }
 
     try {
@@ -576,6 +570,11 @@ export class PointsEngine {
     const priceSnapshot = await this.getDailyEthPriceSnapshot();
     const checkInConfig = buildFeeConfig(priceSnapshot, CFG.CHECK_IN_FEE_USD);
     const saveConfig = buildFeeConfig(priceSnapshot, CFG.STREAK_RESTORE_FEE_USD);
+    const rewardStreak = snapshot.isBroken
+      ? Math.max(snapshot.recoverableStreak + 2, 1)
+      : snapshot.checkedInToday
+        ? Math.max(snapshot.activeStreak, 1)
+        : Math.max(snapshot.activeStreak + 1, 1);
 
     const { count } = await supabase
       .from("users")
@@ -597,7 +596,7 @@ export class PointsEngine {
       nextCheckInAt: snapshot.nextCheckInAt,
       dayEndsAt: snapshot.todayEndsAt,
       lastCheckIn: user.last_check_in,
-      checkInRewardPoints: CFG.CHECK_IN,
+      checkInRewardPoints: getDailyCheckInPoints(rewardStreak),
       nextBoostPercent: getBoostPercent(snapshot.activeStreak + 1),
       boostCapPercent: CFG.MAX_STREAK_BOOST_PERCENT,
       boostStepPercent: CFG.STREAK_BOOST_STEP_PERCENT,
@@ -1261,10 +1260,6 @@ export class PointsEngine {
     }
 
     if (asset === "usdc") {
-      if (transaction.from.toLowerCase() !== normalizedAddress) {
-        throw new Error("Payment transaction sender does not match this wallet");
-      }
-
       const result = this.verifyUsdcPayment(
         receipt.logs,
         normalizedAddress,
@@ -1310,10 +1305,6 @@ export class PointsEngine {
     }
 
     try {
-      if (transaction.from.toLowerCase() !== normalizedAddress) {
-        throw new Error("Payment transaction sender does not match this wallet");
-      }
-
       const usdcPayment = this.verifyUsdcPayment(
         receipt.logs,
         normalizedAddress,
@@ -1412,7 +1403,9 @@ export class PointsEngine {
     );
 
     const nextStreak = snapshot.status === "active" ? user.current_streak + 1 : 1;
-    const pointsAwarded = CFG.CHECK_IN;
+    const unlockedBoostPercent = getBoostPercent(nextStreak);
+    const multiplier = 1 + unlockedBoostPercent / 100;
+    const pointsAwarded = Math.max(0, Math.floor(CFG.CHECK_IN * multiplier));
     const checkInDate = getUtcDayKey(new Date());
     const nowIso = new Date().toISOString();
 
@@ -1431,13 +1424,17 @@ export class PointsEngine {
     await supabase.from("point_events").insert({
       user_id: user.id,
       action: "daily_check_in",
-      points: pointsAwarded,
-      multiplier: 1,
+      points: CFG.CHECK_IN,
+      multiplier,
       total_awarded: pointsAwarded,
       tx_hash: txHash,
       metadata: {
+        basePoints: CFG.CHECK_IN,
         streakDay: nextStreak,
-        unlockedBoostPercent: getBoostPercent(nextStreak),
+        boostPercent: unlockedBoostPercent,
+        streakAtAward: nextStreak,
+        boostApplied: unlockedBoostPercent > 0,
+        unlockedBoostPercent,
         boostAppliesTo: "self_earned_only",
         paymentAsset: payment.asset,
         paymentAmount: payment.amount,
@@ -1483,7 +1480,7 @@ export class PointsEngine {
       pointsAwarded,
       paymentAsset: payment.asset,
       paymentAmountUsd: payment.amountUsd,
-      unlockedBoostPercent: getBoostPercent(nextStreak),
+      unlockedBoostPercent,
       ...(await this.buildBalance(nextUser)),
     };
   }
@@ -1544,6 +1541,11 @@ export class PointsEngine {
       asset
     );
 
+    const restoredStreak = snapshot.recoverableStreak + 1;
+    const restoredCheckInDate = getYesterdayUtcKey(new Date());
+    const restoredLastCheckIn = getYesterdayUtcDate(new Date());
+    restoredLastCheckIn.setUTCHours(23, 59, 59, 999);
+
     await supabase.from("streak_recovery_events").insert({
       user_id: user.id,
       tx_hash: txHash,
@@ -1552,20 +1554,43 @@ export class PointsEngine {
       amount: payment.amount,
       amount_usd: payment.amountUsd,
       previous_streak: snapshot.recoverableStreak,
-      restored_streak: snapshot.recoverableStreak,
+      restored_streak: restoredStreak,
       status: "confirmed",
     });
 
     const nowIso = new Date().toISOString();
     const nextUser = {
       ...user,
-      last_check_in: nowIso,
+      current_streak: restoredStreak,
+      longest_streak: Math.max(restoredStreak, user.longest_streak),
+      last_check_in: restoredLastCheckIn.toISOString(),
     } as UserRecord;
+
+    if (restoredCheckInDate) {
+      await supabase.from("check_ins").upsert(
+        {
+          user_id: user.id,
+          check_in_date: restoredCheckInDate,
+          points_earned: 0,
+          streak_day: restoredStreak,
+          payment_tx_hash: txHash,
+          payment_asset: payment.asset,
+          payment_amount: payment.amount,
+          payment_amount_usd: payment.amountUsd,
+          price_snapshot_date: payment.priceDate,
+        },
+        {
+          onConflict: "user_id,check_in_date",
+        }
+      );
+    }
 
     await supabase
       .from("users")
       .update({
-        last_check_in: nowIso,
+        current_streak: nextUser.current_streak,
+        longest_streak: nextUser.longest_streak,
+        last_check_in: nextUser.last_check_in,
         updated_at: nowIso,
       })
       .eq("id", user.id);
