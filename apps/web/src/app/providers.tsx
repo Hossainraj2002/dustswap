@@ -1,6 +1,6 @@
 "use client";
 
-import { OnchainKitProvider } from "@coinbase/onchainkit";
+import { MiniKitProvider } from "@coinbase/onchainkit/minikit";
 import { type ReactNode, useState } from "react";
 import { WagmiProvider } from "wagmi";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -8,7 +8,6 @@ import { wagmiAdapter, wagmiConfig, projectId } from "@/wagmi";
 import { createAppKit } from "@reown/appkit/react";
 import { INITIAL_WAGMI_CHAINS } from "@/config/web3";
 import { useSwapCapture } from "@/hooks/useSwapCapture";
-import { base } from "viem/chains";
 
 export const modal = createAppKit({
   adapters: [wagmiAdapter],
@@ -56,21 +55,10 @@ export function Providers({ children }: ProvidersProps) {
   return (
     <WagmiProvider config={wagmiConfig} reconnectOnMount>
       <QueryClientProvider client={queryClient}>
-        <OnchainKitProvider
-          chain={base}
-          projectId={projectId}
-          miniKit={{ enabled: true }}
-          config={{
-            appearance: {
-              name: "DustSwap",
-              logo: "https://dustswap.xyz/logo.png",
-              mode: "light",
-            },
-          }}
-        >
+        <MiniKitProvider enabled autoConnect>
           <SwapCaptureBootstrap />
           {children}
-        </OnchainKitProvider>
+        </MiniKitProvider>
       </QueryClientProvider>
     </WagmiProvider>
   );
