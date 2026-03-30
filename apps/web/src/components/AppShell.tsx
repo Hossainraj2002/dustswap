@@ -61,7 +61,8 @@ function AppShellIcon({
 
 export function AppShell({ children }: AppShellProps) {
   const pathname = usePathname();
-  const isLightShell = pathname.startsWith('/leaderboard');
+  const isLightShell =
+    pathname.startsWith('/leaderboard') || pathname.startsWith('/quests');
 
   return (
     <div
