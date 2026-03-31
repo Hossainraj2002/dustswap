@@ -8,14 +8,14 @@
     --dust-purple: #8b5cf6;
     --dust-blue: #6366f1;
     --dust-accent: #3b82f6;
-    --bg-primary: #030305;
-    --bg-surface: #0a0a0f;
-    --bg-surface-50: #18181f;
-    --bg-surface-100: #1e1e2a;
-    --text-primary: #f8fafc;
-    --text-secondary: #94a3b8;
-    --text-muted: #64748b;
-    --border-subtle: rgba(139, 92, 246, 0.12);
+    --bg-primary: #fbfbfe;
+    --bg-surface: #ffffff;
+    --bg-surface-50: #f8fafc;
+    --bg-surface-100: #f1f5f9;
+    --text-primary: #0f172a;
+    --text-secondary: #64748b;
+    --text-muted: #94a3b8;
+    --border-subtle: rgba(139, 92, 246, 0.1);
     --border-default: rgba(139, 92, 246, 0.2);
   }
 
@@ -32,7 +32,7 @@
   }
 
   * {
-    @apply border-white/5;
+    @apply border-black/5;
   }
   
   /* Mobile viewport fix */
@@ -406,7 +406,7 @@
 /* ===== COMPONENT UTILITIES ===== */
 @layer components {
   .glass-card {
-    @apply bg-surface-50/50 backdrop-blur-xl border border-white/5 rounded-2xl shadow-card;
+    @apply bg-surface-50/50 backdrop-blur-xl border border-black/5 rounded-2xl shadow-card;
   }
 
   .glass-card-hover {
@@ -432,8 +432,8 @@
 
   .dust-input {
     @apply w-full px-4 py-3 rounded-xl
-           bg-surface-100 border border-white/5
-           text-white placeholder-gray-500
+           bg-surface-100 border border-black/5
+           text-text-primary placeholder-text-muted
            transition-all duration-200
            focus:outline-none focus:border-dust-purple/40 focus:ring-1 focus:ring-dust-purple/20;
   }
@@ -503,23 +503,24 @@
 /* ─── Glass Card ────────────────────────────────────────────────────────────── */
 
 .swap-glass {
-  background: rgba(13, 17, 28, 0.95);
+  background: rgba(255, 255, 255, 0.85);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
-  border: 1px solid rgba(27, 34, 54, 0.8);
+  border: 1px solid rgba(226, 232, 240, 0.8);
   border-radius: 24px;
   box-shadow: 
     0 0 0 1px rgba(59, 130, 246, 0.05),
-    0 4px 6px -1px rgba(0, 0, 0, 0.3),
-    0 2px 4px -2px rgba(0, 0, 0, 0.2),
-    inset 0 1px 0 rgba(255, 255, 255, 0.02);
+    0 4px 6px -1px rgba(0, 0, 0, 0.05),
+    0 2px 4px -2px rgba(0, 0, 0, 0.02),
+    inset 0 1px 0 rgba(255, 255, 255, 1);
 }
 
 .swap-glass-inner {
-  background: rgba(19, 26, 42, 0.6);
+  background: rgba(248, 250, 252, 0.6);
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
   border-radius: 16px;
+  border: 1px solid rgba(226, 232, 240, 0.6);
 }
 
 /* ─── Token Input ───────────────────────────────────────────────────────────── */
@@ -528,7 +529,7 @@
   background: transparent;
   border: none;
   outline: none;
-  color: #ffffff;
+  color: #0f172a;
   font-size: 2.5rem;
   font-weight: 600;
   font-family: 'DM Sans', sans-serif;
@@ -559,16 +560,18 @@
   align-items: center;
   gap: 0.5rem;
   padding: 0.5rem 0.75rem;
-  background: rgba(27, 34, 54, 0.8);
-  border: 1px solid rgba(27, 34, 54, 1);
+  background: rgba(255, 255, 255, 0.8);
+  border: 1px solid rgba(226, 232, 240, 1);
   border-radius: 16px;
   cursor: pointer;
   transition: all 0.2s ease;
   white-space: nowrap;
+  color: #0f172a;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.05);
 }
 
 .swap-token-button:hover {
-  background: rgba(41, 50, 73, 0.8);
+  background: rgba(241, 245, 249, 0.8);
   border-color: rgba(59, 130, 246, 0.3);
 }
 
@@ -597,16 +600,17 @@
   align-items: center;
   justify-content: center;
   
-  background: #0d111c;
-  border: 4px solid #131a2a;
+  background: #ffffff;
+  border: 4px solid #f8fafc;
   border-radius: 12px;
   cursor: pointer;
   transition: all 0.2s ease;
+  color: #0f172a;
 }
 
 .swap-switch-button:hover {
-  background: #1b2236;
-  border-color: #293249;
+  background: #f1f5f9;
+  border-color: #e2e8f0;
 }
 
 .swap-switch-button:active {

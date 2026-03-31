@@ -34,18 +34,18 @@ export class ErrorBoundary extends Component<Props, State> {
   public render() {
     if (this.state.hasError) {
       return (
-        <div className="p-8 m-8 bg-red-900/50 border border-red-500 rounded-xl text-white">
+        <div className="p-8 m-8 bg-red-50 border border-red-500 rounded-xl text-red-900">
           <h1 className="text-2xl font-bold mb-4 font-mono">Fatal UI Crash Detected!</h1>
           <p className="mb-4">Please copy this EXACT text and send it to the AI assistant:</p>
-          <pre className="p-4 bg-black/50 rounded overflow-x-auto text-sm text-red-300">
+          <pre className="p-4 bg-white/50 rounded overflow-x-auto text-sm text-red-700">
             {this.state.error?.toString()}
           </pre>
-          <pre className="mt-4 p-4 bg-black/50 rounded overflow-x-auto text-xs text-red-200 opacity-80">
+          <pre className="mt-4 p-4 bg-white/50 rounded overflow-x-auto text-xs text-red-600 opacity-80">
             {this.state.errorInfo?.componentStack}
           </pre>
           <button 
              onClick={() => this.setState({ hasError: false })}
-             className="mt-6 bg-white/20 px-4 py-2 rounded hover:bg-white/30"
+             className="mt-6 bg-red-200 px-4 py-2 rounded hover:bg-red-300 text-red-900"
           >
             Try Again
           </button>

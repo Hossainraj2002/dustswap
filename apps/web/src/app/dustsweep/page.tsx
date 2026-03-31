@@ -112,8 +112,8 @@ function TokenCard({
       className={`
         flex items-center justify-between p-4 rounded-xl border transition-all duration-200
         ${isSelected
-          ? 'bg-purple-900/20 border-purple-500/50 shadow-lg shadow-purple-500/10'
-          : 'bg-gray-900/80 border-gray-800 hover:border-gray-700'}
+          ? 'bg-purple-50 border-purple-200 shadow-sm'
+          : 'bg-white border-slate-200 hover:border-purple-300 shadow-sm'}
         ${!hasLiquidity ? 'opacity-60' : ''}
       `}
     >
@@ -123,7 +123,7 @@ function TokenCard({
           <img
             src={token.logoURI}
             alt={token.symbol}
-            className="w-10 h-10 rounded-full bg-gray-800 flex-shrink-0"
+            className="w-10 h-10 rounded-full bg-slate-100 flex-shrink-0"
             onError={(e) => {
               const img = e.target as HTMLImageElement;
               img.style.display = 'none';
@@ -133,22 +133,22 @@ function TokenCard({
           />
         ) : null}
         <div
-          className={`w-10 h-10 rounded-full bg-gradient-to-br from-purple-500 to-indigo-600 flex items-center justify-center text-white font-bold text-sm flex-shrink-0 ${
+          className={`w-10 h-10 rounded-full bg-gradient-to-br from-purple-500 to-indigo-600 flex items-center justify-center text-slate-900 font-bold text-sm flex-shrink-0 ${
             token.logoURI ? 'hidden' : ''
           }`}
         >
           {token.symbol?.charAt(0) || '?'}
         </div>
         <div className="min-w-0">
-          <p className="text-white font-medium text-sm truncate">{token.name}</p>
-          <p className="text-gray-400 text-xs">{token.symbol}</p>
+          <p className="text-slate-900 font-medium text-sm truncate">{token.name}</p>
+          <p className="text-slate-500 text-xs">{token.symbol}</p>
         </div>
       </div>
 
       {/* Center: Balance + USD */}
       <div className="text-right px-3 flex-shrink-0">
-        <p className="text-white text-sm font-mono">{formatBalance(token.balanceFormatted)}</p>
-        <p className="text-gray-400 text-xs">${token.usdValue.toFixed(2)}</p>
+        <p className="text-slate-900 text-sm font-mono">{formatBalance(token.balanceFormatted)}</p>
+        <p className="text-slate-500 text-xs">${token.usdValue.toFixed(2)}</p>
       </div>
 
       {/* Right: Checkbox or Badge */}
@@ -162,27 +162,27 @@ function TokenCard({
               ${isSelected
                 ? 'bg-purple-600 border-purple-500'
                 : disabled
-                ? 'border-gray-700 cursor-not-allowed opacity-40'
-                : 'border-gray-600 hover:border-purple-400'}
+                ? 'border-slate-300 cursor-not-allowed opacity-40'
+                : 'border-slate-300 hover:border-purple-400'}
             `}
             aria-label={isSelected ? `Deselect ${token.symbol}` : `Select ${token.symbol}`}
           >
             {isSelected && (
-              <svg className="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+              <svg className="w-4 h-4 text-slate-900" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
               </svg>
             )}
           </button>
         ) : (
           <div className="flex items-center gap-2">
-            <span className="text-xs bg-red-900/50 text-red-400 px-2 py-0.5 rounded-full border border-red-800/50 whitespace-nowrap">
+            <span className="text-xs bg-red-50 text-red-600 px-2 py-0.5 rounded-full border border-red-200 whitespace-nowrap">
               No Liquidity
             </span>
             <a
               href={`https://basescan.org/token/${token.address}`}
               target="_blank"
               rel="noopener noreferrer"
-              className="text-xs text-gray-500 hover:text-red-400 underline whitespace-nowrap"
+              className="text-xs text-slate-500 hover:text-red-500 underline whitespace-nowrap"
             >
               Burn
             </a>
@@ -205,24 +205,24 @@ function SuccessModal({
   return (
     <>
       <ConfettiParticles />
-      <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-40 p-4">
-        <div className="bg-gray-900 border border-gray-700 rounded-2xl p-8 max-w-md w-full shadow-2xl shadow-purple-500/20">
+      <div className="fixed inset-0 bg-slate-800/40 backdrop-blur-sm flex items-center justify-center z-40 p-4">
+        <div className="bg-white border-slate-200 border border-slate-300 rounded-2xl p-8 max-w-md w-full shadow-2xl shadow-purple-200/50">
           <div className="text-center mb-6">
             <div className="text-6xl mb-3">Ã°Å¸Â§Â¹Ã¢Å“Â¨</div>
-            <h2 className="text-2xl font-bold text-white">Dust Swept!</h2>
-            <p className="text-gray-400 mt-1">Your wallet is cleaner now</p>
+            <h2 className="text-2xl font-bold text-slate-900">Dust Swept!</h2>
+            <p className="text-slate-500 mt-1">Your wallet is cleaner now</p>
           </div>
           <div className="space-y-3 mb-6">
-            <div className="flex justify-between items-center py-2 border-b border-gray-800">
-              <span className="text-gray-400">Tokens Swept</span>
-              <span className="text-white font-semibold">{data.tokensSwept}</span>
+            <div className="flex justify-between items-center py-2 border-b border-slate-200">
+              <span className="text-slate-500">Tokens Swept</span>
+              <span className="text-slate-900 font-semibold">{data.tokensSwept}</span>
             </div>
-            <div className="flex justify-between items-center py-2 border-b border-gray-800">
-              <span className="text-gray-400">Received</span>
-              <span className="text-white font-semibold">{data.amountReceived} {data.outputSymbol}</span>
+            <div className="flex justify-between items-center py-2 border-b border-slate-200">
+              <span className="text-slate-500">Received</span>
+              <span className="text-slate-900 font-semibold">{data.amountReceived} {data.outputSymbol}</span>
             </div>
             <div className="flex justify-between items-center py-2">
-              <span className="text-gray-400">Dust Particles</span>
+              <span className="text-slate-500">Dust Particles</span>
               <span className="text-purple-400 font-bold text-lg">+{data.particlesEarned} Ã¢Å“Â¨</span>
             </div>
           </div>
@@ -231,13 +231,13 @@ function SuccessModal({
               href={`${BASE_SCAN_URL}${data.txHash}`}
               target="_blank"
               rel="noopener noreferrer"
-              className="block w-full text-center py-3 px-4 rounded-xl bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 hover:text-white transition-colors text-sm"
+              className="block w-full text-center py-3 px-4 rounded-xl bg-slate-100 border-slate-200 hover:bg-slate-200 border border-slate-300 text-slate-700 hover:text-slate-900 transition-colors text-sm"
             >
               View on BaseScan Ã¢â€ â€”
             </a>
             <button
               onClick={onClose}
-              className="block w-full text-center py-3 px-4 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-semibold transition-all"
+              className="block w-full text-center py-3 px-4 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-slate-900 font-semibold transition-all"
             >
               Done
             </button>
@@ -280,7 +280,7 @@ function StickySweepPanel({
   );
 
   return (
-    <div className="fixed md:bottom-0 bottom-[calc(64px+env(safe-area-inset-bottom))] left-0 right-0 z-40 bg-gray-950/95 backdrop-blur border-t border-gray-800 shadow-2xl shadow-black/50">
+    <div className="fixed md:bottom-0 bottom-[calc(64px+env(safe-area-inset-bottom))] left-0 right-0 z-40 bg-white/95 backdrop-blur border-t border-slate-200 shadow-lg shadow-slate-300/40">
       <div className="max-w-2xl mx-auto px-4 py-4">
 
         {/* Ã¢â€â‚¬Ã¢â€â‚¬ Partial liquidity warning Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ */}
@@ -297,10 +297,10 @@ function StickySweepPanel({
         <div className="flex items-center gap-4">
           {/* Left: token count + value */}
           <div className="flex-1 min-w-0">
-            <p className="text-white font-semibold text-sm">
+            <p className="text-slate-900 font-semibold text-sm">
               {selectedCount} token{selectedCount !== 1 ? 's' : ''} selected
             </p>
-            <p className="text-gray-400 text-xs mt-0.5">
+            <p className="text-slate-500 text-xs mt-0.5">
               {isQuoting ? (
                 <span className="inline-flex items-center gap-1">
                   <span className="w-3 h-3 border border-purple-500 border-t-transparent rounded-full animate-spin inline-block" />
@@ -329,7 +329,7 @@ function StickySweepPanel({
                 type="button"
                 onClick={onSweep}
                 disabled={isSending}
-                className="bg-gradient-to-r from-purple-600 to-indigo-600 px-6 py-3 text-sm font-semibold text-white rounded-xl shadow-lg shadow-purple-500/25 transition-all duration-200 whitespace-nowrap hover:from-purple-500 hover:to-indigo-500 disabled:cursor-wait disabled:opacity-70"
+                className="bg-gradient-to-r from-purple-600 to-indigo-600 px-6 py-3 text-sm font-semibold text-slate-900 rounded-xl shadow-lg shadow-purple-500/25 transition-all duration-200 whitespace-nowrap hover:from-purple-500 hover:to-indigo-500 disabled:cursor-wait disabled:opacity-70"
               >
                 {isSending ? 'Sweeping...' : `Sweep ${selectedCount}`}
               </button>
@@ -337,7 +337,7 @@ function StickySweepPanel({
               <button
                 onClick={getQuote}
                 disabled={isQuoting}
-                className="py-3 px-6 rounded-xl bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-400 hover:text-white font-semibold text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
+                className="py-3 px-6 rounded-xl bg-slate-100 border-slate-200 hover:bg-slate-200 border border-slate-300 text-slate-500 hover:text-slate-900 font-semibold text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
               >
                 {isQuoting ? 'Getting quote...' : quoteError ? 'Ã¢â€ Âº Retry Quote' : 'Get Quote'}
               </button>
@@ -346,7 +346,7 @@ function StickySweepPanel({
         </div>
 
         {/* Ã¢â€â‚¬Ã¢â€â‚¬ Fee note Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ */}
-        <p className="text-xs text-gray-600 mt-3 text-center">
+        <p className="text-xs text-slate-500 mt-3 text-center">
           DustSwap charges a 2% fee Ã‚Â· Gas sponsored via Base Paymaster Ã‚Â· Earn Ã¢Å“Â¨ Dust Particles
         </p>
       </div>
@@ -369,19 +369,19 @@ function formatBalance(value: string): string {
 
 function TokenSkeleton() {
   return (
-    <div className="flex items-center justify-between p-4 rounded-xl bg-gray-900/80 border border-gray-800 animate-pulse">
+    <div className="flex items-center justify-between p-4 rounded-xl bg-white border-slate-200 shadow-sm border border-slate-200 animate-pulse">
       <div className="flex items-center gap-3">
-        <div className="w-10 h-10 rounded-full bg-gray-700" />
+        <div className="w-10 h-10 rounded-full bg-slate-200" />
         <div>
-          <div className="w-24 h-4 bg-gray-700 rounded mb-1" />
-          <div className="w-12 h-3 bg-gray-700 rounded" />
+          <div className="w-24 h-4 bg-slate-200 rounded mb-1" />
+          <div className="w-12 h-3 bg-slate-200 rounded" />
         </div>
       </div>
       <div className="text-right">
-        <div className="w-16 h-4 bg-gray-700 rounded mb-1" />
-        <div className="w-10 h-3 bg-gray-700 rounded" />
+        <div className="w-16 h-4 bg-slate-200 rounded mb-1" />
+        <div className="w-10 h-3 bg-slate-200 rounded" />
       </div>
-      <div className="w-6 h-6 rounded-md bg-gray-700 ml-2" />
+      <div className="w-6 h-6 rounded-md bg-slate-200 ml-2" />
     </div>
   );
 }
@@ -508,11 +508,11 @@ export default function DustSweepPage() {
 
   if (!isConnected) {
     return (
-      <div className="min-h-screen bg-gray-950 flex items-center justify-center p-4">
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
         <div className="text-center max-w-md">
           <div className="text-7xl mb-6">Ã°Å¸Â§Â¹</div>
-          <h1 className="text-3xl font-bold text-white mb-3">Dust Sweep</h1>
-          <p className="text-gray-400 mb-8">
+          <h1 className="text-3xl font-bold text-slate-900 mb-3">Dust Sweep</h1>
+          <p className="text-slate-500 mb-8">
             Connect your wallet to find and sweep dust tokens into one useful asset.
           </p>
           {/* @ts-ignore */}
@@ -525,7 +525,7 @@ export default function DustSweepPage() {
   // Ã¢â€â‚¬Ã¢â€â‚¬ Main Render Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
   return (
-    <div className="min-h-screen bg-gray-950">
+    <div className="min-h-screen bg-slate-50">
       {successData && <SuccessModal data={successData} onClose={clearSuccess} />}
 
       {/* Ã¢â€â‚¬Ã¢â€â‚¬ Add padding so sticky panel doesn't cover tokens, with extra room for mobile nav Ã¢â€â‚¬Ã¢â€â‚¬ */}
@@ -533,13 +533,13 @@ export default function DustSweepPage() {
 
         {/* Header */}
         <div className="text-center mb-8">
-          <h1 className="text-4xl sm:text-5xl font-bold text-white mb-2">Ã°Å¸Â§Â¹ Dust Sweep</h1>
-          <p className="text-gray-400 text-lg">Select your dust tokens and sweep them into one</p>
+          <h1 className="text-4xl sm:text-5xl font-bold text-slate-900 mb-2">Ã°Å¸Â§Â¹ Dust Sweep</h1>
+          <p className="text-slate-500 text-lg">Select your dust tokens and sweep them into one</p>
         </div>
 
         {/* Threshold Selector */}
         <div className="mb-6">
-          <label className="text-sm text-gray-400 mb-2 block font-medium">
+          <label className="text-sm text-slate-500 mb-2 block font-medium">
             Token Value Threshold
           </label>
           <div className="grid grid-cols-4 gap-2">
@@ -550,8 +550,8 @@ export default function DustSweepPage() {
                 className={`
                   py-2.5 px-3 rounded-xl text-sm font-medium transition-all duration-200
                   ${threshold === value
-                    ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white shadow-lg shadow-purple-500/25'
-                    : 'bg-gray-900 border border-gray-800 text-gray-400 hover:text-white hover:border-gray-600'}
+                    ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-slate-900 shadow-lg shadow-purple-500/25'
+                    : 'bg-white border border-slate-100 text-slate-500 hover:text-slate-900 hover:border-slate-300'}
                 `}
               >
                 {label}
@@ -563,30 +563,30 @@ export default function DustSweepPage() {
         {/* Output Token Selector (shown when tokens selected) */}
         {hasSelectedTokens && (
           <div className="mb-6">
-            <label className="text-sm text-gray-400 mb-2 block font-medium">Sweep Into</label>
+            <label className="text-sm text-slate-500 mb-2 block font-medium">Sweep Into</label>
             <div className="relative" data-output-dropdown>
               <button
                 onClick={() => setOutputDropdownOpen(!outputDropdownOpen)}
-                className="w-full flex items-center justify-between p-4 rounded-xl bg-gray-900/80 border border-gray-800 hover:border-gray-600 transition-colors"
+                className="w-full flex items-center justify-between p-4 rounded-xl bg-white border-slate-200 shadow-sm border border-slate-200 hover:border-slate-300 transition-colors"
               >
                 <div className="flex items-center gap-3">
                   {OUTPUT_OPTIONS.find((o) => o.value === outputToken)?.logoURI ? (
                     <img 
                       src={OUTPUT_OPTIONS.find((o) => o.value === outputToken)?.logoURI} 
                       alt={outputToken}
-                      className="w-8 h-8 rounded-full bg-gray-800"
+                      className="w-8 h-8 rounded-full bg-slate-100 border-slate-200"
                     />
                   ) : (
-                    <span className="w-8 h-8 rounded-full bg-gradient-to-br from-purple-500 to-indigo-600 flex items-center justify-center text-white font-bold text-sm">
+                    <span className="w-8 h-8 rounded-full bg-gradient-to-br from-purple-500 to-indigo-600 flex items-center justify-center text-slate-900 font-bold text-sm">
                       {OUTPUT_OPTIONS.find((o) => o.value === outputToken)?.icon}
                     </span>
                   )}
-                  <span className="text-white font-medium">
+                  <span className="text-slate-900 font-medium">
                     {OUTPUT_OPTIONS.find((o) => o.value === outputToken)?.label}
                   </span>
                 </div>
                 <svg
-                  className={`w-5 h-5 text-gray-400 transition-transform ${outputDropdownOpen ? 'rotate-180' : ''}`}
+                  className={`w-5 h-5 text-slate-500 transition-transform ${outputDropdownOpen ? 'rotate-180' : ''}`}
                   fill="none" viewBox="0 0 24 24" stroke="currentColor"
                 >
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
@@ -594,20 +594,20 @@ export default function DustSweepPage() {
               </button>
 
               {outputDropdownOpen && (
-                <div className="absolute top-full left-0 right-0 mt-1 bg-gray-900 border border-gray-700 rounded-xl overflow-hidden z-30 shadow-xl">
+                <div className="absolute top-full left-0 right-0 mt-1 bg-white border-slate-200 border border-slate-300 rounded-xl overflow-hidden z-30 shadow-xl">
                   {OUTPUT_OPTIONS.map((option) => (
                     <button
                       key={option.value}
                       onClick={() => { setOutputToken(option.value); setOutputDropdownOpen(false); }}
                       className={`
-                        w-full flex items-center gap-3 p-3 hover:bg-gray-800 transition-colors
-                        ${outputToken === option.value ? 'bg-purple-900/20 text-white' : 'text-gray-300'}
+                        w-full flex items-center gap-3 p-3 hover:bg-slate-50 transition-colors
+                        ${outputToken === option.value ? 'bg-purple-900/20 text-slate-900' : 'text-slate-600'}
                       `}
                     >
                       {option.logoURI ? (
-                        <img src={option.logoURI} alt={option.label} className="w-7 h-7 rounded-full bg-gray-800" />
+                        <img src={option.logoURI} alt={option.label} className="w-7 h-7 rounded-full bg-slate-100 border-slate-200" />
                       ) : (
-                        <span className="w-7 h-7 rounded-full bg-gradient-to-br from-purple-500 to-indigo-600 flex items-center justify-center text-white font-bold text-xs">
+                        <span className="w-7 h-7 rounded-full bg-gradient-to-br from-purple-500 to-indigo-600 flex items-center justify-center text-slate-900 font-bold text-xs">
                           {option.icon}
                         </span>
                       )}
@@ -627,7 +627,7 @@ export default function DustSweepPage() {
 
         {/* Error Banner */}
         {error && (
-          <div className="mb-6 p-4 rounded-xl bg-red-900/20 border border-red-800/50 text-red-400 text-sm">
+          <div className="mb-6 p-4 rounded-xl bg-red-900/20 border border-red-200 text-red-400 text-sm">
             <span className="font-medium">Error:</span> {error}
           </div>
         )}
@@ -638,12 +638,12 @@ export default function DustSweepPage() {
 
           {/* Select controls */}
           <div className="flex items-center justify-between mb-3">
-            <p className="text-sm text-gray-400">
+            <p className="text-sm text-slate-500">
               {isLoading ? 'Scanning wallet...' : (
                 <>
-                  <span className="text-white font-medium">{selectedCount}</span>
+                  <span className="text-slate-900 font-medium">{selectedCount}</span>
                   {' of '}
-                  <span className="text-white font-medium">{MAX_SELECTED}</span>
+                  <span className="text-slate-900 font-medium">{MAX_SELECTED}</span>
                   {' max selected'}
                 </>
               )}
@@ -658,7 +658,7 @@ export default function DustSweepPage() {
                 </button>
                 <button
                   onClick={deselectAll}
-                  className="text-xs text-gray-500 hover:text-gray-300 transition-colors px-2 py-1 rounded-lg hover:bg-gray-500/10"
+                  className="text-xs text-slate-400 hover:text-slate-700 transition-colors px-2 py-1 rounded-lg hover:bg-slate-100"
                 >
                   Deselect All
                 </button>
@@ -688,8 +688,8 @@ export default function DustSweepPage() {
             ) : allTokens.length === 0 ? (
               <div className="text-center py-16">
                 <div className="text-6xl mb-4">Ã¢Å“Â¨</div>
-                <h3 className="text-xl font-semibold text-white mb-2">Your wallet is clean!</h3>
-                <p className="text-gray-400">
+                <h3 className="text-xl font-semibold text-slate-900 mb-2">Your wallet is clean!</h3>
+                <p className="text-slate-500">
                   No dust tokens found under ${threshold}. Try increasing the threshold.
                 </p>
               </div>
@@ -709,7 +709,7 @@ export default function DustSweepPage() {
                 {/* No liquidity section */}
                 {noLiquidityTokens.length > 0 && (
                   <div className="mt-6">
-                    <p className="text-xs text-gray-500 uppercase tracking-wider mb-2 px-1">
+                    <p className="text-xs text-slate-400 uppercase tracking-wider mb-2 px-1">
                       No Liquidity ({noLiquidityTokens.length})
                     </p>
                     {noLiquidityTokens.map((token) => (
@@ -730,30 +730,30 @@ export default function DustSweepPage() {
 
         {/* Quote detail card (visible when we have a quote but panel is the primary CTA) */}
         {hasSelectedTokens && quote && (
-          <div className="mb-6 bg-gray-900/80 border border-gray-800 rounded-xl p-5">
-            <h3 className="text-sm font-medium text-gray-300 mb-3">Quote Summary</h3>
+          <div className="mb-6 bg-white border-slate-200 shadow-sm border border-slate-200 rounded-xl p-5">
+            <h3 className="text-sm font-medium text-slate-700 mb-3">Quote Summary</h3>
             <div className="space-y-2">
               <div className="flex justify-between text-sm">
-                <span className="text-gray-400">Selected tokens</span>
-                <span className="text-white">{quote.selectedCount}</span>
+                <span className="text-slate-500">Selected tokens</span>
+                <span className="text-slate-900">{quote.selectedCount}</span>
               </div>
               <div className="flex justify-between text-sm">
-                <span className="text-gray-400">Total dust value</span>
-                <span className="text-white">~${quote.totalDustValueUsd.toFixed(2)}</span>
+                <span className="text-slate-500">Total dust value</span>
+                <span className="text-slate-900">~${quote.totalDustValueUsd.toFixed(2)}</span>
               </div>
               <div className="flex justify-between text-sm">
-                <span className="text-gray-400">Sweep fee ({quote.swapFeePercent}%)</span>
+                <span className="text-slate-500">Sweep fee ({quote.swapFeePercent}%)</span>
                 <span className="text-amber-400">-${quote.swapFeeUsd.toFixed(2)}</span>
               </div>
-              <div className="border-t border-gray-700 my-2" />
+              <div className="border-t border-slate-300 my-2" />
               <div className="flex justify-between text-sm">
-                <span className="text-gray-400">Estimated output</span>
-                <span className="text-white font-semibold text-base">
+                <span className="text-slate-500">Estimated output</span>
+                <span className="text-slate-900 font-semibold text-base">
                   ~{quote.estimatedOutputFormatted} {quote.outputTokenSymbol}
                 </span>
               </div>
               <div className="flex justify-between text-sm">
-                <span className="text-gray-400">Gas</span>
+                <span className="text-slate-500">Gas</span>
                 <span className="inline-flex items-center gap-1 text-green-400 text-xs bg-green-900/20 px-2 py-0.5 rounded-full border border-green-800/30">
                   <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
                     <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />

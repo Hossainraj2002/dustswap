@@ -41,10 +41,10 @@ export default function ParticlesPage() {
   }, [fetchBalance, fetchLeaderboard]);
 
   return (
-    <div className="min-h-screen bg-gray-950 text-white">
+    <div className="min-h-screen bg-slate-50 text-slate-900">
       <h1 className="text-3xl font-bold mb-4">Dust Particles Leaderboard</h1>
       {balance ? (
-        <div className="max-w-md mx-auto p-6 bg-gray-900 border border-gray-800 rounded-xl mb-8">
+        <div className="max-w-md mx-auto p-6 bg-white border border-slate-200 rounded-xl mb-8">
           <h3 className="font-semibold mb-2">Your Balance</h3>
           <p>Total Points: {balance.totalPoints}</p>
           <p>Rank: {balance.rank}</p>
@@ -53,10 +53,10 @@ export default function ParticlesPage() {
           <p>Your Referral Code: {balance.referralCode}</p>
         </div>
       ) : (
-        <p className="text-center text-gray-400">Connect your wallet to view your balance.</p>
+        <p className="text-center text-slate-500">Connect your wallet to view your balance.</p>
       )}
       <h2 className="text-2xl font-semibold mb-4">Top Earners</h2>
-      <ol className="max-w-md mx-auto space-y-2 list-decimal list-inside text-gray-300">
+      <ol className="max-w-md mx-auto space-y-2 list-decimal list-inside text-slate-700">
         {leaderboard.map((entry) => (
           <li key={entry.address}>
             #{entry.rank} – {entry.address} – {entry.points} points
@@ -65,13 +65,13 @@ export default function ParticlesPage() {
       </ol>
 
       {/* $DUST TGE info */}
-      <div className="mt-8 bg-gray-900 border border-gray-800 rounded-xl p-6">
+      <div className="mt-8 bg-white border border-slate-200 rounded-xl p-6">
         <h3 className="font-semibold mb-2">$DUST Token</h3>
-        <p className="text-gray-400 text-sm">
+        <p className="text-slate-500 text-sm">
           Dust Particles convert to $DUST tokens at TGE. The more particles you hold, the larger your $DUST allocation.
           Keep sweeping!
         </p>
-        <p className="text-gray-500 text-xs mt-2">⏳ Estimated TGE: Q4 2025</p>
+        <p className="text-slate-400 text-xs mt-2">⏳ Estimated TGE: Q4 2025</p>
       </div>
     </div>
   );

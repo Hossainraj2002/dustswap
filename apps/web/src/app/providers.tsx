@@ -43,7 +43,7 @@ function ensureAppKit() {
       url: "https://dustswap.xyz",
       icons: ["https://dustswap.xyz/logo.png"],
     },
-    themeMode: "dark",
+    themeMode: "light",
     features: {
       analytics: true,
       email: false,

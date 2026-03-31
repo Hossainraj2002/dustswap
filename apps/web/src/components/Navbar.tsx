@@ -54,7 +54,7 @@ function NavBadgeIcon({
       className={`flex h-8 w-8 items-center justify-center rounded-xl border ${
         active
           ? "border-[#8B5CF6]/25 bg-[#8B5CF6]/10 text-[#8B5CF6]"
-          : "border-white/10 bg-white/5 text-gray-400"
+          : "border-slate-200 bg-white text-slate-500"
       }`}
       aria-hidden="true"
     >
@@ -176,7 +176,7 @@ export function Navbar() {
   return (
     <>
       <nav
-        className="sticky top-0 z-50 w-full border-b border-gray-800 bg-gray-900/80 backdrop-blur-xl"
+        className="sticky top-0 z-50 w-full border-b border-slate-200 bg-white/80 backdrop-blur-xl"
         role="navigation"
         aria-label="Main navigation"
       >
@@ -187,7 +187,7 @@ export function Navbar() {
               className="group flex shrink-0 items-center gap-2 transition-opacity duration-200 hover:opacity-80"
               aria-label="DustSwap home"
             >
-              <span className="flex h-9 w-9 items-center justify-center rounded-2xl border border-white/10 bg-white/5 text-[#8B5CF6] transition-transform duration-300 group-hover:scale-105">
+              <span className="flex h-9 w-9 items-center justify-center rounded-2xl border border-slate-200 bg-white text-[#8B5CF6] transition-transform duration-300 group-hover:scale-105">
                 <ParticlesIcon className="h-4 w-4" aria-hidden="true" />
               </span>
               <span className="bg-gradient-to-r from-[#8B5CF6] to-[#6366F1] bg-clip-text text-xl font-bold text-transparent">
@@ -204,7 +204,7 @@ export function Navbar() {
                   return (
                     <span
                       key={link.href}
-                      className="relative flex cursor-not-allowed items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium text-gray-600"
+                      className="relative flex cursor-not-allowed items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium text-slate-400"
                       title="Coming soon"
                     >
                       <NavBadgeIcon Icon={link.icon} />
@@ -223,7 +223,7 @@ export function Navbar() {
                     className={`relative flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium transition-colors duration-200 ${
                       active
                         ? "text-[#8B5CF6]"
-                        : "text-gray-400 hover:bg-white/5 hover:text-white"
+                        : "text-slate-500 hover:bg-slate-50 hover:text-slate-900"
                     }`}
                     aria-current={active ? "page" : undefined}
                   >
@@ -270,7 +270,7 @@ export function Navbar() {
                 ref={hamburgerRef}
                 type="button"
                 onClick={() => setMobileMenuOpen((prev) => !prev)}
-                className="relative flex h-10 w-10 items-center justify-center rounded-lg text-gray-400 transition-colors duration-200 hover:bg-white/5 hover:text-white lg:hidden"
+                className="relative flex h-10 w-10 items-center justify-center rounded-lg text-slate-500 transition-colors duration-200 hover:bg-slate-50 hover:text-slate-900 lg:hidden"
                 aria-expanded={mobileMenuOpen}
                 aria-controls="mobile-menu"
                 aria-label={mobileMenuOpen ? "Close menu" : "Open menu"}
@@ -303,7 +303,7 @@ export function Navbar() {
       </nav>
 
       <div
-        className={`fixed inset-0 z-40 bg-black/60 backdrop-blur-sm transition-opacity duration-300 lg:hidden ${
+        className={`fixed inset-0 z-40 bg-slate-900/40 backdrop-blur-sm transition-opacity duration-300 lg:hidden ${
           mobileMenuOpen
             ? "pointer-events-auto opacity-100"
             : "pointer-events-none opacity-0"
@@ -318,13 +318,13 @@ export function Navbar() {
         role="dialog"
         aria-modal={mobileMenuOpen}
         aria-label="Mobile navigation"
-        className={`fixed right-0 top-0 z-50 flex h-full w-72 flex-col border-l border-gray-800 bg-gray-900/95 backdrop-blur-xl transition-transform duration-300 ease-out lg:hidden ${
+        className={`fixed right-0 top-0 z-50 flex h-full w-72 flex-col border-l border-slate-200 bg-white/95 backdrop-blur-xl transition-transform duration-300 ease-out lg:hidden ${
           mobileMenuOpen ? "translate-x-0" : "translate-x-full"
         }`}
       >
-        <div className="flex h-16 items-center justify-between border-b border-gray-800 px-4">
+        <div className="flex h-16 items-center justify-between border-b border-slate-200 px-4">
           <div className="flex items-center gap-2">
-            <span className="flex h-9 w-9 items-center justify-center rounded-2xl border border-white/10 bg-white/5 text-[#8B5CF6]">
+            <span className="flex h-9 w-9 items-center justify-center rounded-2xl border border-slate-200 bg-white text-[#8B5CF6]">
               <ParticlesIcon className="h-4 w-4" aria-hidden="true" />
             </span>
             <span className="bg-gradient-to-r from-[#8B5CF6] to-[#6366F1] bg-clip-text text-lg font-bold text-transparent">
@@ -335,7 +335,7 @@ export function Navbar() {
           <button
             type="button"
             onClick={() => setMobileMenuOpen(false)}
-            className="flex h-8 w-8 items-center justify-center rounded-lg text-gray-400 transition-colors hover:bg-white/5 hover:text-white"
+            className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-500 transition-colors hover:bg-slate-50 hover:text-slate-900"
             aria-label="Close menu"
           >
             <svg
@@ -356,7 +356,7 @@ export function Navbar() {
         </div>
 
         {isConnected && (
-          <div className="border-b border-gray-800 px-4 py-3">
+          <div className="border-b border-slate-200 px-4 py-3">
             <Link
               href="/particles"
               onClick={() => setMobileMenuOpen(false)}
@@ -366,7 +366,7 @@ export function Navbar() {
                 <span className="flex h-9 w-9 items-center justify-center rounded-xl border border-[#8B5CF6]/20 bg-[#8B5CF6]/10 text-[#8B5CF6]">
                   <ParticlesIcon className="h-4 w-4" aria-hidden="true" />
                 </span>
-                <span className="text-sm font-medium text-gray-300">
+                <span className="text-sm font-medium text-slate-600">
                   Dust Particles
                 </span>
               </div>
@@ -390,8 +390,8 @@ export function Navbar() {
               return (
                 <li key={link.href}>
                   {isDisabled ? (
-                    <span className="flex cursor-not-allowed items-center gap-3 rounded-xl px-4 py-3 text-sm font-medium text-gray-600">
-                      <span className="flex h-10 w-10 items-center justify-center rounded-xl border border-white/10 bg-white/5 text-gray-500">
+                    <span className="flex cursor-not-allowed items-center gap-3 rounded-xl px-4 py-3 text-sm font-medium text-slate-400">
+                      <span className="flex h-10 w-10 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-400">
                         <link.icon className="h-4 w-4" aria-hidden="true" />
                       </span>
                       <span className="flex-1">{link.label}</span>
@@ -406,7 +406,7 @@ export function Navbar() {
                       className={`flex items-center gap-3 rounded-xl px-4 py-3 text-sm font-medium transition-colors duration-200 ${
                         active
                           ? "border border-[#8B5CF6]/20 bg-[#8B5CF6]/10 text-[#8B5CF6]"
-                          : "text-gray-400 hover:bg-white/5 hover:text-white"
+                          : "text-slate-500 hover:bg-slate-50 hover:text-slate-900"
                       }`}
                       aria-current={active ? "page" : undefined}
                     >
@@ -414,7 +414,7 @@ export function Navbar() {
                         className={`flex h-10 w-10 items-center justify-center rounded-xl border ${
                           active
                             ? "border-[#8B5CF6]/25 bg-[#8B5CF6]/10 text-[#8B5CF6]"
-                            : "border-white/10 bg-white/5 text-gray-400"
+                            : "border-slate-200 bg-white text-slate-500"
                         }`}
                       >
                         <link.icon className="h-4 w-4" aria-hidden="true" />
@@ -441,8 +441,8 @@ export function Navbar() {
           </ul>
         </nav>
 
-        <div className="border-t border-gray-800 px-4 py-4">
-          <div className="text-center text-xs text-gray-600">
+        <div className="border-t border-slate-200 px-4 py-4">
+          <div className="text-center text-xs text-slate-500">
             Built on Base | Powered by Coinbase Smart Wallet
           </div>
         </div>
