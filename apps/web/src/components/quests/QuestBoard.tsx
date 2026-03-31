@@ -400,8 +400,23 @@ export function QuestBoard() {
     }
   }
 
+  function isXExternalUrl(url: string) {
+    try {
+      const parsed = new URL(url, typeof window !== "undefined" ? window.location.origin : "http://localhost");
+      const host = parsed.hostname.toLowerCase();
+      return host === "x.com" || host === "www.x.com" || host === "twitter.com" || host === "www.twitter.com";
+    } catch {
+      return false;
+    }
+  }
+
   function openExternal(url: string) {
     if (typeof window === "undefined") {
+      return;
+    }
+
+    if (isXExternalUrl(url)) {
+      window.open(url);
       return;
     }
 
