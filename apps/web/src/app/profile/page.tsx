@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { pay } from "@base-org/account/payment";
 import { useAccount, usePublicClient, useReadContract, useWalletClient } from "wagmi";
@@ -564,32 +565,31 @@ function ProfilePageContent() {
 
   if (!isConnected) {
     return (
-      <div className="mx-auto flex min-h-[70vh] max-w-3xl items-center justify-center px-4 py-8">
-        <div className="w-full rounded-[30px] border border-white/70 bg-[radial-gradient(circle_at_top_left,rgba(56,189,248,0.14),transparent_34%),linear-gradient(180deg,#fffdf8,#f5fbff)] p-6 text-center shadow-[0_22px_70px_rgba(15,23,42,0.08)] [&>div:first-child]:hidden">
-          <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full border border-sky-200 bg-[radial-gradient(circle,rgba(56,189,248,0.18),transparent_70%)] text-3xl">
-            ✨
+      <div className="mx-auto flex min-h-[calc(100vh-4rem)] max-w-2xl items-center justify-center px-4 py-8">
+        <section className="flex w-full flex-col items-center justify-center rounded-[32px] border border-white/80 bg-white/60 p-8 text-center shadow-[0_24px_80px_rgba(15,23,42,0.08)] backdrop-blur-xl sm:p-12">
+          <div className="flex h-[84px] items-center justify-center rounded-[24px] border border-white/90 bg-white/80 px-6 shadow-[0_14px_40px_rgba(148,163,184,0.12)] backdrop-blur-xl">
+            <Image
+              src="/longlogo.png"
+              alt="DustSwap"
+              width={170}
+              height={40}
+              priority
+              className="h-auto w-full max-w-[150px] sm:max-w-[170px]"
+            />
           </div>
-          <div className="mx-auto mt-1 flex w-fit items-center gap-2 rounded-full border border-sky-200/80 bg-white/85 px-3 py-2 shadow-[0_10px_30px_rgba(37,99,235,0.12)]">
-            <span className="flex h-10 w-10 items-center justify-center rounded-[14px] bg-[linear-gradient(180deg,#1d4ed8,#2563eb)] text-2xl font-black leading-none text-white shadow-[0_10px_20px_rgba(37,99,235,0.22)]">
-              D
-            </span>
-            <span className="bg-[linear-gradient(180deg,#1d4ed8,#2563eb)] bg-clip-text text-[1.7rem] font-black tracking-tight text-transparent">
-              DustSwap
-            </span>
-          </div>
-          <h2 className="mt-5 text-2xl font-black tracking-tight text-slate-950">
+          <h2 className="mt-8 text-2xl font-black tracking-tight text-slate-950 sm:text-3xl">
             Connect your wallet to start your journey at DustSwap
           </h2>
-          <p className="mx-auto mt-3 max-w-md text-sm leading-6 text-slate-600">
+          <p className="mt-3 max-w-md text-sm leading-6 text-slate-500 sm:text-base">
             Use <span aria-hidden="true">&bull;</span> Contribute{" "}
             <span aria-hidden="true">&bull;</span> Earn{" "}
             <span aria-hidden="true">&bull;</span> Repeat.
           </p>
-          <div className="mt-6 flex justify-center">
+          <div className="mt-8 flex justify-center origin-center scale-105 sm:scale-110">
             {/* @ts-ignore */}
             <appkit-button />
           </div>
-        </div>
+        </section>
       </div>
     );
   }
