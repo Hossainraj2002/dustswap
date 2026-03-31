@@ -7,16 +7,6 @@ const statusCards = [
     description:
       "Dust Sweep needs a bit more polish before launch so the first version feels clear and reliable.",
   },
-  {
-    title: "Nothing is lost",
-    description:
-      "The real /dustsweep work stays untouched in the codebase, so it is ready for you to continue later.",
-  },
-  {
-    title: "Use DustSwap today",
-    description:
-      "You can keep swapping and completing quests while Dust Sweep gets finished in the background.",
-  },
 ];
 
 export default function ComingSoonPage() {
