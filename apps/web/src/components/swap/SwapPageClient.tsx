@@ -83,9 +83,13 @@ export default function SwapPageClient() {
   );
 
   return (
-    <main className="flex min-h-screen flex-col items-center justify-center bg-transparent px-4 py-8">
-      <div className="mx-auto w-full max-w-lg">
-        <OpenOceanWidget integrator="DustSwap" config={config as any} />
+    <main className="flex min-h-[calc(100vh-100px)] flex-col items-center justify-center bg-transparent px-1 sm:px-4 py-6 sm:py-8 overflow-x-hidden">
+      {/* On very small mobile screens, the OpenOcean widget internal elements can overflow. 
+          We guarantee a min-width for the widget to render properly, and scale it down to fit the screen. */}
+      <div className="mx-auto w-full max-w-lg origin-top flex justify-center max-[420px]:scale-[0.9] max-[380px]:scale-[0.85] max-[340px]:scale-[0.75]">
+        <div className="w-full min-w-[380px] sm:min-w-[400px]">
+          <OpenOceanWidget integrator="DustSwap" config={config as any} />
+        </div>
       </div>
     </main>
   );
