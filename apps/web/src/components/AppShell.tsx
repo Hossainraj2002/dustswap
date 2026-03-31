@@ -25,8 +25,8 @@ interface NavItem {
 const NAV_ITEMS = [
   { icon: ProfileIcon, label: 'Profile', route: '/profile' },
   { icon: QuestsIcon, label: 'Quests', route: '/quests' },
-  { icon: DustSweepIcon, label: 'Dust Sweep', route: '/dustsweep' },
   { icon: SwapIcon, label: 'Swap', route: '/swap' },
+  { icon: DustSweepIcon, label: 'Dust Sweep', route: '/comingsoon' },
   { icon: LeaderboardIcon, label: 'Leaderboard', route: '/leaderboard' },
 ] satisfies NavItem[];
 

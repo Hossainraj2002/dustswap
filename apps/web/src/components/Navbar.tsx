@@ -31,7 +31,7 @@ interface NavLink {
 const NAV_LINKS: NavLink[] = [
   { href: "/quests", label: "Quests", icon: QuestsIcon },
   { href: "/", label: "Home", icon: HomeIcon },
-  { href: "/dustsweep", label: "Dust Sweep", icon: DustSweepIcon },
+  { href: "/comingsoon", label: "Dust Sweep", icon: DustSweepIcon },
   { href: "/swap", label: "Swap", icon: SwapIcon },
   { href: "/leaderboard", label: "Leaderboard", icon: LeaderboardIcon },
   { href: "/dust-bridge", label: "Bridge", icon: BridgeIcon, badge: "Soon" },

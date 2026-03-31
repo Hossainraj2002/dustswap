@@ -27,7 +27,7 @@ export default function Home() {
             Start Swapping
           </Link>
           <Link
-            href="/dustsweep"
+            href="/comingsoon"
             className="px-8 py-4 bg-white hover:bg-slate-50 text-slate-900 font-bold rounded-2xl transition-all border border-slate-200 text-lg shadow-sm"
           >
             Sweep Dust
