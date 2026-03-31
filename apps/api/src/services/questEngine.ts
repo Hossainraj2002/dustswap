@@ -25,6 +25,7 @@ type QuestRules = {
   delaySeconds?: number;
   fakeFailureCount?: number;
   requiredMention?: string;
+  requiredMentionsAny?: string[];
   requiredHashtags?: string[];
   requiredLinks?: string[];
   composeText?: string;
@@ -326,6 +327,30 @@ function getXBearerToken() {
   return token;
 }
 
+function normalizeXUsernameInput(input: string) {
+  const raw = input.trim().replace(/^@+/, "");
+  if (!raw) {
+    throw new Error("Enter your X username first");
+  }
+
+  if (!/^[A-Za-z0-9_]{1,15}$/.test(raw)) {
+    throw new Error("Enter a valid X username");
+  }
+
+  return {
+    display: `@${raw}`,
+    key: raw.toLowerCase(),
+  };
+}
+
+function normalizeMentionValue(input: string) {
+  return input.trim().replace(/^@+/, "").toLowerCase();
+}
+
+function normalizeHashtagValue(input: string) {
+  return input.trim().replace(/^#+/, "").toLowerCase();
+}
+
 function normalizeAddress(address: string) {
   return address.toLowerCase();
 }
@@ -342,6 +367,30 @@ function extractPostId(input: string) {
 
 function includesToken(text: string, expected: string) {
   return text.toLowerCase().includes(expected.toLowerCase());
+}
+
+function listMentionCandidates(tweet: any): string[] {
+  const mentions = tweet?.entities?.mentions;
+  if (!Array.isArray(mentions)) {
+    return [];
+  }
+
+  return mentions
+    .map((item) => item?.username)
+    .filter(Boolean)
+    .map((value) => normalizeMentionValue(String(value)));
+}
+
+function listHashtagCandidates(tweet: any): string[] {
+  const hashtags = tweet?.entities?.hashtags;
+  if (!Array.isArray(hashtags)) {
+    return [];
+  }
+
+  return hashtags
+    .map((item) => item?.tag)
+    .filter(Boolean)
+    .map((value) => normalizeHashtagValue(String(value)));
 }
 
 function listUrlCandidates(tweet: any): string[] {
@@ -589,6 +638,63 @@ export class QuestEngine {
     };
   }
 
+  async saveManualXUsername(address: string, username: string) {
+    if (!isAddress(address)) {
+      throw new Error("A valid wallet address is required");
+    }
+
+    const normalizedAddress = normalizeAddress(address);
+    const normalizedUsername = normalizeXUsernameInput(username);
+    const user = await pointsEngine.getOrCreate(normalizedAddress);
+
+    const { data: existingUsername, error: existingUsernameError } = await supabase
+      .from("social_accounts")
+      .select("user_id")
+      .eq("platform", "x")
+      .eq("platform_user_id", normalizedUsername.key)
+      .maybeSingle();
+
+    if (existingUsernameError) {
+      throw new Error(`Failed to check X username: ${existingUsernameError.message}`);
+    }
+
+    if (existingUsername && existingUsername.user_id !== user.id) {
+      throw new Error("That X username is already linked to another wallet");
+    }
+
+    const { error } = await supabase.from("social_accounts").upsert(
+      {
+        user_id: user.id,
+        platform: "x",
+        platform_user_id: normalizedUsername.key,
+        username: normalizedUsername.display,
+        display_name: null,
+        profile_image_url: null,
+        access_token: null,
+        refresh_token: null,
+        scope: null,
+        token_expires_at: null,
+        metadata: {
+          linkedAt: new Date().toISOString(),
+          linkedManually: true,
+        },
+        updated_at: new Date().toISOString(),
+      },
+      {
+        onConflict: "user_id,platform",
+      }
+    );
+
+    if (error) {
+      throw new Error(`Failed to save X username: ${error.message}`);
+    }
+
+    return {
+      success: true,
+      username: normalizedUsername.display,
+    };
+  }
+
   async createXAuthUrl(address: string, returnTo: string) {
     if (!isAddress(address)) {
       throw new Error("A valid wallet address is required");
@@ -690,14 +796,16 @@ export class QuestEngine {
       ? new Date(Date.now() + tokenJson.expires_in * 1000).toISOString()
       : null;
 
+    const normalizedUsername = normalizeXUsernameInput(meJson.data.username);
+
     const { error } = await supabase
       .from("social_accounts")
       .upsert(
         {
           user_id: user.id,
           platform: "x",
-          platform_user_id: meJson.data.id,
-          username: meJson.data.username,
+          platform_user_id: normalizedUsername.key,
+          username: normalizedUsername.display,
           display_name: meJson.data.name || null,
           profile_image_url: meJson.data.profile_image_url || null,
           access_token: tokenJson.access_token,
@@ -706,6 +814,7 @@ export class QuestEngine {
           token_expires_at: tokenExpiresAt,
           metadata: {
             linkedAt: new Date().toISOString(),
+            authorId: meJson.data.id,
           },
           updated_at: new Date().toISOString(),
         },
@@ -721,7 +830,7 @@ export class QuestEngine {
     return {
       address: payload.address,
       returnTo: payload.returnTo,
-      username: meJson.data.username,
+      username: normalizedUsername.display,
     };
   }
 
@@ -855,7 +964,7 @@ export class QuestEngine {
       .single();
 
     if (accountError || !accountData) {
-      throw new Error("Connect your X account before verifying this quest");
+      throw new Error("Add your X username before verifying this quest");
     }
 
     const postId = extractPostId(postUrl);
@@ -866,8 +975,10 @@ export class QuestEngine {
     const lookupUrl = new URL(`https://api.x.com/2/tweets/${postId}`);
     lookupUrl.searchParams.set(
       "tweet.fields",
-      "author_id,created_at,entities,text"
+      "author_id,created_at,entities,text,referenced_tweets"
     );
+    lookupUrl.searchParams.set("expansions", "author_id");
+    lookupUrl.searchParams.set("user.fields", "username");
 
     const tweetResponse = await fetch(lookupUrl, {
       headers: {
@@ -895,6 +1006,12 @@ export class QuestEngine {
         text?: string;
         entities?: Record<string, unknown>;
       };
+      includes?: {
+        users?: Array<{
+          id?: string;
+          username?: string;
+        }>;
+      };
     };
 
     const tweet = tweetJson.data;
@@ -902,12 +1019,27 @@ export class QuestEngine {
       throw new Error("That X post is missing required data for verification");
     }
 
-    if (tweet.author_id !== (accountData as SocialAccountRecord).platform_user_id) {
-      throw new Error("That post was not authored by your connected X account");
+    const author = (tweetJson.includes?.users || []).find(
+      (userRow) => userRow.id === tweet.author_id
+    );
+    const authorUsername = author?.username?.toLowerCase();
+    const savedUsername = String(
+      (accountData as SocialAccountRecord).platform_user_id || ""
+    ).toLowerCase();
+
+    if (!authorUsername) {
+      throw new Error("That X post is missing author username data");
+    }
+
+    if (authorUsername !== savedUsername) {
+      throw new Error("That post was not authored by your saved X username");
     }
 
     const text = tweet.text;
     const requiredMention = String(rules.requiredMention || "").trim();
+    const requiredMentionsAny = Array.isArray(rules.requiredMentionsAny)
+      ? rules.requiredMentionsAny.map((value) => String(value).trim()).filter(Boolean)
+      : [];
     const requiredHashtags = Array.isArray(rules.requiredHashtags)
       ? rules.requiredHashtags.map((value) => String(value))
       : [];
@@ -915,13 +1047,35 @@ export class QuestEngine {
       ? rules.requiredLinks.map((value) => String(value))
       : [];
     const urlCandidates = listUrlCandidates(tweet);
+    const mentionCandidates = listMentionCandidates(tweet);
+    const hashtagCandidates = listHashtagCandidates(tweet);
 
     if (requiredMention && !includesToken(text, requiredMention)) {
       throw new Error(`Your post must include ${requiredMention}`);
     }
 
+    if (requiredMentionsAny.length > 0) {
+      const matchedMention = requiredMentionsAny.some((mention) => {
+        const normalized = normalizeMentionValue(mention);
+        return (
+          mentionCandidates.includes(normalized) ||
+          includesToken(text, mention)
+        );
+      });
+
+      if (!matchedMention) {
+        throw new Error(
+          `Your post must mention ${requiredMentionsAny.join(" or ")}`
+        );
+      }
+    }
+
     for (const hashtag of requiredHashtags) {
-      if (!includesToken(text, hashtag)) {
+      const normalized = normalizeHashtagValue(hashtag);
+      const matched =
+        hashtagCandidates.includes(normalized) ||
+        includesToken(text, hashtag);
+      if (!matched) {
         throw new Error(`Your post must include ${hashtag}`);
       }
     }
@@ -945,6 +1099,7 @@ export class QuestEngine {
         postId,
         postUrl,
         authorId: tweet.author_id,
+        authorUsername,
       }
     );
 
@@ -954,7 +1109,7 @@ export class QuestEngine {
       cycleKey,
       "completed",
       { postUrl },
-      { postId, rewardedPoints: completed.awardedPoints }
+      { postId, authorUsername, rewardedPoints: completed.awardedPoints }
     );
 
     return {
@@ -1217,6 +1372,10 @@ export class QuestEngine {
     }
 
     if (!data) {
+      if (platform === "x") {
+        throw new Error("Add your X username before starting this quest");
+      }
+
       throw new Error(`Connect your ${platform.toUpperCase()} account before starting this quest`);
     }
   }

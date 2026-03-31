@@ -163,6 +163,22 @@ export async function fetchXConnectAuthUrl(address: string, returnTo: string) {
   }>(response);
 }
 
+export async function saveXUsername(address: string, username: string) {
+  const response = await fetch(getQuestsApiUrl("/x/username"), {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ address, username }),
+  });
+
+  return parseJson<{
+    success: boolean;
+    username?: string;
+    error?: string;
+  }>(response);
+}
+
 export async function fetchAdminQuests(adminToken: string) {
   const response = await fetch(getQuestsApiUrl("/admin"), {
     headers: {

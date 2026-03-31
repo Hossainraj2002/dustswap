@@ -19,6 +19,7 @@ export type QuestRules = {
   delaySeconds?: number;
   fakeFailureCount?: number;
   requiredMention?: string;
+  requiredMentionsAny?: string[];
   requiredHashtags?: string[];
   requiredLinks?: string[];
   composeText?: string;

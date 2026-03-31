@@ -335,7 +335,7 @@ INSERT INTO quests (
   (
     'x-post-proof',
     'Post About DustSwap',
-    'Connect X, publish your post, and send the link for verification.',
+    'Add your X username, publish your post, and send the link for verification.',
     'social',
     'x',
     'post',
@@ -344,11 +344,11 @@ INSERT INTO quests (
     250,
     1,
     'Open Composer',
-    'https://x.com/intent/tweet?text=Cleaning%20my%20wallet%20with%20%40dustswap%20%23DustSwap%20https%3A%2F%2Fdustswap.xyz',
+    'https://x.com/intent/tweet?text=Posting%20about%20%40dustswaponbase%20%23dustswaponbase',
     'published',
     true,
     40,
-    '{"requiredMention":"@dustswap","requiredHashtags":["#DustSwap"],"requiredLinks":["dustswap.xyz"],"composeText":"Cleaning my wallet with @dustswap #DustSwap https://dustswap.xyz"}'::jsonb
+    '{"requiredMentionsAny":["@dustswaponbase","@akbarx402"],"requiredHashtags":["#dustswaponbase"],"composeText":"Posting about @dustswaponbase #dustswaponbase"}'::jsonb
   ),
   (
     'x-follow-soft',
