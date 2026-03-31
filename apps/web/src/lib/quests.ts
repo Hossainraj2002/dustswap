@@ -136,33 +136,6 @@ export async function syncSwapQuestActivity(address: string) {
   }>(response);
 }
 
-export function buildXConnectUrl(address: string, returnTo: string) {
-  const url = new URL(getQuestsApiUrl("/x/connect"));
-  url.searchParams.set("address", address);
-  url.searchParams.set("returnTo", returnTo);
-  return url.toString();
-}
-
-export async function fetchXConnectAuthUrl(address: string, returnTo: string) {
-  const url = new URL(getQuestsApiUrl("/x/connect"));
-  url.searchParams.set("address", address);
-  url.searchParams.set("returnTo", returnTo);
-  url.searchParams.set("format", "json");
-
-  const response = await fetch(url.toString(), {
-    headers: {
-      "Content-Type": "application/json",
-    },
-    cache: "no-store",
-  });
-
-  return parseJson<{
-    success: boolean;
-    authUrl?: string;
-    error?: string;
-  }>(response);
-}
-
 export async function saveXUsername(address: string, username: string) {
   const response = await fetch(getQuestsApiUrl("/x/username"), {
     method: "POST",
