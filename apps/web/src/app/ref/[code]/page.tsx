@@ -68,6 +68,12 @@ export default function ReferralPage({ params }: ReferralPageProps) {
         clearPendingReferralCode();
         setState("success");
         setMessage("Referral linked. Your inviter now earns 20% of your future points.");
+        if (typeof window !== "undefined") {
+          window.localStorage.setItem(
+            `dustswap:cofounder-pass-pending:${address.toLowerCase()}`,
+            "pending"
+          );
+        }
         window.setTimeout(() => {
           router.replace("/profile");
         }, 1200);
