@@ -70,6 +70,23 @@ questsRoutes.post("/admin", async (c) => {
   }
 });
 
+questsRoutes.get("/admin/campaigns/:key/whitelist", async (c) => {
+  const authError = assertAdmin(c);
+  if (authError) {
+    return authError;
+  }
+
+  try {
+    const data = await questEngine.listCampaignWhitelist(c.req.param("key"));
+    return c.json({ success: true, data });
+  } catch (error) {
+    return c.json(
+      { success: false, error: (error as Error).message },
+      500
+    );
+  }
+});
+
 questsRoutes.delete("/admin/:id", async (c) => {
   const authError = assertAdmin(c);
   if (authError) {

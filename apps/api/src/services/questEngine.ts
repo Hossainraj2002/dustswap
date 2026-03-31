@@ -5,10 +5,12 @@ import { pointsEngine } from "./pointsEngine";
 import { supabase } from "./supabase";
 
 type QuestCategory = "social" | "onchain";
+type QuestCampaignKey = "general" | "cofounder_pass";
 type QuestPlatform = "x" | "base" | "dustswap";
 type QuestActionType =
   | "swap_volume"
   | "swap_count"
+  | "like"
   | "post"
   | "follow"
   | "repost"
@@ -39,6 +41,7 @@ type QuestRecord = {
   slug: string;
   title: string;
   description: string | null;
+  campaign_key: QuestCampaignKey | string;
   category: QuestCategory;
   platform: QuestPlatform;
   action_type: QuestActionType;
@@ -92,11 +95,23 @@ type SocialAccountRecord = {
   metadata: Record<string, unknown> | null;
 };
 
+type QuestCampaignWhitelistRecord = {
+  id: number;
+  campaign_key: string;
+  user_id: number;
+  wallet_address: string;
+  status: string;
+  metadata: Record<string, unknown> | null;
+  created_at: string;
+  updated_at: string;
+};
+
 export type AdminQuestInput = {
   id?: string;
   slug: string;
   title: string;
   description?: string | null;
+  campaignKey?: QuestCampaignKey | string;
   category: QuestCategory;
   platform: QuestPlatform;
   actionType: QuestActionType;
@@ -159,6 +174,8 @@ const OPENOCEAN_REFERRER_ADDRESS =
   process.env.OPENOCEAN_REFERRER_ADDRESS ||
   process.env.NEXT_PUBLIC_OPENOCEAN_REFERRER_ADDRESS ||
   "0x0fd79f3ceaE7ddA5cFC15b35188E67EFAc542573";
+const GENERAL_CAMPAIGN_KEY = "general";
+const COFOUNDER_PASS_CAMPAIGN_KEY = "cofounder_pass";
 
 const baseClient = createPublicClient({
   chain: base,
@@ -176,6 +193,26 @@ function safeRules(value: unknown): QuestRules {
   }
 
   return value as QuestRules;
+}
+
+function normalizeCampaignKey(value?: string | null) {
+  const normalized = String(value || GENERAL_CAMPAIGN_KEY)
+    .trim()
+    .toLowerCase();
+
+  return normalized || GENERAL_CAMPAIGN_KEY;
+}
+
+function getCampaignLabel(campaignKey: string) {
+  if (campaignKey === COFOUNDER_PASS_CAMPAIGN_KEY) {
+    return "coFounder pass";
+  }
+
+  return "General";
+}
+
+function campaignSupportsWhitelist(campaignKey: string) {
+  return campaignKey === COFOUNDER_PASS_CAMPAIGN_KEY;
 }
 
 function getNow() {
@@ -476,6 +513,7 @@ export class QuestEngine {
       slug: input.slug.trim(),
       title: input.title.trim(),
       description: input.description?.trim() || null,
+      campaign_key: normalizeCampaignKey(input.campaignKey),
       category: input.category,
       platform: input.platform,
       action_type: input.actionType,
@@ -510,6 +548,21 @@ export class QuestEngine {
     return data as QuestRecord;
   }
 
+  async listCampaignWhitelist(campaignKey: string) {
+    const normalizedCampaignKey = normalizeCampaignKey(campaignKey);
+    const { data, error } = await supabase
+      .from("quest_campaign_whitelist")
+      .select("*")
+      .eq("campaign_key", normalizedCampaignKey)
+      .order("created_at", { ascending: true });
+
+    if (error) {
+      throw new Error(`Failed to load campaign whitelist: ${error.message}`);
+    }
+
+    return (data ?? []) as QuestCampaignWhitelistRecord[];
+  }
+
   async deleteQuest(id: string) {
     const { error } = await supabase.from("quests").delete().eq("id", id);
 
@@ -538,9 +591,12 @@ export class QuestEngine {
 
     let linkedAccounts: Record<string, unknown> = {};
     let progressByKey = new Map<string, QuestProgressRecord>();
+    let campaignWhitelistByKey = new Map<string, QuestCampaignWhitelistRecord>();
+    let normalizedAddress: string | null = null;
 
     if (address) {
       const user = await pointsEngine.getOrCreate(address);
+      normalizedAddress = normalizeAddress(address);
       const { data: socialData } = await supabase
         .from("social_accounts")
         .select("*")
@@ -577,7 +633,7 @@ export class QuestEngine {
         ) {
           await this.syncSwapProgressForQuest(
             user.id,
-            normalizeAddress(address),
+            normalizedAddress,
             quest
           );
         }
@@ -594,6 +650,14 @@ export class QuestEngine {
           row,
         ])
       );
+
+      campaignWhitelistByKey = await this.ensureCampaignWhitelistState(
+        user.id,
+        normalizedAddress,
+        quests,
+        progressByKey,
+        now
+      );
     }
 
     const questItems = quests.map((quest) => {
@@ -605,6 +669,7 @@ export class QuestEngine {
         slug: quest.slug,
         title: quest.title,
         description: quest.description,
+        campaignKey: normalizeCampaignKey(quest.campaign_key),
         category: quest.category,
         platform: quest.platform,
         actionType: quest.action_type,
@@ -631,8 +696,16 @@ export class QuestEngine {
       };
     });
 
+    const campaigns = this.buildCampaignSummaries(
+      quests,
+      progressByKey,
+      campaignWhitelistByKey,
+      now
+    );
+
     return {
       linkedAccounts,
+      campaigns,
       quests: questItems,
       serverTime: now.toISOString(),
     };
@@ -1359,6 +1432,144 @@ export class QuestEngine {
     return completedQuests;
   }
 
+  private async ensureCampaignWhitelistState(
+    userId: number,
+    address: string,
+    quests: QuestRecord[],
+    progressByKey: Map<string, QuestProgressRecord>,
+    now: Date
+  ) {
+    const liveCampaignKeys = Array.from(
+      new Set(
+        quests
+          .map((quest) => normalizeCampaignKey(quest.campaign_key))
+          .filter((campaignKey) => campaignSupportsWhitelist(campaignKey))
+      )
+    );
+
+    if (liveCampaignKeys.length === 0) {
+      return new Map<string, QuestCampaignWhitelistRecord>();
+    }
+
+    const { data, error } = await supabase
+      .from("quest_campaign_whitelist")
+      .select("*")
+      .eq("user_id", userId)
+      .in("campaign_key", liveCampaignKeys);
+
+    if (error) {
+      throw new Error(`Failed to load campaign whitelist: ${error.message}`);
+    }
+
+    const whitelistByKey = new Map(
+      ((data ?? []) as QuestCampaignWhitelistRecord[]).map((row) => [
+        normalizeCampaignKey(row.campaign_key),
+        row,
+      ])
+    );
+
+    for (const campaignKey of liveCampaignKeys) {
+      const campaignQuests = quests.filter(
+        (quest) => normalizeCampaignKey(quest.campaign_key) === campaignKey
+      );
+      const completedQuests = campaignQuests.filter((quest) => {
+        const cycleKey = getCycleKey(quest.progress_window, now);
+        return Boolean(progressByKey.get(`${quest.id}:${cycleKey}`)?.completed_at);
+      }).length;
+
+      if (
+        campaignQuests.length > 0 &&
+        completedQuests >= campaignQuests.length &&
+        !whitelistByKey.has(campaignKey)
+      ) {
+        const { data: whitelistRow, error: whitelistError } = await supabase
+          .from("quest_campaign_whitelist")
+          .upsert(
+            {
+              campaign_key: campaignKey,
+              user_id: userId,
+              wallet_address: address,
+              status: "whitelisted",
+              metadata: {
+                source: "quest_campaign_completion",
+                questCount: campaignQuests.length,
+                completedAt: now.toISOString(),
+              },
+              updated_at: now.toISOString(),
+            },
+            {
+              onConflict: "campaign_key,user_id",
+            }
+          )
+          .select("*")
+          .single();
+
+        if (whitelistError) {
+          throw new Error(`Failed to save campaign whitelist: ${whitelistError.message}`);
+        }
+
+        whitelistByKey.set(
+          campaignKey,
+          whitelistRow as QuestCampaignWhitelistRecord
+        );
+      }
+    }
+
+    return whitelistByKey;
+  }
+
+  private buildCampaignSummaries(
+    quests: QuestRecord[],
+    progressByKey: Map<string, QuestProgressRecord>,
+    whitelistByKey: Map<string, QuestCampaignWhitelistRecord>,
+    now: Date
+  ) {
+    const campaignKeys = Array.from(
+      new Set(quests.map((quest) => normalizeCampaignKey(quest.campaign_key)))
+    );
+
+    return Object.fromEntries(
+      campaignKeys.map((campaignKey) => {
+        const campaignQuests = quests.filter(
+          (quest) => normalizeCampaignKey(quest.campaign_key) === campaignKey
+        );
+        const completedQuests = campaignQuests.filter((quest) => {
+          const cycleKey = getCycleKey(quest.progress_window, now);
+          return Boolean(progressByKey.get(`${quest.id}:${cycleKey}`)?.completed_at);
+        }).length;
+        const whitelist = whitelistByKey.get(campaignKey) ?? null;
+        const totalQuests = campaignQuests.length;
+        const isComplete = totalQuests > 0 && completedQuests >= totalQuests;
+
+        return [
+          campaignKey,
+          {
+            key: campaignKey,
+            label: getCampaignLabel(campaignKey),
+            totalQuests,
+            completedQuests,
+            remainingQuests: Math.max(totalQuests - completedQuests, 0),
+            isComplete,
+            isWhitelisted: Boolean(whitelist),
+            whitelistedAt: whitelist?.created_at || null,
+          },
+        ];
+      })
+    ) as Record<
+      string,
+      {
+        key: string;
+        label: string;
+        totalQuests: number;
+        completedQuests: number;
+        remainingQuests: number;
+        isComplete: boolean;
+        isWhitelisted: boolean;
+        whitelistedAt: string | null;
+      }
+    >;
+  }
+
   private async assertLinkedSocialAccount(userId: number, platform: QuestPlatform) {
     const { data, error } = await supabase
       .from("social_accounts")
@@ -1516,6 +1727,7 @@ export class QuestEngine {
         questId: quest.id,
         questSlug: quest.slug,
         cycleKey,
+        campaignKey: normalizeCampaignKey(quest.campaign_key),
         category: quest.category,
         platform: quest.platform,
       }

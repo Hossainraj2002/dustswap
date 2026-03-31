@@ -168,6 +168,36 @@ export async function fetchAdminQuests(adminToken: string) {
   }>(response);
 }
 
+export async function fetchAdminCampaignWhitelist(
+  adminToken: string,
+  campaignKey: string
+) {
+  const response = await fetch(
+    getQuestsApiUrl(`/admin/campaigns/${encodeURIComponent(campaignKey)}/whitelist`),
+    {
+      headers: {
+        "Content-Type": "application/json",
+        "x-admin-token": adminToken,
+      },
+      cache: "no-store",
+    }
+  );
+
+  return parseJson<{
+    success: boolean;
+    data?: Array<{
+      id: number;
+      campaign_key: string;
+      user_id: number;
+      wallet_address: string;
+      status: string;
+      created_at: string;
+      updated_at: string;
+    }>;
+    error?: string;
+  }>(response);
+}
+
 export async function saveAdminQuest(adminToken: string, input: AdminQuestInput) {
   const response = await fetch(getQuestsApiUrl("/admin"), {
     method: "POST",

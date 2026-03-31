@@ -10,6 +10,7 @@ import {
   QuestsIcon,
   SwapIcon,
 } from '@/components/NavIcons';
+import { CofounderPassWelcomeModal } from '@/components/quests/CofounderPassWelcomeModal';
 
 interface AppShellProps {
   children: ReactNode;
@@ -136,6 +137,7 @@ export function AppShell({ children }: AppShellProps) {
       </nav>
 
       <main className="relative z-10 flex-1 pb-[calc(78px+env(safe-area-inset-bottom))] transition-opacity duration-100 ease-in-out md:ml-[236px] md:pb-0">
+        <CofounderPassWelcomeModal />
         {children}
       </main>
 

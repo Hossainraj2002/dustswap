@@ -1,8 +1,10 @@
 export type QuestCategory = "social" | "onchain";
+export type QuestCampaignKey = "general" | "cofounder_pass";
 export type QuestPlatform = "x" | "base" | "dustswap";
 export type QuestActionType =
   | "swap_volume"
   | "swap_count"
+  | "like"
   | "post"
   | "follow"
   | "repost"
@@ -44,6 +46,7 @@ export type QuestItem = {
   slug: string;
   title: string;
   description: string | null;
+  campaignKey: QuestCampaignKey | string;
   category: QuestCategory;
   platform: QuestPlatform;
   actionType: QuestActionType;
@@ -58,6 +61,17 @@ export type QuestItem = {
   progress: QuestProgress | null;
 };
 
+export type QuestCampaignSummary = {
+  key: string;
+  label: string;
+  totalQuests: number;
+  completedQuests: number;
+  remainingQuests: number;
+  isComplete: boolean;
+  isWhitelisted: boolean;
+  whitelistedAt: string | null;
+};
+
 export type QuestBoardResponse = {
   success: boolean;
   linkedAccounts: Record<
@@ -69,6 +83,7 @@ export type QuestBoardResponse = {
       profileImageUrl?: string;
     }
   >;
+  campaigns: Record<string, QuestCampaignSummary>;
   quests: QuestItem[];
   serverTime: string;
   error?: string;
@@ -79,6 +94,7 @@ export type AdminQuestInput = {
   slug: string;
   title: string;
   description?: string | null;
+  campaignKey?: QuestCampaignKey | string;
   category: QuestCategory;
   platform: QuestPlatform;
   actionType: QuestActionType;

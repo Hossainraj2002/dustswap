@@ -153,6 +153,7 @@ CREATE TABLE IF NOT EXISTS quests (
   slug              TEXT UNIQUE NOT NULL,
   title             TEXT NOT NULL,
   description       TEXT,
+  campaign_key      TEXT NOT NULL DEFAULT 'general',
   category          TEXT NOT NULL,
   platform          TEXT NOT NULL,
   action_type       TEXT NOT NULL,
@@ -172,6 +173,13 @@ CREATE TABLE IF NOT EXISTS quests (
   created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE quests
+  ADD COLUMN IF NOT EXISTS campaign_key TEXT NOT NULL DEFAULT 'general';
+
+UPDATE quests
+SET campaign_key = 'general'
+WHERE campaign_key IS NULL;
 
 CREATE TABLE IF NOT EXISTS social_accounts (
   id                BIGSERIAL PRIMARY KEY,
@@ -237,33 +245,52 @@ CREATE TABLE IF NOT EXISTS activity_events (
   UNIQUE(tx_hash, event_type, source)
 );
 
+CREATE TABLE IF NOT EXISTS quest_campaign_whitelist (
+  id             BIGSERIAL PRIMARY KEY,
+  campaign_key   TEXT NOT NULL,
+  user_id        INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  wallet_address VARCHAR(42) NOT NULL,
+  status         TEXT NOT NULL DEFAULT 'whitelisted',
+  metadata       JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(campaign_key, user_id),
+  UNIQUE(campaign_key, wallet_address)
+);
+
 CREATE INDEX IF NOT EXISTS idx_quests_status          ON quests(status, is_active, sort_order);
+CREATE INDEX IF NOT EXISTS idx_quests_campaign        ON quests(campaign_key, status, is_active, sort_order);
 CREATE INDEX IF NOT EXISTS idx_social_accounts_user   ON social_accounts(user_id, platform);
 CREATE INDEX IF NOT EXISTS idx_quest_progress_user    ON quest_progress(user_id, quest_id, cycle_key);
 CREATE INDEX IF NOT EXISTS idx_quest_logs_user        ON quest_verification_logs(user_id, quest_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_activity_events_user   ON activity_events(user_id, event_type, occurred_at DESC);
+CREATE INDEX IF NOT EXISTS idx_campaign_whitelist_campaign ON quest_campaign_whitelist(campaign_key, created_at DESC);
 
 ALTER TABLE quests                   ENABLE ROW LEVEL SECURITY;
 ALTER TABLE social_accounts          ENABLE ROW LEVEL SECURITY;
 ALTER TABLE quest_progress           ENABLE ROW LEVEL SECURITY;
 ALTER TABLE quest_verification_logs  ENABLE ROW LEVEL SECURITY;
 ALTER TABLE activity_events          ENABLE ROW LEVEL SECURITY;
+ALTER TABLE quest_campaign_whitelist ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS "service_all_quests"           ON quests;
 DROP POLICY IF EXISTS "service_all_social_accounts"  ON social_accounts;
 DROP POLICY IF EXISTS "service_all_quest_progress"   ON quest_progress;
 DROP POLICY IF EXISTS "service_all_quest_logs"       ON quest_verification_logs;
 DROP POLICY IF EXISTS "service_all_activity_events"  ON activity_events;
+DROP POLICY IF EXISTS "service_all_campaign_whitelist" ON quest_campaign_whitelist;
 CREATE POLICY "service_all_quests"          ON quests                  FOR ALL USING (true);
 CREATE POLICY "service_all_social_accounts" ON social_accounts         FOR ALL USING (true);
 CREATE POLICY "service_all_quest_progress"  ON quest_progress          FOR ALL USING (true);
 CREATE POLICY "service_all_quest_logs"      ON quest_verification_logs FOR ALL USING (true);
 CREATE POLICY "service_all_activity_events" ON activity_events         FOR ALL USING (true);
+CREATE POLICY "service_all_campaign_whitelist" ON quest_campaign_whitelist FOR ALL USING (true);
 
 INSERT INTO quests (
   slug,
   title,
   description,
+  campaign_key,
   category,
   platform,
   action_type,
@@ -282,6 +309,7 @@ INSERT INTO quests (
     'swap-daily-10',
     'Swap $10 Today',
     'Swap at least $10 volume on DustSwap today.',
+    'general',
     'onchain',
     'dustswap',
     'swap_volume',
@@ -300,6 +328,7 @@ INSERT INTO quests (
     'swap-daily-100',
     'Swap $100 Today',
     'Push your daily volume past $100 on DustSwap.',
+    'general',
     'onchain',
     'dustswap',
     'swap_volume',
@@ -318,6 +347,7 @@ INSERT INTO quests (
     'swap-weekly-5000',
     'Weekly $5,000 Volume',
     'Accumulate $5,000 of swap volume this week.',
+    'general',
     'onchain',
     'dustswap',
     'swap_volume',
@@ -336,6 +366,7 @@ INSERT INTO quests (
     'x-post-proof',
     'Post About DustSwap',
     'Add your X username, publish your post, and send the link for verification.',
+    'general',
     'social',
     'x',
     'post',
@@ -354,6 +385,7 @@ INSERT INTO quests (
     'x-follow-soft',
     'Follow DustSwap on X',
     'Open the X profile, come back after 20 seconds, then verify.',
+    'general',
     'social',
     'x',
     'follow',
@@ -372,6 +404,7 @@ INSERT INTO quests (
     'x-repost-soft',
     'Repost the Launch Post',
     'Open the post, repost it, then verify after 20 seconds.',
+    'general',
     'social',
     'x',
     'repost',
@@ -390,6 +423,7 @@ INSERT INTO quests (
     'base-visit-soft',
     'Visit DustSwap on Base App',
     'Open the Base App page, come back after 20 seconds, then verify.',
+    'general',
     'social',
     'base',
     'visit',
@@ -403,10 +437,130 @@ INSERT INTO quests (
     true,
     70,
     '{"delaySeconds":20,"externalUrl":"https://base.app/"}'::jsonb
+  ),
+  (
+    'cofounder-swap-100',
+    'Swap $100 on DustSwap',
+    'Complete at least $100 of swap volume on DustSwap to unlock your coFounder pass progress.',
+    'cofounder_pass',
+    'onchain',
+    'dustswap',
+    'swap_volume',
+    'swap_volume',
+    'once',
+    200,
+    100,
+    'Open Swap',
+    '/swap',
+    'published',
+    true,
+    5,
+    '{"source":"dustswap_swap"}'::jsonb
+  ),
+  (
+    'cofounder-follow-founder',
+    'Follow Akbar on X',
+    'Open the founder profile, follow @akbarx402, come back after 20 seconds, then verify.',
+    'cofounder_pass',
+    'social',
+    'x',
+    'follow',
+    'delay_gate_retry',
+    'once',
+    60,
+    1,
+    'Open Founder X',
+    'https://x.com/akbarx402',
+    'published',
+    true,
+    10,
+    '{"delaySeconds":20,"fakeFailureCount":1,"externalUrl":"https://x.com/akbarx402"}'::jsonb
+  ),
+  (
+    'cofounder-follow-dustswap',
+    'Follow DustSwap on X',
+    'Open the DustSwap profile, follow @dustswaponbase, come back after 20 seconds, then verify.',
+    'cofounder_pass',
+    'social',
+    'x',
+    'follow',
+    'delay_gate_retry',
+    'once',
+    60,
+    1,
+    'Open DustSwap X',
+    'https://x.com/dustswaponbase',
+    'published',
+    true,
+    20,
+    '{"delaySeconds":20,"fakeFailureCount":1,"externalUrl":"https://x.com/dustswaponbase"}'::jsonb
+  ),
+  (
+    'cofounder-like-repost-launch',
+    'Like + repost the launch announcement',
+    'Open the launch announcement, like it, repost it, then verify after 20 seconds.',
+    'cofounder_pass',
+    'social',
+    'x',
+    'like',
+    'delay_gate',
+    'once',
+    90,
+    1,
+    'Open Launch Post',
+    'https://x.com/dustswaponbase',
+    'published',
+    true,
+    30,
+    '{"delaySeconds":20,"externalUrl":"https://x.com/dustswaponbase"}'::jsonb
+  ),
+  (
+    'cofounder-reply-launch',
+    'Reply on the launch announcement',
+    'Open the launch announcement, reply to it, then verify after 20 seconds.',
+    'cofounder_pass',
+    'social',
+    'x',
+    'reply',
+    'delay_gate',
+    'once',
+    90,
+    1,
+    'Open Launch Post',
+    'https://x.com/dustswaponbase',
+    'published',
+    true,
+    40,
+    '{"delaySeconds":20,"externalUrl":"https://x.com/dustswaponbase"}'::jsonb
+  ),
+  (
+    'cofounder-post-about-dustswap',
+    'Post about DustSwap',
+    'Post about DustSwap on X, mention DustSwap or Akbar, add #dustswaponbase, then paste the post link to verify.',
+    'cofounder_pass',
+    'social',
+    'x',
+    'post',
+    'x_post_link',
+    'once',
+    150,
+    1,
+    'Open Composer',
+    'https://x.com/intent/tweet?text=Posting%20about%20%40dustswaponbase%20%23dustswaponbase',
+    'published',
+    true,
+    50,
+    '{"requiredMentionsAny":["@dustswaponbase","@akbarx402"],"requiredHashtags":["#dustswaponbase"],"composeText":"Posting about @dustswaponbase #dustswaponbase"}'::jsonb
   )
 ON CONFLICT (slug) DO UPDATE SET
   title = EXCLUDED.title,
   description = EXCLUDED.description,
+  campaign_key = EXCLUDED.campaign_key,
+  category = EXCLUDED.category,
+  platform = EXCLUDED.platform,
+  action_type = EXCLUDED.action_type,
+  verification_type = EXCLUDED.verification_type,
+  progress_window = EXCLUDED.progress_window,
   reward_points = EXCLUDED.reward_points,
   target_value = EXCLUDED.target_value,
   cta_label = EXCLUDED.cta_label,

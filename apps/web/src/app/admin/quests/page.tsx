@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import {
+  fetchAdminCampaignWhitelist,
   deleteAdminQuest,
   fetchAdminQuests,
   saveAdminQuest,
@@ -39,6 +40,7 @@ const EMPTY_FORM: AdminQuestInput = {
   slug: "",
   title: "",
   description: "",
+  campaignKey: "general",
   category: "social",
   platform: "x",
   actionType: "post",
@@ -134,6 +136,7 @@ function HelpLabel({
 export default function AdminQuestsPage() {
   const [adminToken, setAdminToken] = useState("");
   const [quests, setQuests] = useState<any[]>([]);
+  const [cofounderWhitelist, setCofounderWhitelist] = useState<any[]>([]);
   const [form, setForm] = useState<AdminQuestInput>(EMPTY_FORM);
   const [rulesText, setRulesText] = useState("{}");
   const [status, setStatus] = useState<string | null>(null);
@@ -142,6 +145,24 @@ export default function AdminQuestsPage() {
   const [isSaving, setIsSaving] = useState(false);
   const [isUnlocked, setIsUnlocked] = useState(false);
   const rulesExample = getRulesExample(form);
+
+  async function loadCampaignWhitelist(tokenOverride?: string) {
+    const tokenToUse = tokenOverride || adminToken;
+    if (!tokenToUse) {
+      return;
+    }
+
+    const response = await fetchAdminCampaignWhitelist(
+      tokenToUse,
+      "cofounder_pass"
+    );
+
+    if (!response.success) {
+      throw new Error(response.error || "Failed to load coFounder pass whitelist");
+    }
+
+    setCofounderWhitelist(response.data || []);
+  }
 
   async function loadQuests(tokenOverride?: string) {
     const tokenToUse = tokenOverride || adminToken;
@@ -160,11 +181,13 @@ export default function AdminQuestsPage() {
       }
 
       setQuests(response.data || []);
+      await loadCampaignWhitelist(tokenToUse);
       setIsUnlocked(true);
       setStatus("Quest admin unlocked.");
     } catch (loadError) {
       setIsUnlocked(false);
       setQuests([]);
+      setCofounderWhitelist([]);
       setError(getDisplayError(loadError));
     } finally {
       setIsLoading(false);
@@ -188,6 +211,7 @@ export default function AdminQuestsPage() {
     window.sessionStorage.removeItem("quest-admin-token");
     setIsUnlocked(false);
     setQuests([]);
+    setCofounderWhitelist([]);
   }, [adminToken]);
 
   async function handleSave() {
@@ -254,6 +278,7 @@ export default function AdminQuestsPage() {
       slug: quest.slug,
       title: quest.title,
       description: quest.description,
+      campaignKey: quest.campaign_key || "general",
       category: quest.category,
       platform: quest.platform,
       actionType: quest.action_type,
@@ -386,6 +411,12 @@ export default function AdminQuestsPage() {
 
               {[
                 {
+                  key: "campaignKey",
+                  label: "Quest field",
+                  help: "Choose where this quest lives on the quest page. General keeps it in the normal Social or Onchain tabs. coFounder pass puts it in the limited-time pass tab.",
+                  options: ["general", "cofounder_pass"],
+                },
+                {
                   key: "category",
                   label: "Category",
                   help: "Choose social for X or Base App actions, and onchain for swap-based progress.",
@@ -400,10 +431,11 @@ export default function AdminQuestsPage() {
                 {
                   key: "actionType",
                   label: "Action",
-                  help: "The exact task users perform, like swap volume, follow, repost, or visit.",
+                  help: "The exact task users perform, like swap volume, follow, like, repost, reply, post, or visit.",
                   options: [
                     "swap_volume",
                     "swap_count",
+                    "like",
                     "post",
                     "follow",
                     "repost",
@@ -613,6 +645,9 @@ export default function AdminQuestsPage() {
                           {quest.slug} / {quest.reward_points} PP
                         </p>
                         <p className="mt-1 text-xs text-gray-500">
+                          Field {quest.campaign_key || "general"}
+                        </p>
+                        <p className="mt-1 text-xs text-gray-500">
                           Target {quest.target_value} / Sort {quest.sort_order}
                         </p>
                         {quest.starts_at ? (
@@ -656,6 +691,42 @@ export default function AdminQuestsPage() {
                   </article>
                 ))
               )}
+            </div>
+
+            <div className="mt-6">
+              <div className="flex items-center justify-between gap-3">
+                <h3 className="text-base font-semibold text-white">coFounder pass whitelist</h3>
+                <button
+                  type="button"
+                  onClick={() => void loadQuests()}
+                  disabled={!adminToken || isLoading}
+                  className="rounded-2xl border border-white/10 px-3 py-2 text-xs font-medium text-white transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Refresh
+                </button>
+              </div>
+              <p className="mt-2 text-xs leading-6 text-gray-400">
+                Wallets are saved here permanently once they complete every live coFounder pass quest. If you add new pass tasks later, the quest-page message can disappear, but these whitelist addresses stay in the database.
+              </p>
+              <div className="mt-3 space-y-2">
+                {cofounderWhitelist.length === 0 ? (
+                  <div className="rounded-2xl border border-dashed border-white/10 bg-black/20 px-4 py-4 text-sm text-gray-400">
+                    No wallets have been whitelisted yet.
+                  </div>
+                ) : (
+                  cofounderWhitelist.map((entry) => (
+                    <div
+                      key={entry.id}
+                      className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3"
+                    >
+                      <p className="text-sm font-medium text-white">{entry.wallet_address}</p>
+                      <p className="mt-1 text-xs text-gray-400">
+                        Added {new Date(entry.created_at).toLocaleString()}
+                      </p>
+                    </div>
+                  ))
+                )}
+              </div>
             </div>
           </section>
         </div>
