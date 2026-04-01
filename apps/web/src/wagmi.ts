@@ -42,7 +42,7 @@ export const wagmiConnectors: CreateConnectorFn[] = [
   withBuilderCodeClient(
     coinbaseWallet({
       appName: "DustSwap",
-      appLogoUrl: "https://dustswap.vercel.app/logo.png",
+      appLogoUrl: "https://app.dustswap.wtf/logo.png",
       preference: { options: "all" },
     })
   ),
@@ -52,8 +52,8 @@ export const wagmiConnectors: CreateConnectorFn[] = [
       metadata: {
         name: "DustSwap",
         description: "DustSwap DEX & Yield",
-        url: "https://dustswap.vercel.app",
-        icons: ["https://dustswap.vercel.app/logo.png"],
+        url: "https://app.dustswap.wtf",
+        icons: ["https://app.dustswap.wtf/logo.png"],
       },
       showQrModal: false,
     })

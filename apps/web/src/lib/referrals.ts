@@ -1,4 +1,4 @@
-const DEFAULT_REFERRAL_BASE_URL = "https://base.app/app/dustswap.vercel.app";
+const DEFAULT_REFERRAL_BASE_URL = "https://base.app/app/app.dustswap.wtf";
 const PENDING_REFERRAL_CODE_KEY = "dustswap.pendingReferralCode";
 
 function trimTrailingSlashes(value: string) {
