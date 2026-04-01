@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import type { PointsBalance } from "@/lib/points";
+import { isPaymasterEnabled } from "@/lib/paymaster";
 
 type CelebrationState =
   | {
@@ -260,6 +261,9 @@ export function DailyCheckInModule({
     preferredSaveAsset === "usdc"
       ? `${balance.saveConfig.usdcAmount} USDC`
       : `$${balance.saveConfig.usdTarget.toFixed(2)} in ETH`;
+  const gasCopy = isPaymasterEnabled()
+    ? "Gas sponsored on supported Base wallets"
+    : "Gas fees apply";
 
   return (
     <section
@@ -408,7 +412,7 @@ export function DailyCheckInModule({
 
             <div className="mt-2 flex items-center justify-between gap-3 text-[11px] text-slate-500">
               <span>Using {savePaymentLabel}</span>
-              <span>Gas fees apply</span>
+              <span>{gasCopy}</span>
             </div>
 
             <button
@@ -462,7 +466,7 @@ export function DailyCheckInModule({
 
             <div className="mt-2 flex items-center justify-between gap-3 text-[11px] text-slate-500">
               <span>Fallback: ETH if no USDC on Base</span>
-              <span>Gas fees apply</span>
+              <span>{gasCopy}</span>
             </div>
           </div>
         )}

@@ -27,6 +27,11 @@ import {
 } from "@/lib/referrals";
 import { BASE_CHAIN_ID, USDC_ADDRESS } from "@/lib/tokens";
 import { DATA_SUFFIX } from "@/lib/builderCode";
+import {
+  buildBasePaymasterCapabilities,
+  isPaymasterEnabled,
+  isUserRejectedRequest,
+} from "@/lib/paymaster";
 
 type NeynarProfile = {
   fid: number;
@@ -74,6 +79,10 @@ function isCoinbaseConnector(
 
 function shortAddress(address: string) {
   return `${address.slice(0, 6)}...${address.slice(-4)}`;
+}
+
+function isTxHash(value: unknown): value is `0x${string}` {
+  return typeof value === "string" && /^0x[a-fA-F0-9]{64}$/.test(value);
 }
 
 function formatNumber(value: number) {
@@ -348,28 +357,73 @@ function ProfilePageContent() {
         throw new Error("Switch your wallet to Base before sending this check-in transaction");
       }
 
-      const hash = await walletClient.sendTransaction({
-        to:
-          asset === "usdc"
-            ? (config.usdcAddress as `0x${string}`)
-            : (config.recipient as `0x${string}`),
-        data:
-          asset === "usdc"
-            ? encodeFunctionData({
-                abi: erc20Abi,
-                functionName: "transfer",
-                args: [config.recipient as `0x${string}`, BigInt(config.usdcAmountUnits)],
-              })
-            : undefined,
-        dataSuffix: DATA_SUFFIX,
-        value: asset === "usdc" ? 0n : BigInt(config.ethAmountWei),
-        capabilities: process.env.NEXT_PUBLIC_PAYMASTER_URL
-          ? {
-              paymasterService: {
-                url: process.env.NEXT_PUBLIC_PAYMASTER_URL,
+      const targetAddress =
+        asset === "usdc"
+          ? (config.usdcAddress as `0x${string}`)
+          : (config.recipient as `0x${string}`);
+      const txData =
+        asset === "usdc"
+          ? encodeFunctionData({
+              abi: erc20Abi,
+              functionName: "transfer",
+              args: [config.recipient as `0x${string}`, BigInt(config.usdcAmountUnits)],
+            })
+          : undefined;
+      const txValue = asset === "usdc" ? 0n : BigInt(config.ethAmountWei);
+
+      if (isPaymasterEnabled()) {
+        try {
+          const sendCallsResult = await walletClient.sendCalls({
+            calls: [
+              {
+                to: targetAddress,
+                data: txData,
+                value: txValue,
+                dataSuffix: DATA_SUFFIX,
               },
-            }
-          : undefined,
+            ],
+            capabilities: buildBasePaymasterCapabilities(),
+            experimental_fallback: true,
+          } as any);
+
+          const callId =
+            typeof sendCallsResult === "string" ? sendCallsResult : sendCallsResult?.id;
+          if (!callId) {
+            throw new Error("wallet_sendCalls did not return an id");
+          }
+
+          const status = await walletClient.waitForCallsStatus({
+            id: callId,
+            throwOnFailure: true,
+            timeout: 120_000,
+          });
+          const hash = status.receipts?.find((receipt) => isTxHash(receipt?.transactionHash))
+            ?.transactionHash;
+
+          if (!hash) {
+            throw new Error("Sponsored transaction finished without a transaction hash");
+          }
+
+          const receipt = await publicClient.waitForTransactionReceipt({ hash });
+          if (receipt.status !== "success") {
+            throw new Error("Transaction reverted");
+          }
+
+          return hash;
+        } catch (error) {
+          if (isUserRejectedRequest(error)) {
+            throw error;
+          }
+
+          console.warn("Paymaster sendCalls failed for check-in, falling back to direct sendTransaction.", error);
+        }
+      }
+
+      const hash = await walletClient.sendTransaction({
+        to: targetAddress,
+        data: txData,
+        dataSuffix: DATA_SUFFIX,
+        value: txValue,
       } as any);
 
       const receipt = await publicClient.waitForTransactionReceipt({ hash });
