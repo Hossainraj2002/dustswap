@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from "react";
 import type { PointsBalance } from "@/lib/points";
-import { isPaymasterEnabled } from "@/lib/paymaster";
 
 type CelebrationState =
   | {
@@ -22,8 +21,6 @@ type DailyCheckInModuleProps = {
   recoveryStage: FlowStage;
   celebration: CelebrationState;
   walletReady: boolean;
-  preferredCheckInAsset: "eth" | "usdc";
-  preferredSaveAsset: "eth" | "usdc";
   onCheckIn: () => void;
   onSave: () => void;
   onReset: () => void;
@@ -92,8 +89,8 @@ function CompactProgress({ balance }: { balance: PointsBalance }) {
       : balance.rawStreak) >= balance.streakLength;
 
   return (
-    <div className="rounded-[22px] border border-white/70 bg-white/78 p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.8)]">
-      <div className="mb-2 flex items-center justify-between">
+    <div className="rounded-[20px] border border-white/70 bg-white/78 p-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.8)] sm:rounded-[22px] sm:p-3">
+      <div className="mb-1.5 flex items-center justify-between sm:mb-2">
         <p className="text-[10px] font-black uppercase tracking-[0.24em] text-slate-500">
           30 Day Track
         </p>
@@ -106,7 +103,7 @@ function CompactProgress({ balance }: { balance: PointsBalance }) {
         </p>
       </div>
 
-      <div className="grid grid-cols-10 gap-1.5 sm:hidden">
+      <div className="grid grid-cols-10 gap-1 sm:hidden">
         {Array.from({ length: balance.streakLength }).map((_, index) => {
           const isFilled = index < filledCount;
           const isHighlight = index === highlightIndex;
@@ -183,12 +180,16 @@ function MiniInfo({
   };
 
   return (
-    <div className="rounded-[20px] border border-white/70 bg-white/78 p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.8)]">
+    <div className="rounded-[18px] border border-white/70 bg-white/78 p-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.8)] sm:rounded-[20px] sm:p-3">
       <p className="text-[10px] font-black uppercase tracking-[0.24em] text-slate-500">
         {label}
       </p>
-      <p className={`mt-2 text-2xl font-black tracking-tight ${tones[tone]}`}>{value}</p>
-      <p className="mt-1 text-xs leading-5 text-slate-500">{subtext}</p>
+      <p className={`mt-1.5 text-[1.65rem] font-black tracking-tight sm:mt-2 sm:text-2xl ${tones[tone]}`}>
+        {value}
+      </p>
+      <p className="mt-1 text-[11px] leading-4 text-slate-500 sm:text-xs sm:leading-5">
+        {subtext}
+      </p>
     </div>
   );
 }
@@ -202,8 +203,6 @@ export function DailyCheckInModule({
   recoveryStage,
   celebration,
   walletReady,
-  preferredCheckInAsset,
-  preferredSaveAsset,
   onCheckIn,
   onSave,
   onReset,
@@ -253,21 +252,9 @@ export function DailyCheckInModule({
       ? "Verifying streak save on-chain..."
       : "Verifying daily check-in on-chain...";
 
-  const checkInPaymentLabel =
-    preferredCheckInAsset === "usdc"
-      ? `${balance.checkInConfig.usdcAmount} USDC`
-      : `$${balance.checkInConfig.usdTarget.toFixed(2)} in ETH`;
-  const savePaymentLabel =
-    preferredSaveAsset === "usdc"
-      ? `${balance.saveConfig.usdcAmount} USDC`
-      : `$${balance.saveConfig.usdTarget.toFixed(2)} in ETH`;
-  const gasCopy = isPaymasterEnabled()
-    ? "Gas sponsored on supported Base wallets"
-    : "Gas fees apply";
-
   return (
     <section
-      className={`relative overflow-hidden rounded-[28px] border p-4 shadow-[0_20px_70px_rgba(15,23,42,0.1)] sm:p-6 ${
+      className={`relative overflow-hidden rounded-[24px] border p-3.5 shadow-[0_20px_70px_rgba(15,23,42,0.1)] sm:rounded-[28px] sm:p-6 ${
         balance.streakStatus === "broken"
           ? "border-orange-300/60 bg-[radial-gradient(circle_at_top_left,rgba(251,146,60,0.2),transparent_32%),linear-gradient(180deg,#fff5ef,#ffe5d3)]"
           : "border-white/70 bg-[radial-gradient(circle_at_top_left,rgba(56,189,248,0.18),transparent_34%),radial-gradient(circle_at_top_right,rgba(251,191,36,0.14),transparent_30%),linear-gradient(180deg,#fffdf7,#f3fbff)]"
@@ -329,17 +316,17 @@ export function DailyCheckInModule({
       ) : null}
 
       <div className="relative z-10">
-        <div className="flex items-start justify-between gap-3">
+        <div className="flex items-start justify-between gap-2.5 sm:gap-3">
           <div className="min-w-0">
             <p className="text-[10px] font-black uppercase tracking-[0.32em] text-slate-500">
               Daily Check-In
             </p>
-            <h2 className="mt-2 text-[2rem] font-black tracking-tight text-slate-950">
+            <h2 className="mt-1.5 text-[1.85rem] font-black leading-none tracking-tight text-slate-950 sm:mt-2 sm:text-[2rem]">
               {balance.streakStatus === "broken"
                 ? "Missed the streak"
                 : `Day ${displayDay}`}
             </h2>
-            <p className="mt-1.5 text-sm leading-6 text-slate-600">
+            <p className="mt-1 text-[13px] leading-5 text-slate-600 sm:mt-1.5 sm:text-sm sm:leading-6">
               {balance.streakStatus === "broken"
                 ? "Pay to continue from here or reset to zero."
                 : balance.checkedInToday
@@ -348,15 +335,15 @@ export function DailyCheckInModule({
             </p>
           </div>
 
-          <div className="rounded-full border border-white/70 bg-white/78 px-3 py-2 text-right shadow-[inset_0_1px_0_rgba(255,255,255,0.8)]">
+          <div className="min-w-[96px] rounded-full border border-white/70 bg-white/78 px-2.5 py-2 text-right shadow-[inset_0_1px_0_rgba(255,255,255,0.8)] sm:min-w-[110px] sm:px-3">
             <p className="text-[10px] font-black uppercase tracking-[0.22em] text-slate-500">
               Timer
             </p>
-            <p className="mt-1 text-sm font-black text-slate-900">{timerLabel}</p>
+            <p className="mt-1 text-xs font-black text-slate-900 sm:text-sm">{timerLabel}</p>
           </div>
         </div>
 
-        <div className="mt-3 grid grid-cols-2 gap-2.5">
+        <div className="mt-2.5 grid grid-cols-2 gap-2">
           <MiniInfo
             label="Current Boost"
             value={`+${displayBoost}%`}
@@ -371,25 +358,25 @@ export function DailyCheckInModule({
           />
         </div>
 
-        <div className="mt-3">
+        <div className="mt-2.5">
           <CompactProgress balance={balance} />
         </div>
 
         {balance.streakStatus === "broken" ? (
-          <div className="mt-3 rounded-[22px] border border-orange-200/80 bg-white/78 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.85)]">
-            <div className="flex items-start justify-between gap-3">
+          <div className="mt-2.5 rounded-[20px] border border-orange-200/80 bg-white/78 p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.85)] sm:mt-3 sm:rounded-[22px] sm:p-4">
+            <div className="flex items-start justify-between gap-2.5 sm:gap-3">
               <div>
                 <p className="text-[10px] font-black uppercase tracking-[0.24em] text-orange-500">
                   Restore Flow
                 </p>
-                <h3 className="mt-2 text-xl font-black text-slate-950">
+                <h3 className="mt-1.5 text-lg font-black text-slate-950 sm:mt-2 sm:text-xl">
                   Continue from Day {balance.recoverableStreak}
                 </h3>
-                <p className="mt-1 text-xs leading-5 text-slate-600">
+                <p className="mt-1 hidden text-xs leading-5 text-slate-600 sm:block">
                   Receiver: {formatCompactAddress(balance.saveConfig.recipient)}
                 </p>
               </div>
-              <div className="flex h-11 w-11 items-center justify-center rounded-2xl border border-orange-200 bg-[radial-gradient(circle,rgba(251,146,60,0.25),transparent_70%)] text-xl">
+              <div className="flex h-10 w-10 items-center justify-center rounded-[18px] border border-orange-200 bg-[radial-gradient(circle,rgba(251,146,60,0.25),transparent_70%)] text-lg sm:h-11 sm:w-11 sm:rounded-2xl sm:text-xl">
                 ⛓
               </div>
             </div>
@@ -398,7 +385,7 @@ export function DailyCheckInModule({
               type="button"
               onClick={onSave}
               disabled={!walletReady || isSaving || recoveryStage !== "idle"}
-              className="group relative mt-4 flex w-full items-center justify-center overflow-hidden rounded-[22px] border border-transparent bg-[linear-gradient(135deg,#2563eb_0%,#7c3aed_55%,#f59e0b_100%)] px-4 py-4 text-sm font-black text-white shadow-[0_16px_38px_rgba(37,99,235,0.24)] transition duration-200 hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-55"
+              className="group relative mt-3 flex w-full items-center justify-center overflow-hidden rounded-[20px] border border-transparent bg-[linear-gradient(135deg,#2563eb_0%,#7c3aed_55%,#f59e0b_100%)] px-4 py-3.5 text-sm font-black text-white shadow-[0_16px_38px_rgba(37,99,235,0.24)] transition duration-200 hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-55 sm:mt-4 sm:rounded-[22px] sm:py-4"
             >
               <span className="absolute inset-0 bg-[linear-gradient(120deg,transparent,rgba(255,255,255,0.22),transparent)] opacity-0 transition duration-300 group-hover:opacity-100" />
               <span className="relative">
@@ -410,35 +397,27 @@ export function DailyCheckInModule({
               </span>
             </button>
 
-            <div className="mt-2 flex items-center justify-between gap-3 text-[11px] text-slate-500">
-              <span>Using {savePaymentLabel}</span>
-              <span>{gasCopy}</span>
-            </div>
-
             <button
               type="button"
               onClick={onReset}
               disabled={isResetting || isSaving}
-              className="mt-3 w-full rounded-[18px] border border-slate-300/70 bg-white/50 px-4 py-3 text-sm font-semibold text-slate-500 transition hover:bg-white/70 hover:text-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
+              className="mt-2.5 w-full rounded-[16px] border border-slate-300/70 bg-white/50 px-4 py-3 text-sm font-semibold text-slate-500 transition hover:bg-white/70 hover:text-slate-700 disabled:cursor-not-allowed disabled:opacity-50 sm:mt-3 sm:rounded-[18px]"
             >
               {isResetting ? "Resetting..." : "Reset Streak to 0"}
             </button>
           </div>
         ) : (
-          <div className="mt-3 rounded-[22px] border border-white/70 bg-white/78 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.8)]">
-            <div className="flex items-start justify-between gap-3">
+          <div className="mt-2.5 rounded-[20px] border border-white/70 bg-white/78 p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.8)] sm:mt-3 sm:rounded-[22px] sm:p-4">
+            <div className="flex items-start justify-between gap-2.5 sm:gap-3">
               <div>
                 <p className="text-[10px] font-black uppercase tracking-[0.24em] text-slate-500">
                   Check-In Fee
                 </p>
-                <h3 className="mt-2 text-xl font-black text-slate-950">
+                <h3 className="mt-1.5 text-lg font-black text-slate-950 sm:mt-2 sm:text-xl">
                   {balance.checkedInToday ? "Already checked today" : "Onchain check-in"}
                 </h3>
-                <p className="mt-1 text-xs leading-5 text-slate-600">
-                  Uses {checkInPaymentLabel}. ETH price is locked for {balance.checkInConfig.priceDate}.
-                </p>
               </div>
-              <div className="rounded-full border border-slate-200 bg-[#fbf7ec] px-3 py-2 text-right">
+              <div className="rounded-full border border-slate-200 bg-[#fbf7ec] px-2.5 py-2 text-right sm:px-3">
                 <p className="text-[10px] font-black uppercase tracking-[0.22em] text-slate-500">
                   Scope
                 </p>
@@ -450,7 +429,7 @@ export function DailyCheckInModule({
               type="button"
               onClick={onCheckIn}
               disabled={balance.checkedInToday || isCheckingIn || !walletReady}
-              className="group relative mt-4 flex w-full items-center justify-center overflow-hidden rounded-[24px] border border-transparent bg-[linear-gradient(135deg,#0ea5e9_0%,#22c55e_100%)] px-4 py-4 text-base font-black text-white shadow-[0_16px_42px_rgba(14,165,233,0.22)] transition duration-200 hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-50"
+              className="group relative mt-3 flex w-full items-center justify-center overflow-hidden rounded-[20px] border border-transparent bg-[linear-gradient(135deg,#0ea5e9_0%,#22c55e_100%)] px-4 py-3.5 text-sm font-black text-white shadow-[0_16px_42px_rgba(14,165,233,0.22)] transition duration-200 hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-50 sm:mt-4 sm:rounded-[24px] sm:py-4 sm:text-base"
             >
               <span className="absolute inset-0 bg-[linear-gradient(120deg,transparent,rgba(255,255,255,0.22),transparent)] opacity-0 transition duration-300 group-hover:opacity-100" />
               <span className="relative">
@@ -464,10 +443,6 @@ export function DailyCheckInModule({
               </span>
             </button>
 
-            <div className="mt-2 flex items-center justify-between gap-3 text-[11px] text-slate-500">
-              <span>Fallback: ETH if no USDC on Base</span>
-              <span>{gasCopy}</span>
-            </div>
           </div>
         )}
       </div>

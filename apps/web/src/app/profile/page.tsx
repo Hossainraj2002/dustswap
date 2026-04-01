@@ -130,6 +130,54 @@ function MiniMetric({
   );
 }
 
+const PROFILE_FAQ_ITEMS = [
+  {
+    question: "What is DustSwap?",
+    answers: [
+      "DustSwap is a DEX and bridge built on Base, supporting 20+ networks.",
+      "DustSwap also lets users sweep multiple dust tokens into ETH in a single transaction. This feature is currently under development.",
+    ],
+  },
+  {
+    question: "What is Check-In, and why should I do it?",
+    answers: [
+      "Check-In is DustSwap's daily attendance system for users.",
+      "To help prevent abuse, Check-In includes a very small fee of $0.01.",
+      "By checking in, you earn 100 base PP and a 10% daily boost.",
+      "Your points grow faster as your Check-In boost increases.",
+      "You can unlock up to a 300% boost on all of your self-earned PP.",
+    ],
+  },
+  {
+    question: "What are Quests, and why should I complete them?",
+    answers: [
+      "Quests are social and onchain tasks for DustSwap users.",
+      "By completing quests, you earn PP.",
+      "PP will convert into $DUST tokens after TGE.",
+      "Your PP helps measure your contribution to DustSwap and may help determine your allocation.",
+    ],
+  },
+  {
+    question: "What is the Cofounder Pass?",
+    answers: [
+      "The Cofounder Pass is an NFT for early supporters of DustSwap.",
+      "The mint will take place on OpenSea.",
+      "It will be free for whitelist users and cost 0.003 ETH for the public mint.",
+      "Cofounder Pass holders will share 6.9% of the total $DUST token allocation.",
+      "Holding a Cofounder Pass NFT gives you a 30% boost on referral earnings.",
+      "More surprise benefits are coming.",
+    ],
+  },
+  {
+    question: "How can I get whitelist access for the Cofounder Pass?",
+    answers: [
+      "To get whitelist access, you need to complete all tasks under the Cofounder Pass section on the Quests page.",
+      "You need to complete a total of $100 swap volume on Base through /swap.",
+      "You also need to finish the required social tasks on the Cofounder Pass page.",
+    ],
+  },
+] as const;
+
 function ProfilePageContent() {
   const { address, isConnected, chainId, connector } = useAccount();
   const { data: walletClient } = useWalletClient();
@@ -186,8 +234,6 @@ function ProfilePageContent() {
   const usesBasePayForCheckIn =
     isCoinbaseWallet && preferredCheckInAsset === "usdc";
   const usesBasePayForSave = isCoinbaseWallet && preferredSaveAsset === "usdc";
-  const displayCheckInAsset = usesBasePayForCheckIn ? "usdc" : preferredCheckInAsset;
-  const displaySaveAsset = usesBasePayForSave ? "usdc" : preferredSaveAsset;
   const referralLink = useMemo(
     () => (referral?.code ? buildReferralLink(referral.code) : ""),
     [referral?.code]
@@ -730,8 +776,6 @@ function ProfilePageContent() {
           recoveryStage={recoveryStage}
           celebration={celebration}
           walletReady={Boolean(address)}
-          preferredCheckInAsset={displayCheckInAsset}
-          preferredSaveAsset={displaySaveAsset}
           onCheckIn={() => void handleCheckIn()}
           onSave={() => void handleSave()}
           onReset={() => void handleReset()}
@@ -787,6 +831,53 @@ function ProfilePageContent() {
                 {isCopied ? "Copied!" : "Copy Link"}
               </button>
             </div>
+          </div>
+        </section>
+
+        <section className="rounded-[28px] border border-white/70 bg-[radial-gradient(circle_at_top_right,rgba(56,189,248,0.12),transparent_28%),linear-gradient(180deg,#fffdf8,#f8fbff)] p-4 shadow-[0_20px_70px_rgba(15,23,42,0.08)] sm:p-6">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="text-[10px] font-black uppercase tracking-[0.32em] text-slate-500">
+                FAQ
+              </p>
+              <h2 className="mt-2 text-2xl font-black tracking-tight text-slate-950">
+                DustSwap quick answers
+              </h2>
+              <p className="mt-2 text-sm leading-6 text-slate-600">
+                Everything new users usually want to know, in one place.
+              </p>
+            </div>
+
+            <div className="hidden rounded-full border border-white/80 bg-white/80 px-3 py-2 text-xs font-semibold text-slate-500 shadow-[inset_0_1px_0_rgba(255,255,255,0.8)] sm:block">
+              Swipe less
+            </div>
+          </div>
+
+          <div className="mt-4 space-y-3">
+            {PROFILE_FAQ_ITEMS.map((item) => (
+              <details
+                key={item.question}
+                className="group rounded-[22px] border border-white/80 bg-white/80 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.78)]"
+              >
+                <summary className="flex cursor-pointer list-none items-center justify-between gap-3">
+                  <span className="text-sm font-black tracking-tight text-slate-900 sm:text-base">
+                    {item.question}
+                  </span>
+                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-white text-lg font-medium text-slate-500 transition-transform group-open:rotate-45">
+                    +
+                  </span>
+                </summary>
+
+                <ul className="mt-4 space-y-2 border-t border-slate-200/80 pt-4 text-sm leading-6 text-slate-600">
+                  {item.answers.map((answer) => (
+                    <li key={answer} className="flex gap-2">
+                      <span className="mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full bg-sky-400" />
+                      <span>{answer}</span>
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            ))}
           </div>
         </section>
       </div>
