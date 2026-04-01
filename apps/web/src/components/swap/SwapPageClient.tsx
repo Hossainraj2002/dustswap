@@ -97,50 +97,46 @@ export default function SwapPageClient() {
       <style jsx global>{`
         .swap-widget-stage {
           position: relative;
-          padding: 28px;
-          border-radius: 36px;
           isolation: isolate;
         }
 
         .swap-widget-stage__paper {
           position: absolute;
-          inset: 0;
-          border-radius: inherit;
-          border: 1px solid rgba(15, 23, 42, 0.08);
+          inset: -22px -16px -26px;
+          border-radius: 34px;
           background:
-            linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(244, 247, 252, 0.92)),
+            linear-gradient(180deg, rgba(252, 253, 255, 0.94), rgba(240, 245, 252, 0.9)),
             repeating-linear-gradient(
               0deg,
               transparent 0,
               transparent 18px,
-              rgba(15, 23, 42, 0.055) 18px,
-              rgba(15, 23, 42, 0.055) 19px
+              rgba(100, 116, 139, 0.1) 18px,
+              rgba(100, 116, 139, 0.1) 19px
             ),
             repeating-linear-gradient(
               90deg,
               transparent 0,
               transparent 18px,
-              rgba(15, 23, 42, 0.055) 18px,
-              rgba(15, 23, 42, 0.055) 19px
+              rgba(100, 116, 139, 0.1) 18px,
+              rgba(100, 116, 139, 0.1) 19px
             ),
             repeating-linear-gradient(
               0deg,
               transparent 0,
               transparent 72px,
-              rgba(31, 41, 55, 0.085) 72px,
-              rgba(31, 41, 55, 0.085) 73px
+              rgba(30, 41, 59, 0.14) 72px,
+              rgba(30, 41, 59, 0.14) 73px
             ),
             repeating-linear-gradient(
               90deg,
               transparent 0,
               transparent 72px,
-              rgba(31, 41, 55, 0.085) 72px,
-              rgba(31, 41, 55, 0.085) 73px
+              rgba(30, 41, 59, 0.14) 72px,
+              rgba(30, 41, 59, 0.14) 73px
             );
           box-shadow:
-            0 30px 80px rgba(148, 163, 184, 0.16),
-            inset 0 1px 0 rgba(255, 255, 255, 0.78),
-            inset 0 0 0 1px rgba(255, 255, 255, 0.42);
+            0 28px 72px rgba(148, 163, 184, 0.14),
+            inset 0 1px 0 rgba(255, 255, 255, 0.7);
           overflow: hidden;
         }
 
@@ -160,11 +156,10 @@ export default function SwapPageClient() {
           content: "";
           position: absolute;
           inset: 0;
-          border-radius: inherit;
+          border-radius: 34px;
           background:
-            linear-gradient(180deg, rgba(255, 255, 255, 0.54), transparent 22%, transparent 78%, rgba(226, 232, 240, 0.4)),
-            linear-gradient(90deg, rgba(248, 250, 252, 0.9), transparent 12%, transparent 88%, rgba(248, 250, 252, 0.9));
-          mask-image: radial-gradient(circle at center, black 62%, transparent 100%);
+            linear-gradient(180deg, rgba(255, 255, 255, 0.4), transparent 20%, transparent 82%, rgba(226, 232, 240, 0.28)),
+            linear-gradient(90deg, rgba(248, 250, 252, 0.72), transparent 10%, transparent 90%, rgba(248, 250, 252, 0.72));
           pointer-events: none;
         }
 
@@ -198,7 +193,11 @@ export default function SwapPageClient() {
 
         @media (max-width: 420px) {
           .swap-widget-stage {
-            padding: 16px 10px 18px;
+            width: 100%;
+          }
+
+          .swap-widget-stage__paper {
+            inset: -12px -2px -16px;
             border-radius: 28px;
           }
 
@@ -219,17 +218,17 @@ export default function SwapPageClient() {
           }
 
           .dustswap-openocean-widget .MuiCardContent-root > .MuiBox-root {
-            align-items: flex-start;
-            gap: 8px;
+            align-items: center;
+            gap: 10px;
           }
 
           .dustswap-openocean-widget .MuiCardContent-root > .MuiBox-root > .MuiBox-root:first-child {
-            flex: 0.85 1 0%;
+            flex: 0.9 1 0%;
             min-width: 0;
           }
 
           .dustswap-openocean-widget .MuiCardContent-root > .MuiBox-root > .MuiBox-root:last-child {
-            flex: 1.15 1 0%;
+            flex: 1.1 1 0%;
             min-width: 0;
           }
 
@@ -249,7 +248,8 @@ export default function SwapPageClient() {
 
           .dustswap-openocean-widget .MuiCardContent-root > .MuiBox-root > .MuiBox-root:last-child > .MuiBox-root {
             width: 100%;
-            padding: 12px 12px 8px 4px;
+            padding: 10px 12px 12px 2px;
+            overflow: visible !important;
           }
 
           .dustswap-openocean-widget .MuiFormControl-root,
@@ -267,7 +267,23 @@ export default function SwapPageClient() {
 
           .dustswap-openocean-widget .MuiInputAdornment-positionEnd {
             margin-left: 6px;
-            align-self: flex-start;
+            align-self: center;
+          }
+
+          .dustswap-openocean-widget button,
+          .dustswap-openocean-widget a {
+            min-width: 0;
+            min-height: 0;
+          }
+
+          .dustswap-openocean-widget .MuiInputAdornment-positionEnd .MuiButtonBase-root,
+          .dustswap-openocean-widget .MuiInputAdornment-positionEnd .MuiButton-root {
+            min-width: 34px !important;
+            min-height: 34px !important;
+            height: 34px !important;
+            padding: 0 10px !important;
+            font-size: 11px !important;
+            line-height: 1 !important;
           }
 
           .dustswap-openocean-widget .MuiButton-root {
@@ -276,16 +292,17 @@ export default function SwapPageClient() {
           }
 
           .dustswap-openocean-widget .MuiFormHelperText-root {
-            flex-wrap: wrap;
-            justify-content: space-between;
-            row-gap: 2px;
+            flex-wrap: nowrap;
+            justify-content: flex-end;
+            gap: 4px;
             margin-left: 0;
-            white-space: normal !important;
+            white-space: nowrap !important;
+            overflow: visible !important;
           }
 
           .dustswap-openocean-widget .MuiFormHelperText-root .MuiTypography-root {
             min-width: 0;
-            font-size: 11px;
+            font-size: 10px;
             line-height: 1.2;
           }
         }
