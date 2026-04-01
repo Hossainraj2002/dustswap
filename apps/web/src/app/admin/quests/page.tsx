@@ -107,23 +107,23 @@ function HelpLabel({
 
   return (
     <div className="mb-2">
-      <div className="flex items-center gap-2 text-sm font-medium text-white">
+      <div className="flex items-center gap-2 text-sm font-medium text-gray-900">
         <span>{label}</span>
         <button
           type="button"
           onClick={() => setIsOpen((current) => !current)}
           aria-expanded={isOpen}
           aria-label={`${label} help`}
-          className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-sky-300/30 bg-sky-400/10 text-[11px] font-bold text-sky-100 transition hover:bg-sky-400/20"
+          className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-sky-200 bg-sky-50 text-[11px] font-bold text-sky-700 transition hover:bg-sky-100"
         >
           !
         </button>
       </div>
       {isOpen ? (
-        <div className="mt-2 rounded-2xl border border-sky-300/20 bg-sky-400/10 px-3 py-3 text-xs leading-6 text-sky-50/90">
+        <div className="mt-2 rounded-2xl border border-sky-200 bg-sky-50 px-3 py-3 text-xs leading-6 text-sky-800">
           <p>{help}</p>
           {example ? (
-            <pre className="mt-2 overflow-x-auto whitespace-pre-wrap rounded-2xl border border-white/10 bg-black/20 px-3 py-3 text-[11px] leading-5 text-sky-100">
+            <pre className="mt-2 overflow-x-auto whitespace-pre-wrap rounded-2xl border border-gray-200 bg-white px-3 py-3 text-[11px] leading-5 text-sky-100">
               {example}
             </pre>
           ) : null}
@@ -302,21 +302,21 @@ export default function AdminQuestsPage() {
 
   return (
     <div className="mx-auto flex w-full max-w-7xl flex-col gap-5 px-4 py-6 sm:px-6">
-      <section className="rounded-[28px] border border-white/10 bg-[linear-gradient(180deg,rgba(13,18,31,0.96),rgba(6,9,16,0.96))] p-5 sm:p-7">
-        <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-sky-200/70">
+      <section className="rounded-[28px] border border-gray-200 bg-white shadow-sm p-5 sm:p-7">
+        <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-sky-600">
           Quest Admin
         </p>
-        <h1 className="mt-3 text-3xl font-semibold text-white">Manage quest definitions</h1>
-        <p className="mt-3 max-w-2xl text-sm leading-6 text-gray-300">
+        <h1 className="mt-3 text-3xl font-semibold text-gray-900">Manage quest definitions</h1>
+        <p className="mt-3 max-w-2xl text-sm leading-6 text-gray-600">
           Edit points, rules, quest type, timing, and publish state without touching code.
         </p>
       </section>
 
-      <section className="rounded-[28px] border border-white/10 bg-white/[0.04] p-5">
-        <label className="block text-sm font-medium text-white">Admin token</label>
-        <p className="mt-2 text-sm leading-6 text-gray-300">
+      <section className="rounded-[28px] border border-gray-200 bg-white shadow-sm p-5">
+        <label className="block text-sm font-medium text-gray-900">Admin token</label>
+        <p className="mt-2 text-sm leading-6 text-gray-600">
           This first admin version uses{" "}
-          <code className="rounded bg-black/30 px-1.5 py-0.5 text-xs text-sky-100">
+          <code className="rounded bg-sky-50 border border-sky-100 px-1.5 py-0.5 text-xs text-sky-700">
             QUEST_ADMIN_TOKEN
           </code>{" "}
           from the API env on Railway. Paste the same value here, then tap Load Quests.
@@ -329,44 +329,44 @@ export default function AdminQuestsPage() {
               setIsUnlocked(false);
             }}
             placeholder="Paste QUEST_ADMIN_TOKEN"
-            className="w-full rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-sm text-white outline-none placeholder:text-gray-500"
+            className="w-full rounded-2xl border border-gray-200 bg-white px-4 py-3 text-sm text-gray-900 outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500 shadow-sm placeholder:text-gray-500"
           />
           <button
             type="button"
             onClick={() => void loadQuests()}
             disabled={!adminToken || isLoading}
-            className="rounded-2xl bg-white px-5 py-3 text-sm font-semibold text-[#030305] transition hover:bg-sky-100 disabled:cursor-not-allowed disabled:opacity-50"
+            className="rounded-2xl bg-sky-600 px-5 py-3 text-sm font-semibold text-white transition hover:bg-sky-700 shadow-sm disabled:cursor-not-allowed disabled:opacity-50"
           >
             {isLoading ? "Loading..." : "Load Quests"}
           </button>
         </div>
-        <p className="mt-3 text-xs leading-5 text-gray-400">
+        <p className="mt-3 text-xs leading-5 text-gray-500">
           The full create, edit, and delete UI stays hidden until the API accepts the token.
         </p>
       </section>
 
       {status ? (
-        <div className="rounded-2xl border border-emerald-400/20 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-100">
+        <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
           {status}
         </div>
       ) : null}
 
       {error ? (
-        <div className="rounded-2xl border border-rose-400/20 bg-rose-500/10 px-4 py-3 text-sm text-rose-100">
+        <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
           {error}
         </div>
       ) : null}
 
       {!isUnlocked ? (
-        <section className="rounded-[28px] border border-dashed border-white/10 bg-white/[0.03] p-6 text-sm leading-7 text-gray-300">
-          Enter a valid admin token and tap <span className="font-semibold text-white">Load Quests</span> to unlock the quest manager.
+        <section className="rounded-[28px] border border-dashed border-gray-200 bg-gray-50 p-6 text-sm leading-7 text-gray-600">
+          Enter a valid admin token and tap <span className="font-semibold text-gray-900">Load Quests</span> to unlock the quest manager.
           If it still fails, check that <code>NEXT_PUBLIC_API_URL</code> on Vercel points to the Railway root URL without <code>/api</code>, and make sure the same token is set in Railway API env.
         </section>
       ) : (
         <div className="grid gap-5 lg:grid-cols-[1.1fr_0.9fr]">
-          <section className="rounded-[28px] border border-white/10 bg-white/[0.04] p-5">
+          <section className="rounded-[28px] border border-gray-200 bg-white shadow-sm p-5">
             <div className="flex items-center justify-between gap-3">
-              <h2 className="text-lg font-semibold text-white">
+              <h2 className="text-lg font-semibold text-gray-900">
                 {form.id ? "Edit Quest" : "Create Quest"}
               </h2>
               {form.id ? (
@@ -376,7 +376,7 @@ export default function AdminQuestsPage() {
                     setForm(EMPTY_FORM);
                     setRulesText("{}");
                   }}
-                  className="text-sm font-medium text-sky-200"
+                  className="text-sm font-medium text-sky-600 hover:text-sky-700"
                 >
                   Clear
                 </button>
@@ -404,7 +404,7 @@ export default function AdminQuestsPage() {
                         [field.key]: event.target.value,
                       }))
                     }
-                    className="w-full rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-sm text-white outline-none placeholder:text-gray-500"
+                    className="w-full rounded-2xl border border-gray-200 bg-white px-4 py-3 text-sm text-gray-900 outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500 shadow-sm placeholder:text-gray-500"
                   />
                 </label>
               ))}
@@ -472,7 +472,7 @@ export default function AdminQuestsPage() {
                         [field.key]: event.target.value,
                       }))
                     }
-                    className="w-full rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-sm text-white outline-none"
+                    className="w-full rounded-2xl border border-gray-200 bg-white px-4 py-3 text-sm text-gray-900 outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500 shadow-sm"
                   >
                     {field.options.map((option) => (
                       <option key={option} value={option}>
@@ -511,7 +511,7 @@ export default function AdminQuestsPage() {
                         [field.key]: Number(event.target.value),
                       }))
                     }
-                    className="w-full rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-sm text-white outline-none"
+                    className="w-full rounded-2xl border border-gray-200 bg-white px-4 py-3 text-sm text-gray-900 outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500 shadow-sm"
                   />
                 </label>
               ))}
@@ -530,7 +530,7 @@ export default function AdminQuestsPage() {
                       startsAt: toIsoOrNull(event.target.value),
                     }))
                   }
-                  className="w-full rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-sm text-white outline-none"
+                  className="w-full rounded-2xl border border-gray-200 bg-white px-4 py-3 text-sm text-gray-900 outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500 shadow-sm"
                 />
               </label>
 
@@ -548,7 +548,7 @@ export default function AdminQuestsPage() {
                       endsAt: toIsoOrNull(event.target.value),
                     }))
                   }
-                  className="w-full rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-sm text-white outline-none"
+                  className="w-full rounded-2xl border border-gray-200 bg-white px-4 py-3 text-sm text-gray-900 outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500 shadow-sm"
                 />
               </label>
 
@@ -557,7 +557,7 @@ export default function AdminQuestsPage() {
                   label="Active quest"
                   help="Turn this off to hide the quest without deleting it. The normal live setup is status = published and Active quest = on."
                 />
-                <label className="flex items-center gap-3 rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-sm text-white">
+                <label className="flex items-center gap-3 rounded-2xl border border-gray-200 bg-white px-4 py-3 text-sm text-gray-900">
                   <input
                     type="checkbox"
                     checked={Boolean(form.isActive)}
@@ -573,14 +573,14 @@ export default function AdminQuestsPage() {
               </div>
             </div>
 
-            <div className="mt-4 grid gap-3 rounded-2xl border border-white/10 bg-black/20 p-4 text-xs leading-6 text-gray-300 sm:grid-cols-2">
+            <div className="mt-4 grid gap-3 rounded-2xl border border-gray-200 bg-white p-4 text-xs leading-6 text-gray-600 sm:grid-cols-2">
               <p>
-                <span className="font-semibold text-white">Target value:</span> use USD amount for{" "}
+                <span className="font-semibold text-gray-900">Target value:</span> use USD amount for{" "}
                 <code>swap_volume</code>, number of swaps for <code>swap_count</code>, and usually{" "}
                 <code>1</code> for social tasks.
               </p>
               <p>
-                <span className="font-semibold text-white">Sort order:</span> lower numbers appear first on the quest page.
+                <span className="font-semibold text-gray-900">Sort order:</span> lower numbers appear first on the quest page.
                 Example: <code>10</code> shows before <code>100</code>.
               </p>
             </div>
@@ -595,12 +595,12 @@ export default function AdminQuestsPage() {
                 value={rulesText}
                 onChange={(event) => setRulesText(event.target.value)}
                 rows={12}
-                className="w-full rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-sm text-white outline-none placeholder:text-gray-500"
+                className="w-full rounded-2xl border border-gray-200 bg-white px-4 py-3 text-sm text-gray-900 outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500 shadow-sm placeholder:text-gray-500"
               />
             </label>
 
-            <div className="mt-3 rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-xs leading-6 text-gray-300">
-              <p className="font-semibold text-white">Quick rules guide</p>
+            <div className="mt-3 rounded-2xl border border-gray-200 bg-white px-4 py-3 text-xs leading-6 text-gray-600">
+              <p className="font-semibold text-gray-900">Quick rules guide</p>
               <p className="mt-1">
                 <code>delaySeconds</code> controls the wait time before verify.
                 <code className="ml-1">fakeFailureCount</code> is only for the follow-style fake first failure.
@@ -616,32 +616,32 @@ export default function AdminQuestsPage() {
               type="button"
               onClick={() => void handleSave()}
               disabled={!adminToken || isSaving}
-              className="mt-5 w-full rounded-2xl bg-white px-5 py-3 text-sm font-semibold text-[#030305] transition hover:bg-sky-100 disabled:cursor-not-allowed disabled:opacity-50"
+              className="mt-5 w-full rounded-2xl bg-sky-600 px-5 py-3 text-sm font-semibold text-white transition hover:bg-sky-700 shadow-sm disabled:cursor-not-allowed disabled:opacity-50"
             >
               {isSaving ? "Saving..." : form.id ? "Update Quest" : "Create Quest"}
             </button>
           </section>
 
-          <section className="rounded-[28px] border border-white/10 bg-white/[0.04] p-5">
-            <h2 className="text-lg font-semibold text-white">Current quests</h2>
+          <section className="rounded-[28px] border border-gray-200 bg-white shadow-sm p-5">
+            <h2 className="text-lg font-semibold text-gray-900">Current quests</h2>
             <div className="mt-4 space-y-3">
               {quests.length === 0 ? (
-                <div className="rounded-2xl border border-dashed border-white/10 bg-black/20 px-4 py-6 text-sm text-gray-400">
+                <div className="rounded-2xl border border-dashed border-gray-200 bg-white px-4 py-6 text-sm text-gray-500">
                   No quests found yet.
                 </div>
               ) : (
                 quests.map((quest) => (
                   <article
                     key={quest.id}
-                    className="rounded-2xl border border-white/10 bg-black/20 p-4"
+                    className="rounded-2xl border border-gray-200 bg-white p-4"
                   >
                     <div className="flex items-start justify-between gap-3">
                       <div>
                         <p className="text-[11px] uppercase tracking-[0.25em] text-gray-500">
                           {quest.platform} / {quest.action_type}
                         </p>
-                        <h3 className="mt-2 text-base font-semibold text-white">{quest.title}</h3>
-                        <p className="mt-1 text-xs text-gray-400">
+                        <h3 className="mt-2 text-base font-semibold text-gray-900">{quest.title}</h3>
+                        <p className="mt-1 text-xs text-gray-500">
                           {quest.slug} / {quest.reward_points} PP
                         </p>
                         <p className="mt-1 text-xs text-gray-500">
@@ -664,8 +664,8 @@ export default function AdminQuestsPage() {
                       <span
                         className={`rounded-full border px-3 py-1 text-[11px] uppercase tracking-[0.22em] ${
                           quest.status === "published"
-                            ? "border-emerald-400/20 bg-emerald-500/10 text-emerald-100"
-                            : "border-white/10 bg-white/5 text-gray-300"
+                            ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                            : "border-gray-200 bg-gray-100 text-gray-600"
                         }`}
                       >
                         {quest.status}
@@ -676,14 +676,14 @@ export default function AdminQuestsPage() {
                       <button
                         type="button"
                         onClick={() => startEdit(quest)}
-                        className="rounded-2xl border border-white/10 px-4 py-2 text-sm font-medium text-white transition hover:bg-white/10"
+                        className="rounded-2xl border border-gray-200 px-4 py-2 text-sm font-medium text-gray-900 transition hover:bg-gray-50"
                       >
                         Edit
                       </button>
                       <button
                         type="button"
                         onClick={() => void handleDelete(quest.id)}
-                        className="rounded-2xl border border-rose-400/20 px-4 py-2 text-sm font-medium text-rose-100 transition hover:bg-rose-500/10"
+                        className="rounded-2xl border border-rose-200 px-4 py-2 text-sm font-medium text-rose-700 transition hover:bg-rose-50 bg-white"
                       >
                         Delete
                       </button>
@@ -695,32 +695,32 @@ export default function AdminQuestsPage() {
 
             <div className="mt-6">
               <div className="flex items-center justify-between gap-3">
-                <h3 className="text-base font-semibold text-white">coFounder pass whitelist</h3>
+                <h3 className="text-base font-semibold text-gray-900">coFounder pass whitelist</h3>
                 <button
                   type="button"
                   onClick={() => void loadQuests()}
                   disabled={!adminToken || isLoading}
-                  className="rounded-2xl border border-white/10 px-3 py-2 text-xs font-medium text-white transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="rounded-2xl border border-gray-200 px-3 py-2 text-xs font-medium text-gray-900 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   Refresh
                 </button>
               </div>
-              <p className="mt-2 text-xs leading-6 text-gray-400">
+              <p className="mt-2 text-xs leading-6 text-gray-500">
                 Wallets are saved here permanently once they complete every live coFounder pass quest. If you add new pass tasks later, the quest-page message can disappear, but these whitelist addresses stay in the database.
               </p>
               <div className="mt-3 space-y-2">
                 {cofounderWhitelist.length === 0 ? (
-                  <div className="rounded-2xl border border-dashed border-white/10 bg-black/20 px-4 py-4 text-sm text-gray-400">
+                  <div className="rounded-2xl border border-dashed border-gray-200 bg-white px-4 py-4 text-sm text-gray-500">
                     No wallets have been whitelisted yet.
                   </div>
                 ) : (
                   cofounderWhitelist.map((entry) => (
                     <div
                       key={entry.id}
-                      className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3"
+                      className="rounded-2xl border border-gray-200 bg-white px-4 py-3"
                     >
-                      <p className="text-sm font-medium text-white">{entry.wallet_address}</p>
-                      <p className="mt-1 text-xs text-gray-400">
+                      <p className="text-sm font-medium text-gray-900">{entry.wallet_address}</p>
+                      <p className="mt-1 text-xs text-gray-500">
                         Added {new Date(entry.created_at).toLocaleString()}
                       </p>
                     </div>
