@@ -63,8 +63,9 @@ export default function SwapPageClient() {
       },
       walletConfig: {
         onConnect: () => {
-          open();
+          open?.();
         },
+        usePartialWalletManagement: true,
       },
       chains: {
         allow: [
@@ -89,6 +90,32 @@ export default function SwapPageClient() {
           <OpenOceanWidget integrator="DustSwap" config={config as any} />
         </div>
       </div>
+      <style jsx global>{`
+        @media (max-width: 640px) {
+          .dustswap-openocean-widget .MuiInputAdornment-positionEnd {
+            margin-left: 8px;
+            align-self: center;
+          }
+
+          .dustswap-openocean-widget .MuiInputAdornment-positionEnd .MuiButtonBase-root,
+          .dustswap-openocean-widget .MuiInputAdornment-positionEnd .MuiButton-root,
+          .dustswap-openocean-widget .MuiInputAdornment-positionEnd button {
+            min-width: 0 !important;
+            min-height: 0 !important;
+            width: auto !important;
+            height: 32px !important;
+            padding: 0 10px !important;
+            border-radius: 10px !important;
+            font-size: 11px !important;
+            line-height: 1 !important;
+          }
+
+          .dustswap-openocean-widget .MuiFormHelperText-root {
+            margin-left: 0 !important;
+            white-space: nowrap !important;
+          }
+        }
+      `}</style>
     </main>
   );
 }
