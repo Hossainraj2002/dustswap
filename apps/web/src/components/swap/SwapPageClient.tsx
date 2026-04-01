@@ -83,14 +83,49 @@ export default function SwapPageClient() {
   );
 
   return (
-    <main className="flex min-h-[calc(100vh-100px)] flex-col items-center justify-center bg-transparent px-1 sm:px-4 py-6 sm:py-8 overflow-x-hidden">
-      {/* On very small mobile screens, the OpenOcean widget internal elements can overflow. 
-          We guarantee a min-width for the widget to render properly, and scale it down to fit the screen. */}
-      <div className="mx-auto w-full max-w-lg origin-top flex justify-center max-[420px]:scale-[0.9] max-[380px]:scale-[0.85] max-[340px]:scale-[0.75]">
-        <div className="w-full min-w-[380px] sm:min-w-[400px]">
+    <main className="flex min-h-[calc(100vh-100px)] flex-col items-center justify-center bg-transparent px-2 sm:px-4 py-6 sm:py-8 overflow-x-hidden">
+      <div className="mx-auto flex w-full max-w-[400px] justify-center max-[359px]:origin-top max-[359px]:scale-[0.96]">
+        <div className="dustswap-openocean-widget w-full min-w-0">
           <OpenOceanWidget integrator="DustSwap" config={config as any} />
         </div>
       </div>
+      <style jsx global>{`
+        @media (max-width: 420px) {
+          .dustswap-openocean-widget .MuiInputBase-root {
+            min-width: 0;
+          }
+
+          .dustswap-openocean-widget .MuiInputBase-input {
+            min-width: 0 !important;
+            font-size: 18px !important;
+            line-height: 1.2 !important;
+            padding-left: 8px !important;
+          }
+
+          .dustswap-openocean-widget .MuiInputAdornment-positionEnd {
+            margin-left: 8px;
+            align-self: flex-start;
+          }
+
+          .dustswap-openocean-widget .MuiButton-root {
+            padding: 4px 8px;
+            font-size: 12px;
+          }
+
+          .dustswap-openocean-widget .MuiFormHelperText-root {
+            flex-wrap: wrap;
+            justify-content: flex-end;
+            row-gap: 2px;
+            white-space: normal !important;
+          }
+
+          .dustswap-openocean-widget .MuiFormHelperText-root .MuiTypography-root {
+            min-width: 0;
+            font-size: 11px;
+            line-height: 1.2;
+          }
+        }
+      `}</style>
     </main>
   );
 }

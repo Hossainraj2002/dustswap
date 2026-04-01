@@ -306,6 +306,13 @@ function resolveCallsId(result: unknown) {
     }
   }
 
+  if (result && typeof result === "object" && "batchId" in result) {
+    const value = (result as { batchId?: unknown }).batchId;
+    if (typeof value === "string" && value.trim()) {
+      return normalizeCallId(value);
+    }
+  }
+
   return "";
 }
 
@@ -778,9 +785,10 @@ export function useSwapCapture() {
                   method: "wallet_sendCalls",
                   params: [
                     {
-                      version: "1.0",
+                      version: "2.0.0",
                       chainId: toHexChainId(resolvedChainId),
                       from: resolvedAddress,
+                      atomicRequired: true,
                       calls: [
                         {
                           to: String(request.to),
