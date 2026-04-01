@@ -83,15 +83,67 @@ export default function SwapPageClient() {
   );
 
   return (
-    <main className="flex min-h-[calc(100vh-100px)] flex-col items-center justify-center bg-transparent px-2 sm:px-4 py-6 sm:py-8 overflow-x-hidden">
-      <div className="mx-auto flex w-full max-w-[400px] justify-center max-[359px]:origin-top max-[359px]:scale-[0.96]">
+    <main className="flex min-h-[calc(100vh-100px)] flex-col items-center justify-center bg-transparent px-0 sm:px-4 py-6 sm:py-8 overflow-x-hidden">
+      <div className="mx-auto flex w-full max-w-[420px] justify-center">
         <div className="dustswap-openocean-widget w-full min-w-0">
           <OpenOceanWidget integrator="DustSwap" config={config as any} />
         </div>
       </div>
       <style jsx global>{`
         @media (max-width: 420px) {
+          .dustswap-openocean-widget,
+          .dustswap-openocean-widget > .MuiBox-root,
+          .dustswap-openocean-widget > .MuiBox-root > .MuiBox-root {
+            width: 100%;
+            max-width: 100% !important;
+          }
+
+          .dustswap-openocean-widget > .MuiBox-root > .MuiBox-root {
+            min-width: 0 !important;
+          }
+
+          .dustswap-openocean-widget .MuiContainer-root {
+            padding-left: 12px;
+            padding-right: 12px;
+          }
+
+          .dustswap-openocean-widget .MuiCardContent-root > .MuiBox-root {
+            align-items: flex-start;
+            gap: 8px;
+          }
+
+          .dustswap-openocean-widget .MuiCardContent-root > .MuiBox-root > .MuiBox-root:first-child {
+            flex: 0.85 1 0%;
+            min-width: 0;
+          }
+
+          .dustswap-openocean-widget .MuiCardContent-root > .MuiBox-root > .MuiBox-root:last-child {
+            flex: 1.15 1 0%;
+            min-width: 0;
+          }
+
+          .dustswap-openocean-widget .MuiCardHeader-root {
+            width: 100% !important;
+            min-width: 0;
+            padding: 12px 8px 12px 12px;
+          }
+
+          .dustswap-openocean-widget .MuiCardHeader-content {
+            min-width: 0;
+          }
+
+          .dustswap-openocean-widget .MuiCardHeader-content .MuiTypography-root {
+            min-width: 0;
+          }
+
+          .dustswap-openocean-widget .MuiCardContent-root > .MuiBox-root > .MuiBox-root:last-child > .MuiBox-root {
+            width: 100%;
+            padding: 12px 12px 8px 4px;
+          }
+
+          .dustswap-openocean-widget .MuiFormControl-root,
           .dustswap-openocean-widget .MuiInputBase-root {
+            width: 100%;
             min-width: 0;
           }
 
@@ -99,11 +151,11 @@ export default function SwapPageClient() {
             min-width: 0 !important;
             font-size: 18px !important;
             line-height: 1.2 !important;
-            padding-left: 8px !important;
+            padding-left: 0 !important;
           }
 
           .dustswap-openocean-widget .MuiInputAdornment-positionEnd {
-            margin-left: 8px;
+            margin-left: 6px;
             align-self: flex-start;
           }
 
@@ -114,8 +166,9 @@ export default function SwapPageClient() {
 
           .dustswap-openocean-widget .MuiFormHelperText-root {
             flex-wrap: wrap;
-            justify-content: flex-end;
+            justify-content: space-between;
             row-gap: 2px;
+            margin-left: 0;
             white-space: normal !important;
           }
 
