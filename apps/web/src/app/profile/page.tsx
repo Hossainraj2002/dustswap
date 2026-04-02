@@ -85,6 +85,32 @@ function isTxHash(value: unknown): value is `0x${string}` {
   return typeof value === "string" && /^0x[a-fA-F0-9]{64}$/.test(value);
 }
 
+function toHexChainId(chainId: number) {
+  return `0x${chainId.toString(16)}`;
+}
+
+function resolveSendCallsId(result: unknown) {
+  if (typeof result === "string" && result.trim()) {
+    return result;
+  }
+
+  if (result && typeof result === "object" && "id" in result) {
+    const value = (result as { id?: unknown }).id;
+    if (typeof value === "string" && value.trim()) {
+      return value;
+    }
+  }
+
+  if (result && typeof result === "object" && "batchId" in result) {
+    const value = (result as { batchId?: unknown }).batchId;
+    if (typeof value === "string" && value.trim()) {
+      return value;
+    }
+  }
+
+  return "";
+}
+
 function formatNumber(value: number) {
   return value.toLocaleString();
 }
@@ -416,9 +442,37 @@ function ProfilePageContent() {
             })
           : undefined;
       const txValue = asset === "usdc" ? 0n : BigInt(config.ethAmountWei);
+      const requestClient = walletClient as typeof walletClient & {
+        account?: { address?: `0x${string}` };
+        request?: (args: { method: string; params?: unknown[] }) => Promise<unknown>;
+      };
 
       if (isPaymasterEnabled()) {
         try {
+          const capabilitiesResult =
+            requestClient.account?.address
+              ? ((await requestClient.request({
+                  method: "wallet_getCapabilities",
+                  params: [requestClient.account.address],
+                })) as Record<
+                  string,
+                  {
+                    paymasterService?: {
+                      supported?: boolean;
+                    };
+                  }
+                > | null)
+              : null;
+          const chainCapabilities = capabilitiesResult
+            ? Object.entries(capabilitiesResult).find(
+                ([candidate]) => candidate.toLowerCase() === toHexChainId(BASE_CHAIN_ID).toLowerCase()
+              )?.[1]
+            : null;
+
+          if (!chainCapabilities?.paymasterService?.supported) {
+            throw new Error("wallet paymasterService capability is unavailable");
+          }
+
           const sendCallsResult = await walletClient.sendCalls({
             calls: [
               {
@@ -429,11 +483,9 @@ function ProfilePageContent() {
               },
             ],
             capabilities: buildBasePaymasterCapabilities(),
-            experimental_fallback: true,
           } as any);
 
-          const callId =
-            typeof sendCallsResult === "string" ? sendCallsResult : sendCallsResult?.id;
+          const callId = resolveSendCallsId(sendCallsResult);
           if (!callId) {
             throw new Error("wallet_sendCalls did not return an id");
           }
