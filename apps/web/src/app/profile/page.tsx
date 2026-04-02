@@ -665,31 +665,116 @@ function ProfilePageContent() {
 
   if (!isConnected) {
     return (
-      <div className="mx-auto flex min-h-[calc(100vh-4rem)] max-w-2xl items-center justify-center px-4 py-8">
-        <section className="flex w-full flex-col items-center justify-center rounded-[32px] border border-white/80 bg-white/60 p-8 text-center shadow-[0_24px_80px_rgba(15,23,42,0.08)] backdrop-blur-xl sm:p-12">
-          <div className="flex h-[84px] items-center justify-center rounded-[24px] border border-white/90 bg-white/80 px-6 shadow-[0_14px_40px_rgba(148,163,184,0.12)] backdrop-blur-xl">
-            <Image
-              src="/longlogo.png"
-              alt="DustSwap"
-              width={170}
-              height={40}
-              priority
-              className="h-auto w-full max-w-[150px] sm:max-w-[170px]"
-            />
+      <div className="relative min-h-[calc(100vh-4rem)] overflow-hidden">
+
+        {/* ── Layer 1: Blurred fake profile background ── */}
+        <div
+          aria-hidden="true"
+          className="pointer-events-none select-none min-h-[calc(100vh-4rem)] bg-[radial-gradient(circle_at_top_left,rgba(56,189,248,0.14),transparent_28%),radial-gradient(circle_at_top_right,rgba(251,191,36,0.12),transparent_22%),linear-gradient(180deg,#f8fafc,#fef7ed_45%,#eff6ff)] px-3 py-4 pb-16 sm:px-6 sm:py-8 blur-sm opacity-60"
+        >
+          <div className="mx-auto flex w-full max-w-4xl flex-col gap-3 sm:gap-5">
+
+            {/* Profile card skeleton */}
+            <div className="rounded-[28px] border border-white/70 bg-white/82 px-4 py-3 shadow-[0_20px_70px_rgba(15,23,42,0.08)] backdrop-blur sm:px-5 sm:py-4">
+              <div className="flex items-center gap-3">
+                <div className="flex h-11 w-11 items-center justify-center rounded-[14px] border border-sky-200 bg-[linear-gradient(135deg,#38bdf8,#0ea5e9)] text-base font-black text-white shadow-[0_10px_28px_rgba(14,165,233,0.22)]">
+                  0x
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-[9px] font-black uppercase tracking-[0.32em] text-slate-500">Profile Hub</p>
+                  <div className="mt-1 h-5 w-32 rounded-full bg-slate-200" />
+                  <div className="mt-1 h-3 w-20 rounded-full bg-slate-100" />
+                </div>
+              </div>
+              <div className="mt-3 grid grid-cols-2 gap-2">
+                {(["sky", "amber", "sky", "emerald"] as const).map((accent, i) => {
+                  const cls = {
+                    sky: "border-sky-200 bg-sky-50",
+                    amber: "border-amber-200 bg-amber-50",
+                    emerald: "border-emerald-200 bg-emerald-50",
+                  }[accent];
+                  const labels = ["Total PP", "Rank", "All-Time Volume", "Total Referrals"];
+                  return (
+                    <div key={i} className={`rounded-[20px] border px-3 py-3 ${cls}`}>
+                      <p className="text-[10px] font-black uppercase tracking-[0.22em] opacity-70">{labels[i]}</p>
+                      <div className="mt-1.5 h-6 w-14 rounded-full bg-slate-200/80" />
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Daily Check-In skeleton */}
+            <div className="rounded-[28px] border border-white/70 bg-white/82 px-4 py-4 shadow-[0_20px_70px_rgba(15,23,42,0.08)] sm:px-5 sm:py-5">
+              <div className="h-2.5 w-24 rounded-full bg-slate-200" />
+              <div className="mt-2 h-6 w-36 rounded-full bg-slate-200" />
+              <div className="mt-3 grid grid-cols-3 gap-2">
+                <div className="h-14 rounded-[18px] bg-sky-50 border border-sky-100" />
+                <div className="h-14 rounded-[18px] bg-amber-50 border border-amber-100" />
+                <div className="h-14 rounded-[18px] bg-emerald-50 border border-emerald-100" />
+              </div>
+              <div className="mt-3 h-11 w-full rounded-[20px] bg-slate-100" />
+            </div>
+
+            {/* Referral Vault skeleton */}
+            <div className="rounded-[28px] border border-white/70 bg-white/82 px-4 py-3 shadow-[0_20px_70px_rgba(15,23,42,0.08)] sm:px-5 sm:py-4">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <div className="h-2 w-16 rounded-full bg-slate-200" />
+                  <div className="mt-1.5 h-4 w-44 rounded-full bg-slate-200" />
+                </div>
+                <div className="flex gap-2">
+                  <div className="h-12 w-16 rounded-[14px] border border-sky-100 bg-sky-50" />
+                  <div className="h-12 w-16 rounded-[14px] border border-emerald-100 bg-emerald-50" />
+                </div>
+              </div>
+              <div className="mt-2.5 h-16 w-full rounded-[18px] border border-slate-200 bg-slate-50" />
+            </div>
+
+            {/* FAQ skeleton */}
+            <div className="rounded-[28px] border border-white/70 bg-[linear-gradient(180deg,#fffdf8,#f8fbff)] px-4 py-3 shadow-[0_20px_70px_rgba(15,23,42,0.08)] sm:px-5 sm:py-4">
+              <div className="h-2 w-8 rounded-full bg-slate-200" />
+              <div className="mt-1.5 h-4 w-44 rounded-full bg-slate-200" />
+              <div className="mt-2.5 space-y-2">
+                {[0, 1, 2, 3, 4].map((i) => (
+                  <div key={i} className="rounded-[18px] border border-white/80 bg-white/80 px-3.5 py-3">
+                    <div className={`h-3 rounded-full bg-slate-200 ${i % 2 === 0 ? "w-3/4" : "w-2/3"}`} />
+                  </div>
+                ))}
+              </div>
+            </div>
+
           </div>
-          <h2 className="mt-8 text-2xl font-black tracking-tight text-slate-950 sm:text-3xl">
-            Connect your wallet to start your journey at DustSwap
-          </h2>
-          <p className="mt-3 max-w-md text-sm leading-6 text-slate-500 sm:text-base">
-            Use <span aria-hidden="true">&bull;</span> Contribute{" "}
-            <span aria-hidden="true">&bull;</span> Earn{" "}
-            <span aria-hidden="true">&bull;</span> Repeat.
-          </p>
-          <div className="mt-8 flex justify-center origin-center scale-105 sm:scale-110">
-            {/* @ts-ignore */}
-            <appkit-button />
-          </div>
-        </section>
+        </div>
+
+        {/* ── Layer 2: Glassmorphism connect overlay ── */}
+        <div className="absolute inset-0 flex items-center justify-center bg-gradient-to-b from-white/20 via-slate-100/30 to-white/40 px-4 backdrop-blur-[3px]">
+          <section className="flex w-full max-w-[340px] flex-col items-center rounded-[32px] border border-white/80 bg-white/78 p-8 text-center shadow-[0_32px_80px_rgba(15,23,42,0.16),inset_0_1px_0_rgba(255,255,255,0.9)] backdrop-blur-2xl sm:p-10">
+            <div className="flex h-[76px] items-center justify-center rounded-[22px] border border-white/90 bg-white/90 px-6 shadow-[0_12px_32px_rgba(148,163,184,0.14)] backdrop-blur-xl">
+              <Image
+                src="/longlogo.png"
+                alt="DustSwap"
+                width={160}
+                height={38}
+                priority
+                className="h-auto w-full max-w-[140px] sm:max-w-[160px]"
+              />
+            </div>
+            <h2 className="mt-7 text-xl font-black tracking-tight text-slate-950 sm:text-2xl">
+              Connect your wallet to start your journey at DustSwap
+            </h2>
+            <p className="mt-2.5 max-w-xs text-sm leading-6 text-slate-500">
+              Use <span aria-hidden="true">&bull;</span> Contribute{" "}
+              <span aria-hidden="true">&bull;</span> Earn{" "}
+              <span aria-hidden="true">&bull;</span> Repeat.
+            </p>
+            <div className="mt-7 flex origin-center justify-center scale-105 sm:scale-110">
+              {/* @ts-ignore */}
+              <appkit-button />
+            </div>
+          </section>
+        </div>
+
       </div>
     );
   }
