@@ -17,6 +17,7 @@ import type { QuestItem } from "@/types/quests";
 type CategoryFilter = "cofounder_pass" | "social" | "onchain";
 type PendingState = Record<string, boolean>;
 type PostInputState = Record<string, string>;
+type QuestInlineErrorState = Record<string, string>;
 
 const SYNC_NOW_EVENT = "dustswap:quest-sync-now";
 const SWAP_RECORDED_EVENT = "dustswap:quest-swap-recorded";
@@ -287,6 +288,7 @@ export function QuestBoard() {
   const [board, setBoard] = useState<Awaited<ReturnType<typeof fetchQuestBoard>> | null>(null);
   const [pending, setPending] = useState<PendingState>({});
   const [postInputs, setPostInputs] = useState<PostInputState>({});
+  const [questInlineErrors, setQuestInlineErrors] = useState<QuestInlineErrorState>({});
   const [xUsernameInput, setXUsernameInput] = useState("");
   const [isSavingXUsername, setIsSavingXUsername] = useState(false);
 
@@ -430,6 +432,25 @@ export function QuestBoard() {
     });
   }
 
+  function clearQuestInlineError(questId: string) {
+    setQuestInlineErrors((current) => {
+      if (!current[questId]) {
+        return current;
+      }
+
+      const next = { ...current };
+      delete next[questId];
+      return next;
+    });
+  }
+
+  function setQuestInlineError(questId: string, nextError: string) {
+    setQuestInlineErrors((current) => ({
+      ...current,
+      [questId]: nextError,
+    }));
+  }
+
   async function handleOnchainRefresh() {
     if (!address) {
       setError("Connect your wallet first");
@@ -510,6 +531,7 @@ export function QuestBoard() {
       }
 
       setXUsernameInput(response.username);
+      setQuestInlineErrors({});
       await refreshWithMessage(`X username saved as ${response.username}.`);
     } catch (saveError) {
       setError(getDisplayError(saveError));
@@ -591,20 +613,27 @@ export function QuestBoard() {
   }
 
   async function handleVerifyPost(quest: QuestItem) {
+    setError(null);
+    setMessage(null);
+    clearQuestInlineError(quest.id);
+
     if (!address) {
-      setError("Connect your wallet first");
+      setQuestInlineError(quest.id, "Connect your wallet first");
       return;
     }
 
     if (!isXLinked) {
-      setError("Add your X username first before verifying X quests.");
+      setQuestInlineError(
+        quest.id,
+        "Add your X username first before verifying X quests."
+      );
       focusXUsernameInput();
       return;
     }
 
     const postUrl = postInputs[quest.id]?.trim();
     if (!postUrl) {
-      setError("Paste your X post link first");
+      setQuestInlineError(quest.id, "Paste your X post link first");
       return;
     }
 
@@ -617,11 +646,12 @@ export function QuestBoard() {
       }
 
       setPostInputs((current) => ({ ...current, [quest.id]: "" }));
+      clearQuestInlineError(quest.id);
       await refreshWithMessage(
         `Post verified. You earned ${formatPoints(response.awardedPoints || 0)}.`
       );
     } catch (verifyError) {
-      setError(getDisplayError(verifyError));
+      setQuestInlineError(quest.id, getDisplayError(verifyError));
     } finally {
       setPending((current) => ({ ...current, [quest.id]: false }));
     }
@@ -634,6 +664,7 @@ export function QuestBoard() {
     const percent = getProgressPercent(progressValue, quest.targetValue);
     const isDone = Boolean(quest.progress?.completedAt);
     const isPending = Boolean(pending[quest.id]);
+    const inlineError = questInlineErrors[quest.id];
     const canVerifyDelay =
       quest.progress?.nextVerificationAt &&
       new Date(quest.progress.nextVerificationAt).getTime() <= Date.now();
@@ -729,11 +760,15 @@ export function QuestBoard() {
                 type="button"
                 onClick={() => {
                   if (xLocked) {
-                    setError("Add your X username first before opening X quests.");
+                    setQuestInlineError(
+                      quest.id,
+                      "Add your X username first before opening X quests."
+                    );
                     focusXUsernameInput();
                     return;
                   }
 
+                  clearQuestInlineError(quest.id);
                   if (questUrl) {
                     openExternal(questUrl);
                   }
@@ -746,14 +781,22 @@ export function QuestBoard() {
               <input
                 value={postInputs[quest.id] || ""}
                 onChange={(event) =>
-                  setPostInputs((current) => ({
-                    ...current,
-                    [quest.id]: event.target.value,
-                  }))
+                  {
+                    clearQuestInlineError(quest.id);
+                    setPostInputs((current) => ({
+                      ...current,
+                      [quest.id]: event.target.value,
+                    }));
+                  }
                 }
                 placeholder="Paste your X post link"
                 className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none placeholder:text-slate-400 focus:border-sky-300"
               />
+              {inlineError ? (
+                <p className="rounded-2xl border border-rose-200 bg-rose-50 px-3 py-2 text-[12px] font-medium leading-5 text-rose-700">
+                  {inlineError}
+                </p>
+              ) : null}
               <button
                 type="button"
                 onClick={() => void handleVerifyPost(quest)}

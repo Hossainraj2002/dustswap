@@ -393,6 +393,39 @@ function normalizeAddress(address: string) {
   return address.toLowerCase();
 }
 
+function getNormalizedLinkedXKeys(account: SocialAccountRecord) {
+  const candidates = new Set<string>();
+
+  const rawPlatformUserId = String(account.platform_user_id || "")
+    .trim()
+    .replace(/^@+/, "")
+    .toLowerCase();
+  if (rawPlatformUserId) {
+    candidates.add(rawPlatformUserId);
+  }
+
+  const rawUsername = String(account.username || "").trim();
+  if (rawUsername) {
+    try {
+      candidates.add(normalizeXUsernameInput(rawUsername).key);
+    } catch {
+      // Ignore malformed legacy usernames and fall back to platform_user_id.
+    }
+  }
+
+  return Array.from(candidates);
+}
+
+function getLinkedXUsernameDisplay(account: SocialAccountRecord) {
+  const rawUsername = String(account.username || "").trim();
+  if (rawUsername) {
+    return rawUsername.startsWith("@") ? rawUsername : `@${rawUsername}`;
+  }
+
+  const key = getNormalizedLinkedXKeys(account)[0];
+  return key ? `@${key}` : "@your_saved_x_username";
+}
+
 function extractPostId(input: string) {
   const trimmed = input.trim();
   if (/^\d+$/.test(trimmed)) {
@@ -1141,22 +1174,23 @@ export class QuestEngine {
       throw new Error("That X post is missing required data for verification");
     }
 
-    const author = (tweetJson.includes?.users || []).find(
-      (userRow) => userRow.id === tweet.author_id
-    );
+    const includedUsers = tweetJson.includes?.users || [];
+    const author =
+      includedUsers.find((userRow) => userRow.id === tweet.author_id) ||
+      includedUsers[0];
     const authorUsername = author?.username?.toLowerCase();
-    const savedUsername = String(
-      (accountData as SocialAccountRecord).platform_user_id || ""
-    ).toLowerCase();
+    const linkedAccount = accountData as SocialAccountRecord;
+    const savedUsernameKeys = getNormalizedLinkedXKeys(linkedAccount);
 
     if (!authorUsername) {
       throw new Error("That X post is missing author username data");
     }
 
-    if (authorUsername !== savedUsername) {
-      const enteredUsername =
-        String((accountData as SocialAccountRecord).username || "").trim() ||
-        `@${savedUsername}`;
+    if (
+      savedUsernameKeys.length === 0 ||
+      !savedUsernameKeys.includes(authorUsername)
+    ) {
+      const enteredUsername = getLinkedXUsernameDisplay(linkedAccount);
       throw new Error(
         `X username not match. Kindly post from ${enteredUsername} id and try verify again.`
       );
