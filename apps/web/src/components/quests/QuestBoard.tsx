@@ -994,7 +994,7 @@ export function QuestBoard() {
               </div>
               {cofounderCampaign.isComplete ? (
                 <div className="mt-3 rounded-2xl border border-emerald-200/90 bg-white/80 px-4 py-3 text-sm leading-6 text-emerald-800">
-                  You are locked into the coFounder pass whitelist. If new pass quests go live later, this success card will disappear until you finish them, but your saved whitelist address will stay in our database.
+                  You are locked into the coFounder pass whitelist.
                 </div>
               ) : null}
             </div>
