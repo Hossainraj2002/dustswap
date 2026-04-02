@@ -447,7 +447,7 @@ function ProfilePageContent() {
         request?: (args: { method: string; params?: unknown[] }) => Promise<unknown>;
       };
 
-      if (isPaymasterEnabled()) {
+      if (isPaymasterEnabled() && isCoinbaseWallet) {
         try {
           const capabilitiesResult =
             requestClient.account?.address
@@ -531,7 +531,7 @@ function ProfilePageContent() {
 
       return hash;
     },
-    [chainId, publicClient, walletClient]
+    [chainId, isCoinbaseWallet, publicClient, walletClient]
   );
 
   const sendBasePayTransaction = useCallback(async (config: FeeConfig) => {
@@ -699,11 +699,10 @@ function ProfilePageContent() {
       });
     } catch (error) {
       console.error(error);
+      const message = getErrorMessage(error);
       setToast({
         kind: "error",
-        message: usesBasePayForSave
-          ? getErrorMessage(error) || "Base Pay recovery failed. Try again."
-          : "Transaction failed. Try again to save your streak.",
+        message: message || "Transaction failed. Try again to save your streak.",
       });
     } finally {
       setRecoveryStage("idle");
