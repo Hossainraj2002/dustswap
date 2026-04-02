@@ -709,34 +709,34 @@ function ProfilePageContent() {
           </div>
         ) : null}
 
-        <section className="rounded-[28px] border border-white/70 bg-white/82 p-4 shadow-[0_20px_70px_rgba(15,23,42,0.08)] backdrop-blur sm:p-6">
+        <section className="rounded-[28px] border border-white/70 bg-white/82 px-4 py-3 shadow-[0_20px_70px_rgba(15,23,42,0.08)] backdrop-blur sm:px-5 sm:py-4">
           <div className="flex items-center gap-3">
             {profile?.pfp_url ? (
               <img
                 src={profile.pfp_url}
                 alt="Profile"
-                className="h-14 w-14 rounded-[18px] border border-white/70 object-cover shadow-[0_10px_28px_rgba(56,189,248,0.18)]"
+                className="h-11 w-11 rounded-[14px] border border-white/70 object-cover shadow-[0_10px_28px_rgba(56,189,248,0.18)]"
               />
             ) : (
-              <div className="flex h-14 w-14 items-center justify-center rounded-[18px] border border-sky-200 bg-[linear-gradient(135deg,#38bdf8,#0ea5e9)] text-lg font-black text-white shadow-[0_10px_28px_rgba(14,165,233,0.22)]">
+              <div className="flex h-11 w-11 items-center justify-center rounded-[14px] border border-sky-200 bg-[linear-gradient(135deg,#38bdf8,#0ea5e9)] text-base font-black text-white shadow-[0_10px_28px_rgba(14,165,233,0.22)]">
                 {address?.slice(2, 4)}
               </div>
             )}
 
             <div className="min-w-0">
-              <p className="text-[10px] font-black uppercase tracking-[0.32em] text-slate-500">
+              <p className="text-[9px] font-black uppercase tracking-[0.32em] text-slate-500">
                 Profile Hub
               </p>
-              <h1 className="mt-1 truncate text-2xl font-black tracking-tight text-slate-950">
+              <h1 className="truncate text-xl font-black tracking-tight text-slate-950">
                 {getDisplayName(profile, address)}
               </h1>
-              <p className="mt-1 truncate text-sm text-slate-600">
+              <p className="truncate text-xs text-slate-600">
                 {profile?.username ? `@${profile.username}` : shortAddress(address || "")}
               </p>
             </div>
           </div>
 
-          <div className="mt-4 grid grid-cols-2 gap-2.5">
+          <div className="mt-3 grid grid-cols-2 gap-2">
             <MiniMetric
               label="Total PP"
               value={`${formatNumber(balance?.totalPoints || 0)} PP`}
@@ -781,38 +781,34 @@ function ProfilePageContent() {
           onReset={() => void handleReset()}
         />
 
-        <section className="rounded-[28px] border border-white/70 bg-white/82 p-4 shadow-[0_20px_70px_rgba(15,23,42,0.08)] sm:p-6">
-          <p className="text-[10px] font-black uppercase tracking-[0.32em] text-slate-500">
-            Referral Vault
-          </p>
-          <h2 className="mt-2 text-2xl font-black tracking-tight text-slate-950">
-            Invite friends and stack the network
-          </h2>
-          <p className="mt-2 text-sm leading-6 text-slate-600">
-            Share your Base App link and earn 20% of your friends&apos; self-earned points.
-          </p>
-
-          <div className="mt-4 grid grid-cols-2 gap-2.5">
-            <MiniMetric
-              label="Friends Joined"
-              value={String(referral?.friendsJoined || 0)}
-              accent="sky"
-              isLoading={isLoading}
-            />
-            <MiniMetric
-              label="Referral Points"
-              value={`${formatNumber(referral?.pointsEarned || 0)} PP`}
-              accent="emerald"
-              isLoading={isLoading}
-            />
+        <section className="rounded-[28px] border border-white/70 bg-white/82 px-4 py-3 shadow-[0_20px_70px_rgba(15,23,42,0.08)] sm:px-5 sm:py-4">
+          <div className="flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-[9px] font-black uppercase tracking-[0.32em] text-slate-500">
+                Referral Vault
+              </p>
+              <h2 className="text-base font-black tracking-tight text-slate-950">
+                Invite friends, earn 20% of their points
+              </h2>
+            </div>
+            <div className="flex shrink-0 gap-2">
+              <div className="rounded-[14px] border border-sky-100 bg-sky-50 px-2.5 py-1.5 text-center">
+                <p className="text-[9px] font-black uppercase tracking-[0.2em] text-sky-500">Friends</p>
+                <p className="text-sm font-black text-sky-800">{String(referral?.friendsJoined || 0)}</p>
+              </div>
+              <div className="rounded-[14px] border border-emerald-100 bg-emerald-50 px-2.5 py-1.5 text-center">
+                <p className="text-[9px] font-black uppercase tracking-[0.2em] text-emerald-500">Ref PP</p>
+                <p className="text-sm font-black text-emerald-800">{formatNumber(referral?.pointsEarned || 0)}</p>
+              </div>
+            </div>
           </div>
 
-          <div className="mt-4 rounded-[22px] border border-slate-200 bg-[#f8fbff] p-3">
-            <p className="text-[10px] font-black uppercase tracking-[0.24em] text-slate-500">
+          <div className="mt-2.5 rounded-[18px] border border-slate-200 bg-[#f8fbff] p-2.5">
+            <p className="text-[9px] font-black uppercase tracking-[0.24em] text-slate-500">
               Your Link
             </p>
-            <div className="mt-2 flex flex-col gap-2 sm:flex-row">
-              <div className="flex-1 break-all rounded-[16px] border border-slate-200 bg-white px-3 py-3 font-mono text-[11px] font-semibold leading-5 text-sky-700">
+            <div className="mt-1.5 flex flex-col gap-2 sm:flex-row">
+              <div className="flex-1 break-all rounded-[12px] border border-slate-200 bg-white px-2.5 py-2 font-mono text-[11px] font-semibold leading-5 text-sky-700">
                 {referralLink || "LOADING..."}
               </div>
               <button
@@ -826,7 +822,7 @@ function ProfilePageContent() {
                   setToast({ kind: "success", message: "Referral link copied." });
                   window.setTimeout(() => setIsCopied(false), 1800);
                 }}
-                className="rounded-[16px] bg-[linear-gradient(135deg,#0ea5e9,#22c55e)] px-4 py-3 text-sm font-black text-white shadow-[0_14px_32px_rgba(14,165,233,0.18)] transition hover:-translate-y-0.5"
+                className="rounded-[12px] bg-[linear-gradient(135deg,#0ea5e9,#22c55e)] px-4 py-2 text-sm font-black text-white shadow-[0_8px_20px_rgba(14,165,233,0.18)] transition hover:-translate-y-0.5"
               >
                 {isCopied ? "Copied!" : "Copy Link"}
               </button>
@@ -834,44 +830,37 @@ function ProfilePageContent() {
           </div>
         </section>
 
-        <section className="rounded-[28px] border border-white/70 bg-[radial-gradient(circle_at_top_right,rgba(56,189,248,0.12),transparent_28%),linear-gradient(180deg,#fffdf8,#f8fbff)] p-4 shadow-[0_20px_70px_rgba(15,23,42,0.08)] sm:p-6">
-          <div className="flex items-start justify-between gap-3">
+        <section className="rounded-[28px] border border-white/70 bg-[radial-gradient(circle_at_top_right,rgba(56,189,248,0.12),transparent_28%),linear-gradient(180deg,#fffdf8,#f8fbff)] px-4 py-3 shadow-[0_20px_70px_rgba(15,23,42,0.08)] sm:px-5 sm:py-4">
+          <div className="flex items-center justify-between gap-3">
             <div>
-              <p className="text-[10px] font-black uppercase tracking-[0.32em] text-slate-500">
+              <p className="text-[9px] font-black uppercase tracking-[0.32em] text-slate-500">
                 FAQ
               </p>
-              <h2 className="mt-2 text-2xl font-black tracking-tight text-slate-950">
+              <h2 className="text-base font-black tracking-tight text-slate-950">
                 DustSwap quick answers
               </h2>
-              <p className="mt-2 text-sm leading-6 text-slate-600">
-                Everything new users usually want to know, in one place.
-              </p>
-            </div>
-
-            <div className="hidden rounded-full border border-white/80 bg-white/80 px-3 py-2 text-xs font-semibold text-slate-500 shadow-[inset_0_1px_0_rgba(255,255,255,0.8)] sm:block">
-              Swipe less
             </div>
           </div>
 
-          <div className="mt-4 space-y-3">
+          <div className="mt-2.5 space-y-2">
             {PROFILE_FAQ_ITEMS.map((item) => (
               <details
                 key={item.question}
-                className="group rounded-[22px] border border-white/80 bg-white/80 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.78)]"
+                className="group rounded-[18px] border border-white/80 bg-white/80 px-3.5 py-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.78)]"
               >
                 <summary className="flex cursor-pointer list-none items-center justify-between gap-3">
-                  <span className="text-sm font-black tracking-tight text-slate-900 sm:text-base">
+                  <span className="text-xs font-black tracking-tight text-slate-900 sm:text-sm">
                     {item.question}
                   </span>
-                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-white text-lg font-medium text-slate-500 transition-transform group-open:rotate-45">
+                  <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-white text-base font-medium text-slate-500 transition-transform group-open:rotate-45">
                     +
                   </span>
                 </summary>
 
-                <ul className="mt-4 space-y-2 border-t border-slate-200/80 pt-4 text-sm leading-6 text-slate-600">
+                <ul className="mt-2.5 space-y-1.5 border-t border-slate-200/80 pt-2.5 text-xs leading-5 text-slate-600">
                   {item.answers.map((answer) => (
                     <li key={answer} className="flex gap-2">
-                      <span className="mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full bg-sky-400" />
+                      <span className="mt-[5px] h-1.5 w-1.5 shrink-0 rounded-full bg-sky-400" />
                       <span>{answer}</span>
                     </li>
                   ))}
