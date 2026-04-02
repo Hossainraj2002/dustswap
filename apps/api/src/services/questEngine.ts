@@ -28,6 +28,7 @@ type QuestRules = {
   fakeFailureCount?: number;
   requiredMention?: string;
   requiredMentionsAny?: string[];
+  requiredAnyOf?: string[];
   requiredHashtags?: string[];
   requiredLinks?: string[];
   composeText?: string;
@@ -428,6 +429,41 @@ function listHashtagCandidates(tweet: any): string[] {
     .map((item) => item?.tag)
     .filter(Boolean)
     .map((value) => normalizeHashtagValue(String(value)));
+}
+
+function matchesRequiredXToken(args: {
+  token: string;
+  text: string;
+  mentionCandidates: string[];
+  hashtagCandidates: string[];
+  urlCandidates: string[];
+}) {
+  const normalizedToken = String(args.token || "").trim();
+  if (!normalizedToken) {
+    return false;
+  }
+
+  if (normalizedToken.startsWith("@")) {
+    const normalizedMention = normalizeMentionValue(normalizedToken);
+    return (
+      args.mentionCandidates.includes(normalizedMention) ||
+      includesToken(args.text, normalizedToken)
+    );
+  }
+
+  if (normalizedToken.startsWith("#")) {
+    const normalizedHashtag = normalizeHashtagValue(normalizedToken);
+    return (
+      args.hashtagCandidates.includes(normalizedHashtag) ||
+      includesToken(args.text, normalizedToken)
+    );
+  }
+
+  const lowered = normalizedToken.toLowerCase();
+  return (
+    includesToken(args.text, lowered) ||
+    args.urlCandidates.some((candidate) => candidate.includes(lowered))
+  );
 }
 
 function listUrlCandidates(tweet: any): string[] {
@@ -1027,7 +1063,8 @@ export class QuestEngine {
     const quest = await this.getQuestById(questId);
     const rules = safeRules(quest.rules);
     const user = await pointsEngine.getOrCreate(address);
-    const cycleKey = getCycleKey(quest.progress_window, getNow());
+    const now = getNow();
+    const cycleKey = getCycleKey(quest.progress_window, now);
 
     const { data: accountData, error: accountError } = await supabase
       .from("social_accounts")
@@ -1044,6 +1081,18 @@ export class QuestEngine {
     if (!postId) {
       throw new Error("Enter a valid X post link");
     }
+
+    await this.upsertProgress({
+      userId: user.id,
+      quest,
+      cycleKey,
+      updates: {
+        status: "in_progress",
+        progress: 0,
+        target_value: quest.target_value,
+        opened_at: now.toISOString(),
+      },
+    });
 
     const lookupUrl = new URL(`https://api.x.com/2/tweets/${postId}`);
     lookupUrl.searchParams.set(
@@ -1105,13 +1154,21 @@ export class QuestEngine {
     }
 
     if (authorUsername !== savedUsername) {
-      throw new Error("That post was not authored by your saved X username");
+      const enteredUsername =
+        String((accountData as SocialAccountRecord).username || "").trim() ||
+        `@${savedUsername}`;
+      throw new Error(
+        `X username not match. Kindly post from ${enteredUsername} id and try verify again.`
+      );
     }
 
     const text = tweet.text;
     const requiredMention = String(rules.requiredMention || "").trim();
     const requiredMentionsAny = Array.isArray(rules.requiredMentionsAny)
       ? rules.requiredMentionsAny.map((value) => String(value).trim()).filter(Boolean)
+      : [];
+    const requiredAnyOf = Array.isArray(rules.requiredAnyOf)
+      ? rules.requiredAnyOf.map((value) => String(value).trim()).filter(Boolean)
       : [];
     const requiredHashtags = Array.isArray(rules.requiredHashtags)
       ? rules.requiredHashtags.map((value) => String(value))
@@ -1122,34 +1179,28 @@ export class QuestEngine {
     const urlCandidates = listUrlCandidates(tweet);
     const mentionCandidates = listMentionCandidates(tweet);
     const hashtagCandidates = listHashtagCandidates(tweet);
+    const fallbackAnyOf = [
+      ...requiredAnyOf,
+      ...requiredMentionsAny,
+      ...requiredHashtags,
+      ...(requiredMention ? [requiredMention] : []),
+    ].filter(Boolean);
 
-    if (requiredMention && !includesToken(text, requiredMention)) {
-      throw new Error(`Your post must include ${requiredMention}`);
-    }
+    if (fallbackAnyOf.length > 0) {
+      const matchedAnyOf = fallbackAnyOf.some((token) =>
+        matchesRequiredXToken({
+          token,
+          text,
+          mentionCandidates,
+          hashtagCandidates,
+          urlCandidates,
+        })
+      );
 
-    if (requiredMentionsAny.length > 0) {
-      const matchedMention = requiredMentionsAny.some((mention) => {
-        const normalized = normalizeMentionValue(mention);
-        return (
-          mentionCandidates.includes(normalized) ||
-          includesToken(text, mention)
-        );
-      });
-
-      if (!matchedMention) {
+      if (!matchedAnyOf) {
         throw new Error(
-          `Your post must mention ${requiredMentionsAny.join(" or ")}`
+          `Required # or @ not found. Kindly add ${fallbackAnyOf.join(" ")} at least one.`
         );
-      }
-    }
-
-    for (const hashtag of requiredHashtags) {
-      const normalized = normalizeHashtagValue(hashtag);
-      const matched =
-        hashtagCandidates.includes(normalized) ||
-        includesToken(text, hashtag);
-      if (!matched) {
-        throw new Error(`Your post must include ${hashtag}`);
       }
     }
 

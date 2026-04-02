@@ -379,7 +379,7 @@ INSERT INTO quests (
     'published',
     true,
     40,
-    '{"requiredMentionsAny":["@dustswaponbase","@akbarx402"],"requiredHashtags":["#dustswaponbase"],"composeText":"Posting about @dustswaponbase #dustswaponbase"}'::jsonb
+    '{"requiredAnyOf":["@dustswaponbase","#dustswaponbase","@akbarx402"],"composeText":"Posting about @dustswaponbase #dustswaponbase"}'::jsonb
   ),
   (
     'x-follow-soft',
@@ -550,7 +550,7 @@ INSERT INTO quests (
     'published',
     true,
     50,
-    '{"requiredMentionsAny":["@dustswaponbase","@akbarx402"],"requiredHashtags":["#dustswaponbase"],"composeText":"Posting about @dustswaponbase #dustswaponbase"}'::jsonb
+    '{"requiredAnyOf":["@dustswaponbase","#dustswaponbase","@akbarx402"],"composeText":"Posting about @dustswaponbase #dustswaponbase"}'::jsonb
   )
 ON CONFLICT (slug) DO UPDATE SET
   title = EXCLUDED.title,

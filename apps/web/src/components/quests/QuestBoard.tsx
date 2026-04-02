@@ -56,6 +56,30 @@ function formatXUsernameDisplay(value?: string | null) {
   return value.startsWith("@") ? value : `@${value}`;
 }
 
+function getPostRequirementHint(quest: QuestItem) {
+  const ruleTokens = Array.isArray(quest.rules.requiredAnyOf)
+    ? quest.rules.requiredAnyOf
+    : [
+        ...(Array.isArray(quest.rules.requiredMentionsAny)
+          ? quest.rules.requiredMentionsAny
+          : []),
+        ...(Array.isArray(quest.rules.requiredHashtags)
+          ? quest.rules.requiredHashtags
+          : []),
+        ...(quest.rules.requiredMention ? [quest.rules.requiredMention] : []),
+      ];
+
+  const cleaned = ruleTokens
+    .map((value) => String(value).trim())
+    .filter(Boolean);
+
+  if (cleaned.length === 0) {
+    return null;
+  }
+
+  return `Add at least one: ${cleaned.join("  ")}`;
+}
+
 function formatWindowLabel(windowType: QuestItem["progressWindow"]) {
   if (windowType === "daily") {
     return "Daily";
@@ -615,6 +639,7 @@ export function QuestBoard() {
       new Date(quest.progress.nextVerificationAt).getTime() <= Date.now();
     const isXQuest = quest.platform === "x";
     const xLocked = isXQuest && !isXLinked;
+    const postRequirementHint = getPostRequirementHint(quest);
     const primaryLabel = xLocked
       ? "Add X Username First"
       : quest.ctaLabel || (quest.category === "onchain" ? "Open Swap" : "Open Task");
@@ -693,6 +718,11 @@ export function QuestBoard() {
               {quest.rules.composeText ? (
                 <p className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-[12px] leading-5 text-slate-600">
                   {quest.rules.composeText}
+                </p>
+              ) : null}
+              {postRequirementHint ? (
+                <p className="rounded-2xl border border-rose-200 bg-rose-50 px-3 py-2 text-[12px] font-medium leading-5 text-rose-700">
+                  {postRequirementHint}
                 </p>
               ) : null}
               <button

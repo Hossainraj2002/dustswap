@@ -62,8 +62,7 @@ const EMPTY_FORM: AdminQuestInput = {
 function getRulesExample(form: AdminQuestInput) {
   if (form.verificationType === "x_post_link") {
     return `{
-  "requiredMentionsAny": ["@dustswaponbase", "@akbarx402"],
-  "requiredHashtags": ["#dustswaponbase"],
+  "requiredAnyOf": ["@dustswaponbase", "#dustswaponbase", "@akbarx402"],
   "composeText": "Just posted about @dustswaponbase #dustswaponbase"
 }`;
   }
@@ -446,7 +445,7 @@ export default function AdminQuestsPage() {
                 {
                   key: "verificationType",
                   label: "Verification",
-                  help: "Defines how the backend confirms completion. swap_volume reads swap progress, x_post_link checks a pasted tweet URL against the saved X username plus required mentions and hashtags, delay_gate waits 20 seconds, and delay_gate_retry adds the fake first failure behavior.",
+                  help: "Defines how the backend confirms completion. swap_volume reads swap progress, x_post_link checks a pasted tweet URL against the saved X username plus your any-of tag or mention rules, delay_gate waits 20 seconds, and delay_gate_retry adds the fake first failure behavior.",
                   options: ["swap_volume", "x_post_link", "delay_gate", "delay_gate_retry"],
                 },
                 {
@@ -588,7 +587,7 @@ export default function AdminQuestsPage() {
             <label className="mt-4 block">
               <HelpLabel
                 label="Rules JSON"
-                help="Advanced per-quest config. For post verification you can require one of several mentions with requiredMentionsAny, require hashtags with requiredHashtags, and suggest text with composeText. The example below changes automatically based on the current quest type."
+                help="Advanced per-quest config. For post verification you can require any one acceptable X tag or mention with requiredAnyOf, and suggest text with composeText. The example below changes automatically based on the current quest type."
                 example={rulesExample}
               />
               <textarea
@@ -604,8 +603,7 @@ export default function AdminQuestsPage() {
               <p className="mt-1">
                 <code>delaySeconds</code> controls the wait time before verify.
                 <code className="ml-1">fakeFailureCount</code> is only for the follow-style fake first failure.
-                <code className="ml-1">requiredMentionsAny</code> means any one of those X mentions is accepted.
-                <code className="ml-1">requiredHashtags</code> means all listed hashtags are required.
+                <code className="ml-1">requiredAnyOf</code> means the post only needs one of those allowed X mentions or hashtags.
                 <code className="ml-1">x_post_link</code> also checks that the tweet author username matches the X username saved by the wallet.
                 <code className="ml-1">externalUrl</code> is the page users open.
                 <code className="ml-1">source</code> is used for onchain swap tracking.
