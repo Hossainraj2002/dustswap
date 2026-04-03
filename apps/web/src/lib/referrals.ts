@@ -66,3 +66,25 @@ export function isTerminalReferralError(message?: string) {
     normalized.includes("cannot self-refer")
   );
 }
+
+// ── Referral onboarding modal dismiss state ───────────────────────────────
+// Completely separate from the pendingReferralCode link-based flow.
+const REFERRAL_ONBOARDING_DISMISSED_PREFIX = "dustswap:referral-onboarding-dismissed";
+
+function getReferralOnboardingDismissedKey(address: string) {
+  return `${REFERRAL_ONBOARDING_DISMISSED_PREFIX}:${address.toLowerCase()}`;
+}
+
+export function isReferralOnboardingDismissed(address: string): boolean {
+  if (typeof window === "undefined") {
+    return false;
+  }
+  return window.localStorage.getItem(getReferralOnboardingDismissedKey(address)) === "1";
+}
+
+export function setReferralOnboardingDismissed(address: string): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+  window.localStorage.setItem(getReferralOnboardingDismissedKey(address), "1");
+}

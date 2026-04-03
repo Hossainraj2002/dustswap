@@ -1843,6 +1843,7 @@ export class PointsEngine {
         referral: {
           success: true,
           code: user.referral_code,
+          hasReferrer: user.referred_by !== null,
           ...referral,
         },
       };
@@ -2032,6 +2033,39 @@ export class PointsEngine {
         })),
       } satisfies LeaderboardHubResponse;
     });
+  }
+
+  async previewReferral(
+    userAddress: string,
+    code: string
+  ): Promise<{ valid: boolean; normalizedCode: string; message: string }> {
+    const normalizedCode = code.trim().toUpperCase();
+
+    if (!normalizedCode) {
+      return { valid: false, normalizedCode, message: "Enter a referral code." };
+    }
+
+    const user = await this.getOrCreate(userAddress);
+
+    if (user.referred_by) {
+      return { valid: false, normalizedCode, message: "You have already applied a referral code." };
+    }
+
+    const { data: referrer } = await supabase
+      .from("users")
+      .select("id, address")
+      .eq("referral_code", normalizedCode)
+      .maybeSingle();
+
+    if (!referrer) {
+      return { valid: false, normalizedCode, message: "Invalid referral code." };
+    }
+
+    if (String((referrer as { address: string }).address).toLowerCase() === userAddress.toLowerCase()) {
+      return { valid: false, normalizedCode, message: "You cannot use your own referral code." };
+    }
+
+    return { valid: true, normalizedCode, message: "Valid referral code! Apply to get 500 PP." };
   }
 
   async applyReferral(userAddress: string, code: string): Promise<void> {

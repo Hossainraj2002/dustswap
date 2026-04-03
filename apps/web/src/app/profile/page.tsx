@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { pay } from "@base-org/account/payment";
 import { useAccount, usePublicClient, useReadContract, useWalletClient } from "wagmi";
 import { encodeFunctionData, erc20Abi } from "viem";
@@ -12,6 +12,7 @@ import {
   clearPointsSummaryCache,
   fetchPointsSummary,
   performDailyCheckIn,
+  previewReferralCode,
   resetBrokenStreak,
   saveBrokenStreak,
   type PointsBalance,
@@ -222,6 +223,18 @@ function ProfilePageContent() {
   const [isCopied, setIsCopied] = useState(false);
   const [pendingReferralCode, setPendingReferralCode] = useState<string | null>(null);
 
+  // Inline referral code entry state — profile fallback, completely separate from link-based flow
+  type InlineValidation =
+    | { status: "idle" }
+    | { status: "validating" }
+    | { status: "valid"; message: string }
+    | { status: "invalid"; message: string };
+  const [inlineCode, setInlineCode] = useState("");
+  const [isApplyingInline, setIsApplyingInline] = useState(false);
+  const [inlineError, setInlineError] = useState<string | null>(null);
+  const [inlineSuccess, setInlineSuccess] = useState(false);
+  const [inlineValidation, setInlineValidation] = useState<InlineValidation>({ status: "idle" });
+  const inlineDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [isCheckingIn, setIsCheckingIn] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isResetting, setIsResetting] = useState(false);
@@ -463,6 +476,53 @@ function ProfilePageContent() {
         : current
     );
   }, []);
+
+  // Debounced preview for inline profile code entry
+  useEffect(() => {
+    if (inlineDebounceRef.current) clearTimeout(inlineDebounceRef.current);
+    const trimmed = inlineCode.trim();
+    if (!trimmed || trimmed.length < 4 || !address) {
+      setInlineValidation({ status: "idle" });
+      return;
+    }
+    setInlineValidation({ status: "validating" });
+    inlineDebounceRef.current = setTimeout(async () => {
+      try {
+        const res = await previewReferralCode(address, trimmed);
+        setInlineValidation(
+          res.valid
+            ? { status: "valid", message: res.message || "Valid code!" }
+            : { status: "invalid", message: res.message || "Invalid code." }
+        );
+      } catch {
+        setInlineValidation({ status: "idle" });
+      }
+    }, 600);
+    return () => { if (inlineDebounceRef.current) clearTimeout(inlineDebounceRef.current); };
+  }, [address, inlineCode]);
+
+  const handleApplyInline = useCallback(async () => {
+    const trimmed = inlineCode.trim();
+    if (!trimmed || isApplyingInline || !address) return;
+    setIsApplyingInline(true);
+    setInlineError(null);
+    try {
+      const result = await applyReferralCode(address, trimmed.toUpperCase());
+      if (!result.success) {
+        setInlineError(result.error || "Could not apply code. Please try again.");
+        setIsApplyingInline(false);
+        return;
+      }
+      setInlineSuccess(true);
+      clearPointsSummaryCache(address);
+      emitDataInvalidation(["leaderboard", "points"], "referral-applied");
+      setToast({ kind: "success", message: "Referral linked! +500 PP on the way." });
+      await fetchProfileData({ force: true, silent: true });
+    } catch {
+      setInlineError("Something went wrong. Please try again.");
+      setIsApplyingInline(false);
+    }
+  }, [address, fetchProfileData, inlineCode, isApplyingInline]);
 
   const sendFeeTransaction = useCallback(
     async (config: FeeConfig, asset: "eth" | "usdc") => {
@@ -989,6 +1049,104 @@ function ProfilePageContent() {
               </div>
             </div>
           </div>
+
+          {/* Inline referral code entry \u2014 shown only if user has no referrer yet */}
+          {!isLoading && referral?.hasReferrer === false && !inlineSuccess && (
+            <div className="mt-2.5 rounded-[18px] border border-sky-100 bg-[radial-gradient(circle_at_top_right,rgba(99,102,241,0.08),transparent_50%),linear-gradient(180deg,#f0f9ff,#eff6ff)] p-3">
+              <div className="flex items-center gap-2">
+                <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-sky-200 bg-white shadow-sm">
+                  <svg className="h-3.5 w-3.5 text-sky-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 4v16m8-8H4" />
+                  </svg>
+                </div>
+                <div>
+                  <p className="text-[10px] font-black uppercase tracking-[0.22em] text-sky-600">Enter referral code</p>
+                  <p className="text-[11px] leading-[1.5] text-slate-500">
+                    Get <span className="font-bold text-slate-700">500 PP</span> when you link an invite code. Both users receive the reward.
+                  </p>
+                </div>
+              </div>
+              <div className="mt-2.5 flex flex-col gap-1.5 sm:flex-row sm:items-center">
+                <div className="relative flex-1">
+                  <input
+                    type="text"
+                    value={inlineCode}
+                    onChange={(e) => { setInlineCode(e.target.value.toUpperCase()); setInlineError(null); }}
+                    onKeyDown={(e) => { if (e.key === "Enter") void handleApplyInline(); }}
+                    placeholder="e.g. DUST-XXXXX"
+                    maxLength={32}
+                    disabled={isApplyingInline}
+                    className={`w-full rounded-[12px] border px-3 py-2 font-mono text-[12px] font-bold tracking-[0.04em] text-slate-800 outline-none transition-all placeholder:font-normal placeholder:tracking-normal placeholder:text-slate-300 ${
+                      inlineValidation.status === "valid"
+                        ? "border-emerald-300 bg-emerald-50 focus:ring-2 focus:ring-emerald-200"
+                        : inlineValidation.status === "invalid"
+                          ? "border-rose-300 bg-rose-50 focus:ring-2 focus:ring-rose-200"
+                          : "border-slate-200 bg-white focus:border-sky-300 focus:ring-2 focus:ring-sky-100"
+                    }`}
+                  />
+                  {inlineValidation.status === "validating" && (
+                    <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                      <div className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-slate-200 border-t-sky-500" />
+                    </div>
+                  )}
+                  {inlineValidation.status === "valid" && (
+                    <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                      <svg className="h-3.5 w-3.5 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+                      </svg>
+                    </div>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => void handleApplyInline()}
+                  disabled={!inlineCode.trim() || isApplyingInline}
+                  className={`shrink-0 rounded-[12px] px-4 py-2 text-[12px] font-black text-white shadow-sm transition active:scale-[0.98] ${
+                    inlineCode.trim() && !isApplyingInline
+                      ? "bg-[linear-gradient(135deg,#0ea5e9,#6366f1)] hover:-translate-y-0.5 hover:shadow-md"
+                      : "cursor-not-allowed bg-slate-200 text-slate-400 shadow-none"
+                  }`}
+                >
+                  {isApplyingInline ? (
+                    <span className="flex items-center gap-1.5">
+                      <span className="h-3 w-3 animate-spin rounded-full border-2 border-white/40 border-t-white" />
+                      Applying…
+                    </span>
+                  ) : (
+                    "Apply Code"
+                  )}
+                </button>
+              </div>
+              {(inlineValidation.status === "valid" || inlineValidation.status === "invalid") && (
+                <p className={`mt-1 text-[11px] font-semibold ${inlineValidation.status === "valid" ? "text-emerald-600" : "text-rose-600"}`}>
+                  {inlineValidation.status === "valid"
+                    ? (inlineValidation as { status: "valid"; message: string }).message
+                    : (inlineValidation as { status: "invalid"; message: string }).message}
+                </p>
+              )}
+              {inlineError && <p className="mt-1 text-[11px] font-semibold text-rose-600">{inlineError}</p>}
+            </div>
+          )}
+
+          {/* Invite activated badge \u2014 shown when user is already referred */}
+          {!isLoading && referral?.hasReferrer === true && (
+            <div className="mt-2.5 flex items-center gap-2 rounded-[14px] border border-emerald-200 bg-emerald-50 px-3 py-2">
+              <svg className="h-4 w-4 shrink-0 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+              </svg>
+              <p className="text-[11px] font-black uppercase tracking-[0.18em] text-emerald-700">Invite activated</p>
+            </div>
+          )}
+
+          {/* Inline success state */}
+          {inlineSuccess && (
+            <div className="mt-2.5 flex items-center gap-2 rounded-[14px] border border-emerald-200 bg-emerald-50 px-3 py-2">
+              <svg className="h-4 w-4 shrink-0 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+              </svg>
+              <p className="text-[11px] font-black text-emerald-700">Referral linked! +500 PP incoming.</p>
+            </div>
+          )}
 
           <div className="mt-2.5 rounded-[18px] border border-slate-200 bg-[#f8fbff] p-2.5">
             <p className="text-[9px] font-black uppercase tracking-[0.24em] text-slate-500">

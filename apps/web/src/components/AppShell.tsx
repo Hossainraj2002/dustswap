@@ -2,7 +2,8 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { type ComponentType, type ReactNode, type SVGProps } from 'react';
+import { type ComponentType, type ReactNode, type SVGProps, useCallback, useEffect, useRef, useState } from 'react';
+import { useAccount } from 'wagmi';
 import {
   DustSweepIcon,
   LeaderboardIcon,
@@ -11,6 +12,9 @@ import {
   SwapIcon,
 } from '@/components/NavIcons';
 import { CofounderPassWelcomeModal } from '@/components/quests/CofounderPassWelcomeModal';
+import { ReferralOnboardingModal } from '@/components/referrals/ReferralOnboardingModal';
+import { fetchPointsSummary, clearPointsSummaryCache } from '@/lib/points';
+import { getPendingReferralCode, isReferralOnboardingDismissed, setReferralOnboardingDismissed } from '@/lib/referrals';
 
 interface AppShellProps {
   children: ReactNode;
@@ -63,6 +67,63 @@ function AppShellIcon({
 export function AppShell({ children }: AppShellProps) {
   const pathname = usePathname();
   const isLightShell = true;
+  const { address, isConnected } = useAccount();
+
+  // ── Referral onboarding modal state ──────────────────────────
+  const [showReferralModal, setShowReferralModal] = useState(false);
+  const checkedRef = useRef<string | null>(null);
+
+  const checkReferralEligibility = useCallback(async (addr: string) => {
+    // Safety checks before any fetch
+    if (typeof window === 'undefined') return;
+    if (getPendingReferralCode()) return;              // link-based flow takes over
+    if (isReferralOnboardingDismissed(addr)) return;  // already dismissed for this wallet
+
+    try {
+      const summary = await fetchPointsSummary(addr);
+      if (summary?.success && summary.referral?.hasReferrer === false) {
+        setShowReferralModal(true);
+      }
+    } catch {
+      // silently fail — don't interrupt app
+    }
+  }, []);
+
+  useEffect(() => {
+    // Don't show on /admin or /ref/... routes
+    if (pathname.startsWith('/admin') || pathname.startsWith('/ref/')) {
+      setShowReferralModal(false);
+      return;
+    }
+
+    if (!isConnected || !address) {
+      checkedRef.current = null;
+      setShowReferralModal(false);
+      return;
+    }
+
+    // Only check once per wallet address (not on every route change)
+    if (checkedRef.current === address.toLowerCase()) return;
+    checkedRef.current = address.toLowerCase();
+
+    // Small delay so the page has time to load first
+    const t = window.setTimeout(() => void checkReferralEligibility(address), 1200);
+    return () => window.clearTimeout(t);
+  }, [address, checkReferralEligibility, isConnected, pathname]);
+
+  const handleReferralApplied = useCallback(() => {
+    setShowReferralModal(false);
+    if (address) {
+      clearPointsSummaryCache(address);
+    }
+  }, [address]);
+
+  const handleReferralDismiss = useCallback(() => {
+    if (address) {
+      setReferralOnboardingDismissed(address);
+    }
+    setShowReferralModal(false);
+  }, [address]);
 
   return (
     <div
@@ -138,6 +199,13 @@ export function AppShell({ children }: AppShellProps) {
 
       <main className="relative z-10 flex-1 pb-[calc(78px+env(safe-area-inset-bottom))] transition-opacity duration-100 ease-in-out md:ml-[236px] md:pb-0">
         <CofounderPassWelcomeModal />
+        {showReferralModal && address && (
+          <ReferralOnboardingModal
+            address={address}
+            onApplied={handleReferralApplied}
+            onDismiss={handleReferralDismiss}
+          />
+        )}
         {children}
       </main>
 

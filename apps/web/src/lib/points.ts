@@ -80,6 +80,7 @@ export type ReferralStats = {
   code: string;
   friendsJoined: number;
   pointsEarned: number;
+  hasReferrer?: boolean;
   error?: string;
 };
 
@@ -248,6 +249,24 @@ export async function fetchReferralStats(address: string) {
   });
 
   return parseJson<ReferralStats>(response);
+}
+
+export async function previewReferralCode(address: string, referralCode: string) {
+  const response = await fetch(getPointsApiUrl("/referral/preview"), {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ address, referralCode }),
+  });
+
+  return parseJson<{
+    success: boolean;
+    valid: boolean;
+    normalizedCode?: string;
+    message?: string;
+    error?: string;
+  }>(response);
 }
 
 export async function applyReferralCode(address: string, referralCode: string) {

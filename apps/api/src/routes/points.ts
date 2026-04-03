@@ -293,4 +293,18 @@ pointsRoutes.post("/referral/apply", async (c) => {
   }
 });
 
+// POST /api/points/referral/preview (read-only validation — no DB writes)
+pointsRoutes.post("/referral/preview", async (c) => {
+  const body = await c.req.json<{ address?: string; referralCode?: string }>();
+  if (!body.address || !body.referralCode) {
+    return c.json({ success: false, valid: false, message: "address and referralCode required" }, 400);
+  }
+  try {
+    const result = await pointsEngine.previewReferral(body.address, body.referralCode);
+    return c.json({ success: true, ...result });
+  } catch (e: unknown) {
+    return c.json({ success: false, valid: false, message: (e as Error).message }, 500);
+  }
+});
+
 export { pointsRoutes };
