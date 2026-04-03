@@ -11,6 +11,8 @@ import {
   recordSwap,
   swapRecorderErrors,
 } from "../services/swapRecorder";
+import { pointsEngine } from "../services/pointsEngine";
+import { questEngine } from "../services/questEngine";
 
 const swapsRoutes = new Hono();
 
@@ -44,6 +46,31 @@ swapsRoutes.post("/record", async (c) => {
       chainId: body.chainId,
     });
 
+    const normalizedAddress = normalizeAddress(body.address);
+    pointsEngine.invalidateUserReadCaches(normalizedAddress);
+    questEngine.invalidateSwapSyncCache(normalizedAddress);
+
+    let questSync: {
+      success: boolean;
+      completedQuests?: Array<{ questId: string; slug: string; awardedPoints: number }>;
+      error?: string;
+    } = {
+      success: true,
+      completedQuests: [],
+    };
+
+    try {
+      questSync = await questEngine.syncRecordedSwapProgress(normalizedAddress);
+    } catch (questSyncError) {
+      questSync = {
+        success: false,
+        completedQuests: [],
+        error:
+          (questSyncError as Error).message ||
+          "Swap was recorded but quest progress could not be refreshed immediately",
+      };
+    }
+
     return c.json({
       success: true,
       txHash: result.txHash,
@@ -51,6 +78,7 @@ swapsRoutes.post("/record", async (c) => {
       dayKey: result.dayKey,
       weekKey: result.weekKey,
       isNew: result.isNew,
+      questSync,
     });
   } catch (error) {
     if (error instanceof swapRecorderErrors.ValidationError) {

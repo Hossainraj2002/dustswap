@@ -217,13 +217,15 @@ questsRoutes.post("/activities/swap", async (c) => {
 
 questsRoutes.post("/activities/swap/sync", async (c) => {
   try {
-    const body = (await c.req.json()) as { address?: string };
+    const body = (await c.req.json()) as { address?: string; force?: boolean };
 
     if (!body.address) {
       return c.json({ success: false, error: "address is required" }, 400);
     }
 
-    const data = await questEngine.syncRecentSwapActivity(body.address);
+    const data = await questEngine.syncRecentSwapActivity(body.address, {
+      force: Boolean(body.force),
+    });
     return c.json(data);
   } catch (error) {
     return c.json(

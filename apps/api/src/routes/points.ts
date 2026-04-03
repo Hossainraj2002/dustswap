@@ -59,6 +59,16 @@ pointsRoutes.post("/profile-cache", async (c) => {
   }
 });
 
+// GET /api/points/:address/summary
+pointsRoutes.get("/:address/summary", async (c) => {
+  try {
+    const data = await pointsEngine.getPointsSummary(c.req.param("address"));
+    return c.json({ success: true, ...data });
+  } catch (e: unknown) {
+    return c.json({ success: false, error: (e as Error).message }, 500);
+  }
+});
+
 // GET /api/points/:address
 pointsRoutes.get("/:address", async (c) => {
   try {

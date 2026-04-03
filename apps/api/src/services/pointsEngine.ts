@@ -10,6 +10,7 @@ import {
 import { base } from "viem/chains";
 import { getPaymentStatus } from "@base-org/account/payment";
 import { supabase } from "./supabase";
+import { runtimeCache } from "../utils/runtimeCache";
 
 const CFG = {
   CHECK_IN: 100,
@@ -65,6 +66,8 @@ const ENTRY_POINT_V06_ADDRESS = "0x5ff137d4b0fdcd49dca30c7cf57e578a026d2789";
 const DEFAULT_ETH_PRICE_USD = Number(process.env.DEFAULT_ETH_PRICE_USD || "3500");
 const PRICE_SCALE = 100_000_000;
 const WEI_PER_ETH = 10n ** 18n;
+const POINTS_SUMMARY_CACHE_TTL_MS = 15_000;
+const LEADERBOARD_CACHE_TTL_MS = 60_000;
 const ENTRY_POINT_HANDLE_OPS_ABI = parseAbi([
   "function handleOps((address sender,uint256 nonce,bytes initCode,bytes callData,uint256 callGasLimit,uint256 verificationGasLimit,uint256 preVerificationGas,uint256 maxFeePerGas,uint256 maxPriorityFeePerGas,bytes paymasterAndData,bytes signature)[] ops,address beneficiary)",
 ]);
@@ -186,6 +189,39 @@ type VerifiedPayment = {
   amountUsd: number;
   priceDate: string;
   ethPriceUsd: number;
+};
+
+type UserSweepStatsRow = {
+  dust_swept: number | string | null;
+  swap_volume: number | string | null;
+  tokens_burned: number | string | null;
+};
+
+type UserReferralStatsRow = {
+  friends_joined: number | string | null;
+  points_earned: number | string | null;
+};
+
+type PointsOverviewRow = {
+  total_particle_points: number | string | null;
+  total_user_count: number | string | null;
+};
+
+type ReferralLeaderboardRow = {
+  address: string;
+  rank: number | string;
+  referral_points: number | string | null;
+  referred_users: number | string | null;
+  total_points: number | string | null;
+  user_id: number | string;
+};
+
+type VolumeLeaderboardRow = {
+  address: string;
+  rank: number | string;
+  swap_volume: number | string | null;
+  total_points: number | string | null;
+  user_id: number | string;
 };
 
 function genCode(): string {
@@ -336,6 +372,10 @@ function parseUsdAmount(value: string | number | null | undefined) {
   return Number.isFinite(normalized) && normalized > 0 ? normalized : null;
 }
 
+function firstRow<T>(rows: T[] | null | undefined) {
+  return rows?.[0] ?? null;
+}
+
 function calculateEthWeiFromUsd(usdAmount: number, ethPriceUsd: number) {
   const usdScaled = BigInt(Math.round(usdAmount * PRICE_SCALE));
   const ethPriceScaled = BigInt(Math.round(ethPriceUsd * PRICE_SCALE));
@@ -396,6 +436,37 @@ export class PointsEngine {
     }
 
     return nu as UserRecord;
+  }
+
+  private getPointsSummaryCacheKey(address: string) {
+    return `points-summary:${address.toLowerCase()}`;
+  }
+
+  private getLeaderboardCacheKey(
+    type: LeaderboardKind,
+    page: number,
+    pageSize: number,
+    viewerAddress?: string
+  ) {
+    return `leaderboard:${type}:${page}:${pageSize}:${(viewerAddress || "").toLowerCase()}`;
+  }
+
+  invalidateSummaryCache(address?: string | null) {
+    if (!address) {
+      runtimeCache.invalidatePrefix("points-summary:");
+      return;
+    }
+
+    runtimeCache.invalidate(this.getPointsSummaryCacheKey(address));
+  }
+
+  invalidateLeaderboardCache() {
+    runtimeCache.invalidatePrefix("leaderboard:");
+  }
+
+  invalidateUserReadCaches(address?: string | null) {
+    this.invalidateSummaryCache(address);
+    this.invalidateLeaderboardCache();
   }
 
   private async fetchCurrentEthPriceUsd(): Promise<PriceFeedQuote> {
@@ -724,186 +795,175 @@ export class PointsEngine {
     return users;
   }
 
-  private async fetchAllLeaderboardUsers() {
-    const rows = await this.fetchAllPages<
-      Pick<UserRecord, "id" | "address" | "total_points">
-    >(async (from, to) =>
-      await supabase
-        .from("users")
-        .select("id, address, total_points")
-        .order("id", { ascending: true })
-        .range(from, to)
-    );
-
-    return rows.map((row) => ({
-      id: Number(row.id),
-      address: String(row.address),
-      total_points: Number(row.total_points || 0),
-    }));
-  }
-
-  private async countUsers() {
-    const { count, error } = await supabase
-      .from("users")
-      .select("*", { count: "exact", head: true });
+  private async getSweepStatsByUserId(userId: number) {
+    const { data, error } = await supabase.rpc("get_user_sweep_stats", {
+      p_user_id: userId,
+    });
 
     if (error) {
-      throw new Error(`Count users: ${error.message}`);
+      throw new Error(`Load user sweep stats: ${error.message}`);
     }
 
-    return count ?? 0;
-  }
-
-  private async sumTotalPoints() {
-    const rows = await this.fetchAllPages<{ total_points: number | null }>(
-      async (from, to) =>
-        await supabase.from("users").select("total_points").range(from, to)
-    );
-
-    return rows.reduce(
-      (sum, row) => sum + Number(row.total_points || 0),
-      0
-    );
-  }
-
-  private async getReferralAggregateMaps() {
-    const referralRows = await this.fetchAllPages<{ referrer_id: number | null }>(
-      async (from, to) =>
-        await supabase
-          .from("referrals")
-          .select("referrer_id")
-          .not("referrer_id", "is", null)
-          .range(from, to)
-    );
-
-    const referralPointRows = await this.fetchAllPages<{
-      user_id: number | null;
-      total_awarded: number | null;
-    }>(
-      async (from, to) =>
-        await supabase
-          .from("point_events")
-          .select("user_id,total_awarded")
-          .in("action", ["referral_commission", "referral_new_user"])
-          .not("user_id", "is", null)
-          .range(from, to)
-    );
-
-    const referredUsersByUser = new Map<number, number>();
-    for (const row of referralRows) {
-      const userId = Number(row.referrer_id);
-      if (!Number.isFinite(userId)) {
-        continue;
-      }
-
-      referredUsersByUser.set(userId, (referredUsersByUser.get(userId) || 0) + 1);
-    }
-
-    const referralPointsByUser = new Map<number, number>();
-    for (const row of referralPointRows) {
-      const userId = Number(row.user_id);
-      if (!Number.isFinite(userId)) {
-        continue;
-      }
-
-      referralPointsByUser.set(
-        userId,
-        (referralPointsByUser.get(userId) || 0) + Number(row.total_awarded || 0)
-      );
-    }
-
+    const row = firstRow(data as UserSweepStatsRow[] | null);
     return {
-      referredUsersByUser,
-      referralPointsByUser,
+      dustSwept: Number(row?.dust_swept || 0),
+      swapVolume: Number(row?.swap_volume || 0),
+      tokensBurned: Number(row?.tokens_burned || 0),
     };
   }
 
-  private async getSwapVolumeMap() {
-    const swapRows = await this.fetchAllPages<{
-      user_id: number | null;
-      output_value_usd: number | string | null;
-    }>(
-      async (from, to) =>
-        await supabase
-          .from("sweep_history")
-          .select("user_id,output_value_usd")
-          .eq("type", "swap")
-          .not("user_id", "is", null)
-          .range(from, to)
-    );
+  private async getReferralStatsByUserId(userId: number) {
+    const { data, error } = await supabase.rpc("get_user_referral_stats", {
+      p_user_id: userId,
+    });
 
-    const swapVolumeByUser = new Map<number, number>();
-    for (const row of swapRows) {
-      const userId = Number(row.user_id);
-      if (!Number.isFinite(userId)) {
-        continue;
-      }
-
-      swapVolumeByUser.set(
-        userId,
-        (swapVolumeByUser.get(userId) || 0) + Number(row.output_value_usd || 0)
-      );
+    if (error) {
+      throw new Error(`Load user referral stats: ${error.message}`);
     }
 
-    return swapVolumeByUser;
+    const row = firstRow(data as UserReferralStatsRow[] | null);
+    return {
+      friendsJoined: Number(row?.friends_joined || 0),
+      pointsEarned: Number(row?.points_earned || 0),
+    };
   }
 
-  private async buildViewerEntry(
-    type: LeaderboardKind,
-    viewerAddress?: string,
-    context?: {
-      referralPointsByUser?: Map<number, number>;
-      referredUsersByUser?: Map<number, number>;
-      swapVolumeByUser?: Map<number, number>;
-      rankByUserId?: Map<number, number>;
+  private async getPointsOverview() {
+    const { data, error } = await supabase.rpc("get_points_overview");
+
+    if (error) {
+      throw new Error(`Load points overview: ${error.message}`);
     }
-  ): Promise<LeaderboardEntry | null> {
+
+    const row = firstRow(data as PointsOverviewRow[] | null);
+    return {
+      totalParticlePoints: Number(row?.total_particle_points || 0),
+      totalUserCount: Number(row?.total_user_count || 0),
+    };
+  }
+
+  private async getReferralLeaderboardPage(offset: number, limit: number) {
+    const { data, error } = await supabase.rpc("get_referral_leaderboard_page", {
+      p_limit: limit,
+      p_offset: offset,
+    });
+
+    if (error) {
+      throw new Error(`Load referral leaderboard: ${error.message}`);
+    }
+
+    return ((data ?? []) as ReferralLeaderboardRow[]).map((row) => ({
+      rank: Number(row.rank || 0),
+      userId: Number(row.user_id || 0),
+      address: String(row.address),
+      totalPoints: Number(row.total_points || 0),
+      referralPoints: Number(row.referral_points || 0),
+      referredUsers: Number(row.referred_users || 0),
+      swapVolume: 0,
+    }));
+  }
+
+  private async getReferralLeaderboardViewer(userId: number) {
+    const { data, error } = await supabase.rpc("get_referral_leaderboard_viewer", {
+      p_user_id: userId,
+    });
+
+    if (error) {
+      throw new Error(`Load referral leaderboard viewer: ${error.message}`);
+    }
+
+    const row = firstRow(data as ReferralLeaderboardRow[] | null);
+    if (!row) {
+      return null;
+    }
+
+    return {
+      rank: Number(row.rank || 0),
+      userId: Number(row.user_id || 0),
+      address: String(row.address),
+      totalPoints: Number(row.total_points || 0),
+      referralPoints: Number(row.referral_points || 0),
+      referredUsers: Number(row.referred_users || 0),
+      swapVolume: 0,
+    } satisfies Omit<LeaderboardEntry, "profile">;
+  }
+
+  private async getVolumeLeaderboardPage(offset: number, limit: number) {
+    const { data, error } = await supabase.rpc("get_volume_leaderboard_page", {
+      p_limit: limit,
+      p_offset: offset,
+    });
+
+    if (error) {
+      throw new Error(`Load volume leaderboard: ${error.message}`);
+    }
+
+    return ((data ?? []) as VolumeLeaderboardRow[]).map((row) => ({
+      rank: Number(row.rank || 0),
+      userId: Number(row.user_id || 0),
+      address: String(row.address),
+      totalPoints: Number(row.total_points || 0),
+      referralPoints: 0,
+      referredUsers: 0,
+      swapVolume: Number(row.swap_volume || 0),
+    }));
+  }
+
+  private async getVolumeLeaderboardViewer(userId: number) {
+    const { data, error } = await supabase.rpc("get_volume_leaderboard_viewer", {
+      p_user_id: userId,
+    });
+
+    if (error) {
+      throw new Error(`Load volume leaderboard viewer: ${error.message}`);
+    }
+
+    const row = firstRow(data as VolumeLeaderboardRow[] | null);
+    if (!row) {
+      return null;
+    }
+
+    return {
+      rank: Number(row.rank || 0),
+      userId: Number(row.user_id || 0),
+      address: String(row.address),
+      totalPoints: Number(row.total_points || 0),
+      referralPoints: 0,
+      referredUsers: 0,
+      swapVolume: Number(row.swap_volume || 0),
+    } satisfies Omit<LeaderboardEntry, "profile">;
+  }
+
+  private async buildParticlePointsViewerEntry(viewerAddress?: string) {
     if (!viewerAddress) {
       return null;
     }
 
     const user = await this.getOrCreate(viewerAddress);
-    const [profiles, userStats, referralStats] = await Promise.all([
+    const [profiles, userStats, referralStats, rankResult] = await Promise.all([
       this.fetchCachedProfiles([user.id]),
-      this.getUserStats(user.address),
-      this.getReferralStats(user.address),
-    ]);
-
-    let rank = 1;
-
-    if (type === "particle_points") {
-      const { count } = await supabase
+      this.getSweepStatsByUserId(user.id),
+      this.getReferralStatsByUserId(user.id),
+      supabase
         .from("users")
         .select("*", { count: "exact", head: true })
-        .gt("total_points", user.total_points);
-      rank = (count ?? 0) + 1;
-    } else if (type === "referral") {
-      const viewerReferralPoints =
-        context?.referralPointsByUser?.get(user.id) ?? referralStats.pointsEarned ?? 0;
-      const allScores = [...(context?.referralPointsByUser?.values() ?? [])];
-      rank = allScores.filter((value) => value > viewerReferralPoints).length + 1;
-      } else {
-        const viewerSwapVolume = context?.swapVolumeByUser?.get(user.id) ?? userStats.swapVolume ?? 0;
-        const allScores = [...(context?.swapVolumeByUser?.values() ?? [])];
-        rank = allScores.filter((value) => value > viewerSwapVolume).length + 1;
-      }
+        .gt("total_points", user.total_points),
+    ]);
 
-      if (context?.rankByUserId?.has(user.id)) {
-        rank = context.rankByUserId.get(user.id) || rank;
-      }
+    if (rankResult.error) {
+      throw new Error(`Load particle point viewer rank: ${rankResult.error.message}`);
+    }
 
-      return {
-        rank,
-        userId: user.id,
+    return {
+      rank: (rankResult.count ?? 0) + 1,
+      userId: user.id,
       address: user.address,
       totalPoints: Number(user.total_points || 0),
-      referralPoints:
-        context?.referralPointsByUser?.get(user.id) ?? Number(referralStats.pointsEarned || 0),
-      referredUsers:
-        context?.referredUsersByUser?.get(user.id) ?? Number(referralStats.friendsJoined || 0),
-      swapVolume: context?.swapVolumeByUser?.get(user.id) ?? Number(userStats.swapVolume || 0),
+      referralPoints: referralStats.pointsEarned,
+      referredUsers: referralStats.friendsJoined,
+      swapVolume: userStats.swapVolume,
       profile: profiles.get(user.id) ?? null,
-    };
+    } satisfies LeaderboardEntry;
   }
 
   async cacheFarcasterProfile(
@@ -940,6 +1000,8 @@ export class PointsEngine {
     if (error) {
       throw new Error(`Save Farcaster profile: ${error.message}`);
     }
+
+    this.invalidateLeaderboardCache();
   }
 
   private async updateReferralLedger(
@@ -1077,6 +1139,8 @@ export class PointsEngine {
       .eq("id", user.id);
 
     await this.awardReferralCommission(user, address, action, totalAwarded, txHash);
+
+    this.invalidateUserReadCaches(address);
 
     return {
       user: {
@@ -1475,6 +1539,8 @@ export class PointsEngine {
       txHash
     );
 
+    this.invalidateUserReadCaches(normalizedAddress);
+
     return {
       points: pointsAwarded,
       pointsAwarded,
@@ -1508,6 +1574,8 @@ export class PointsEngine {
         updated_at: new Date().toISOString(),
       })
       .eq("id", user.id);
+
+    this.invalidateSummaryCache(address);
 
     return {
       reset: true,
@@ -1594,6 +1662,8 @@ export class PointsEngine {
         updated_at: nowIso,
       })
       .eq("id", user.id);
+
+    this.invalidateSummaryCache(normalizedAddress);
 
     return {
       restored: true,
@@ -1738,6 +1808,8 @@ export class PointsEngine {
       throw new Error(`Record swap history: ${error.message}`);
     }
 
+    this.invalidateUserReadCaches(address);
+
     return award.totalAwarded;
   }
 
@@ -1746,61 +1818,54 @@ export class PointsEngine {
     return this.buildBalance(user);
   }
 
+  async getPointsSummary(address: string) {
+    const normalizedAddress = address.toLowerCase();
+    const cacheKey = this.getPointsSummaryCacheKey(normalizedAddress);
+
+    return runtimeCache.getOrSet(cacheKey, POINTS_SUMMARY_CACHE_TTL_MS, async () => {
+      const user = await this.getOrCreate(normalizedAddress);
+      const [balance, stats, referral] = await Promise.all([
+        this.buildBalance(user),
+        this.getSweepStatsByUserId(user.id),
+        this.getReferralStatsByUserId(user.id),
+      ]);
+
+      return {
+        balance: {
+          success: true,
+          ...balance,
+        },
+        stats: {
+          success: true,
+          totalPoints: user.total_points,
+          ...stats,
+        },
+        referral: {
+          success: true,
+          code: user.referral_code,
+          ...referral,
+        },
+      };
+    });
+  }
+
   async getUserStats(address: string) {
     const user = await this.getOrCreate(address);
-    const { data } = await supabase
-      .from("sweep_history")
-      .select("type, output_value_usd, token_count")
-      .eq("user_id", user.id);
-
-    let dustSwept = 0;
-    let swapVolume = 0;
-    let tokensBurned = 0;
-
-    for (const row of data || []) {
-      if (row.type === "sweep") {
-        dustSwept += row.token_count;
-      }
-      if (row.type === "swap" && row.output_value_usd) {
-        swapVolume += Number(row.output_value_usd);
-      }
-      if (row.type === "burn") {
-        tokensBurned += row.token_count;
-      }
-    }
+    const stats = await this.getSweepStatsByUserId(user.id);
 
     return {
       totalPoints: user.total_points,
-      dustSwept,
-      swapVolume,
-      tokensBurned,
+      ...stats,
     };
   }
 
   async getReferralStats(address: string) {
     const user = await this.getOrCreate(address);
-
-    const { count } = await supabase
-      .from("referrals")
-      .select("*", { count: "exact", head: true })
-      .eq("referrer_id", user.id);
-
-    const { data } = await supabase
-      .from("point_events")
-      .select("total_awarded")
-      .eq("user_id", user.id)
-      .in("action", ["referral_commission", "referral_new_user"]);
-
-    const referralPoints = (data || []).reduce(
-      (sum: number, row: { total_awarded: number }) =>
-        sum + Number(row.total_awarded || 0),
-      0
-    );
+    const referral = await this.getReferralStatsByUserId(user.id);
 
     return {
       code: user.referral_code,
-      friendsJoined: count || 0,
-      pointsEarned: referralPoints,
+      ...referral,
     };
   }
 
@@ -1849,90 +1914,101 @@ export class PointsEngine {
     const requestedPageSize = options?.pageSize ?? 10;
     const viewerAddress = options?.viewerAddress;
     const safeLimit = Math.max(1, Math.min(50, requestedPageSize));
-    const [totalUserCount, totalParticlePoints] = await Promise.all([
-      this.countUsers(),
-      this.sumTotalPoints(),
-    ]);
-    const totalEntries = totalUserCount;
-    const totalPages = Math.max(1, Math.ceil(totalEntries / safeLimit));
-    const currentPage = Math.min(Math.max(1, options?.page ?? 1), totalPages);
-    const offset = (currentPage - 1) * safeLimit;
+    const currentPageInput = Math.max(1, options?.page ?? 1);
+    const cacheKey = this.getLeaderboardCacheKey(
+      type,
+      currentPageInput,
+      safeLimit,
+      viewerAddress
+    );
 
-    if (type === "particle_points") {
-      const { data, error } = await supabase
-        .from("users")
-        .select("id,address,total_points")
-        .order("total_points", { ascending: false })
-        .order("id", { ascending: true })
-        .range(offset, offset + safeLimit - 1);
+    return runtimeCache.getOrSet(cacheKey, LEADERBOARD_CACHE_TTL_MS, async () => {
+      const { totalParticlePoints, totalUserCount } = await this.getPointsOverview();
+      const totalEntries = totalUserCount;
+      const totalPages = Math.max(1, Math.ceil(totalEntries / safeLimit));
+      const currentPage = Math.min(currentPageInput, totalPages);
+      const offset = (currentPage - 1) * safeLimit;
 
-      if (error) {
-        throw new Error(`Load particle point leaderboard: ${error.message}`);
+      if (type === "particle_points") {
+        const { data, error } = await supabase
+          .from("users")
+          .select("id,address,total_points")
+          .order("total_points", { ascending: false })
+          .order("id", { ascending: true })
+          .range(offset, offset + safeLimit - 1);
+
+        if (error) {
+          throw new Error(`Load particle point leaderboard: ${error.message}`);
+        }
+
+        const topUsers = (data ?? []) as Array<
+          Pick<UserRecord, "id" | "address" | "total_points">
+        >;
+        const profiles = await this.fetchCachedProfiles(
+          topUsers.map((user) => Number(user.id))
+        );
+        const viewer = await this.buildParticlePointsViewerEntry(viewerAddress);
+
+        return {
+          type,
+          limit: safeLimit,
+          page: currentPage,
+          pageSize: safeLimit,
+          totalEntries,
+          totalPages,
+          totalUserCount,
+          totalParticlePoints,
+          viewer,
+          entries: topUsers.map((user, index) => ({
+            rank: offset + index + 1,
+            userId: Number(user.id),
+            address: String(user.address),
+            totalPoints: Number(user.total_points || 0),
+            referralPoints: 0,
+            referredUsers: 0,
+            swapVolume: 0,
+            profile: profiles.get(Number(user.id)) ?? null,
+          })),
+        } satisfies LeaderboardHubResponse;
       }
 
-      const topUsers = (data ?? []) as Array<Pick<UserRecord, "id" | "address" | "total_points">>;
-      const profiles = await this.fetchCachedProfiles(topUsers.map((user) => Number(user.id)));
-      const viewer = await this.buildViewerEntry(type, viewerAddress);
+      if (type === "referral") {
+        const pageEntries = await this.getReferralLeaderboardPage(offset, safeLimit);
+        const viewerUser = viewerAddress ? await this.getOrCreate(viewerAddress) : null;
+        const [profiles, viewerRow, viewerProfiles] = await Promise.all([
+          this.fetchCachedProfiles(pageEntries.map((entry) => entry.userId)),
+          viewerUser ? this.getReferralLeaderboardViewer(viewerUser.id) : Promise.resolve(null),
+          viewerUser ? this.fetchCachedProfiles([viewerUser.id]) : Promise.resolve(new Map()),
+        ]);
 
-      return {
-        type,
-        limit: safeLimit,
-        page: currentPage,
-        pageSize: safeLimit,
-        totalEntries,
-        totalPages,
-        totalUserCount,
-        totalParticlePoints,
-        viewer,
-        entries: topUsers.map((user, index) => ({
-          rank: offset + index + 1,
-          userId: Number(user.id),
-          address: String(user.address),
-          totalPoints: Number(user.total_points || 0),
-          referralPoints: 0,
-          referredUsers: 0,
-          swapVolume: 0,
-          profile: profiles.get(Number(user.id)) ?? null,
-        })),
-      };
-    }
+        return {
+          type,
+          limit: safeLimit,
+          page: currentPage,
+          pageSize: safeLimit,
+          totalEntries,
+          totalPages,
+          totalUserCount,
+          totalParticlePoints,
+          viewer: viewerRow
+            ? {
+                ...viewerRow,
+                profile: viewerProfiles.get(viewerRow.userId) ?? null,
+              }
+            : null,
+          entries: pageEntries.map((entry) => ({
+            ...entry,
+            profile: profiles.get(entry.userId) ?? null,
+          })),
+        } satisfies LeaderboardHubResponse;
+      }
 
-    if (type === "referral") {
-      const { referredUsersByUser, referralPointsByUser } = await this.getReferralAggregateMaps();
-      const allUsers = await this.fetchAllLeaderboardUsers();
-      const sortedUsers = [...allUsers].sort((left, right) => {
-        const pointDelta =
-          (referralPointsByUser.get(right.id) || 0) - (referralPointsByUser.get(left.id) || 0);
-        if (pointDelta !== 0) {
-          return pointDelta;
-        }
-
-        const countDelta =
-          (referredUsersByUser.get(right.id) || 0) - (referredUsersByUser.get(left.id) || 0);
-        if (countDelta !== 0) {
-          return countDelta;
-        }
-
-        const totalPointDelta =
-          Number(right.total_points || 0) - Number(left.total_points || 0);
-        if (totalPointDelta !== 0) {
-          return totalPointDelta;
-        }
-
-        return left.id - right.id;
-      });
-      const rankByUserId = new Map<number, number>();
-      sortedUsers.forEach((user, index) => {
-        rankByUserId.set(Number(user.id), index + 1);
-      });
-      const pageUsers = sortedUsers.slice(offset, offset + safeLimit);
-      const [profiles, viewer] = await Promise.all([
-        this.fetchCachedProfiles(pageUsers.map((user) => Number(user.id))),
-        this.buildViewerEntry(type, viewerAddress, {
-          referralPointsByUser,
-          referredUsersByUser,
-          rankByUserId,
-        }),
+      const pageEntries = await this.getVolumeLeaderboardPage(offset, safeLimit);
+      const viewerUser = viewerAddress ? await this.getOrCreate(viewerAddress) : null;
+      const [profiles, viewerRow, viewerProfiles] = await Promise.all([
+        this.fetchCachedProfiles(pageEntries.map((entry) => entry.userId)),
+        viewerUser ? this.getVolumeLeaderboardViewer(viewerUser.id) : Promise.resolve(null),
+        viewerUser ? this.fetchCachedProfiles([viewerUser.id]) : Promise.resolve(new Map()),
       ]);
 
       return {
@@ -1944,79 +2020,18 @@ export class PointsEngine {
         totalPages,
         totalUserCount,
         totalParticlePoints,
-        viewer,
-        entries: pageUsers
-          .map((user) => {
-            return {
-              rank: rankByUserId.get(Number(user.id)) || 1,
-              userId: Number(user.id),
-              address: String(user.address),
-              totalPoints: Number(user.total_points || 0),
-              referralPoints: referralPointsByUser.get(Number(user.id)) || 0,
-              referredUsers: referredUsersByUser.get(Number(user.id)) || 0,
-              swapVolume: 0,
-              profile: profiles.get(Number(user.id)) ?? null,
-            } satisfies LeaderboardEntry;
-          })
-          .filter((entry): entry is LeaderboardEntry => Boolean(entry)),
-      };
-    }
-
-    const swapVolumeByUser = await this.getSwapVolumeMap();
-    const allUsers = await this.fetchAllLeaderboardUsers();
-    const sortedUsers = [...allUsers].sort((left, right) => {
-      const volumeDelta =
-        (swapVolumeByUser.get(right.id) || 0) - (swapVolumeByUser.get(left.id) || 0);
-      if (volumeDelta !== 0) {
-        return volumeDelta;
-      }
-
-      const totalPointDelta =
-        Number(right.total_points || 0) - Number(left.total_points || 0);
-      if (totalPointDelta !== 0) {
-        return totalPointDelta;
-      }
-
-      return left.id - right.id;
+        viewer: viewerRow
+          ? {
+              ...viewerRow,
+              profile: viewerProfiles.get(viewerRow.userId) ?? null,
+            }
+          : null,
+        entries: pageEntries.map((entry) => ({
+          ...entry,
+          profile: profiles.get(entry.userId) ?? null,
+        })),
+      } satisfies LeaderboardHubResponse;
     });
-    const rankByUserId = new Map<number, number>();
-    sortedUsers.forEach((user, index) => {
-      rankByUserId.set(Number(user.id), index + 1);
-    });
-    const pageUsers = sortedUsers.slice(offset, offset + safeLimit);
-    const [profiles, viewer] = await Promise.all([
-      this.fetchCachedProfiles(pageUsers.map((user) => Number(user.id))),
-      this.buildViewerEntry(type, viewerAddress, {
-        swapVolumeByUser,
-        rankByUserId,
-      }),
-    ]);
-
-    return {
-      type,
-      limit: safeLimit,
-      page: currentPage,
-      pageSize: safeLimit,
-      totalEntries,
-      totalPages,
-      totalUserCount,
-      totalParticlePoints,
-      viewer,
-      entries: pageUsers
-        .map((user) => {
-          return {
-            rank: rankByUserId.get(Number(user.id)) || 1,
-            userId: Number(user.id),
-            address: String(user.address),
-            totalPoints: Number(user.total_points || 0),
-            referralPoints: 0,
-            referredUsers: 0,
-            swapVolume: swapVolumeByUser.get(Number(user.id)) || 0,
-            profile: profiles.get(Number(user.id)) ?? null,
-          } satisfies LeaderboardEntry;
-        })
-        .filter((entry): entry is LeaderboardEntry => Boolean(entry)),
-    };
   }
 
   async applyReferral(userAddress: string, code: string): Promise<void> {
@@ -2072,6 +2087,9 @@ export class PointsEngine {
       user.id,
       referrerAward.totalAwarded
     );
+
+    this.invalidateUserReadCaches(userAddress);
+    this.invalidateUserReadCaches((referrer as UserRecord).address);
   }
 }
 

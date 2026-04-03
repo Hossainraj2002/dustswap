@@ -12,10 +12,11 @@ import {
   toRpcHexValue,
 } from "@/lib/paymaster";
 import { BASE_CHAIN_ID } from "@/lib/tokens";
+import { emitDataInvalidation } from "@/lib/clientEvents";
+import { clearPointsSummaryCache } from "@/lib/points";
 
 const STORAGE_KEY = "dustswap.swap.capture.queue";
 const CALLS_STORAGE_KEY = "dustswap.swap.capture.calls.queue";
-const SYNC_NOW_EVENT = "dustswap:quest-sync-now";
 const FAST_RETRY_CODE = "receipt_pending";
 const MAX_QUEUE_ITEMS = 50;
 const MAX_CALL_QUEUE_ITEMS = 25;
@@ -411,7 +412,16 @@ async function postSwapRecord(item: CaptureQueueItem) {
 
   const text = await response.text();
   const payload = text
-    ? (JSON.parse(text) as { success?: boolean; error?: string; code?: string })
+    ? (JSON.parse(text) as {
+        success?: boolean;
+        error?: string;
+        code?: string;
+        questSync?: {
+          success?: boolean;
+          completedQuests?: Array<{ awardedPoints: number; questId: string; slug: string }>;
+          error?: string;
+        };
+      })
     : {};
 
   if (!response.ok || !payload.success) {
@@ -610,9 +620,20 @@ export function useSwapCapture() {
           }
 
           try {
-            await postSwapRecord(item);
+            const swapResult = await postSwapRecord(item);
             nextQueue = nextQueue.filter((candidate) => candidate.txHash !== item.txHash);
-            window.dispatchEvent(new Event(SYNC_NOW_EVENT));
+
+            clearPointsSummaryCache(item.address);
+            emitDataInvalidation("profile", "swap-recorded");
+            emitDataInvalidation("leaderboard", "swap-recorded");
+
+            if (swapResult.questSync?.success) {
+              emitDataInvalidation("quests", "swap-recorded");
+            }
+
+            if ((swapResult.questSync?.completedQuests?.length || 0) > 0) {
+              emitDataInvalidation("points", "swap-recorded:quest-completed");
+            }
           } catch (error) {
             const requestError = error as RequestError;
             if (requestError.permanent) {

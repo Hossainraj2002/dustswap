@@ -20,6 +20,8 @@ import {
   QuestsIcon,
   SwapIcon,
 } from "@/components/NavIcons";
+import { subscribeToDataInvalidation } from "@/lib/clientEvents";
+import { fetchPointsSummary } from "@/lib/points";
 
 interface NavLink {
   href: string;
@@ -41,6 +43,8 @@ const NAV_LINKS: NavLink[] = [
 interface PointsData {
   totalPoints: number;
 }
+
+const POINTS_FALLBACK_REFRESH_MS = 180000;
 
 function NavBadgeIcon({
   Icon,
@@ -72,9 +76,7 @@ export function Navbar() {
   const mobileMenuRef = useRef<HTMLDivElement>(null);
   const hamburgerRef = useRef<HTMLButtonElement>(null);
 
-  const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
-
-  const fetchPoints = useCallback(async () => {
+  const fetchPoints = useCallback(async (options?: { force?: boolean }) => {
     if (!address) {
       setParticleCount(0);
       return;
@@ -82,33 +84,58 @@ export function Navbar() {
 
     setPointsLoading(true);
     try {
-      const response = await fetch(`${apiUrl}/api/points/${address}`, {
-        method: "GET",
-        headers: { "Content-Type": "application/json" },
-        signal: AbortSignal.timeout(8000),
+      const response = await fetchPointsSummary(address, {
+        force: options?.force,
       });
-
-      if (!response.ok) {
+      if (!response.success) {
         setParticleCount(0);
         return;
       }
 
-      const data: PointsData = await response.json();
+      const data: PointsData = response.balance;
       setParticleCount(data.totalPoints ?? 0);
     } catch {
       setParticleCount(0);
     } finally {
       setPointsLoading(false);
     }
-  }, [address, apiUrl]);
+  }, [address]);
 
   useEffect(() => {
-    fetchPoints();
+    void fetchPoints();
+  }, [fetchPoints]);
 
-    if (!address) return;
+  useEffect(() => {
+    if (!address) {
+      return;
+    }
 
-    const interval = setInterval(fetchPoints, 60000);
-    return () => clearInterval(interval);
+    const unsubscribe = subscribeToDataInvalidation("points", () => {
+      void fetchPoints({ force: true });
+    });
+    const handleFocus = () => {
+      void fetchPoints({ force: true });
+    };
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        void fetchPoints({ force: true });
+      }
+    };
+    const interval = window.setInterval(() => {
+      if (document.visibilityState === "visible") {
+        void fetchPoints({ force: true });
+      }
+    }, POINTS_FALLBACK_REFRESH_MS);
+
+    window.addEventListener("focus", handleFocus);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      unsubscribe();
+      window.removeEventListener("focus", handleFocus);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.clearInterval(interval);
+    };
   }, [fetchPoints, address]);
 
   useEffect(() => {

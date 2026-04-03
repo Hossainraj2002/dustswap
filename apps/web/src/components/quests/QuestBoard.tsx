@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { startTransition, useEffect, useMemo, useState } from "react";
+import { startTransition, useCallback, useEffect, useMemo, useState } from "react";
 import { useAccount } from "wagmi";
 import {
   fetchQuestBoard,
@@ -11,6 +11,8 @@ import {
   verifyDelayQuest,
   verifyXPost,
 } from "@/lib/quests";
+import { emitDataInvalidation, subscribeToDataInvalidation } from "@/lib/clientEvents";
+import { clearPointsSummaryCache } from "@/lib/points";
 import { PremiumQuestBackground } from "@/components/quests/PremiumQuestBackground";
 import type { QuestItem } from "@/types/quests";
 
@@ -19,8 +21,7 @@ type PendingState = Record<string, boolean>;
 type PostInputState = Record<string, string>;
 type QuestInlineErrorState = Record<string, string>;
 
-const SYNC_NOW_EVENT = "dustswap:quest-sync-now";
-const SWAP_RECORDED_EVENT = "dustswap:quest-swap-recorded";
+const BOARD_FALLBACK_REFRESH_MS = 120000;
 const GENERAL_CAMPAIGN_KEY = "general";
 const COFOUNDER_PASS_CAMPAIGN_KEY = "cofounder_pass";
 
@@ -292,38 +293,41 @@ export function QuestBoard() {
   const [xUsernameInput, setXUsernameInput] = useState("");
   const [isSavingXUsername, setIsSavingXUsername] = useState(false);
 
-  async function loadBoard(options?: { silent?: boolean }) {
-    const silent = options?.silent ?? false;
+  const loadBoard = useCallback(
+    async (options?: { silent?: boolean }) => {
+      const silent = options?.silent ?? false;
 
-    if (silent) {
-      setIsRefreshing(true);
-    } else {
-      setIsLoading(true);
-    }
-
-    setError(null);
-
-    try {
-      const data = await fetchQuestBoard(address);
-      if (!data.success) {
-        throw new Error(data.error || "Failed to load quests");
-      }
-
-      setBoard(data);
-    } catch (loadError) {
-      setError(getDisplayError(loadError));
-    } finally {
       if (silent) {
-        setIsRefreshing(false);
+        setIsRefreshing(true);
       } else {
-        setIsLoading(false);
+        setIsLoading(true);
       }
-    }
-  }
+
+      setError(null);
+
+      try {
+        const data = await fetchQuestBoard(address);
+        if (!data.success) {
+          throw new Error(data.error || "Failed to load quests");
+        }
+
+        setBoard(data);
+      } catch (loadError) {
+        setError(getDisplayError(loadError));
+      } finally {
+        if (silent) {
+          setIsRefreshing(false);
+        } else {
+          setIsLoading(false);
+        }
+      }
+    },
+    [address]
+  );
 
   useEffect(() => {
     void loadBoard();
-  }, [address]);
+  }, [loadBoard]);
 
   useEffect(() => {
     const interval = window.setInterval(() => {
@@ -335,31 +339,21 @@ export function QuestBoard() {
 
   useEffect(() => {
     const interval = window.setInterval(() => {
-      if (address && categoryFilter !== "social") {
-        void syncSwapQuestActivity(address)
-          .catch(() => null)
-          .finally(() => {
-            void loadBoard({ silent: true });
-          });
-        return;
+      if (document.visibilityState === "visible") {
+        void loadBoard({ silent: true });
       }
-
-      void loadBoard({ silent: true });
-    }, 30000);
+    }, BOARD_FALLBACK_REFRESH_MS);
 
     return () => window.clearInterval(interval);
-  }, [address, categoryFilter]);
+  }, [loadBoard]);
 
   useEffect(() => {
-    const handleSwapRecorded = () => {
+    return subscribeToDataInvalidation("quests", () => {
       startTransition(() => {
         void loadBoard({ silent: true });
       });
-    };
-
-    window.addEventListener(SWAP_RECORDED_EVENT, handleSwapRecorded);
-    return () => window.removeEventListener(SWAP_RECORDED_EVENT, handleSwapRecorded);
-  }, []);
+    });
+  }, [loadBoard]);
 
   const linkedXAccount = board?.linkedAccounts?.x;
   const isXLinked = Boolean(linkedXAccount?.username);
@@ -422,14 +416,12 @@ export function QuestBoard() {
     (quest) => quest.progress?.completedAt
   ).length;
 
-  async function refreshWithMessage(nextMessage?: string) {
+  function refreshWithMessage(nextMessage?: string, reason = "quest-update") {
     if (nextMessage) {
       setMessage(nextMessage);
     }
 
-    startTransition(() => {
-      void loadBoard({ silent: true });
-    });
+    emitDataInvalidation("quests", reason);
   }
 
   function clearQuestInlineError(questId: string) {
@@ -459,18 +451,31 @@ export function QuestBoard() {
 
     setIsRefreshing(true);
     setMessage("Checking your latest swap progress...");
-    window.dispatchEvent(new Event(SYNC_NOW_EVENT));
     let syncIssue: string | null = null;
 
     try {
-      const response = await syncSwapQuestActivity(address);
+      const response = await syncSwapQuestActivity(address, { force: true });
       if (!response.success) {
         throw new Error(response.error || "Failed to sync recent swaps");
+      }
+
+      if ((response.importedHashes?.length || 0) > 0 || (response.completedQuests?.length || 0) > 0) {
+        clearPointsSummaryCache(address);
+      }
+
+      emitDataInvalidation("quests", "quest-manual-sync");
+
+      if ((response.importedHashes?.length || 0) > 0) {
+        emitDataInvalidation("profile", "quest-manual-sync:swap-imported");
+        emitDataInvalidation("leaderboard", "quest-manual-sync:swap-imported");
+      }
+
+      if ((response.completedQuests?.length || 0) > 0) {
+        emitDataInvalidation(["leaderboard", "points"], "quest-manual-sync:quest-completed");
       }
     } catch (syncError) {
       syncIssue = getDisplayError(syncError);
     } finally {
-      await loadBoard({ silent: true });
       if (syncIssue) {
         setError(syncIssue);
       }
@@ -532,7 +537,7 @@ export function QuestBoard() {
 
       setXUsernameInput(response.username);
       setQuestInlineErrors({});
-      await refreshWithMessage(`X username saved as ${response.username}.`);
+      refreshWithMessage(`X username saved as ${response.username}.`, "x-username-saved");
     } catch (saveError) {
       setError(getDisplayError(saveError));
     } finally {
@@ -567,7 +572,7 @@ export function QuestBoard() {
         throw new Error(response.error || "Failed to start quest");
       }
 
-      await refreshWithMessage("Quest opened. Come back when verify unlocks.");
+      refreshWithMessage("Quest opened. Come back when verify unlocks.", "quest-started");
     } catch (startError) {
       setError(getDisplayError(startError));
     } finally {
@@ -598,13 +603,14 @@ export function QuestBoard() {
 
       if (!response.success && response.status === "retry_required") {
         setMessage(response.message || "Revisit the task once more, then verify again.");
+        emitDataInvalidation("quests", "quest-retry-required");
       } else if (!response.success) {
         throw new Error(response.error || "Verification failed");
       } else {
         setMessage(`Quest completed. You earned ${formatPoints(response.awardedPoints || 0)}.`);
+        clearPointsSummaryCache(address);
+        emitDataInvalidation(["leaderboard", "points", "quests"], "delay-quest-verified");
       }
-
-      await loadBoard({ silent: true });
     } catch (verifyError) {
       setError(getDisplayError(verifyError));
     } finally {
@@ -647,9 +653,12 @@ export function QuestBoard() {
 
       setPostInputs((current) => ({ ...current, [quest.id]: "" }));
       clearQuestInlineError(quest.id);
-      await refreshWithMessage(
-        `Post verified. You earned ${formatPoints(response.awardedPoints || 0)}.`
+      clearPointsSummaryCache(address);
+      refreshWithMessage(
+        `Post verified. You earned ${formatPoints(response.awardedPoints || 0)}.`,
+        "x-post-verified"
       );
+      emitDataInvalidation(["leaderboard", "points"], "x-post-verified");
     } catch (verifyError) {
       setQuestInlineError(quest.id, getDisplayError(verifyError));
     } finally {

@@ -3,6 +3,7 @@ import { createPublicClient, http, isAddress } from "viem";
 import { base } from "viem/chains";
 import { pointsEngine } from "./pointsEngine";
 import { supabase } from "./supabase";
+import { runtimeCache } from "../utils/runtimeCache";
 
 type QuestCategory = "social" | "onchain";
 type QuestCampaignKey = "general" | "cofounder_pass";
@@ -177,6 +178,8 @@ const OPENOCEAN_REFERRER_ADDRESS =
   "0x0fd79f3ceaE7ddA5cFC15b35188E67EFAc542573";
 const GENERAL_CAMPAIGN_KEY = "general";
 const COFOUNDER_PASS_CAMPAIGN_KEY = "cofounder_pass";
+const QUEST_BOARD_CACHE_TTL_MS = 10_000;
+const SWAP_SYNC_DEDUPE_TTL_MS = 25_000;
 
 const baseClient = createPublicClient({
   chain: base,
@@ -614,6 +617,7 @@ export class QuestEngine {
       throw new Error(`Failed to save quest: ${error.message}`);
     }
 
+    this.invalidateQuestBoardCache();
     return data as QuestRecord;
   }
 
@@ -639,145 +643,176 @@ export class QuestEngine {
       throw new Error(`Failed to delete quest: ${error.message}`);
     }
 
+    this.invalidateQuestBoardCache();
     return { success: true };
   }
 
-  async getQuestBoard(address?: string) {
-    const now = getNow();
-    const { data: questsData, error: questsError } = await supabase
-      .from("quests")
-      .select("*")
-      .order("sort_order", { ascending: true })
-      .order("created_at", { ascending: true });
+  private getQuestBoardCacheKey(address?: string | null) {
+    return `quest-board:${normalizeAddress(address || "guest")}`;
+  }
 
-    if (questsError) {
-      throw new Error(`Failed to load quest board: ${questsError.message}`);
+  private getSwapSyncCacheKey(address: string) {
+    return `quest-swap-sync:${normalizeAddress(address)}`;
+  }
+
+  private invalidateQuestBoardCache(address?: string | null) {
+    if (!address) {
+      runtimeCache.invalidatePrefix("quest-board:");
+      return;
     }
 
-    const quests = ((questsData ?? []) as QuestRecord[]).filter((quest) =>
-      isQuestLive(quest, now)
-    );
+    runtimeCache.invalidate(this.getQuestBoardCacheKey(address));
+  }
 
-    let linkedAccounts: Record<string, unknown> = {};
-    let progressByKey = new Map<string, QuestProgressRecord>();
-    let campaignWhitelistByKey = new Map<string, QuestCampaignWhitelistRecord>();
-    let normalizedAddress: string | null = null;
+  invalidateSwapSyncCache(address?: string | null) {
+    if (!address) {
+      runtimeCache.invalidatePrefix("quest-swap-sync:");
+      return;
+    }
 
-    if (address) {
-      const user = await pointsEngine.getOrCreate(address);
-      normalizedAddress = normalizeAddress(address);
-      const { data: socialData } = await supabase
-        .from("social_accounts")
+    runtimeCache.invalidate(this.getSwapSyncCacheKey(address));
+  }
+
+  private async getExistingUserId(address: string) {
+    const normalizedAddress = normalizeAddress(address);
+    const { data, error } = await supabase
+      .from("users")
+      .select("id")
+      .eq("address", normalizedAddress)
+      .maybeSingle();
+
+    if (error) {
+      throw new Error(`Failed to load quest user: ${error.message}`);
+    }
+
+    return data ? Number((data as { id: number }).id) : null;
+  }
+
+  async getQuestBoard(address?: string) {
+    const normalizedAddress = address ? normalizeAddress(address) : null;
+    const cacheKey = this.getQuestBoardCacheKey(normalizedAddress);
+
+    return runtimeCache.getOrSet(cacheKey, QUEST_BOARD_CACHE_TTL_MS, async () => {
+      const now = getNow();
+      const { data: questsData, error: questsError } = await supabase
+        .from("quests")
         .select("*")
-        .eq("user_id", user.id);
+        .order("sort_order", { ascending: true })
+        .order("created_at", { ascending: true });
 
-      linkedAccounts = Object.fromEntries(
-        ((socialData ?? []) as SocialAccountRecord[]).map((account) => [
-          account.platform,
-          {
-            username: account.username,
-            platformUserId: account.platform_user_id,
-            displayName: account.display_name,
-            profileImageUrl: account.profile_image_url,
-          },
-        ])
+      if (questsError) {
+        throw new Error(`Failed to load quest board: ${questsError.message}`);
+      }
+
+      const quests = ((questsData ?? []) as QuestRecord[]).filter((quest) =>
+        isQuestLive(quest, now)
       );
 
-      const { data: progressRows } = await supabase
-        .from("quest_progress")
-        .select("*")
-        .eq("user_id", user.id);
+      let linkedAccounts: Record<string, unknown> = {};
+      let progressByKey = new Map<string, QuestProgressRecord>();
+      let campaignWhitelistByKey = new Map<string, QuestCampaignWhitelistRecord>();
 
-      progressByKey = new Map(
-        ((progressRows ?? []) as QuestProgressRecord[]).map((row) => [
-          `${row.quest_id}:${row.cycle_key}`,
-          row,
-        ])
-      );
+      if (normalizedAddress) {
+        const userId = await this.getExistingUserId(normalizedAddress);
 
-      for (const quest of quests) {
-        if (
-          quest.category === "onchain" &&
-          (quest.action_type === "swap_volume" || quest.action_type === "swap_count")
-        ) {
-          await this.syncSwapProgressForQuest(
-            user.id,
-            normalizedAddress,
-            quest
+        if (userId) {
+          const [{ data: socialData, error: socialError }, { data: progressRows, error: progressError }, { data: whitelistRows, error: whitelistError }] =
+            await Promise.all([
+              supabase.from("social_accounts").select("*").eq("user_id", userId),
+              supabase.from("quest_progress").select("*").eq("user_id", userId),
+              supabase.from("quest_campaign_whitelist").select("*").eq("user_id", userId),
+            ]);
+
+          if (socialError) {
+            throw new Error(`Failed to load linked quest accounts: ${socialError.message}`);
+          }
+
+          if (progressError) {
+            throw new Error(`Failed to load quest progress: ${progressError.message}`);
+          }
+
+          if (whitelistError) {
+            throw new Error(`Failed to load campaign whitelist: ${whitelistError.message}`);
+          }
+
+          linkedAccounts = Object.fromEntries(
+            ((socialData ?? []) as SocialAccountRecord[]).map((account) => [
+              account.platform,
+              {
+                username: account.username,
+                platformUserId: account.platform_user_id,
+                displayName: account.display_name,
+                profileImageUrl: account.profile_image_url,
+              },
+            ])
+          );
+
+          progressByKey = new Map(
+            ((progressRows ?? []) as QuestProgressRecord[]).map((row) => [
+              `${row.quest_id}:${row.cycle_key}`,
+              row,
+            ])
+          );
+
+          campaignWhitelistByKey = new Map(
+            ((whitelistRows ?? []) as QuestCampaignWhitelistRecord[]).map((row) => [
+              normalizeCampaignKey(row.campaign_key),
+              row,
+            ])
           );
         }
       }
 
-      const { data: refreshedProgressRows } = await supabase
-        .from("quest_progress")
-        .select("*")
-        .eq("user_id", user.id);
+      const questItems = quests.map((quest) => {
+        const cycleKey = getCycleKey(quest.progress_window, now);
+        const progress = progressByKey.get(`${quest.id}:${cycleKey}`) ?? null;
 
-      progressByKey = new Map(
-        ((refreshedProgressRows ?? []) as QuestProgressRecord[]).map((row) => [
-          `${row.quest_id}:${row.cycle_key}`,
-          row,
-        ])
-      );
+        return {
+          id: quest.id,
+          slug: quest.slug,
+          title: quest.title,
+          description: quest.description,
+          campaignKey: normalizeCampaignKey(quest.campaign_key),
+          category: quest.category,
+          platform: quest.platform,
+          actionType: quest.action_type,
+          verificationType: quest.verification_type,
+          progressWindow: quest.progress_window,
+          rewardKind: quest.reward_kind,
+          rewardPoints: quest.reward_points,
+          targetValue: quest.target_value,
+          ctaLabel: quest.cta_label,
+          ctaUrl: quest.cta_url,
+          rules: safeRules(quest.rules),
+          progress: progress
+            ? {
+                status: progress.status,
+                value: progress.progress,
+                targetValue: progress.target_value,
+                verificationAttempts: progress.verification_attempts,
+                fakeFailuresServed: progress.fake_failures_served,
+                nextVerificationAt: progress.next_verification_at,
+                openedAt: progress.opened_at,
+                completedAt: progress.completed_at,
+              }
+            : null,
+        };
+      });
 
-      campaignWhitelistByKey = await this.ensureCampaignWhitelistState(
-        user.id,
-        normalizedAddress,
+      const campaigns = this.buildCampaignSummaries(
         quests,
         progressByKey,
+        campaignWhitelistByKey,
         now
       );
-    }
-
-    const questItems = quests.map((quest) => {
-      const cycleKey = getCycleKey(quest.progress_window, now);
-      const progress = progressByKey.get(`${quest.id}:${cycleKey}`) ?? null;
 
       return {
-        id: quest.id,
-        slug: quest.slug,
-        title: quest.title,
-        description: quest.description,
-        campaignKey: normalizeCampaignKey(quest.campaign_key),
-        category: quest.category,
-        platform: quest.platform,
-        actionType: quest.action_type,
-        verificationType: quest.verification_type,
-        progressWindow: quest.progress_window,
-        rewardKind: quest.reward_kind,
-        rewardPoints: quest.reward_points,
-        targetValue: quest.target_value,
-        ctaLabel: quest.cta_label,
-        ctaUrl: quest.cta_url,
-        rules: safeRules(quest.rules),
-        progress: progress
-          ? {
-              status: progress.status,
-              value: progress.progress,
-              targetValue: progress.target_value,
-              verificationAttempts: progress.verification_attempts,
-              fakeFailuresServed: progress.fake_failures_served,
-              nextVerificationAt: progress.next_verification_at,
-              openedAt: progress.opened_at,
-              completedAt: progress.completed_at,
-            }
-          : null,
+        linkedAccounts,
+        campaigns,
+        quests: questItems,
+        serverTime: now.toISOString(),
       };
     });
-
-    const campaigns = this.buildCampaignSummaries(
-      quests,
-      progressByKey,
-      campaignWhitelistByKey,
-      now
-    );
-
-    return {
-      linkedAccounts,
-      campaigns,
-      quests: questItems,
-      serverTime: now.toISOString(),
-    };
   }
 
   async saveManualXUsername(address: string, username: string) {
@@ -831,6 +866,7 @@ export class QuestEngine {
       throw new Error(`Failed to save X username: ${error.message}`);
     }
 
+    this.invalidateQuestBoardCache(normalizedAddress);
     return {
       success: true,
       username: normalizedUsername.display,
@@ -1002,6 +1038,7 @@ export class QuestEngine {
       },
     });
 
+    this.invalidateQuestBoardCache(address);
     return {
       success: true,
       questId,
@@ -1059,6 +1096,7 @@ export class QuestEngine {
         { fakeFailuresServed: updated.fake_failures_served }
       );
 
+      this.invalidateQuestBoardCache(address);
       return {
         success: false,
         status: "retry_required",
@@ -1085,6 +1123,7 @@ export class QuestEngine {
       { rewardedPoints: completed.awardedPoints }
     );
 
+    this.invalidateQuestBoardCache(address);
     return {
       success: true,
       status: "completed",
@@ -1270,6 +1309,7 @@ export class QuestEngine {
       { postId, authorUsername, rewardedPoints: completed.awardedPoints }
     );
 
+    this.invalidateQuestBoardCache(address);
     return {
       success: true,
       status: "completed",
@@ -1278,101 +1318,120 @@ export class QuestEngine {
     };
   }
 
-  async syncRecentSwapActivity(address: string) {
+  async syncRecentSwapActivity(address: string, options?: { force?: boolean }) {
     if (!isAddress(address)) {
       throw new Error("A valid wallet address is required");
     }
 
     const normalizedAddress = normalizeAddress(address);
-    const user = await pointsEngine.getOrCreate(normalizedAddress);
-    const knownHashes = await this.getKnownSwapAmounts(user.id);
+    const cacheKey = this.getSwapSyncCacheKey(normalizedAddress);
+    const force = options?.force ?? false;
 
-    const params = new URLSearchParams({
-      account: normalizedAddress,
-      pageSize: "15",
-    });
+    const runSync = async () => {
+      const user = await pointsEngine.getOrCreate(normalizedAddress);
+      const knownHashes = await this.getKnownSwapAmounts(user.id);
 
-    const history = await fetchOpenOceanData<OpenOceanWalletTransaction[]>(
-      `/base/getTxs?${params.toString()}`
-    );
+      const params = new URLSearchParams({
+        account: normalizedAddress,
+        pageSize: "15",
+      });
 
-    const importedHashes: string[] = [];
-    const expectedReferrer = OPENOCEAN_REFERRER_ADDRESS.toLowerCase();
+      const history = await fetchOpenOceanData<OpenOceanWalletTransaction[]>(
+        `/base/getTxs?${params.toString()}`
+      );
 
-    for (const item of history ?? []) {
-      const txHash = item.txHash;
-      if (!txHash) {
-        continue;
-      }
+      const importedHashes: string[] = [];
+      const expectedReferrer = OPENOCEAN_REFERRER_ADDRESS.toLowerCase();
 
-      const knownAmount = knownHashes.get(txHash) ?? -1;
-      if (knownAmount > 0) {
-        continue;
-      }
-
-      try {
-        const detail = await fetchOpenOceanData<OpenOceanTransactionDetail>(
-          `/base/getTransaction?hash=${encodeURIComponent(txHash)}`
-        );
-
-        const resolvedHash = detail.tx_hash || txHash;
-        const sender = String(detail.sender || detail.receiver || "").toLowerCase();
-        if (sender && sender !== normalizedAddress) {
+      for (const item of history ?? []) {
+        const txHash = item.txHash;
+        if (!txHash) {
           continue;
         }
 
-        const referrer = String(detail.referrer || "").toLowerCase();
-        if (!referrer || referrer !== expectedReferrer) {
+        const knownAmount = knownHashes.get(txHash) ?? -1;
+        if (knownAmount > 0) {
           continue;
         }
 
-        const amountUsd = toNumber(detail.usd_valuation, 0);
-        await this.upsertSwapActivityEvent({
-          userId: user.id,
-          chainId: base.id,
-          txHash: resolvedHash,
-          amountUsd,
-          inputToken: detail.in_token_symbol || item.inToken || null,
-          outputToken: detail.out_token_symbol || item.outToken || null,
-          occurredAt:
-            detail.update_at ||
-            detail.create_at ||
-            item.tradeTime ||
-            new Date().toISOString(),
-          metadata: {
-            source: "openocean_history_sync",
-            referrer: detail.referrer || null,
-            inAmountValue: detail.in_amount_value || item.inAmount || null,
-            outAmountValue: detail.out_amount_value || item.outAmount || null,
-            tradeTime: detail.update_at || detail.create_at || item.tradeTime || null,
-          },
-        });
-        await pointsEngine.recordSwap(normalizedAddress, {
-          txHash: resolvedHash,
-          chainId: base.id,
-          inputToken: detail.in_token_symbol || item.inToken || null,
-          outputToken: detail.out_token_symbol || item.outToken || null,
-          volumeUsd: amountUsd,
-          awardPoints: false,
-        });
+        try {
+          const detail = await fetchOpenOceanData<OpenOceanTransactionDetail>(
+            `/base/getTransaction?hash=${encodeURIComponent(txHash)}`
+          );
 
-        importedHashes.push(resolvedHash);
-        knownHashes.set(resolvedHash, amountUsd);
-      } catch {
-        // Ignore individual lookup failures so one bad tx does not block all sync.
+          const resolvedHash = detail.tx_hash || txHash;
+          const sender = String(detail.sender || detail.receiver || "").toLowerCase();
+          if (sender && sender !== normalizedAddress) {
+            continue;
+          }
+
+          const referrer = String(detail.referrer || "").toLowerCase();
+          if (!referrer || referrer !== expectedReferrer) {
+            continue;
+          }
+
+          const amountUsd = toNumber(detail.usd_valuation, 0);
+          await this.upsertSwapActivityEvent({
+            userId: user.id,
+            chainId: base.id,
+            txHash: resolvedHash,
+            amountUsd,
+            inputToken: detail.in_token_symbol || item.inToken || null,
+            outputToken: detail.out_token_symbol || item.outToken || null,
+            occurredAt:
+              detail.update_at ||
+              detail.create_at ||
+              item.tradeTime ||
+              new Date().toISOString(),
+            metadata: {
+              source: "openocean_history_sync",
+              referrer: detail.referrer || null,
+              inAmountValue: detail.in_amount_value || item.inAmount || null,
+              outAmountValue: detail.out_amount_value || item.outAmount || null,
+              tradeTime: detail.update_at || detail.create_at || item.tradeTime || null,
+            },
+          });
+          await pointsEngine.recordSwap(normalizedAddress, {
+            txHash: resolvedHash,
+            chainId: base.id,
+            inputToken: detail.in_token_symbol || item.inToken || null,
+            outputToken: detail.out_token_symbol || item.outToken || null,
+            volumeUsd: amountUsd,
+            awardPoints: false,
+          });
+
+          importedHashes.push(resolvedHash);
+          knownHashes.set(resolvedHash, amountUsd);
+        } catch {
+          // Ignore individual lookup failures so one bad tx does not block all sync.
+        }
       }
+
+      const completedQuests = await this.syncPublishedSwapQuests(
+        user.id,
+        normalizedAddress
+      );
+
+      if (importedHashes.length > 0 || completedQuests.length > 0) {
+        pointsEngine.invalidateUserReadCaches(normalizedAddress);
+      }
+
+      this.invalidateQuestBoardCache(normalizedAddress);
+
+      return {
+        success: true,
+        importedHashes,
+        completedQuests,
+      };
+    };
+
+    if (force) {
+      const result = await runSync();
+      runtimeCache.set(cacheKey, result, SWAP_SYNC_DEDUPE_TTL_MS);
+      return result;
     }
 
-    const completedQuests = await this.syncPublishedSwapQuests(
-      user.id,
-      normalizedAddress
-    );
-
-    return {
-      success: true,
-      importedHashes,
-      completedQuests,
-    };
+    return runtimeCache.getOrSet(cacheKey, SWAP_SYNC_DEDUPE_TTL_MS, runSync);
   }
 
   async recordSwapActivity(input: SwapActivityInput) {
@@ -1421,6 +1480,28 @@ export class QuestEngine {
       user.id,
       normalizedAddress
     );
+
+    pointsEngine.invalidateUserReadCaches(normalizedAddress);
+    this.invalidateQuestBoardCache(normalizedAddress);
+    return {
+      success: true,
+      completedQuests,
+    };
+  }
+
+  async syncRecordedSwapProgress(address: string) {
+    if (!isAddress(address)) {
+      throw new Error("A valid wallet address is required");
+    }
+
+    const normalizedAddress = normalizeAddress(address);
+    const user = await pointsEngine.getOrCreate(normalizedAddress);
+    const completedQuests = await this.syncPublishedSwapQuests(user.id, normalizedAddress);
+
+    if (completedQuests.length > 0) {
+      pointsEngine.invalidateUserReadCaches(normalizedAddress);
+    }
+    this.invalidateQuestBoardCache(normalizedAddress);
 
     return {
       success: true,
@@ -1515,6 +1596,65 @@ export class QuestEngine {
     }
 
     return completedQuests;
+  }
+
+  private async syncCampaignWhitelistForUser(
+    userId: number,
+    address: string,
+    campaignKey?: string | null
+  ) {
+    const normalizedCampaignKey = normalizeCampaignKey(campaignKey);
+    if (!campaignSupportsWhitelist(normalizedCampaignKey)) {
+      return new Map<string, QuestCampaignWhitelistRecord>();
+    }
+
+    const now = getNow();
+    const { data: questsData, error: questsError } = await supabase
+      .from("quests")
+      .select("*")
+      .eq("campaign_key", normalizedCampaignKey)
+      .eq("status", "published")
+      .eq("is_active", true);
+
+    if (questsError) {
+      throw new Error(`Failed to load campaign quests: ${questsError.message}`);
+    }
+
+    const quests = ((questsData ?? []) as QuestRecord[]).filter((quest) =>
+      isQuestLive(quest, now)
+    );
+
+    if (quests.length === 0) {
+      return new Map<string, QuestCampaignWhitelistRecord>();
+    }
+
+    const { data: progressRows, error: progressError } = await supabase
+      .from("quest_progress")
+      .select("*")
+      .eq("user_id", userId)
+      .in(
+        "quest_id",
+        quests.map((quest) => quest.id)
+      );
+
+    if (progressError) {
+      throw new Error(`Failed to load campaign progress: ${progressError.message}`);
+    }
+
+    const progressByKey = new Map(
+      ((progressRows ?? []) as QuestProgressRecord[]).map((row) => [
+        `${row.quest_id}:${row.cycle_key}`,
+        row,
+      ])
+    );
+
+    return this.ensureCampaignWhitelistState(
+      userId,
+      address,
+      quests,
+      progressByKey,
+      now
+    );
   }
 
   private async ensureCampaignWhitelistState(
@@ -1777,6 +1917,12 @@ export class QuestEngine {
     }
 
     if (progress.rewarded_at) {
+      await this.syncCampaignWhitelistForUser(
+        userId,
+        address,
+        normalizeCampaignKey(quest.campaign_key)
+      );
+      this.invalidateQuestBoardCache(address);
       return {
         progress,
         awardedPoints: 0,
@@ -1817,6 +1963,13 @@ export class QuestEngine {
         platform: quest.platform,
       }
     );
+
+    await this.syncCampaignWhitelistForUser(
+      userId,
+      address,
+      normalizeCampaignKey(quest.campaign_key)
+    );
+    this.invalidateQuestBoardCache(address);
 
     return {
       progress: updated,

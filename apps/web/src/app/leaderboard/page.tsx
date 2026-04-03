@@ -1,9 +1,10 @@
 "use client";
 
 import Image from "next/image";
-import { useEffect, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { useAccount } from "wagmi";
 import { InteractiveLeaderboardBackground } from "@/components/leaderboard/InteractiveLeaderboardBackground";
+import { subscribeToDataInvalidation } from "@/lib/clientEvents";
 import {
   fetchLeaderboardHub,
   type CachedLeaderboardProfile,
@@ -20,6 +21,7 @@ type NeynarProfile = {
 };
 
 const BOARD_PAGE_SIZE = 10;
+const LEADERBOARD_FALLBACK_REFRESH_MS = 300000;
 
 const BOARD_OPTIONS: Array<{
   id: LeaderboardBoardType;
@@ -287,6 +289,7 @@ export default function LeaderboardPage() {
   const [isLoadingBoard, setIsLoadingBoard] = useState(true);
   const [isLoadingProfile, setIsLoadingProfile] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const isMountedRef = useRef(true);
 
   const normalizedAddress = address?.toLowerCase();
   const viewer = leaderboard?.viewer ?? null;
@@ -300,11 +303,13 @@ export default function LeaderboardPage() {
   const totalPages = leaderboard?.totalPages ?? 1;
   const visiblePages = getVisiblePages(currentPage, totalPages);
 
-  useEffect(() => {
-    let cancelled = false;
+  const loadLeaderboard = useCallback(
+    async (options?: { silent?: boolean }) => {
+      const silent = options?.silent ?? false;
 
-    async function loadLeaderboard() {
-      setIsLoadingBoard(true);
+      if (!silent) {
+        setIsLoadingBoard(true);
+      }
       setError(null);
 
       try {
@@ -318,32 +323,34 @@ export default function LeaderboardPage() {
           throw new Error(response.error || "Failed to load leaderboard");
         }
 
-        if (!cancelled) {
+        if (isMountedRef.current) {
           setLeaderboard(response);
           setCurrentPage(response.page);
         }
       } catch (loadError) {
-        if (!cancelled) {
+        if (isMountedRef.current && !silent) {
           setError((loadError as Error).message || "Failed to load leaderboard");
           setLeaderboard(null);
         }
       } finally {
-        if (!cancelled) {
+        if (isMountedRef.current && !silent) {
           setIsLoadingBoard(false);
         }
       }
-    }
-
-    void loadLeaderboard();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [currentPage, normalizedAddress, selectedBoard]);
+    },
+    [currentPage, normalizedAddress, selectedBoard]
+  );
 
   useEffect(() => {
-    setCurrentPage(1);
-  }, [selectedBoard]);
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    void loadLeaderboard();
+  }, [loadLeaderboard]);
 
   useEffect(() => {
     if (!normalizedAddress) {
@@ -381,24 +388,33 @@ export default function LeaderboardPage() {
   }, [normalizedAddress]);
 
   useEffect(() => {
-    const intervalId = window.setInterval(async () => {
-      try {
-        const response = await fetchLeaderboardHub(selectedBoard, {
-          page: currentPage,
-          pageSize: BOARD_PAGE_SIZE,
-          viewerAddress: normalizedAddress,
-        });
-        if (response.success) {
-          setLeaderboard(response);
-          setCurrentPage(response.page);
-        }
-      } catch {
-        return;
+    const unsubscribe = subscribeToDataInvalidation("leaderboard", () => {
+      void loadLeaderboard({ silent: true });
+    });
+    const handleFocus = () => {
+      void loadLeaderboard({ silent: true });
+    };
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        void loadLeaderboard({ silent: true });
       }
-    }, 60000);
+    };
+    const intervalId = window.setInterval(() => {
+      if (document.visibilityState === "visible") {
+        void loadLeaderboard({ silent: true });
+      }
+    }, LEADERBOARD_FALLBACK_REFRESH_MS);
 
-    return () => window.clearInterval(intervalId);
-  }, [currentPage, normalizedAddress, selectedBoard]);
+    window.addEventListener("focus", handleFocus);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      unsubscribe();
+      window.removeEventListener("focus", handleFocus);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.clearInterval(intervalId);
+    };
+  }, [loadLeaderboard]);
 
   return (
     <main className="min-h-screen bg-[#f3f7fb] px-3 py-3 sm:px-4 sm:py-4 md:px-8 md:py-8">

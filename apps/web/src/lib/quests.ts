@@ -119,13 +119,16 @@ export async function recordSwapQuestActivity(input: {
   }>(response);
 }
 
-export async function syncSwapQuestActivity(address: string) {
+export async function syncSwapQuestActivity(
+  address: string,
+  options?: { force?: boolean }
+) {
   const response = await fetch(getQuestsApiUrl("/activities/swap/sync"), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ address }),
+    body: JSON.stringify({ address, force: options?.force ?? false }),
   });
 
   return parseJson<{

@@ -9,16 +9,17 @@ import { DailyCheckInModule } from "@/components/profile/DailyCheckInModule";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import {
   applyReferralCode,
-  fetchPointsBalance,
-  fetchReferralStats,
-  fetchUserStats,
+  clearPointsSummaryCache,
+  fetchPointsSummary,
   performDailyCheckIn,
   resetBrokenStreak,
   saveBrokenStreak,
   type PointsBalance,
+  type PointsSummaryResponse,
   type ReferralStats,
   type UserStats,
 } from "@/lib/points";
+import { emitDataInvalidation } from "@/lib/clientEvents";
 import {
   buildReferralLink,
   clearPendingReferralCode,
@@ -56,6 +57,7 @@ type CelebrationState =
 
 type FlowStage = "idle" | "wallet" | "verifying";
 type FeeConfig = NonNullable<PointsBalance["checkInConfig"]>;
+const PROFILE_FALLBACK_REFRESH_MS = 180000;
 
 function getErrorMessage(error: unknown) {
   if (error instanceof Error && error.message) {
@@ -265,52 +267,71 @@ function ProfilePageContent() {
     [referral?.code]
   );
 
-  const fetchProfileData = useCallback(async () => {
+  const applySummary = useCallback((summary: PointsSummaryResponse) => {
+    setBalance(summary.balance);
+    setStats(summary.stats);
+    setReferral(summary.referral);
+  }, []);
+
+  const fetchProfileData = useCallback(
+    async (options?: { force?: boolean; silent?: boolean }) => {
+      if (!address) {
+        setBalance(null);
+        setStats(null);
+        setReferral(null);
+        setProfile(null);
+        setIsLoading(false);
+        return;
+      }
+
+      if (!options?.silent) {
+        setIsLoading(true);
+      }
+
+      try {
+        const summary = await fetchPointsSummary(address, {
+          force: options?.force,
+        });
+
+        if (!summary.success) {
+          throw new Error(summary.error || "Failed to load profile summary");
+        }
+
+        applySummary(summary);
+      } catch (error) {
+        setToast({
+          kind: "error",
+          message: (error as Error).message || "Failed to load your profile",
+        });
+      } finally {
+        if (!options?.silent) {
+          setIsLoading(false);
+        }
+      }
+    },
+    [address, applySummary]
+  );
+
+  const fetchNeynarProfile = useCallback(async () => {
     if (!address) {
-      setBalance(null);
-      setStats(null);
-      setReferral(null);
       setProfile(null);
-      setIsLoading(false);
       return;
     }
 
-    setIsLoading(true);
-
     try {
-      const [balanceData, statsData, referralData] = await Promise.all([
-        fetchPointsBalance(address),
-        fetchUserStats(address),
-        fetchReferralStats(address),
-      ]);
-
-      if (!balanceData.success) {
-        throw new Error(balanceData.error || "Failed to load check-in status");
-      }
-
-      setBalance(balanceData);
-      if (statsData.success) {
-        setStats(statsData);
-      }
-      if (referralData.success) {
-        setReferral(referralData);
-      }
-
-      fetch(`/api/neynar/user?address=${address}`)
-        .then((res) => (res.ok ? res.json() : null))
-        .then((data) => {
-          if (data && !data.error) {
-            setProfile(data);
-          }
-        })
-        .catch(() => null);
-    } catch (error) {
-      setToast({
-        kind: "error",
-        message: (error as Error).message || "Failed to load your profile",
+      const response = await fetch(`/api/neynar/user?address=${address}`, {
+        cache: "no-store",
       });
-    } finally {
-      setIsLoading(false);
+      const data = response.ok ? await response.json() : null;
+
+      if (data && !data.error) {
+        setProfile(data);
+        return;
+      }
+
+      setProfile(null);
+    } catch {
+      setProfile(null);
     }
   }, [address]);
 
@@ -322,22 +343,44 @@ function ProfilePageContent() {
   useEffect(() => {
     if (isConnected) {
       void fetchProfileData();
+      void fetchNeynarProfile();
       return;
     }
 
+    setBalance(null);
+    setStats(null);
+    setReferral(null);
+    setProfile(null);
     setIsLoading(false);
-  }, [fetchProfileData, isConnected]);
+  }, [fetchNeynarProfile, fetchProfileData, isConnected]);
 
   useEffect(() => {
     if (!address) {
       return;
     }
 
+    const handleFocus = () => {
+      void fetchProfileData({ force: true, silent: true });
+    };
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        void fetchProfileData({ force: true, silent: true });
+      }
+    };
     const interval = window.setInterval(() => {
-      void fetchProfileData();
-    }, 60000);
+      if (document.visibilityState === "visible") {
+        void fetchProfileData({ force: true, silent: true });
+      }
+    }, PROFILE_FALLBACK_REFRESH_MS);
 
-    return () => window.clearInterval(interval);
+    window.addEventListener("focus", handleFocus);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      window.removeEventListener("focus", handleFocus);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.clearInterval(interval);
+    };
   }, [address, fetchProfileData]);
 
   useEffect(() => {
@@ -358,11 +401,13 @@ function ProfilePageContent() {
 
       if (result.success) {
         clearPendingReferralCode();
+        clearPointsSummaryCache(address);
         setToast({
           kind: "success",
           message: "Referral linked successfully. Your inviter now earns 20% of your points.",
         });
-        await fetchProfileData();
+        await fetchProfileData({ force: true, silent: true });
+        emitDataInvalidation(["leaderboard", "points"], "referral-applied");
         return;
       }
 
@@ -612,6 +657,7 @@ function ProfilePageContent() {
       }
 
       updateBalanceAndStats(result);
+      clearPointsSummaryCache(address);
       setCelebration({ kind: "checkin", id: Date.now() });
       setToast({
         kind: "success",
@@ -620,6 +666,7 @@ function ProfilePageContent() {
             ? `Onchain check-in complete with ${balance.checkInConfig.usdcAmount} USDC.`
             : `Onchain check-in complete with $${balance.checkInConfig.usdTarget.toFixed(2)} in ETH.`,
       });
+      emitDataInvalidation(["leaderboard", "points"], "check-in");
     } catch (error) {
       console.error(error);
       setToast({
@@ -649,12 +696,14 @@ function ProfilePageContent() {
       }
 
       updateBalanceAndStats(result);
+      clearPointsSummaryCache(address);
       setToast({
         kind: "success",
         message: result.reset
           ? "Streak reset. You can start again today."
           : "There was no broken streak to reset.",
       });
+      emitDataInvalidation("points", "reset-streak");
     } catch (error) {
       setToast({
         kind: "error",
@@ -692,11 +741,13 @@ function ProfilePageContent() {
       }
 
       updateBalanceAndStats(result);
+      clearPointsSummaryCache(address);
       setCelebration({ kind: "save", id: Date.now() });
       setToast({
         kind: "success",
         message: "Streak Saved!",
       });
+      emitDataInvalidation(["leaderboard", "points"], "save-streak");
     } catch (error) {
       console.error(error);
       const message = getErrorMessage(error);

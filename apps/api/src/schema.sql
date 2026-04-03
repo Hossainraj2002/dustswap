@@ -113,9 +113,17 @@ CREATE TABLE IF NOT EXISTS sweep_history (
 -- Indexes
 CREATE INDEX IF NOT EXISTS idx_events_user    ON point_events(user_id);
 CREATE INDEX IF NOT EXISTS idx_events_action  ON point_events(action);
+CREATE INDEX IF NOT EXISTS idx_events_user_action_created
+  ON point_events(user_id, action, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_users_points   ON users(total_points DESC);
 CREATE INDEX IF NOT EXISTS idx_users_refcode  ON users(referral_code);
 CREATE INDEX IF NOT EXISTS idx_history_user   ON sweep_history(user_id);
+CREATE INDEX IF NOT EXISTS idx_history_user_type_created
+  ON sweep_history(user_id, type, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_history_tx_hash
+  ON sweep_history(tx_hash);
+CREATE INDEX IF NOT EXISTS idx_referrals_referrer
+  ON referrals(referrer_id);
 CREATE INDEX IF NOT EXISTS idx_recovery_user  ON streak_recovery_events(user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_daily_asset_prices_symbol_date ON daily_asset_prices(asset_symbol, price_date DESC);
 
@@ -264,6 +272,8 @@ CREATE INDEX IF NOT EXISTS idx_social_accounts_user   ON social_accounts(user_id
 CREATE INDEX IF NOT EXISTS idx_quest_progress_user    ON quest_progress(user_id, quest_id, cycle_key);
 CREATE INDEX IF NOT EXISTS idx_quest_logs_user        ON quest_verification_logs(user_id, quest_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_activity_events_user   ON activity_events(user_id, event_type, occurred_at DESC);
+CREATE INDEX IF NOT EXISTS idx_activity_events_user_source_occurred
+  ON activity_events(user_id, event_type, source, occurred_at DESC);
 CREATE INDEX IF NOT EXISTS idx_campaign_whitelist_campaign ON quest_campaign_whitelist(campaign_key, created_at DESC);
 
 ALTER TABLE quests                   ENABLE ROW LEVEL SECURITY;
@@ -285,6 +295,270 @@ CREATE POLICY "service_all_quest_progress"  ON quest_progress          FOR ALL U
 CREATE POLICY "service_all_quest_logs"      ON quest_verification_logs FOR ALL USING (true);
 CREATE POLICY "service_all_activity_events" ON activity_events         FOR ALL USING (true);
 CREATE POLICY "service_all_campaign_whitelist" ON quest_campaign_whitelist FOR ALL USING (true);
+
+CREATE OR REPLACE FUNCTION get_user_sweep_stats(p_user_id INTEGER)
+RETURNS TABLE (
+  dust_swept BIGINT,
+  swap_volume NUMERIC,
+  tokens_burned BIGINT
+)
+LANGUAGE sql
+STABLE
+AS $$
+  SELECT
+    COALESCE(SUM(CASE WHEN type = 'sweep' THEN token_count ELSE 0 END), 0)::BIGINT AS dust_swept,
+    COALESCE(
+      SUM(CASE WHEN type = 'swap' THEN COALESCE(output_value_usd, 0) ELSE 0 END),
+      0
+    )::NUMERIC(20,6) AS swap_volume,
+    COALESCE(SUM(CASE WHEN type = 'burn' THEN token_count ELSE 0 END), 0)::BIGINT AS tokens_burned
+  FROM sweep_history
+  WHERE user_id = p_user_id;
+$$;
+
+CREATE OR REPLACE FUNCTION get_user_referral_stats(p_user_id INTEGER)
+RETURNS TABLE (
+  friends_joined BIGINT,
+  points_earned BIGINT
+)
+LANGUAGE sql
+STABLE
+AS $$
+  SELECT
+    (
+      SELECT COUNT(*)::BIGINT
+      FROM referrals
+      WHERE referrer_id = p_user_id
+    ) AS friends_joined,
+    (
+      SELECT COALESCE(SUM(total_awarded), 0)::BIGINT
+      FROM point_events
+      WHERE user_id = p_user_id
+        AND action IN ('referral_commission', 'referral_new_user')
+    ) AS points_earned;
+$$;
+
+CREATE OR REPLACE FUNCTION get_points_overview()
+RETURNS TABLE (
+  total_user_count BIGINT,
+  total_particle_points BIGINT
+)
+LANGUAGE sql
+STABLE
+AS $$
+  SELECT
+    COUNT(*)::BIGINT AS total_user_count,
+    COALESCE(SUM(total_points), 0)::BIGINT AS total_particle_points
+  FROM users;
+$$;
+
+CREATE OR REPLACE FUNCTION get_referral_leaderboard_page(
+  p_offset INTEGER,
+  p_limit INTEGER
+)
+RETURNS TABLE (
+  rank BIGINT,
+  user_id INTEGER,
+  address VARCHAR(42),
+  total_points BIGINT,
+  referral_points BIGINT,
+  referred_users BIGINT
+)
+LANGUAGE sql
+STABLE
+AS $$
+  WITH referral_counts AS (
+    SELECT referrer_id AS user_id, COUNT(*)::BIGINT AS referred_users
+    FROM referrals
+    WHERE referrer_id IS NOT NULL
+    GROUP BY referrer_id
+  ),
+  referral_points AS (
+    SELECT user_id, COALESCE(SUM(total_awarded), 0)::BIGINT AS referral_points
+    FROM point_events
+    WHERE action IN ('referral_commission', 'referral_new_user')
+    GROUP BY user_id
+  ),
+  ranked AS (
+    SELECT
+      ROW_NUMBER() OVER (
+        ORDER BY
+          COALESCE(referral_points.referral_points, 0) DESC,
+          COALESCE(referral_counts.referred_users, 0) DESC,
+          u.total_points DESC,
+          u.id ASC
+      )::BIGINT AS rank,
+      u.id AS user_id,
+      u.address,
+      u.total_points::BIGINT AS total_points,
+      COALESCE(referral_points.referral_points, 0)::BIGINT AS referral_points,
+      COALESCE(referral_counts.referred_users, 0)::BIGINT AS referred_users
+    FROM users u
+    LEFT JOIN referral_counts ON referral_counts.user_id = u.id
+    LEFT JOIN referral_points ON referral_points.user_id = u.id
+  )
+  SELECT
+    ranked.rank,
+    ranked.user_id,
+    ranked.address,
+    ranked.total_points,
+    ranked.referral_points,
+    ranked.referred_users
+  FROM ranked
+  ORDER BY ranked.rank
+  OFFSET GREATEST(COALESCE(p_offset, 0), 0)
+  LIMIT LEAST(GREATEST(COALESCE(p_limit, 10), 1), 50);
+$$;
+
+CREATE OR REPLACE FUNCTION get_referral_leaderboard_viewer(p_user_id INTEGER)
+RETURNS TABLE (
+  rank BIGINT,
+  user_id INTEGER,
+  address VARCHAR(42),
+  total_points BIGINT,
+  referral_points BIGINT,
+  referred_users BIGINT
+)
+LANGUAGE sql
+STABLE
+AS $$
+  WITH referral_counts AS (
+    SELECT referrer_id AS user_id, COUNT(*)::BIGINT AS referred_users
+    FROM referrals
+    WHERE referrer_id IS NOT NULL
+    GROUP BY referrer_id
+  ),
+  referral_points AS (
+    SELECT user_id, COALESCE(SUM(total_awarded), 0)::BIGINT AS referral_points
+    FROM point_events
+    WHERE action IN ('referral_commission', 'referral_new_user')
+    GROUP BY user_id
+  ),
+  ranked AS (
+    SELECT
+      ROW_NUMBER() OVER (
+        ORDER BY
+          COALESCE(referral_points.referral_points, 0) DESC,
+          COALESCE(referral_counts.referred_users, 0) DESC,
+          u.total_points DESC,
+          u.id ASC
+      )::BIGINT AS rank,
+      u.id AS user_id,
+      u.address,
+      u.total_points::BIGINT AS total_points,
+      COALESCE(referral_points.referral_points, 0)::BIGINT AS referral_points,
+      COALESCE(referral_counts.referred_users, 0)::BIGINT AS referred_users
+    FROM users u
+    LEFT JOIN referral_counts ON referral_counts.user_id = u.id
+    LEFT JOIN referral_points ON referral_points.user_id = u.id
+  )
+  SELECT
+    ranked.rank,
+    ranked.user_id,
+    ranked.address,
+    ranked.total_points,
+    ranked.referral_points,
+    ranked.referred_users
+  FROM ranked
+  WHERE ranked.user_id = p_user_id
+  LIMIT 1;
+$$;
+
+CREATE OR REPLACE FUNCTION get_volume_leaderboard_page(
+  p_offset INTEGER,
+  p_limit INTEGER
+)
+RETURNS TABLE (
+  rank BIGINT,
+  user_id INTEGER,
+  address VARCHAR(42),
+  total_points BIGINT,
+  swap_volume NUMERIC
+)
+LANGUAGE sql
+STABLE
+AS $$
+  WITH volume_totals AS (
+    SELECT
+      user_id,
+      COALESCE(SUM(output_value_usd), 0)::NUMERIC(20,6) AS swap_volume
+    FROM sweep_history
+    WHERE type = 'swap'
+      AND user_id IS NOT NULL
+    GROUP BY user_id
+  ),
+  ranked AS (
+    SELECT
+      ROW_NUMBER() OVER (
+        ORDER BY
+          COALESCE(volume_totals.swap_volume, 0) DESC,
+          u.total_points DESC,
+          u.id ASC
+      )::BIGINT AS rank,
+      u.id AS user_id,
+      u.address,
+      u.total_points::BIGINT AS total_points,
+      COALESCE(volume_totals.swap_volume, 0)::NUMERIC(20,6) AS swap_volume
+    FROM users u
+    LEFT JOIN volume_totals ON volume_totals.user_id = u.id
+  )
+  SELECT
+    ranked.rank,
+    ranked.user_id,
+    ranked.address,
+    ranked.total_points,
+    ranked.swap_volume
+  FROM ranked
+  ORDER BY ranked.rank
+  OFFSET GREATEST(COALESCE(p_offset, 0), 0)
+  LIMIT LEAST(GREATEST(COALESCE(p_limit, 10), 1), 50);
+$$;
+
+CREATE OR REPLACE FUNCTION get_volume_leaderboard_viewer(p_user_id INTEGER)
+RETURNS TABLE (
+  rank BIGINT,
+  user_id INTEGER,
+  address VARCHAR(42),
+  total_points BIGINT,
+  swap_volume NUMERIC
+)
+LANGUAGE sql
+STABLE
+AS $$
+  WITH volume_totals AS (
+    SELECT
+      user_id,
+      COALESCE(SUM(output_value_usd), 0)::NUMERIC(20,6) AS swap_volume
+    FROM sweep_history
+    WHERE type = 'swap'
+      AND user_id IS NOT NULL
+    GROUP BY user_id
+  ),
+  ranked AS (
+    SELECT
+      ROW_NUMBER() OVER (
+        ORDER BY
+          COALESCE(volume_totals.swap_volume, 0) DESC,
+          u.total_points DESC,
+          u.id ASC
+      )::BIGINT AS rank,
+      u.id AS user_id,
+      u.address,
+      u.total_points::BIGINT AS total_points,
+      COALESCE(volume_totals.swap_volume, 0)::NUMERIC(20,6) AS swap_volume
+    FROM users u
+    LEFT JOIN volume_totals ON volume_totals.user_id = u.id
+  )
+  SELECT
+    ranked.rank,
+    ranked.user_id,
+    ranked.address,
+    ranked.total_points,
+    ranked.swap_volume
+  FROM ranked
+  WHERE ranked.user_id = p_user_id
+  LIMIT 1;
+$$;
 
 INSERT INTO quests (
   slug,

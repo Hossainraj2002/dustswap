@@ -83,6 +83,14 @@ export type ReferralStats = {
   error?: string;
 };
 
+export type PointsSummaryResponse = {
+  success: boolean;
+  balance: PointsBalance;
+  stats: UserStats;
+  referral: ReferralStats;
+  error?: string;
+};
+
 export type LeaderboardEntry = {
   rank: number;
   address: string;
@@ -135,6 +143,32 @@ export type LeaderboardHubResponse = {
   error?: string;
 };
 
+const POINTS_SUMMARY_TTL_MS = 10_000;
+const pointsSummaryCache = new Map<
+  string,
+  {
+    expiresAt: number;
+    value: PointsSummaryResponse;
+  }
+>();
+const pointsSummaryInflight = new Map<string, Promise<PointsSummaryResponse>>();
+
+function getPointsSummaryCacheKey(address: string) {
+  return address.toLowerCase();
+}
+
+export function clearPointsSummaryCache(address?: string) {
+  if (!address) {
+    pointsSummaryCache.clear();
+    pointsSummaryInflight.clear();
+    return;
+  }
+
+  const key = getPointsSummaryCacheKey(address);
+  pointsSummaryCache.delete(key);
+  pointsSummaryInflight.delete(key);
+}
+
 export function getPointsApiUrl(path = "") {
   return `${getApiOrigin()}/api/points${path}`;
 }
@@ -148,6 +182,50 @@ export async function fetchPointsBalance(address: string) {
   });
 
   return parseJson<PointsBalance>(response);
+}
+
+export async function fetchPointsSummary(
+  address: string,
+  options?: { force?: boolean }
+) {
+  const key = getPointsSummaryCacheKey(address);
+  const now = Date.now();
+
+  if (!options?.force) {
+    const cached = pointsSummaryCache.get(key);
+    if (cached && cached.expiresAt > now) {
+      return cached.value;
+    }
+
+    const inflight = pointsSummaryInflight.get(key);
+    if (inflight) {
+      return inflight;
+    }
+  }
+
+  const request = fetch(getPointsApiUrl(`/${address}/summary`), {
+    headers: {
+      "Content-Type": "application/json",
+    },
+    cache: "no-store",
+  })
+    .then((response) => parseJson<PointsSummaryResponse>(response))
+    .then((data) => {
+      if (data.success) {
+        pointsSummaryCache.set(key, {
+          expiresAt: Date.now() + POINTS_SUMMARY_TTL_MS,
+          value: data,
+        });
+      }
+
+      return data;
+    })
+    .finally(() => {
+      pointsSummaryInflight.delete(key);
+    });
+
+  pointsSummaryInflight.set(key, request);
+  return request;
 }
 
 export async function fetchUserStats(address: string) {

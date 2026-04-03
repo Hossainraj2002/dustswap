@@ -2,7 +2,6 @@ import type { Metadata, Viewport } from "next";
 import { Inter } from "next/font/google";
 import { Providers } from "./providers";
 import { AppShell } from "@/components/AppShell";
-import { QuestSwapTracker } from "@/components/QuestSwapTracker";
 import "./globals.css";
 
 const inter = Inter({
@@ -43,7 +42,6 @@ export default function RootLayout({
     <html lang="en" className={inter.variable} suppressHydrationWarning>
       <body className="min-h-screen bg-[#eef3f8] font-sans text-slate-900 antialiased">
         <Providers>
-          <QuestSwapTracker />
           <AppShell>{children}</AppShell>
         </Providers>
       </body>
