@@ -31,6 +31,8 @@ export const metadata: Metadata = {
       {
         url: "/og.png",
         alt: "Dustswap - Made defi fun",
+        width: 1200,
+        height: 628,
       },
     ],
     locale: "en_US",

@@ -1,16 +1,6 @@
-"use client";
-
-import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { useAccount } from "wagmi";
-import { useEffect, useMemo, useState } from "react";
-import { applyReferralCode } from "@/lib/points";
-import {
-  clearPendingReferralCode,
-  isTerminalReferralError,
-  normalizeReferralCode,
-  storePendingReferralCode,
-} from "@/lib/referrals";
+import type { Metadata } from "next";
+import { ReferralPageClient } from "./ReferralPageClient";
+import { normalizeReferralCode } from "@/lib/referrals";
 
 type ReferralPageProps = {
   params: Promise<{
@@ -18,163 +8,49 @@ type ReferralPageProps = {
   }>;
 };
 
-type ApplyState = "idle" | "applying" | "success" | "error";
+const siteUrl = process.env.NEXT_PUBLIC_APP_URL || "https://app.dustswap.wtf";
+const referralImage = `${siteUrl}/og.png`;
+
+export async function generateMetadata({
+  params,
+}: ReferralPageProps): Promise<Metadata> {
+  const { code } = await params;
+  const normalizedCode = normalizeReferralCode(decodeURIComponent(code));
+  const referralUrl = `${siteUrl}/ref/${encodeURIComponent(normalizedCode)}`;
+  const title = "Join Dustswap | Referral Invite";
+  const description = `Use referral code ${normalizedCode} to join Dustswap, swap and bridge on Base, and earn community rewards.`;
+
+  return {
+    title,
+    description,
+    alternates: {
+      canonical: referralUrl,
+    },
+    openGraph: {
+      title,
+      description,
+      url: referralUrl,
+      siteName: "Dustswap",
+      images: [
+        {
+          url: referralImage,
+          alt: "Dustswap referral invite",
+          width: 1200,
+          height: 628,
+        },
+      ],
+      locale: "en_US",
+      type: "website",
+    },
+    twitter: {
+      card: "summary_large_image",
+      title,
+      description,
+      images: [referralImage],
+    },
+  };
+}
 
 export default function ReferralPage({ params }: ReferralPageProps) {
-  const router = useRouter();
-  const { address, isConnected } = useAccount();
-  const [referralCode, setReferralCode] = useState("");
-  const [state, setState] = useState<ApplyState>("idle");
-  const [message, setMessage] = useState(
-    "Connect your wallet to activate this referral code."
-  );
-  const [attempt, setAttempt] = useState(0);
-
-  useEffect(() => {
-    let active = true;
-
-    params.then((resolved) => {
-      if (!active) {
-        return;
-      }
-
-      const normalized = normalizeReferralCode(decodeURIComponent(resolved.code));
-      setReferralCode(normalized);
-      storePendingReferralCode(normalized);
-    });
-
-    return () => {
-      active = false;
-    };
-  }, [params]);
-
-  useEffect(() => {
-    if (!address || !referralCode) {
-      return;
-    }
-
-    let cancelled = false;
-
-    const run = async () => {
-      setState("applying");
-      setMessage("Applying your referral on-chain profile...");
-
-      const result = await applyReferralCode(address, referralCode);
-      if (cancelled) {
-        return;
-      }
-
-      if (result.success) {
-        clearPendingReferralCode();
-        setState("success");
-        setMessage("Referral linked. Your inviter now earns 20% of your future points.");
-        if (typeof window !== "undefined") {
-          window.localStorage.setItem(
-            `dustswap:cofounder-pass-pending:${address.toLowerCase()}`,
-            "pending"
-          );
-        }
-        window.setTimeout(() => {
-          router.replace("/profile");
-        }, 1200);
-        return;
-      }
-
-      if (isTerminalReferralError(result.error)) {
-        clearPendingReferralCode();
-      }
-
-      setState("error");
-      setMessage(result.error || "Referral could not be applied. Try again.");
-    };
-
-    void run();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [address, attempt, referralCode, router]);
-
-  const toneClasses = useMemo(() => {
-    if (state === "success") {
-      return "border-emerald-200 bg-emerald-50 text-emerald-700";
-    }
-
-    if (state === "error") {
-      return "border-rose-200 bg-rose-50 text-rose-700";
-    }
-
-    return "border-sky-200 bg-sky-50 text-sky-700";
-  }, [state]);
-
-  return (
-    <div className="min-h-[calc(100vh-4rem)] bg-[radial-gradient(circle_at_top_left,rgba(56,189,248,0.14),transparent_28%),radial-gradient(circle_at_top_right,rgba(251,191,36,0.12),transparent_22%),linear-gradient(180deg,#f8fafc,#fef7ed_45%,#eff6ff)] px-3 py-4 pb-16 sm:px-6 sm:py-8">
-      <div className="mx-auto flex w-full max-w-xl flex-col gap-3">
-        <section className="rounded-[28px] border border-white/70 bg-white/88 p-5 shadow-[0_24px_70px_rgba(15,23,42,0.08)]">
-          <p className="text-[10px] font-black uppercase tracking-[0.32em] text-slate-500">
-            REFERRAL UNLOCK
-          </p>
-          <h1 className="mt-2 text-3xl font-black tracking-tight text-slate-950">
-            You&apos;ve been invited to join DustSwap
-          </h1>
-          <p className="mt-2 text-sm leading-6 text-slate-600">
-            Connect your wallet to activate this referral code.
-          </p>
-          <p className="mt-2 text-sm leading-6 text-slate-600">
-            When the invite is linked successfully, both you and the person who
-            referred you receive 500 PP.
-          </p>
-
-          <div className="mt-4 rounded-[22px] border border-slate-200 bg-[#f8fbff] p-4">
-            <p className="text-[10px] font-black uppercase tracking-[0.24em] text-slate-500">
-              INVITE CODE
-            </p>
-            <p className="mt-2 break-all font-mono text-lg font-black tracking-[0.18em] text-sky-700">
-              {referralCode || "LOADING..."}
-            </p>
-          </div>
-
-          <div className={`mt-4 rounded-[20px] border px-4 py-3 text-sm ${toneClasses}`}>
-            {message}
-          </div>
-
-          <div className="mt-5 flex flex-col gap-3">
-            {!isConnected ? (
-              <div className="rounded-[22px] border border-slate-200 bg-[#fffdf7] p-4 text-center">
-                <div className="flex justify-center">
-                  {/* @ts-ignore */}
-                  <appkit-button />
-                </div>
-              </div>
-            ) : (
-              <div className="rounded-[22px] border border-slate-200 bg-[#fffdf7] p-4">
-                <p className="text-[10px] font-black uppercase tracking-[0.24em] text-slate-500">
-                  Connected Wallet
-                </p>
-                <p className="mt-2 break-all text-sm font-semibold text-slate-800">{address}</p>
-              </div>
-            )}
-
-            {state === "error" ? (
-              <button
-                type="button"
-                onClick={() => setAttempt((current) => current + 1)}
-                disabled={!isConnected}
-                className="rounded-[18px] bg-[linear-gradient(135deg,#0ea5e9,#22c55e)] px-4 py-3 text-sm font-black text-white shadow-[0_14px_32px_rgba(14,165,233,0.18)] transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                Retry Referral Apply
-              </button>
-            ) : null}
-
-            <Link
-              href="/profile"
-              className="rounded-[18px] border border-slate-300/70 bg-white/70 px-4 py-3 text-center text-sm font-semibold text-slate-600 transition hover:bg-white hover:text-slate-900"
-            >
-              Open Profile
-            </Link>
-          </div>
-        </section>
-      </div>
-    </div>
-  );
+  return <ReferralPageClient params={params} />;
 }
