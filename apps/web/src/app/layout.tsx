@@ -10,13 +10,40 @@ const inter = Inter({
   variable: "--font-inter",
 });
 
+const siteUrl = process.env.NEXT_PUBLIC_APP_URL || "https://app.dustswap.wtf";
+const siteTitle = "Dustswap | Made defi fun";
+const siteDescription =
+  "Swap and bridge aggregator with social quests and rewards for the Base community.";
+
 export const metadata: Metadata = {
-  title: "DustSwap - Cross-Chain Swaps",
-  description: "Swap and bridge tokens across chains with zero gas fees",
+  metadataBase: new URL(siteUrl),
+  applicationName: "Dustswap",
+  title: siteTitle,
+  description: siteDescription,
   keywords: ["DustSwap", "Swap", "Bridge", "Cross-chain", "Base"],
   authors: [{ name: "DustSwap Team" }],
+  openGraph: {
+    title: siteTitle,
+    description: siteDescription,
+    url: siteUrl,
+    siteName: "Dustswap",
+    images: [
+      {
+        url: "/og.png",
+        alt: "Dustswap - Made defi fun",
+      },
+    ],
+    locale: "en_US",
+    type: "website",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: siteTitle,
+    description: siteDescription,
+    images: ["/og.png"],
+  },
   icons: {
-    icon: "/logo.svg",
+    icon: "/logo.png",
   },
   other: {
     "base:app_id": "6992d2eae0d5d2cf831b5db6",

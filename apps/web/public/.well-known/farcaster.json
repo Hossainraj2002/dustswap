@@ -7,13 +7,13 @@
   "frame": {
     "version": "1",
     "name": "DustSwap",
-    "iconUrl": "https://dustswap.vercel.app/icon.png",
-    "homeUrl": "https://dustswap.vercel.app",
-    "imageUrl": "https://dustswap.vercel.app/og.png",
+    "iconUrl": "https://app.dustswap.wtf/logo.png",
+    "homeUrl": "https://app.dustswap.wtf",
+    "imageUrl": "https://app.dustswap.wtf/og.png",
     "buttonTitle": "Open DustSwap",
-    "splashImageUrl": "https://dustswap.vercel.app/splash.png",
+    "splashImageUrl": "https://app.dustswap.wtf/logo.png",
     "splashBackgroundColor": "#030305",
-    "webhookUrl": "https://dustswap.vercel.app/api/webhook",
+    "webhookUrl": "https://app.dustswap.wtf/api/webhook",
     "primaryCategory": "finance",
     "tags": [
       "dex",

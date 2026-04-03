@@ -12,6 +12,7 @@ import { DATA_SUFFIX } from "@/lib/builderCode";
 
 let hasInitializedAppKit = false;
 let wagmiAdapter: InstanceType<typeof WagmiAdapter> | null = null;
+const appUrl = process.env.NEXT_PUBLIC_APP_URL || "https://app.dustswap.wtf";
 
 function getAppKitAdapter() {
   if (!wagmiAdapter) {
@@ -38,10 +39,11 @@ function ensureAppKit() {
     projectId,
     networks: INITIAL_WAGMI_CHAINS as any,
     metadata: {
-      name: "DustSwap",
-      description: "DustSwap cross-chain swaps and bridges",
-      url: "https://dustswap.xyz",
-      icons: ["https://dustswap.xyz/logo.png"],
+      name: "Dustswap",
+      description:
+        "Swap and bridge aggregator with social quests and rewards for the Base community.",
+      url: appUrl,
+      icons: [`${appUrl}/logo.png`],
     },
     themeMode: "light",
     features: {

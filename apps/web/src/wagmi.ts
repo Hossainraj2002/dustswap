@@ -11,6 +11,8 @@ import { DATA_SUFFIX } from "@/lib/builderCode";
 
 export const projectId =
   process.env.NEXT_PUBLIC_WALLET_CONNECT_PROJECT_ID || process.env.NEXT_PUBLIC_WC_PROJECT_ID || "e3ac88268c575d561fc945ca1e2a2874";
+const appUrl = process.env.NEXT_PUBLIC_APP_URL || "https://app.dustswap.wtf";
+const appIconUrl = `${appUrl}/logo.png`;
 
 function withBuilderCodeClient(connectorFn: CreateConnectorFn): CreateConnectorFn {
   return (params) => {
@@ -42,7 +44,7 @@ export const wagmiConnectors: CreateConnectorFn[] = [
   withBuilderCodeClient(
     coinbaseWallet({
       appName: "DustSwap",
-      appLogoUrl: "https://app.dustswap.wtf/logo.png",
+      appLogoUrl: appIconUrl,
       preference: { options: "all" },
     })
   ),
@@ -52,8 +54,8 @@ export const wagmiConnectors: CreateConnectorFn[] = [
       metadata: {
         name: "DustSwap",
         description: "DustSwap DEX & Yield",
-        url: "https://app.dustswap.wtf",
-        icons: ["https://app.dustswap.wtf/logo.png"],
+        url: appUrl,
+        icons: [appIconUrl],
       },
       showQrModal: false,
     })
