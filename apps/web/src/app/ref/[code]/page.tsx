@@ -10,6 +10,7 @@ type ReferralPageProps = {
 
 const siteUrl = process.env.NEXT_PUBLIC_APP_URL || "https://app.dustswap.wtf";
 const referralImage = `${siteUrl}/og.png`;
+const referralSplashImage = `${siteUrl}/logo.png`;
 
 export async function generateMetadata({
   params,
@@ -19,6 +20,20 @@ export async function generateMetadata({
   const referralUrl = `${siteUrl}/ref/${encodeURIComponent(normalizedCode)}`;
   const title = "Join Dustswap | Referral Invite";
   const description = `Use referral code ${normalizedCode} to join Dustswap, swap and bridge on Base, and earn community rewards.`;
+  const referralEmbed = JSON.stringify({
+    version: "1",
+    imageUrl: referralImage,
+    button: {
+      title: "Open Referral",
+      action: {
+        type: "launch_frame",
+        name: "Dustswap Referral",
+        url: referralUrl,
+        splashImageUrl: referralSplashImage,
+        splashBackgroundColor: "#030305",
+      },
+    },
+  });
 
   return {
     title,
@@ -47,6 +62,10 @@ export async function generateMetadata({
       title,
       description,
       images: [referralImage],
+    },
+    other: {
+      "fc:miniapp": referralEmbed,
+      "fc:frame": referralEmbed,
     },
   };
 }

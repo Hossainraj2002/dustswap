@@ -426,7 +426,7 @@ contract DustSweepRouterTest is Test {
 
     function test_builderCode() public view {
         string memory code = router.BUILDER_CODE();
-        assertEq(keccak256(bytes(code)), keccak256(bytes("bc_ox7237gv")));
+        assertEq(keccak256(bytes(code)), keccak256(bytes("bc_tpolfjho")));
     }
 
     // ======================= ADMIN =========================

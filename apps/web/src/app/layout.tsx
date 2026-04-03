@@ -14,6 +14,22 @@ const siteUrl = process.env.NEXT_PUBLIC_APP_URL || "https://app.dustswap.wtf";
 const siteTitle = "Dustswap | Made defi fun";
 const siteDescription =
   "Swap and bridge aggregator with social quests and rewards for the Base community.";
+const siteOgImage = `${siteUrl}/og.png`;
+const siteLogo = `${siteUrl}/logo.png`;
+const baseEmbed = JSON.stringify({
+  version: "1",
+  imageUrl: siteOgImage,
+  button: {
+    title: "Open Dustswap",
+    action: {
+      type: "launch_frame",
+      name: "Dustswap",
+      url: siteUrl,
+      splashImageUrl: siteLogo,
+      splashBackgroundColor: "#030305",
+    },
+  },
+});
 
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),
@@ -49,6 +65,8 @@ export const metadata: Metadata = {
   },
   other: {
     "base:app_id": "6992d2eae0d5d2cf831b5db6",
+    "fc:miniapp": baseEmbed,
+    "fc:frame": baseEmbed,
   },
   manifest: "/manifest.json",
 };

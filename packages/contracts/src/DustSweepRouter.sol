@@ -36,7 +36,7 @@ contract DustSweepRouter is Ownable, ReentrancyGuard, Pausable {
     uint256 public constant MAX_BATCH_SIZE = 10;
     uint256 public constant MAX_DUST_SWEEP_FEE_BPS = 500; // 5 %
     uint256 public constant MAX_SWAP_FEE_BPS = 100; // 1 %
-    string public constant BUILDER_CODE = "bc_ox7237gv";
+    string public constant BUILDER_CODE = "bc_tpolfjho";
 
     // ──────────────────────── Immutables ───────────────────
     ISwapRouter02 public immutable swapRouter;

@@ -4,21 +4,24 @@
     "signature": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAASAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABbGHQYo6BjOBVCP4HytHT_9U5BSGYLoLbCsmlc1zapdwF_WaCTWtxFSCIDAg82kedi53T3BZYBIulanj_YxjrPwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAl8ZgIay2xclZzG8RWZzuWvO8j9R0fus3XxDee9lRlVy8dAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACKeyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoiRlY1a180WlVpWUhxeUY2NHRNQVNSQV9OTVV3cVJ5dVJXeko5SmdicVBhNCIsIm9yaWdpbiI6Imh0dHBzOi8va2V5cy5jb2luYmFzZS5jb20iLCJjcm9zc09yaWdpbiI6ZmFsc2V9AAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
   },
   
-  "frame": {
+  "miniapp": {
     "version": "1",
-    "name": "DustSwap",
+    "name": "Dustswap",
+    "subtitle": "Swap, bridge, and earn",
+    "description": "Swap and bridge aggregator with social quests and rewards for the Base community.",
+    "tagline": "Made defi fun",
     "iconUrl": "https://app.dustswap.wtf/logo.png",
     "homeUrl": "https://app.dustswap.wtf",
-    "imageUrl": "https://app.dustswap.wtf/og.png",
-    "buttonTitle": "Open DustSwap",
+    "screenshotUrls": [
+      "https://app.dustswap.wtf/og.png"
+    ],
+    "heroImageUrl": "https://app.dustswap.wtf/og.png",
     "splashImageUrl": "https://app.dustswap.wtf/logo.png",
     "splashBackgroundColor": "#030305",
-    "webhookUrl": "https://app.dustswap.wtf/api/webhook",
     "primaryCategory": "finance",
     "noindex": false,
-    "ogTitle": "dustswap made defi fun",
-    "ogDescription": ".",
-    "heroImageUrl": "https://app.dustswap.wtf/og.png",
+    "ogTitle": "Dustswap | Made defi fun",
+    "ogDescription": "Swap and bridge aggregator with social quests and rewards for the Base community.",
     "ogImageUrl": "https://app.dustswap.wtf/og.png",
     "tags": [
       "dex",

@@ -3,7 +3,7 @@ import { concat, type Hex } from "viem";
 import { Attribution } from "ox/erc8021";
 
 export const BUILDER_CODE =
-  process.env.NEXT_PUBLIC_BUILDER_CODE || "bc_ox7237gv";
+  process.env.NEXT_PUBLIC_BUILDER_CODE || "bc_tpolfjho";
 
 export const DATA_SUFFIX = Attribution.toDataSuffix({
   codes: [BUILDER_CODE],
