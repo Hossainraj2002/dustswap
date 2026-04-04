@@ -36,6 +36,19 @@ export function CofounderPassWelcomeModal() {
     }
 
     const normalizedAddress = address.toLowerCase();
+    const isOnProfile = pathname === "/profile" || pathname.startsWith("/profile/");
+
+    // Always show on /profile regardless of seen/pending state
+    if (isOnProfile) {
+      // Reset ref so re-navigating to /profile triggers again
+      lastAddressRef.current = null;
+      const timer = window.setTimeout(() => {
+        setIsOpen(true);
+      }, 500);
+      return () => window.clearTimeout(timer);
+    }
+
+    // On other pages, keep original behaviour: require pending flag, one-time only
     const alreadySeen =
       window.localStorage.getItem(getSeenKey(normalizedAddress)) === "seen";
     const pendingOpen =
@@ -59,7 +72,11 @@ export function CofounderPassWelcomeModal() {
 
   function closeModal() {
     if (address && typeof window !== "undefined") {
-      window.localStorage.setItem(getSeenKey(address), "seen");
+      const isOnProfile = pathname === "/profile" || pathname.startsWith("/profile/");
+      // Only persist "seen" when closing from the one-time referral flow (not /profile)
+      if (!isOnProfile) {
+        window.localStorage.setItem(getSeenKey(address), "seen");
+      }
       window.localStorage.removeItem(getPendingKey(address));
     }
     setIsOpen(false);
