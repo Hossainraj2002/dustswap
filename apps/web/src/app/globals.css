@@ -22,6 +22,9 @@
   html {
     @apply scroll-smooth antialiased;
     color-scheme: light;
+    max-width: 100%;
+    overflow-x: hidden;
+    overflow-x: clip;
   }
 
   body {
@@ -29,6 +32,9 @@
     font-feature-settings: "rlig" 1, "calt" 1;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+    max-width: 100%;
+    overflow-x: hidden;
+    overflow-x: clip;
   }
 
   * {
