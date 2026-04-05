@@ -11,9 +11,9 @@ const inter = Inter({
 });
 
 const siteUrl = process.env.NEXT_PUBLIC_APP_URL || "https://app.dustswap.wtf";
-const siteTitle = "Dustswap | Made defi fun";
+const siteTitle = "DustSwap | Swap, quests, and progress on Base";
 const siteDescription =
-  "Swap and bridge aggregator with social quests and rewards for the Base community.";
+  "DustSwap combines swapping, quests, streaks, referrals, and leaderboard progress into one Base-first app.";
 const siteOgImage = `${siteUrl}/og.png`;
 const siteLogo = `${siteUrl}/logo.png`;
 const baseEmbed = JSON.stringify({
