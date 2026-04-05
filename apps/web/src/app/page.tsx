@@ -127,6 +127,64 @@ function ConnectWalletButton({
   fullWidth?: boolean;
   onConnectStart?: () => void;
 }) {
+  const [isMounted, setIsMounted] = useState(false);
+
+  useEffect(() => {
+    setIsMounted(true);
+  }, []);
+
+  if (!isMounted) {
+    const variantClasses = {
+      primary:
+        "bg-[#0066ff] text-white shadow-[0_18px_50px_rgba(0,102,255,0.26)]",
+      secondary:
+        "border border-slate-200 bg-white text-slate-900 shadow-[0_14px_36px_rgba(148,163,184,0.16)]",
+      header:
+        "border border-slate-200/90 bg-white/88 text-slate-900 shadow-[0_12px_32px_rgba(148,163,184,0.14)]",
+    } as const;
+
+    return (
+      <button
+        type="button"
+        disabled
+        className={cx(
+          "inline-flex items-center justify-center gap-2 rounded-full px-5 py-3 text-sm font-semibold transition-all duration-200 disabled:cursor-default",
+          variantClasses[variant],
+          fullWidth && "w-full",
+          className
+        )}
+        aria-label="Connect wallet"
+      >
+        <span className="h-2.5 w-2.5 rounded-full bg-sky-200" aria-hidden="true" />
+        <span>Connect wallet</span>
+      </button>
+    );
+  }
+
+  return (
+    <HydratedConnectWalletButton
+      variant={variant}
+      className={className}
+      connectedLabel={connectedLabel}
+      fullWidth={fullWidth}
+      onConnectStart={onConnectStart}
+    />
+  );
+}
+
+function HydratedConnectWalletButton({
+  variant = "primary",
+  className,
+  connectedLabel,
+  fullWidth = false,
+  onConnectStart,
+}: {
+  variant?: "primary" | "secondary" | "header";
+  className?: string;
+  connectedLabel?: string;
+  fullWidth?: boolean;
+  onConnectStart?: () => void;
+}) {
   const { open } = useAppKit();
   const { address, isConnected } = useAccount();
 
