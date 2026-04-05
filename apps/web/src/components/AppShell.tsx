@@ -1,11 +1,19 @@
 'use client';
 
+import Image from 'next/image';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { type ComponentType, type ReactNode, type SVGProps, useCallback, useEffect, useRef, useState } from 'react';
+import {
+  type ComponentType,
+  type ReactNode,
+  type SVGProps,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from 'react';
 import { useAccount } from 'wagmi';
 import {
-  DustSweepIcon,
   LeaderboardIcon,
   ProfileIcon,
   QuestsIcon,
@@ -13,8 +21,12 @@ import {
 } from '@/components/NavIcons';
 import { CofounderPassWelcomeModal } from '@/components/quests/CofounderPassWelcomeModal';
 import { ReferralOnboardingModal } from '@/components/referrals/ReferralOnboardingModal';
-import { fetchPointsSummary, clearPointsSummaryCache } from '@/lib/points';
-import { getPendingReferralCode, isReferralOnboardingDismissed, setReferralOnboardingDismissed } from '@/lib/referrals';
+import { clearPointsSummaryCache, fetchPointsSummary } from '@/lib/points';
+import {
+  getPendingReferralCode,
+  isReferralOnboardingDismissed,
+  setReferralOnboardingDismissed,
+} from '@/lib/referrals';
 
 interface AppShellProps {
   children: ReactNode;
@@ -30,7 +42,6 @@ const NAV_ITEMS = [
   { icon: ProfileIcon, label: 'Profile', route: '/profile' },
   { icon: QuestsIcon, label: 'Quests', route: '/quests' },
   { icon: SwapIcon, label: 'Swap', route: '/swap' },
-  { icon: DustSweepIcon, label: 'Dust Sweep', route: '/comingsoon' },
   { icon: LeaderboardIcon, label: 'Leaderboard', route: '/leaderboard' },
 ] satisfies NavItem[];
 
@@ -67,17 +78,15 @@ function AppShellIcon({
 export function AppShell({ children }: AppShellProps) {
   const pathname = usePathname();
   const isLightShell = true;
+  const isLandingPage = pathname === '/';
   const { address, isConnected } = useAccount();
-
-  // ── Referral onboarding modal state ──────────────────────────
   const [showReferralModal, setShowReferralModal] = useState(false);
   const checkedRef = useRef<string | null>(null);
 
   const checkReferralEligibility = useCallback(async (addr: string) => {
-    // Safety checks before any fetch
     if (typeof window === 'undefined') return;
-    if (getPendingReferralCode()) return;              // link-based flow takes over
-    if (isReferralOnboardingDismissed(addr)) return;  // already dismissed for this wallet
+    if (getPendingReferralCode()) return;
+    if (isReferralOnboardingDismissed(addr)) return;
 
     try {
       const summary = await fetchPointsSummary(addr);
@@ -85,13 +94,17 @@ export function AppShell({ children }: AppShellProps) {
         setShowReferralModal(true);
       }
     } catch {
-      // silently fail — don't interrupt app
+      // Keep the shell resilient even if the profile summary request fails.
     }
   }, []);
 
   useEffect(() => {
-    // Don't show on /admin or /ref/... routes
-    if (pathname.startsWith('/admin') || pathname.startsWith('/ref/')) {
+    if (
+      isLandingPage ||
+      pathname.startsWith('/admin') ||
+      pathname.startsWith('/ref/')
+    ) {
+      checkedRef.current = null;
       setShowReferralModal(false);
       return;
     }
@@ -102,14 +115,17 @@ export function AppShell({ children }: AppShellProps) {
       return;
     }
 
-    // Only check once per wallet address (not on every route change)
-    if (checkedRef.current === address.toLowerCase()) return;
-    checkedRef.current = address.toLowerCase();
+    const normalizedAddress = address.toLowerCase();
+    if (checkedRef.current === normalizedAddress) return;
+    checkedRef.current = normalizedAddress;
 
-    // Small delay so the page has time to load first
-    const t = window.setTimeout(() => void checkReferralEligibility(address), 1200);
-    return () => window.clearTimeout(t);
-  }, [address, checkReferralEligibility, isConnected, pathname]);
+    const timerId = window.setTimeout(
+      () => void checkReferralEligibility(address),
+      1200
+    );
+
+    return () => window.clearTimeout(timerId);
+  }, [address, checkReferralEligibility, isConnected, isLandingPage, pathname]);
 
   const handleReferralApplied = useCallback(() => {
     setShowReferralModal(false);
@@ -138,67 +154,79 @@ export function AppShell({ children }: AppShellProps) {
         />
       )}
 
-      <nav
-        className={`fixed inset-y-0 left-0 z-50 hidden w-[236px] flex-col border-r backdrop-blur-2xl md:flex ${
-          isLightShell
-            ? 'border-slate-200/80 bg-white/78 shadow-[0_24px_80px_rgba(148,163,184,0.16)]'
-            : 'border-white/10 bg-[rgba(6,10,18,0.84)]'
+      {!isLandingPage && (
+        <nav
+          className={`fixed inset-y-0 left-0 z-50 hidden w-[236px] flex-col border-r backdrop-blur-2xl md:flex ${
+            isLightShell
+              ? 'border-slate-200/80 bg-white/78 shadow-[0_24px_80px_rgba(148,163,184,0.16)]'
+              : 'border-white/10 bg-[rgba(6,10,18,0.84)]'
+          }`}
+        >
+          <div className="p-6">
+            <Link
+              href="/"
+              className="inline-flex rounded-[22px] border border-white/70 bg-white/90 px-4 py-3 shadow-[0_16px_36px_rgba(148,163,184,0.16)] transition-transform duration-200 hover:-translate-y-0.5"
+              aria-label="DustSwap home"
+            >
+              <Image
+                src="/longlogo.png"
+                alt="DustSwap"
+                width={170}
+                height={42}
+                className="h-auto w-[138px]"
+                priority
+              />
+            </Link>
+          </div>
+
+          <div className="mt-2 flex-1 space-y-2 px-4">
+            {NAV_ITEMS.map((item) => {
+              const active = isActiveRoute(pathname, item.route);
+              const Icon = item.icon;
+
+              return (
+                <Link
+                  key={item.route}
+                  href={item.route}
+                  className={`group flex items-center gap-3 rounded-[18px] px-3 py-3 transition-all duration-200 ${
+                    isLightShell
+                      ? active
+                        ? 'bg-sky-50/85 text-slate-950'
+                        : 'text-slate-500 hover:bg-slate-100/80 hover:text-slate-900'
+                      : active
+                        ? 'bg-white/[0.06] text-white'
+                        : 'text-slate-400 hover:bg-white/[0.04] hover:text-white'
+                  }`}
+                >
+                  <AppShellIcon Icon={Icon} active={active} light={isLightShell} />
+                  <span
+                    className="font-medium tracking-[-0.02em]"
+                    style={{ fontFamily: 'DM Sans, sans-serif' }}
+                  >
+                    {item.label}
+                  </span>
+                  {active && (
+                    <span
+                      className={`ml-auto h-2 w-2 rounded-full ${
+                        isLightShell ? 'bg-[#2563eb]' : 'bg-blue-400'
+                      }`}
+                    />
+                  )}
+                </Link>
+              );
+            })}
+          </div>
+        </nav>
+      )}
+
+      <main
+        className={`relative z-10 flex-1 transition-opacity duration-100 ease-in-out ${
+          isLandingPage
+            ? ''
+            : 'pb-[calc(78px+env(safe-area-inset-bottom))] md:ml-[236px] md:pb-0'
         }`}
       >
-        <div className="p-6">
-          <h1
-            className={`text-2xl font-semibold tracking-[-0.06em] ${
-              isLightShell
-                ? 'bg-gradient-to-r from-slate-950 via-slate-700 to-sky-600 bg-clip-text text-transparent'
-                : 'bg-gradient-to-r from-blue-300 via-sky-400 to-blue-500 bg-clip-text text-transparent'
-            }`}
-            style={{ fontFamily: 'Syne, sans-serif' }}
-          >
-            DustSwap
-          </h1>
-        </div>
-
-        <div className="mt-2 flex-1 space-y-2 px-4">
-          {NAV_ITEMS.map((item) => {
-            const active = isActiveRoute(pathname, item.route);
-            const Icon = item.icon;
-
-            return (
-              <Link
-                key={item.route}
-                href={item.route}
-                className={`group flex items-center gap-3 rounded-[18px] px-3 py-3 transition-all duration-200 ${
-                  isLightShell
-                    ? active
-                      ? 'bg-sky-50/85 text-slate-950'
-                      : 'text-slate-500 hover:bg-slate-100/80 hover:text-slate-900'
-                    : active
-                      ? 'bg-white/[0.06] text-white'
-                      : 'text-slate-400 hover:bg-white/[0.04] hover:text-white'
-                }`}
-              >
-                <AppShellIcon Icon={Icon} active={active} light={isLightShell} />
-                <span
-                  className="font-medium tracking-[-0.02em]"
-                  style={{ fontFamily: 'DM Sans, sans-serif' }}
-                >
-                  {item.label}
-                </span>
-                {active && (
-                  <span
-                    className={`ml-auto h-2 w-2 rounded-full ${
-                      isLightShell ? 'bg-[#2563eb]' : 'bg-blue-400'
-                    }`}
-                  />
-                )}
-              </Link>
-            );
-          })}
-        </div>
-      </nav>
-
-      <main className="relative z-10 flex-1 pb-[calc(78px+env(safe-area-inset-bottom))] transition-opacity duration-100 ease-in-out md:ml-[236px] md:pb-0">
-        <CofounderPassWelcomeModal />
+        {!isLandingPage && <CofounderPassWelcomeModal />}
         {showReferralModal && address && (
           <ReferralOnboardingModal
             address={address}
@@ -209,52 +237,54 @@ export function AppShell({ children }: AppShellProps) {
         {children}
       </main>
 
-      <nav
-        className={`fixed bottom-0 left-0 right-0 z-50 flex h-[74px] border-t backdrop-blur-2xl md:hidden ${
-          isLightShell
-            ? 'border-slate-200/80 bg-white/88 shadow-[0_-18px_44px_rgba(148,163,184,0.18)]'
-            : 'border-white/10 bg-[rgba(6,10,18,0.9)]'
-        }`}
-        style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
-      >
-        {NAV_ITEMS.map((item) => {
-          const active = isActiveRoute(pathname, item.route);
-          const Icon = item.icon;
+      {!isLandingPage && (
+        <nav
+          className={`fixed bottom-0 left-0 right-0 z-50 flex h-[74px] border-t backdrop-blur-2xl md:hidden ${
+            isLightShell
+              ? 'border-slate-200/80 bg-white/88 shadow-[0_-18px_44px_rgba(148,163,184,0.18)]'
+              : 'border-white/10 bg-[rgba(6,10,18,0.9)]'
+          }`}
+          style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
+        >
+          {NAV_ITEMS.map((item) => {
+            const active = isActiveRoute(pathname, item.route);
+            const Icon = item.icon;
 
-          return (
-            <Link
-              key={item.route}
-              href={item.route}
-              className="group relative flex flex-1 flex-col items-center justify-center gap-1 active:scale-95 transition-transform"
-            >
-              <AppShellIcon Icon={Icon} active={active} light={isLightShell} />
-              <span
-                className={`text-[10px] font-medium tracking-[-0.01em] sm:text-xs ${
-                  isLightShell
-                    ? active
-                      ? 'text-slate-950'
-                      : 'text-slate-500'
-                    : active
-                      ? 'text-white'
-                      : 'text-slate-500'
-                }`}
-                style={{ fontFamily: 'DM Sans, sans-serif' }}
+            return (
+              <Link
+                key={item.route}
+                href={item.route}
+                className="group relative flex flex-1 flex-col items-center justify-center gap-1 transition-transform active:scale-95"
               >
-                {item.label}
-              </span>
-              {active && (
-                <div
-                  className={`absolute top-0 h-[3px] w-9 rounded-b-full ${
+                <AppShellIcon Icon={Icon} active={active} light={isLightShell} />
+                <span
+                  className={`text-[10px] font-medium tracking-[-0.01em] sm:text-xs ${
                     isLightShell
-                      ? 'bg-[#2563eb] shadow-[0_0_12px_rgba(37,99,235,0.35)]'
-                      : 'bg-[#3b82f6] shadow-[0_0_12px_rgba(59,130,246,0.55)]'
+                      ? active
+                        ? 'text-slate-950'
+                        : 'text-slate-500'
+                      : active
+                        ? 'text-white'
+                        : 'text-slate-500'
                   }`}
-                />
-              )}
-            </Link>
-          );
-        })}
-      </nav>
+                  style={{ fontFamily: 'DM Sans, sans-serif' }}
+                >
+                  {item.label}
+                </span>
+                {active && (
+                  <div
+                    className={`absolute top-0 h-[3px] w-9 rounded-b-full ${
+                      isLightShell
+                        ? 'bg-[#2563eb] shadow-[0_0_12px_rgba(37,99,235,0.35)]'
+                        : 'bg-[#3b82f6] shadow-[0_0_12px_rgba(59,130,246,0.55)]'
+                    }`}
+                  />
+                )}
+              </Link>
+            );
+          })}
+        </nav>
+      )}
     </div>
   );
 }
