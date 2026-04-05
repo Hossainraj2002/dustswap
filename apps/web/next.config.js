@@ -13,15 +13,16 @@ const nextConfig = {
       { protocol: "https", hostname: "coin-images.coingecko.com", pathname: "/**" }
     ]
   },
-
-
-
-  async redirects() {
+  async headers() {
     return [
       {
-        source: "/",
-        destination: "/profile",
-        permanent: true,
+        source: "/:path*",
+        headers: [
+          {
+            key: "Cross-Origin-Opener-Policy",
+            value: "same-origin-allow-popups",
+          },
+        ],
       },
     ];
   },

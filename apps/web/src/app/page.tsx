@@ -4,8 +4,18 @@ import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useAppKit } from "@reown/appkit/react";
-import { useEffect, useState, type ReactNode } from "react";
-import { useAccount } from "wagmi";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
+import type { Address } from "viem";
+import { base } from "viem/chains";
+import { createSiweMessage } from "viem/siwe";
+import { useAccount, useSignMessage } from "wagmi";
+import {
+  clearStoredSiweSession,
+  hasStoredSiweSession,
+  requestSiweNonce,
+  saveStoredSiweSession,
+  verifySiweSession,
+} from "@/lib/siweAuth";
 
 const NAV_ITEMS = [
   { href: "/profile", label: "Profile" },
@@ -114,18 +124,41 @@ function SectionKicker({ children }: { children: ReactNode }) {
   );
 }
 
+function getErrorMessage(error: unknown) {
+  const message =
+    error instanceof Error ? error.message : String(error ?? "Unknown error");
+
+  if (
+    message.toLowerCase().includes("user rejected") ||
+    message.toLowerCase().includes("rejected the request") ||
+    message.toLowerCase().includes("cancelled")
+  ) {
+    return "Sign-in was cancelled before it finished.";
+  }
+
+  return message;
+}
+
 function ConnectWalletButton({
   variant = "primary",
   className,
   connectedLabel,
   fullWidth = false,
-  onConnectStart,
+  disabled = false,
+  labelOverride,
+  onAction,
 }: {
   variant?: "primary" | "secondary" | "header";
   className?: string;
   connectedLabel?: string;
   fullWidth?: boolean;
-  onConnectStart?: () => void;
+  disabled?: boolean;
+  labelOverride?: string;
+  onAction?: (context: {
+    address?: Address;
+    isConnected: boolean;
+    open: (() => Promise<unknown>) | undefined;
+  }) => void | Promise<void>;
 }) {
   const [isMounted, setIsMounted] = useState(false);
 
@@ -167,7 +200,9 @@ function ConnectWalletButton({
       className={className}
       connectedLabel={connectedLabel}
       fullWidth={fullWidth}
-      onConnectStart={onConnectStart}
+      disabled={disabled}
+      labelOverride={labelOverride}
+      onAction={onAction}
     />
   );
 }
@@ -177,13 +212,21 @@ function HydratedConnectWalletButton({
   className,
   connectedLabel,
   fullWidth = false,
-  onConnectStart,
+  disabled = false,
+  labelOverride,
+  onAction,
 }: {
   variant?: "primary" | "secondary" | "header";
   className?: string;
   connectedLabel?: string;
   fullWidth?: boolean;
-  onConnectStart?: () => void;
+  disabled?: boolean;
+  labelOverride?: string;
+  onAction?: (context: {
+    address?: Address;
+    isConnected: boolean;
+    open: (() => Promise<unknown>) | undefined;
+  }) => void | Promise<void>;
 }) {
   const { open } = useAppKit();
   const { address, isConnected } = useAccount();
@@ -198,21 +241,33 @@ function HydratedConnectWalletButton({
   } as const;
 
   const label =
-    isConnected && address
+    labelOverride ??
+    (isConnected && address
       ? connectedLabel ?? shortAddress(address)
-      : "Connect wallet";
+      : "Connect wallet");
 
   return (
     <button
       type="button"
+      disabled={disabled}
       onClick={() => {
-        if (!isConnected) {
-          onConnectStart?.();
+        if (disabled) {
+          return;
         }
+
+        if (onAction) {
+          void onAction({
+            address: address as Address | undefined,
+            isConnected,
+            open,
+          });
+          return;
+        }
+
         void open?.();
       }}
       className={cx(
-        "inline-flex items-center justify-center gap-2 rounded-full px-5 py-3 text-sm font-semibold transition-all duration-200",
+        "inline-flex items-center justify-center gap-2 rounded-full px-5 py-3 text-sm font-semibold transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-70",
         variantClasses[variant],
         fullWidth && "w-full",
         className
@@ -476,18 +531,20 @@ function FounderFallback({
   );
 }
 
-function LandingHeader() {
-  const { isConnected } = useAccount();
+function LandingHeader({
+  walletButtonDisabled,
+  walletButtonLabel,
+  onWalletAction,
+}: {
+  walletButtonDisabled: boolean;
+  walletButtonLabel: string;
+  onWalletAction: (context: {
+    address?: Address;
+    isConnected: boolean;
+    open: (() => Promise<unknown>) | undefined;
+  }) => void | Promise<void>;
+}) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const [redirectToProfileAfterConnect, setRedirectToProfileAfterConnect] = useState(false);
-  const router = useRouter();
-
-  useEffect(() => {
-    if (redirectToProfileAfterConnect && isConnected) {
-      setRedirectToProfileAfterConnect(false);
-      router.replace("/profile");
-    }
-  }, [isConnected, redirectToProfileAfterConnect, router]);
 
   useEffect(() => {
     document.body.style.overflow = mobileMenuOpen ? "hidden" : "";
@@ -532,7 +589,9 @@ function LandingHeader() {
             <ConnectWalletButton
               variant="header"
               connectedLabel="Wallet connected"
-              onConnectStart={() => setRedirectToProfileAfterConnect(true)}
+              disabled={walletButtonDisabled}
+              labelOverride={walletButtonLabel}
+              onAction={onWalletAction}
             />
           </div>
 
@@ -605,7 +664,9 @@ function LandingHeader() {
             variant="primary"
             connectedLabel="Wallet connected"
             fullWidth
-            onConnectStart={() => setRedirectToProfileAfterConnect(true)}
+            disabled={walletButtonDisabled}
+            labelOverride={walletButtonLabel}
+            onAction={onWalletAction}
           />
         </div>
       </div>
@@ -614,16 +675,155 @@ function LandingHeader() {
 }
 
 export default function Home() {
-  const { isConnected } = useAccount();
-  const [redirectToProfileAfterConnect, setRedirectToProfileAfterConnect] = useState(false);
+  const { address, chainId, isConnected } = useAccount();
+  const { signMessageAsync } = useSignMessage();
+  const [hasSiweSession, setHasSiweSession] = useState(false);
+  const [landingAuthState, setLandingAuthState] = useState<
+    "idle" | "preparing" | "waitingForWallet" | "signing" | "verifying"
+  >("idle");
+  const [landingAuthError, setLandingAuthError] = useState<string | null>(null);
+  const [pendingNonce, setPendingNonce] = useState<string | null>(null);
   const router = useRouter();
 
   useEffect(() => {
-    if (redirectToProfileAfterConnect && isConnected) {
-      setRedirectToProfileAfterConnect(false);
-      router.replace("/profile");
+    setHasSiweSession(hasStoredSiweSession(address));
+  }, [address, isConnected]);
+
+  const completeLandingSignIn = useCallback(
+    async (nonce: string, connectedAddress: Address) => {
+      setPendingNonce(null);
+      setLandingAuthError(null);
+
+      try {
+        setLandingAuthState("signing");
+
+        const message = createSiweMessage({
+          address: connectedAddress,
+          chainId: chainId ?? base.id,
+          domain: window.location.host,
+          issuedAt: new Date(),
+          nonce,
+          statement: "Sign in to DustSwap to continue to your profile.",
+          uri: window.location.origin,
+          version: "1",
+        });
+
+        const signature = await signMessageAsync({ message });
+
+        setLandingAuthState("verifying");
+
+        const session = await verifySiweSession({
+          address: connectedAddress,
+          message,
+          signature,
+        });
+
+        saveStoredSiweSession(session);
+        setHasSiweSession(true);
+        setLandingAuthState("idle");
+        router.replace("/profile");
+      } catch (error) {
+        clearStoredSiweSession();
+        setHasSiweSession(false);
+        setLandingAuthState("idle");
+        setLandingAuthError(getErrorMessage(error));
+      }
+    },
+    [chainId, router, signMessageAsync]
+  );
+
+  useEffect(() => {
+    if (
+      landingAuthState === "waitingForWallet" &&
+      pendingNonce &&
+      isConnected &&
+      address
+    ) {
+      void completeLandingSignIn(pendingNonce, address as Address);
     }
-  }, [isConnected, redirectToProfileAfterConnect, router]);
+  }, [address, completeLandingSignIn, isConnected, landingAuthState, pendingNonce]);
+
+  const handleLandingWalletAction = useCallback(
+    async ({
+      address: currentAddress,
+      isConnected: walletConnected,
+      open,
+    }: {
+      address?: Address;
+      isConnected: boolean;
+      open: (() => Promise<unknown>) | undefined;
+    }) => {
+      if (landingAuthState === "signing" || landingAuthState === "verifying") {
+        return;
+      }
+
+      if (walletConnected && currentAddress && hasStoredSiweSession(currentAddress)) {
+        router.replace("/profile");
+        return;
+      }
+
+      if (landingAuthState === "waitingForWallet" && !walletConnected) {
+        setLandingAuthError(null);
+        await open?.();
+        return;
+      }
+
+      setLandingAuthState("preparing");
+      setLandingAuthError(null);
+
+      try {
+        const { nonce } = await requestSiweNonce();
+
+        if (walletConnected && currentAddress) {
+          await completeLandingSignIn(nonce, currentAddress);
+          return;
+        }
+
+        setPendingNonce(nonce);
+        setLandingAuthState("waitingForWallet");
+        await open?.();
+      } catch (error) {
+        setPendingNonce(null);
+        setLandingAuthState("idle");
+        setLandingAuthError(getErrorMessage(error));
+      }
+    },
+    [completeLandingSignIn, landingAuthState, router]
+  );
+
+  const walletButtonLabel =
+    landingAuthState === "preparing"
+      ? "Preparing sign-in..."
+      : landingAuthState === "waitingForWallet"
+        ? "Finish wallet connect..."
+        : landingAuthState === "signing"
+          ? "Sign message to continue..."
+          : landingAuthState === "verifying"
+            ? "Verifying sign-in..."
+            : isConnected && address && hasSiweSession
+              ? "Open profile"
+              : isConnected
+                ? "Sign in to continue"
+                : "Connect wallet";
+
+  const walletButtonDisabled =
+    landingAuthState === "preparing" ||
+    landingAuthState === "signing" ||
+    landingAuthState === "verifying";
+
+  const walletHelperCopy =
+    isConnected && !hasSiweSession && landingAuthState === "idle"
+      ? "Wallet connected. Sign in with a message to continue to your profile."
+      : null;
+
+  useEffect(() => {
+    if (!address) {
+      setHasSiweSession(false);
+      if (landingAuthState !== "idle" && landingAuthState !== "waitingForWallet") {
+        setLandingAuthState("idle");
+      }
+    }
+  }, [address, landingAuthState]);
 
   return (
     <div className="relative overflow-hidden bg-transparent">
@@ -636,7 +836,11 @@ export default function Home() {
         className="pointer-events-none absolute inset-0 opacity-60 [background-image:linear-gradient(rgba(148,163,184,0.12)_1px,transparent_1px),linear-gradient(90deg,rgba(148,163,184,0.12)_1px,transparent_1px)] [background-size:96px_96px] [mask-image:linear-gradient(180deg,rgba(0,0,0,0.7),transparent_85%)]"
       />
 
-      <LandingHeader />
+      <LandingHeader
+        walletButtonDisabled={walletButtonDisabled}
+        walletButtonLabel={walletButtonLabel}
+        onWalletAction={handleLandingWalletAction}
+      />
 
       <div className="relative z-10">
         <section className="px-4 pb-20 pt-12 sm:px-6 sm:pt-16 lg:px-8 lg:pb-28 lg:pt-20">
@@ -672,7 +876,9 @@ export default function Home() {
                 <ConnectWalletButton
                   variant="primary"
                   connectedLabel="Wallet connected"
-                  onConnectStart={() => setRedirectToProfileAfterConnect(true)}
+                  disabled={walletButtonDisabled}
+                  labelOverride={walletButtonLabel}
+                  onAction={handleLandingWalletAction}
                 />
                 <Link
                   href="/leaderboard"
@@ -681,6 +887,18 @@ export default function Home() {
                   Leaderboard
                 </Link>
               </div>
+
+              {walletHelperCopy && (
+                <p className="mt-4 text-sm font-medium text-slate-600">
+                  {walletHelperCopy}
+                </p>
+              )}
+
+              {landingAuthError && (
+                <p className="mt-4 text-sm font-medium text-rose-600">
+                  {landingAuthError}
+                </p>
+              )}
 
               <p className="mt-5 text-sm font-medium text-slate-500">
                 Powered by OpenOcean for swap &amp; bridge

@@ -6,6 +6,7 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { logger } from "hono/logger";
 import { prettyJSON } from "hono/pretty-json";
+import { authRoutes } from "./routes/auth";
 import { pointsRoutes } from "./routes/points";
 import { questsRoutes } from "./routes/quests";
 import { swapsRoutes } from "./routes/swaps";
@@ -40,6 +41,7 @@ app.use(
 );
 
 app.route("/api/tokens", tokens);
+app.route("/api/auth", authRoutes);
 app.route("/api/points", pointsRoutes);
 app.route("/api/quests", questsRoutes);
 app.route("/api/swaps", swapsRoutes);
