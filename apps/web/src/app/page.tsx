@@ -24,24 +24,6 @@ const NAV_ITEMS = [
   { href: "/leaderboard", label: "Leaderboard" },
 ] as const;
 
-const PREVIEW_ITEMS = [
-  {
-    title: "Profile",
-    src: "/ss1.png",
-    caption: "Profile tracks PP, referrals, streaks, and rank.",
-  },
-  {
-    title: "Swap",
-    src: "/ss2.png",
-    caption: "Swap uses OpenOcean routing inside the same app flow.",
-  },
-  {
-    title: "Leaderboard",
-    src: "/ss3.png",
-    caption: "Leaderboard shows PP, referrals, and swap activity.",
-  },
-] as const;
-
 const FEATURE_ITEMS = [
   {
     title: "Swap on Base",
@@ -455,48 +437,25 @@ function HeroVisual() {
   );
 }
 
-function PreviewGrid() {
-  return (
-    <div className="grid gap-4 md:grid-cols-3 md:gap-6">
-      {PREVIEW_ITEMS.map((item) => (
-        <article
-          key={item.title}
-          className="overflow-hidden rounded-[28px] border border-white/90 bg-white shadow-[0_18px_42px_rgba(148,163,184,0.1)]"
-        >
-          <div className="aspect-[0.92/1] overflow-hidden bg-slate-50">
-            <Image
-              src={item.src}
-              alt={`${item.title} preview`}
-              width={1200}
-              height={1300}
-              className="h-full w-full object-cover object-top"
-            />
-          </div>
-          <div className="px-5 py-5">
-            <p className="text-base font-semibold text-slate-900">{item.title}</p>
-            <p className="mt-2 text-sm leading-6 text-slate-500">{item.caption}</p>
-          </div>
-        </article>
-      ))}
-    </div>
-  );
-}
-
 function FeatureGrid() {
   return (
-    <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+    <div className="grid gap-3 sm:grid-cols-2 sm:gap-4 xl:grid-cols-4">
       {FEATURE_ITEMS.map((item, index) => (
         <article
           key={item.title}
-          className="rounded-[26px] border border-white/90 bg-white/88 p-6 shadow-[0_18px_42px_rgba(148,163,184,0.08)] backdrop-blur"
+          className="rounded-[22px] border border-white/90 bg-white/88 p-4 shadow-[0_16px_34px_rgba(148,163,184,0.08)] backdrop-blur sm:rounded-[26px] sm:p-6 sm:shadow-[0_18px_42px_rgba(148,163,184,0.08)]"
         >
           <div className="flex items-center gap-3">
-            <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[linear-gradient(135deg,#dbeafe_0%,#eff6ff_100%)] text-sm font-semibold text-sky-700">
+            <div className="flex h-10 w-10 items-center justify-center rounded-[16px] bg-[linear-gradient(135deg,#dbeafe_0%,#eff6ff_100%)] text-sm font-semibold text-sky-700 sm:h-11 sm:w-11 sm:rounded-2xl">
               0{index + 1}
             </div>
-            <h3 className="text-base font-semibold text-slate-900">{item.title}</h3>
+            <h3 className="text-[15px] font-semibold leading-5 text-slate-900 sm:text-base">
+              {item.title}
+            </h3>
           </div>
-          <p className="mt-4 text-sm leading-6 text-slate-600">{item.body}</p>
+          <p className="mt-3 text-[13px] leading-5 text-slate-600 sm:mt-4 sm:text-sm sm:leading-6">
+            {item.body}
+          </p>
         </article>
       ))}
     </div>
@@ -505,17 +464,21 @@ function FeatureGrid() {
 
 function HowItWorksGrid() {
   return (
-    <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+    <div className="grid gap-3 md:grid-cols-2 md:gap-4 xl:grid-cols-4">
       {HOW_IT_WORKS_STEPS.map((step, index) => (
         <article
           key={step.title}
-          className="rounded-[26px] border border-white/90 bg-white/90 p-6 shadow-[0_18px_42px_rgba(148,163,184,0.08)]"
+          className="rounded-[22px] border border-white/90 bg-white/90 p-4 shadow-[0_16px_34px_rgba(148,163,184,0.08)] sm:rounded-[26px] sm:p-6 sm:shadow-[0_18px_42px_rgba(148,163,184,0.08)]"
         >
           <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-sky-600">
             Step {index + 1}
           </p>
-          <h3 className="mt-3 text-lg font-semibold text-slate-900">{step.title}</h3>
-          <p className="mt-3 text-sm leading-6 text-slate-600">{step.body}</p>
+          <h3 className="mt-2.5 text-[15px] font-semibold leading-5 text-slate-900 sm:mt-3 sm:text-lg">
+            {step.title}
+          </h3>
+          <p className="mt-2.5 text-[13px] leading-5 text-slate-600 sm:mt-3 sm:text-sm sm:leading-6">
+            {step.body}
+          </p>
         </article>
       ))}
     </div>
@@ -784,56 +747,38 @@ export default function Home() {
           </div>
         </section>
 
-        <section className="px-4 py-14 sm:px-6 sm:py-16 lg:py-24">
-          <div className="mx-auto max-w-6xl">
-            <div className="max-w-2xl">
-              <SectionKicker>Product</SectionKicker>
-              <h2 className="mt-4 font-syne text-3xl font-bold tracking-[-0.03em] text-slate-950 sm:text-4xl">
-                See how DustSwap works
-              </h2>
-              <p className="mt-4 text-base leading-7 text-slate-600 sm:text-lg">
-                A clean view of the product users actually interact with.
-              </p>
-            </div>
-
-            <div className="mt-8">
-              <PreviewGrid />
-            </div>
-          </div>
-        </section>
-
-        <section className="px-4 py-14 sm:px-6 sm:py-16 lg:py-24">
-          <div className="mx-auto max-w-6xl rounded-[32px] border border-white/85 bg-[linear-gradient(180deg,rgba(255,255,255,0.94)_0%,rgba(240,249,255,0.88)_100%)] p-5 shadow-[0_26px_64px_rgba(148,163,184,0.1)] sm:p-8 lg:p-10">
+        <section className="px-4 py-10 sm:px-6 sm:py-16 lg:py-24">
+          <div className="mx-auto max-w-6xl rounded-[28px] border border-white/85 bg-[linear-gradient(180deg,rgba(255,255,255,0.94)_0%,rgba(240,249,255,0.88)_100%)] p-4 shadow-[0_20px_46px_rgba(148,163,184,0.08)] sm:rounded-[32px] sm:p-8 sm:shadow-[0_26px_64px_rgba(148,163,184,0.1)] lg:p-10">
             <div className="max-w-2xl">
               <SectionKicker>Live Features</SectionKicker>
-              <h2 className="mt-4 font-syne text-3xl font-bold tracking-[-0.03em] text-slate-950 sm:text-4xl">
+              <h2 className="mt-3 font-syne text-[1.7rem] font-bold tracking-[-0.03em] text-slate-950 sm:mt-4 sm:text-4xl">
                 Built around activity that is already live
               </h2>
-              <p className="mt-4 text-base leading-7 text-slate-600">
+              <p className="mt-3 text-sm leading-6 text-slate-600 sm:mt-4 sm:text-base sm:leading-7">
                 The app is simple on purpose. Connect, use it, and your progress shows up.
               </p>
             </div>
 
-            <div className="mt-8">
+            <div className="mt-5 sm:mt-8">
               <FeatureGrid />
             </div>
           </div>
         </section>
 
-        <section className="px-4 py-14 sm:px-6 sm:py-16 lg:py-24">
+        <section className="px-4 py-10 sm:px-6 sm:py-16 lg:py-24">
           <div className="mx-auto max-w-6xl">
             <div className="max-w-2xl">
               <SectionKicker>Flow</SectionKicker>
-              <h2 className="mt-4 font-syne text-3xl font-bold tracking-[-0.03em] text-slate-950 sm:text-4xl">
+              <h2 className="mt-3 font-syne text-[1.7rem] font-bold tracking-[-0.03em] text-slate-950 sm:mt-4 sm:text-4xl">
                 How DustSwap works
               </h2>
-              <p className="mt-4 text-base leading-7 text-slate-600">
+              <p className="mt-3 text-sm leading-6 text-slate-600 sm:mt-4 sm:text-base sm:leading-7">
                 The path is straightforward. Connect once, act inside the app, and your
                 account starts building a visible history.
               </p>
             </div>
 
-            <div className="mt-8">
+            <div className="mt-5 sm:mt-8">
               <HowItWorksGrid />
             </div>
           </div>
@@ -845,14 +790,9 @@ export default function Home() {
               <div className="flex flex-col justify-center p-6 sm:p-8 lg:p-10">
                 <SectionKicker>Early users</SectionKicker>
                 <h2 className="mt-5 font-syne text-3xl font-bold tracking-[-0.03em] text-slate-950 sm:text-4xl">
-                  Built for early users who actually show up
+                  coFounder pass Built for early users who actually show up
                 </h2>
                 <p className="mt-5 text-base leading-7 text-slate-600">
-                  There is already a live Cofounder Pass quest path inside DustSwap for
-                  early users who keep participating. It is there for people who are
-                  already using the app, not as the main pitch.
-                </p>
-                <p className="mt-4 text-base leading-7 text-slate-600">
                   Users who complete that path become eligible to mint the pass. The rest
                   of the product still stays centered on swaps, quests, streaks, referrals,
                   and leaderboard progress.
