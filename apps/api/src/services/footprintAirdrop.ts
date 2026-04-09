@@ -59,19 +59,19 @@ function deterministicReward(seed: string, min: number, max: number) {
 
 function getSavedRewardRange(totalUsdc: number): RewardRange | null {
   if (totalUsdc > 100) {
-    return { min: 20_000, max: 21_000, label: "Saved reward > 100 USDC" };
+    return { min: 25_000, max: 26_000, label: "Tier 4" };
   }
 
   if (totalUsdc > 50) {
-    return { min: 12_000, max: 15_000, label: "Saved reward > 50 USDC" };
+    return { min: 15_000, max: 18_000, label: "Tier 3" };
   }
 
   if (totalUsdc > 20) {
-    return { min: 10_000, max: 12_000, label: "Saved reward > 20 USDC" };
+    return { min: 12_000, max: 14_000, label: "Tier 2" };
   }
 
   if (totalUsdc > 4) {
-    return { min: 5_000, max: 6_000, label: "Saved reward > 4 USDC" };
+    return { min: 7_000, max: 8_000, label: "Tier 1" };
   }
 
   return null;
@@ -145,7 +145,7 @@ export class FootprintAirdropService {
             rangeMax: null,
             tierLabel: null,
             reason:
-              "Address found in the saved Base creator reward list, but it is below the current reward floor.",
+              "Address found in the Baseapp Power user list, but it is below the current reward floor.",
             allowlistTotalUsdc: savedTotalUsdc,
             transactionsCount: null,
             tokenTransfersCount: null,

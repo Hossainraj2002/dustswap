@@ -26,21 +26,6 @@ const NAV_ITEMS = [
   { href: "/leaderboard", label: "Leaderboard" },
 ] as const;
 
-const INFO_ITEMS = [
-  {
-    title: "Saved list first",
-    body: "Saved Base creator reward wallets are resolved before any fallback call.",
-  },
-  {
-    title: "Blockscout fallback",
-    body: "If the wallet is not saved, the backend checks Base counters and maps the result to a tier.",
-  },
-  {
-    title: "One-time claim",
-    body: "Claim once, add PP to your account, and let referrals earn 20% of claimed PP.",
-  },
-] as const;
-
 function cx(...parts: Array<string | false | null | undefined>) {
   return parts.filter(Boolean).join(" ");
 }
@@ -335,11 +320,11 @@ function StatusMetric({
   value: string;
 }) {
   return (
-    <div className="rounded-[18px] border border-sky-100 bg-sky-50/70 px-3 py-3">
+    <div className="rounded-[16px] border border-sky-100 bg-sky-50/70 px-3 py-2.5 sm:rounded-[18px] sm:py-3">
       <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-400">
         {label}
       </p>
-      <p className="mt-1.5 text-sm font-semibold text-slate-900">{value}</p>
+      <p className="mt-1.5 text-sm font-semibold text-slate-900 sm:text-[15px]">{value}</p>
     </div>
   );
 }
@@ -367,9 +352,9 @@ function FootprintStatusPanel({
 
   const sourceLabel =
     status.source === "saved_leaderboard"
-      ? "Saved Base creator reward list"
+      ? "Baseapp Power user"
       : status.source === "blockscout"
-        ? "Blockscout Base counters"
+        ? "Base onchain activity"
         : "Footprint Drop";
 
   const showClaimButton =
@@ -401,22 +386,19 @@ function FootprintStatusPanel({
         </div>
       </div>
 
-      <div className="mt-5 grid gap-3 sm:grid-cols-3">
+      <div
+        className={cx(
+          "mt-4 grid gap-2.5 sm:mt-5 sm:gap-3",
+          status.source === "saved_leaderboard" ? "grid-cols-2" : "sm:grid-cols-3"
+        )}
+      >
         {status.source === "saved_leaderboard" ? (
           <>
             <StatusMetric
-              label="Saved reward"
+              label="Total creator reward earned"
               value={`$${formatWhole(status.allowlistTotalUsdc)}`}
             />
             <StatusMetric label="Tier" value={status.tierLabel || "Below floor"} />
-            <StatusMetric
-              label="Reward band"
-              value={
-                status.rangeMin && status.rangeMax
-                  ? `${formatWhole(status.rangeMin)} - ${formatWhole(status.rangeMax)}`
-                  : "Not unlocked"
-              }
-            />
           </>
         ) : (
           <>
@@ -504,24 +486,6 @@ function FootprintStatusPanel({
           </div>
         </div>
       )}
-    </div>
-  );
-}
-
-function InfoGrid() {
-  return (
-    <div className="grid gap-3 md:grid-cols-3">
-      {INFO_ITEMS.map((item) => (
-        <article
-          key={item.title}
-          className="rounded-[22px] border border-white/90 bg-white/90 p-4 shadow-[0_16px_34px_rgba(148,163,184,0.08)] sm:p-5"
-        >
-          <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-sky-600">
-            {item.title}
-          </p>
-          <p className="mt-3 text-sm leading-6 text-slate-600">{item.body}</p>
-        </article>
-      ))}
     </div>
   );
 }
@@ -764,42 +728,30 @@ export default function FootprintDropLanding() {
       />
 
       <main className="relative z-10 overflow-x-clip px-4 pb-16 pt-[92px] sm:px-6 sm:pb-20 sm:pt-[102px]">
-        <section className="mx-auto max-w-6xl py-8 sm:py-12 lg:py-16">
-          <div className="grid gap-8 lg:grid-cols-[minmax(0,0.82fr)_minmax(0,1fr)] lg:items-start lg:gap-10">
-            <div className="min-w-0">
+        <section className="mx-auto max-w-6xl py-4 sm:py-12 lg:py-16">
+          <div className="grid gap-5 sm:gap-8 lg:grid-cols-[minmax(0,0.82fr)_minmax(0,1fr)] lg:items-start lg:gap-10">
+            <div className="min-w-0 max-w-[19rem] sm:max-w-xl">
               <SectionKicker>Footprint Drop</SectionKicker>
-              <h1 className="mt-5 max-w-[12ch] font-syne text-[2.35rem] font-bold leading-[1.02] tracking-[-0.045em] text-slate-950 sm:text-[3.25rem] lg:text-[4.5rem]">
+              <h1 className="mt-3 max-w-[12ch] font-syne text-[1.95rem] font-bold leading-[1.02] tracking-[-0.045em] text-slate-950 sm:mt-5 sm:text-[3.25rem] lg:text-[4.5rem]">
                 Earn reward for what you do already every day.
               </h1>
-              <p className="mt-5 max-w-xl text-base leading-7 text-slate-600 sm:text-lg">
+              <p className="mt-3 max-w-xl text-[15px] leading-6 text-slate-600 sm:mt-5 sm:text-lg sm:leading-7">
                 A PP airdrop for wallets that are already active on Base. We check your
-                saved creator reward footprint first, then fall back to Base onchain
-                counters on the backend.
+                Baseapp Power user footprint first, then fall back to Base onchain
+                activity on the backend.
               </p>
-
-              <div className="mt-6 flex flex-wrap gap-2.5">
-                <span className="rounded-full border border-white/90 bg-white/90 px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-[0_8px_18px_rgba(148,163,184,0.08)]">
-                  Saved list first
-                </span>
-                <span className="rounded-full border border-white/90 bg-white/90 px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-[0_8px_18px_rgba(148,163,184,0.08)]">
-                  Blockscout fallback
-                </span>
-                <span className="rounded-full border border-white/90 bg-white/90 px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-[0_8px_18px_rgba(148,163,184,0.08)]">
-                  Added to leaderboard
-                </span>
-              </div>
             </div>
 
-            <div className="rounded-[30px] border border-white/90 bg-white/90 p-5 shadow-[0_24px_60px_rgba(37,99,235,0.12)] backdrop-blur sm:p-6">
+            <div className="rounded-[28px] border border-white/90 bg-white/90 p-4 shadow-[0_24px_60px_rgba(37,99,235,0.12)] backdrop-blur sm:rounded-[30px] sm:p-6">
               <SectionKicker>Airdrop</SectionKicker>
-              <h2 className="mt-4 font-syne text-[1.85rem] font-bold tracking-[-0.04em] text-slate-950 sm:text-[2.2rem]">
+              <h2 className="mt-3 font-syne text-[1.55rem] font-bold tracking-[-0.04em] text-slate-950 sm:mt-4 sm:text-[2.2rem]">
                 Are you active user of Baseapp?
               </h2>
-              <p className="mt-3 text-base leading-7 text-slate-600">
+              <p className="mt-2.5 text-[15px] leading-6 text-slate-600 sm:mt-3 sm:text-base sm:leading-7">
                 Are you a power onchain user on Base? Then check your PP airdrop.
               </p>
 
-              <div className="mt-6">
+              <div className="mt-5 sm:mt-6">
                 <label
                   htmlFor="footprint-address"
                   className="text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-400"
@@ -819,7 +771,7 @@ export default function FootprintDropLanding() {
                 />
               </div>
 
-              <div className="mt-4 flex flex-col gap-3 sm:flex-row">
+              <div className="mt-4 flex flex-col gap-2.5 sm:flex-row sm:gap-3">
                 <button
                   type="button"
                   disabled={lookupState === "checking"}
@@ -839,7 +791,7 @@ export default function FootprintDropLanding() {
                 />
               </div>
 
-              <p className="mt-4 text-sm leading-6 text-slate-500">
+              <p className="mt-3 text-sm leading-6 text-slate-500">
                 You can paste any Base wallet to preview. Claim works only for the connected wallet after sign-in.
               </p>
 
@@ -852,7 +804,7 @@ export default function FootprintDropLanding() {
               )}
 
               {status && (
-                <div className="mt-6">
+                <div className="mt-5 sm:mt-6">
                   <FootprintStatusPanel
                     status={status}
                     connectedAddress={connectedAddress}
@@ -865,23 +817,6 @@ export default function FootprintDropLanding() {
                 </div>
               )}
             </div>
-          </div>
-        </section>
-
-        <section className="mx-auto max-w-6xl py-2 sm:py-6">
-          <div className="max-w-2xl">
-            <SectionKicker>How it works</SectionKicker>
-            <h2 className="mt-4 font-syne text-3xl font-bold tracking-[-0.03em] text-slate-950 sm:text-4xl">
-              The backend decides the drop, not the browser
-            </h2>
-            <p className="mt-4 text-base leading-7 text-slate-600">
-              We keep the reward logic on the server so the saved list, fallback counters,
-              and claim state stay consistent for every wallet.
-            </p>
-          </div>
-
-          <div className="mt-6">
-            <InfoGrid />
           </div>
         </section>
       </main>
