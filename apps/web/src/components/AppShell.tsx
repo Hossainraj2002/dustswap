@@ -55,18 +55,14 @@ function AppShellIcon({
   Icon,
   active,
   light,
-  compact = false,
 }: {
   Icon: ComponentType<SVGProps<SVGSVGElement>>;
   active: boolean;
   light: boolean;
-  compact?: boolean;
 }) {
   return (
     <span
-      className={`flex items-center justify-center border transition-all duration-200 ${
-        compact ? 'h-9 w-9 rounded-[12px]' : 'h-10 w-10 rounded-[14px]'
-      } ${
+      className={`flex h-10 w-10 items-center justify-center rounded-[14px] border transition-all duration-200 ${
         light
           ? active
             ? 'border-sky-200 bg-white text-[#2563eb] shadow-[0_10px_24px_rgba(59,130,246,0.16)]'
@@ -76,7 +72,7 @@ function AppShellIcon({
             : 'border-white/8 bg-white/[0.04] text-slate-400 group-hover:border-white/14 group-hover:text-white'
       }`}
     >
-      <Icon className={compact ? 'h-4 w-4' : 'h-[18px] w-[18px]'} />
+      <Icon className="h-[18px] w-[18px]" />
     </span>
   );
 }
@@ -260,11 +256,11 @@ export function AppShell({ children }: AppShellProps) {
               <Link
                 key={item.route}
                 href={item.route}
-                className="group relative flex flex-1 flex-col items-center justify-center gap-0.5 px-1 pb-1 pt-2 transition-transform active:scale-95"
+                className="group relative flex flex-1 flex-col items-center justify-center gap-1 transition-transform active:scale-95"
               >
-                <AppShellIcon Icon={Icon} active={active} light={isLightShell} compact />
+                <AppShellIcon Icon={Icon} active={active} light={isLightShell} />
                 <span
-                  className={`min-w-0 text-center text-[9px] font-medium leading-none tracking-[-0.01em] sm:text-[10px] ${
+                  className={`min-w-0 text-center text-[10px] font-medium leading-none tracking-[-0.01em] sm:text-xs ${
                     isLightShell
                       ? active
                         ? 'text-slate-950'

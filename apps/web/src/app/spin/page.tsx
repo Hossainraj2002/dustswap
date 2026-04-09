@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useAccount, usePublicClient, useWalletClient } from "wagmi";
 import { encodeFunctionData } from "viem";
 import { HistoryIcon } from "@/components/NavIcons";
@@ -23,7 +23,6 @@ import {
   buildBasePaymasterCapabilities,
   isPaymasterEnabled,
   isUserRejectedRequest,
-  toRpcHexValue,
 } from "@/lib/paymaster";
 import {
   SPIN_CONTRACT_ADDRESS,
@@ -50,18 +49,6 @@ function getErrorMessage(error: unknown) {
   }
 
   return String(error ?? "Unknown error");
-}
-
-function isCoinbaseConnector(
-  connector: {
-    id?: string | null;
-    name?: string | null;
-  } | null | undefined
-) {
-  const id = connector?.id?.toLowerCase() ?? "";
-  const name = connector?.name?.toLowerCase() ?? "";
-
-  return id.includes("coinbase") || name.includes("coinbase") || name.includes("base account");
 }
 
 function isTxHash(value: unknown): value is `0x${string}` {
@@ -227,7 +214,7 @@ function SpinHistoryDrawer({
 }
 
 export default function SpinPage() {
-  const { address, isConnected, chainId, connector } = useAccount();
+  const { address, isConnected, chainId } = useAccount();
   const { data: walletClient } = useWalletClient();
   const publicClient = usePublicClient();
 
@@ -242,7 +229,6 @@ export default function SpinPage() {
   const [historyLoading, setHistoryLoading] = useState(false);
   const [history, setHistory] = useState<SpinHistoryEntry[]>([]);
 
-  const isCoinbaseWallet = useMemo(() => isCoinbaseConnector(connector), [connector]);
   const ticketCount = balance?.spinTickets ?? 0;
   const hasTicket = ticketCount > 0;
   const isBusy = flowStage !== "idle";
@@ -381,91 +367,76 @@ export default function SpinPage() {
       request?: (args: { method: string; params?: unknown[] }) => Promise<unknown>;
     };
 
-    if (isPaymasterEnabled() && isCoinbaseWallet) {
-      const smartWalletAddress = requestClient.account?.address;
-      const request = requestClient.request;
-
-      if (smartWalletAddress && request) {
-        try {
-          const capabilitiesResult = (await request({
-            method: "wallet_getCapabilities",
-            params: [smartWalletAddress],
-          })) as Record<
-            string,
-            {
-              paymasterService?: {
-                supported?: boolean;
-              };
-            }
-          > | null;
-          const chainCapabilities = capabilitiesResult
-            ? Object.entries(capabilitiesResult).find(
-                ([candidate]) => candidate.toLowerCase() === toHexChainId(BASE_CHAIN_ID).toLowerCase()
-              )?.[1]
-            : null;
-
-          if (chainCapabilities?.paymasterService?.supported) {
-            const sendCallsResult = await request({
-              method: "wallet_sendCalls",
-              params: [
+    if (isPaymasterEnabled()) {
+      try {
+        const smartWalletAddress =
+          requestClient.account?.address ?? (address as `0x${string}` | undefined);
+        const request = requestClient.request;
+        const capabilitiesResult =
+          smartWalletAddress && request
+            ? ((await request({
+                method: "wallet_getCapabilities",
+                params: [smartWalletAddress],
+              })) as Record<
+                string,
                 {
-                  version: "2.0.0",
-                  chainId: toHexChainId(BASE_CHAIN_ID),
-                  from: smartWalletAddress,
-                  atomicRequired: true,
-                  calls: [
-                    {
-                      to: SPIN_CONTRACT_ADDRESS,
-                      data: txData,
-                      value: toRpcHexValue(0n),
-                      dataSuffix: DATA_SUFFIX,
-                    },
-                  ],
-                  capabilities: buildBasePaymasterCapabilities(),
-                },
-              ],
-            });
+                  paymasterService?: {
+                    supported?: boolean;
+                  };
+                }
+              > | null)
+            : null;
+        const chainCapabilities = capabilitiesResult
+          ? Object.entries(capabilitiesResult).find(
+              ([candidate]) => candidate.toLowerCase() === toHexChainId(BASE_CHAIN_ID).toLowerCase()
+            )?.[1]
+          : null;
 
-            const callId = resolveSendCallsId(sendCallsResult);
-            if (!callId) {
-              throw new Error("wallet_sendCalls did not return an id");
-            }
-
-            const status = await walletClient.waitForCallsStatus({
-              id: callId,
-              throwOnFailure: true,
-              timeout: 120_000,
-            });
-            const hash = status.receipts?.find((receipt) => isTxHash(receipt?.transactionHash))
-              ?.transactionHash;
-
-            if (!hash) {
-              throw new Error("Sponsored spin finished without a transaction hash");
-            }
-
-            const receipt = await publicClient.waitForTransactionReceipt({ hash });
-            if (receipt.status !== "success") {
-              throw new Error("Transaction reverted");
-            }
-
-            return hash;
-          }
-        } catch (error) {
-          if (isUserRejectedRequest(error)) {
-            throw error;
-          }
-          const message = getErrorMessage(error);
-          if (
-            message.toLowerCase().includes("wallet_sendcalls") ||
-            message.toLowerCase().includes("paymaster") ||
-            message.toLowerCase().includes("sponsored")
-          ) {
-            throw new Error(
-              message ||
-                "Sponsored smart wallet spin failed. Check paymaster allowlist and try again."
-            );
-          }
+        if (!chainCapabilities?.paymasterService?.supported) {
+          throw new Error("wallet paymasterService capability is unavailable");
         }
+
+        const sendCallsResult = await walletClient.sendCalls({
+          calls: [
+            {
+              to: SPIN_CONTRACT_ADDRESS,
+              data: txData,
+              value: 0n,
+              dataSuffix: DATA_SUFFIX,
+            },
+          ],
+          capabilities: buildBasePaymasterCapabilities(),
+        } as any);
+
+        const callId = resolveSendCallsId(sendCallsResult);
+        if (!callId) {
+          throw new Error("wallet_sendCalls did not return an id");
+        }
+
+        const status = await walletClient.waitForCallsStatus({
+          id: callId,
+          throwOnFailure: true,
+          timeout: 120_000,
+        });
+        const hash = status.receipts?.find((receipt) => isTxHash(receipt?.transactionHash))
+          ?.transactionHash;
+
+        if (!hash) {
+          throw new Error("Sponsored spin finished without a transaction hash");
+        }
+
+        const receipt = await publicClient.waitForTransactionReceipt({ hash });
+        if (receipt.status !== "success") {
+          throw new Error("Transaction reverted");
+        }
+
+        return hash;
+      } catch (error) {
+        if (isUserRejectedRequest(error)) {
+          throw error;
+        }
+
+        console.warn("Paymaster sendCalls failed for spin, falling back to direct sendTransaction.", error);
       }
     }
 
@@ -482,7 +453,7 @@ export default function SpinPage() {
     }
 
     return hash;
-  }, [chainId, isCoinbaseWallet, publicClient, walletClient]);
+  }, [address, chainId, publicClient, walletClient]);
 
   const handleSpin = useCallback(async () => {
     if (!address || !balance) {

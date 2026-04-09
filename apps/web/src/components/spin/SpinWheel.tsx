@@ -59,20 +59,20 @@ export function SpinWheel({
                   }}
                 />
                 <div
-                  className="absolute left-1/2 top-1/2 w-[20%] min-w-[54px] max-w-[76px] -translate-x-1/2 -translate-y-1/2 text-center"
+                  className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2"
                   style={{
-                    transform: `translate(-50%, -50%) rotate(${labelAngle}deg) translateY(-182%) rotate(${-labelAngle}deg)`,
+                    transform: `translate(-50%, -50%) rotate(${labelAngle}deg) translateY(-248%)`,
                   }}
                 >
                   <div
-                    className={`rounded-[16px] border px-1.5 py-1.5 shadow-[0_10px_20px_rgba(255,255,255,0.2)] ${
+                    className={`flex h-[38px] w-[88px] items-center justify-center rounded-full border px-2 py-1 text-center shadow-[0_10px_20px_rgba(255,255,255,0.24)] sm:h-[42px] sm:w-[98px] ${
                       active
                         ? "border-sky-200 bg-white/95"
                         : "border-white/60 bg-white/78"
                     }`}
                   >
                     <p
-                      className="text-[10px] font-black uppercase leading-none tracking-[0.04em] sm:text-[11px]"
+                      className="text-[11px] font-black uppercase leading-none tracking-[0.04em] sm:text-[12px]"
                       style={{ color: segment.accent }}
                     >
                       {segment.label}
