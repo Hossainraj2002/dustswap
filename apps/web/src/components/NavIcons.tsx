@@ -107,3 +107,30 @@ export function ParticlesIcon(props: IconProps) {
     </IconFrame>
   );
 }
+
+export function SpinIcon(props: IconProps) {
+  return (
+    <IconFrame {...props}>
+      <circle cx="12" cy="12" r="7.5" />
+      <circle cx="12" cy="12" r="1.75" />
+      <path d="M12 4.5v3" />
+      <path d="m17.2 6.8-1.9 2.2" />
+      <path d="m19.5 12-3 .05" />
+      <path d="m16.95 17.2-2.2-1.85" />
+      <path d="M12 19.5v-3" />
+      <path d="m7.05 17.2 2.2-1.85" />
+      <path d="M4.5 12h3" />
+      <path d="m6.8 6.8 1.9 2.2" />
+    </IconFrame>
+  );
+}
+
+export function HistoryIcon(props: IconProps) {
+  return (
+    <IconFrame {...props}>
+      <path d="M4.75 12a7.25 7.25 0 1 0 2.12-5.13" />
+      <path d="M4.75 5.75v3.5h3.5" />
+      <path d="M12 8.25v4l2.75 1.5" />
+    </IconFrame>
+  );
+}

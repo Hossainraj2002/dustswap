@@ -91,10 +91,39 @@ pointsRoutes.post("/airdrop/claim", async (c) => {
   }
 });
 
+// POST /api/points/spin
+pointsRoutes.post("/spin", async (c) => {
+  const body = await c.req.json<{
+    address?: string;
+    txHash?: string;
+  }>();
+
+  if (!body.address || !body.txHash) {
+    return c.json({ error: "address and txHash required" }, 400);
+  }
+
+  try {
+    const result = await pointsEngine.spin(body.address, body.txHash);
+    return c.json({ success: true, ...result });
+  } catch (e: unknown) {
+    return c.json({ success: false, error: (e as Error).message }, 400);
+  }
+});
+
 // GET /api/points/:address/summary
 pointsRoutes.get("/:address/summary", async (c) => {
   try {
     const data = await pointsEngine.getPointsSummary(c.req.param("address"));
+    return c.json({ success: true, ...data });
+  } catch (e: unknown) {
+    return c.json({ success: false, error: (e as Error).message }, 500);
+  }
+});
+
+// GET /api/points/:address/spin-history
+pointsRoutes.get("/:address/spin-history", async (c) => {
+  try {
+    const data = await pointsEngine.getSpinHistory(c.req.param("address"));
     return c.json({ success: true, ...data });
   } catch (e: unknown) {
     return c.json({ success: false, error: (e as Error).message }, 500);

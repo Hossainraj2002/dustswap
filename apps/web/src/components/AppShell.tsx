@@ -17,6 +17,7 @@ import {
   LeaderboardIcon,
   ProfileIcon,
   QuestsIcon,
+  SpinIcon,
   SwapIcon,
 } from '@/components/NavIcons';
 import { CofounderPassWelcomeModal } from '@/components/quests/CofounderPassWelcomeModal';
@@ -40,6 +41,7 @@ interface NavItem {
 
 const NAV_ITEMS = [
   { icon: ProfileIcon, label: 'Profile', route: '/profile' },
+  { icon: SpinIcon, label: 'Spin', route: '/spin' },
   { icon: QuestsIcon, label: 'Quests', route: '/quests' },
   { icon: SwapIcon, label: 'Swap', route: '/swap' },
   { icon: LeaderboardIcon, label: 'Leaderboard', route: '/leaderboard' },

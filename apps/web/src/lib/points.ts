@@ -1,3 +1,5 @@
+import type { SpinRewardKey, SpinRewardKind } from "@/lib/spin";
+
 const DEFAULT_API_URL = "http://localhost:3001";
 
 function normalizeApiOrigin(value: string) {
@@ -21,6 +23,7 @@ export type PointsBalance = {
   success: boolean;
   totalPoints: number;
   rank: number;
+  spinTickets: number;
   streak: number;
   rawStreak: number;
   recoverableStreak: number;
@@ -64,6 +67,25 @@ export type PointsBalance = {
     priceDate: string;
   };
   error?: string;
+};
+
+export type SpinReward = {
+  key: SpinRewardKey;
+  label: string;
+  type: SpinRewardKind;
+  amount: number;
+  pointsAwarded: number;
+  probability: number;
+};
+
+export type SpinHistoryEntry = {
+  id: number;
+  txHash: string;
+  reward: SpinReward;
+  ticketCost: number;
+  executionType: string;
+  status: string;
+  createdAt: string | null;
 };
 
 export type UserStats = {
@@ -390,4 +412,39 @@ export async function saveBrokenStreak(input: {
       asset: "eth" | "usdc";
     }
   >(response);
+}
+
+export async function performSpin(input: { address: string; txHash: string }) {
+  const response = await fetch(getPointsApiUrl("/spin"), {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(input),
+  });
+
+  return parseJson<
+    PointsBalance & {
+      success: boolean;
+      txHash: string;
+      ticketCost: number;
+      executionType: string;
+      reward: SpinReward;
+    }
+  >(response);
+}
+
+export async function fetchSpinHistory(address: string) {
+  const response = await fetch(getPointsApiUrl(`/${address}/spin-history`), {
+    headers: {
+      "Content-Type": "application/json",
+    },
+    cache: "no-store",
+  });
+
+  return parseJson<{
+    success: boolean;
+    history: SpinHistoryEntry[];
+    error?: string;
+  }>(response);
 }

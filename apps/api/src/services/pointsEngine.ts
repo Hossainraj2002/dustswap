@@ -1,5 +1,6 @@
 import {
   createPublicClient,
+  encodeFunctionData,
   decodeFunctionData,
   decodeEventLog,
   erc20Abi,
@@ -43,6 +44,8 @@ const CFG = {
 
   CHECK_IN_FEE_USD: 0.01,
   STREAK_RESTORE_FEE_USD: 1,
+  SPIN_TICKETS_PER_CHECK_IN: 3,
+  SPIN_TICKET_COST: 1,
 } as const;
 
 const REFERRAL_FOUNDER_PASS_CONTRACT =
@@ -68,6 +71,11 @@ const STREAK_SAVE_USDC_ADDRESS =
   process.env.STREAK_SAVE_USDC_ADDRESS ||
   process.env.NEXT_PUBLIC_STREAK_SAVE_USDC_ADDRESS ||
   "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+const SPIN_CONTRACT_ADDRESS = (
+  process.env.SPIN_CONTRACT_ADDRESS ||
+  process.env.NEXT_PUBLIC_SPIN_CONTRACT_ADDRESS ||
+  ""
+).toLowerCase();
 const ENTRY_POINT_V06_ADDRESS = "0x5ff137d4b0fdcd49dca30c7cf57e578a026d2789";
 const DEFAULT_ETH_PRICE_USD = Number(process.env.DEFAULT_ETH_PRICE_USD || "3500");
 const PRICE_SCALE = 100_000_000;
@@ -81,6 +89,16 @@ const SMART_WALLET_EXECUTION_ABI = parseAbi([
   "function execute(address target,uint256 value,bytes data)",
   "function executeBatch((address target,uint256 value,bytes data)[] calls)",
 ]);
+const SPIN_TRIGGER_ABI = parseAbi([
+  "function spin()",
+  "event SpinTriggered(address indexed player,uint256 indexed playerNonce)",
+]);
+const SPIN_FUNCTION_SELECTOR = encodeFunctionData({
+  abi: SPIN_TRIGGER_ABI,
+  functionName: "spin",
+})
+  .slice(0, 10)
+  .toLowerCase();
 
 const baseClient = createPublicClient({
   chain: base,
@@ -96,6 +114,7 @@ type UserRecord = {
   current_streak: number;
   longest_streak: number;
   last_check_in: string | null;
+  spin_tickets?: number | null;
 };
 
 type SocialAccountRecord = {
@@ -242,6 +261,99 @@ type AddPointsOptions = {
   applyStreakBoost?: boolean;
   applyReferralCommission?: boolean;
 };
+
+type SpinRewardKind = "pp" | "usdc";
+
+type SpinRewardOption = {
+  key: string;
+  label: string;
+  probability: number;
+  type: SpinRewardKind;
+  amount: number;
+  pointsAwarded: number;
+};
+
+type SpinHistoryRow = {
+  id: number | string;
+  tx_hash: string;
+  reward_key: string;
+  reward_label: string;
+  reward_type: SpinRewardKind;
+  reward_amount: number | string;
+  reward_points: number | string | null;
+  reward_probability: number | string | null;
+  ticket_cost: number | string | null;
+  execution_type: string | null;
+  status: string | null;
+  created_at: string | null;
+};
+
+const SPIN_REWARDS: readonly SpinRewardOption[] = [
+  {
+    key: "50_pp",
+    label: "50 PP",
+    probability: 25,
+    type: "pp",
+    amount: 50,
+    pointsAwarded: 50,
+  },
+  {
+    key: "100_pp",
+    label: "100 PP",
+    probability: 20,
+    type: "pp",
+    amount: 100,
+    pointsAwarded: 100,
+  },
+  {
+    key: "150_pp",
+    label: "150 PP",
+    probability: 20,
+    type: "pp",
+    amount: 150,
+    pointsAwarded: 150,
+  },
+  {
+    key: "200_pp",
+    label: "200 PP",
+    probability: 15,
+    type: "pp",
+    amount: 200,
+    pointsAwarded: 200,
+  },
+  {
+    key: "250_pp",
+    label: "250 PP",
+    probability: 15,
+    type: "pp",
+    amount: 250,
+    pointsAwarded: 250,
+  },
+  {
+    key: "500_pp",
+    label: "500 PP",
+    probability: 5,
+    type: "pp",
+    amount: 500,
+    pointsAwarded: 500,
+  },
+  {
+    key: "1_usdc",
+    label: "1 USDC",
+    probability: 0,
+    type: "usdc",
+    amount: 1,
+    pointsAwarded: 0,
+  },
+  {
+    key: "5_usdc",
+    label: "5 USDC",
+    probability: 0,
+    type: "usdc",
+    amount: 5,
+    pointsAwarded: 0,
+  },
+] as const;
 
 function genCode(): string {
   const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
@@ -422,6 +534,39 @@ function buildFeeConfig(snapshot: DailyAssetPriceRecord, usdTarget: number): Fee
     ethPriceUsd: snapshot.price_usd,
     priceDate: snapshot.price_date,
   };
+}
+
+function normalizeSpinRewardRow(row: SpinHistoryRow) {
+  return {
+    id: Number(row.id),
+    txHash: String(row.tx_hash),
+    reward: {
+      key: String(row.reward_key),
+      label: String(row.reward_label),
+      type: row.reward_type,
+      amount: Number(row.reward_amount || 0),
+      pointsAwarded: Number(row.reward_points || 0),
+      probability: Number(row.reward_probability || 0),
+    },
+    ticketCost: Number(row.ticket_cost || 0),
+    executionType: row.execution_type || "eoa",
+    status: row.status || "confirmed",
+    createdAt: row.created_at,
+  };
+}
+
+function pickSpinReward() {
+  const roll = Math.random() * 100;
+  let cursor = 0;
+
+  for (const reward of SPIN_REWARDS) {
+    cursor += reward.probability;
+    if (roll < cursor) {
+      return reward;
+    }
+  }
+
+  return SPIN_REWARDS[SPIN_REWARDS.length - 1];
 }
 
 export class PointsEngine {
@@ -674,6 +819,7 @@ export class PointsEngine {
     return {
       totalPoints: user.total_points,
       rank: (count ?? 0) + 1,
+      spinTickets: Number(user.spin_tickets || 0),
       streak: snapshot.activeStreak,
       rawStreak: snapshot.storedStreak,
       recoverableStreak: snapshot.recoverableStreak,
@@ -1605,6 +1751,176 @@ export class PointsEngine {
     throw new Error("USDC payment was not found in this transaction");
   }
 
+  private getConfiguredSpinContractAddress() {
+    if (!SPIN_CONTRACT_ADDRESS) {
+      throw new Error("Spin contract is not configured");
+    }
+
+    return SPIN_CONTRACT_ADDRESS;
+  }
+
+  private async adjustSpinTickets(userId: number, delta: number) {
+    const { data, error } = await supabase.rpc("adjust_spin_tickets", {
+      p_user_id: userId,
+      p_delta: delta,
+    });
+
+    if (error) {
+      if (error.message?.includes("insufficient_spin_tickets")) {
+        throw new Error("You don't have any ticket to spin right now");
+      }
+
+      throw new Error(`Adjust spin tickets: ${error.message}`);
+    }
+
+    return Number(data || 0);
+  }
+
+  private verifySpinEvent(logs: readonly any[], normalizedAddress: string) {
+    const spinContractAddress = this.getConfiguredSpinContractAddress();
+
+    for (const log of logs) {
+      if (String(log.address).toLowerCase() !== spinContractAddress) {
+        continue;
+      }
+
+      try {
+        const decoded = decodeEventLog({
+          abi: SPIN_TRIGGER_ABI,
+          data: log.data,
+          topics: log.topics,
+        });
+
+        if (decoded.eventName !== "SpinTriggered") {
+          continue;
+        }
+
+        const player = String(decoded.args.player || "").toLowerCase();
+        if (player === normalizedAddress) {
+          return;
+        }
+      } catch {
+        continue;
+      }
+    }
+
+    throw new Error("Spin transaction was not emitted by the configured contract");
+  }
+
+  private verifySmartWalletSpinCall(
+    normalizedAddress: string,
+    transaction: Awaited<ReturnType<typeof baseClient.getTransaction>>
+  ) {
+    const spinContractAddress = this.getConfiguredSpinContractAddress();
+
+    if (
+      !transaction.to ||
+      transaction.to.toLowerCase() !== ENTRY_POINT_V06_ADDRESS ||
+      transaction.value > 0n ||
+      !transaction.input ||
+      transaction.input === "0x"
+    ) {
+      return null;
+    }
+
+    try {
+      const decodedEntryPointCall = decodeFunctionData({
+        abi: ENTRY_POINT_HANDLE_OPS_ABI,
+        data: transaction.input,
+      });
+
+      if (decodedEntryPointCall.functionName !== "handleOps") {
+        return null;
+      }
+
+      const matchingOperation = decodedEntryPointCall.args[0].find(
+        (operation) => operation.sender.toLowerCase() === normalizedAddress
+      );
+
+      if (!matchingOperation) {
+        return null;
+      }
+
+      const decodedWalletCall = decodeFunctionData({
+        abi: SMART_WALLET_EXECUTION_ABI,
+        data: matchingOperation.callData,
+      });
+
+      const calls =
+        decodedWalletCall.functionName === "execute"
+          ? [
+              {
+                target: decodedWalletCall.args[0],
+                value: decodedWalletCall.args[1],
+                data: decodedWalletCall.args[2],
+              },
+            ]
+          : decodedWalletCall.args[0];
+
+      const matchingCall = calls.find(
+        (call) =>
+          call.target.toLowerCase() === spinContractAddress &&
+          call.value === 0n &&
+          String(call.data || "")
+            .toLowerCase()
+            .startsWith(SPIN_FUNCTION_SELECTOR)
+      );
+
+      return matchingCall || null;
+    } catch {
+      return null;
+    }
+  }
+
+  private async verifySpinTransaction(normalizedAddress: string, txHash: string) {
+    const spinContractAddress = this.getConfiguredSpinContractAddress();
+    const [transaction, receipt] = await Promise.all([
+      baseClient.getTransaction({ hash: txHash as `0x${string}` }),
+      baseClient.getTransactionReceipt({ hash: txHash as `0x${string}` }),
+    ]);
+
+    if (receipt.status !== "success") {
+      throw new Error("Spin transaction is not confirmed");
+    }
+
+    const smartWalletCall = this.verifySmartWalletSpinCall(normalizedAddress, transaction);
+    if (smartWalletCall) {
+      this.verifySpinEvent(receipt.logs, normalizedAddress);
+
+      return {
+        executionType: "smart_wallet" as const,
+        contractAddress: spinContractAddress,
+      };
+    }
+
+    if (transaction.from.toLowerCase() !== normalizedAddress) {
+      throw new Error("Spin transaction sender does not match this wallet");
+    }
+
+    if (!transaction.to || transaction.to.toLowerCase() !== spinContractAddress) {
+      throw new Error("Spin transaction was not sent to the configured contract");
+    }
+
+    if (transaction.value > 0n) {
+      throw new Error("Spin transaction must not send ETH");
+    }
+
+    if (
+      !transaction.input ||
+      transaction.input === "0x" ||
+      !transaction.input.toLowerCase().startsWith(SPIN_FUNCTION_SELECTOR)
+    ) {
+      throw new Error("Spin transaction does not call the expected contract method");
+    }
+
+    this.verifySpinEvent(receipt.logs, normalizedAddress);
+
+    return {
+      executionType: "eoa" as const,
+      contractAddress: spinContractAddress,
+    };
+  }
+
   async dailyCheckIn(address: string, txHash: string, asset?: SaveAsset) {
     const normalizedAddress = address.toLowerCase();
     const user = await this.getOrCreate(normalizedAddress);
@@ -1692,6 +2008,11 @@ export class PointsEngine {
       "daily_check_in",
       pointsAwarded,
       txHash
+    );
+
+    nextUser.spin_tickets = await this.adjustSpinTickets(
+      user.id,
+      CFG.SPIN_TICKETS_PER_CHECK_IN
     );
 
     this.invalidateUserReadCaches(normalizedAddress);
@@ -1826,6 +2147,131 @@ export class PointsEngine {
       asset: payment.asset,
       paymentAmountUsd: payment.amountUsd,
       ...(await this.buildBalance(nextUser)),
+    };
+  }
+
+  async spin(address: string, txHash: string) {
+    const normalizedAddress = getAddress(address).toLowerCase();
+    const user = await this.getOrCreate(normalizedAddress);
+
+    if (Number(user.spin_tickets || 0) < CFG.SPIN_TICKET_COST) {
+      throw new Error("You don't have any ticket to spin right now");
+    }
+
+    const { data: existingSpin } = await supabase
+      .from("spin_history")
+      .select("id")
+      .eq("tx_hash", txHash)
+      .maybeSingle();
+
+    if (existingSpin) {
+      throw new Error("That spin transaction has already been used");
+    }
+
+    const verification = await this.verifySpinTransaction(normalizedAddress, txHash);
+    const remainingTickets = await this.adjustSpinTickets(user.id, -CFG.SPIN_TICKET_COST);
+    const reward = pickSpinReward();
+
+    const { error: historyError } = await supabase.from("spin_history").insert({
+      user_id: user.id,
+      tx_hash: txHash,
+      reward_key: reward.key,
+      reward_label: reward.label,
+      reward_type: reward.type,
+      reward_amount: reward.amount,
+      reward_points: reward.pointsAwarded,
+      reward_probability: reward.probability,
+      ticket_cost: CFG.SPIN_TICKET_COST,
+      execution_type: verification.executionType,
+      status: "confirmed",
+    });
+
+    if (historyError) {
+      await this.adjustSpinTickets(user.id, CFG.SPIN_TICKET_COST).catch(() => undefined);
+
+      if (historyError.message?.toLowerCase().includes("duplicate")) {
+        throw new Error("That spin transaction has already been used");
+      }
+
+      throw new Error(`Record spin history: ${historyError.message}`);
+    }
+
+    let nextUser = {
+      ...user,
+      spin_tickets: remainingTickets,
+    } as UserRecord;
+
+    if (reward.pointsAwarded > 0) {
+      try {
+        const rewardResult = await this.addPoints(
+          normalizedAddress,
+          reward.pointsAwarded,
+          "spin_reward",
+          txHash,
+          {
+            rewardKey: reward.key,
+            rewardLabel: reward.label,
+            rewardType: reward.type,
+            rewardAmount: reward.amount,
+            rewardProbability: reward.probability,
+            executionType: verification.executionType,
+            ticketCost: CFG.SPIN_TICKET_COST,
+            contractAddress: verification.contractAddress,
+          },
+          {
+            applyStreakBoost: false,
+            applyReferralCommission: false,
+          }
+        );
+
+        nextUser = {
+          ...rewardResult.user,
+          spin_tickets: remainingTickets,
+        } as UserRecord;
+      } catch (error) {
+        await supabase
+          .from("spin_history")
+          .update({ status: "reward_failed" })
+          .eq("tx_hash", txHash);
+        throw error;
+      }
+    }
+
+    this.invalidateUserReadCaches(normalizedAddress);
+
+    return {
+      txHash,
+      ticketCost: CFG.SPIN_TICKET_COST,
+      executionType: verification.executionType,
+      reward: {
+        key: reward.key,
+        label: reward.label,
+        type: reward.type,
+        amount: reward.amount,
+        pointsAwarded: reward.pointsAwarded,
+        probability: reward.probability,
+      },
+      ...(await this.buildBalance(nextUser)),
+    };
+  }
+
+  async getSpinHistory(address: string) {
+    const user = await this.getOrCreate(address);
+    const { data, error } = await supabase
+      .from("spin_history")
+      .select(
+        "id, tx_hash, reward_key, reward_label, reward_type, reward_amount, reward_points, reward_probability, ticket_cost, execution_type, status, created_at"
+      )
+      .eq("user_id", user.id)
+      .order("created_at", { ascending: false })
+      .limit(25);
+
+    if (error) {
+      throw new Error(`Load spin history: ${error.message}`);
+    }
+
+    return {
+      history: ((data ?? []) as SpinHistoryRow[]).map(normalizeSpinRewardRow),
     };
   }
 
