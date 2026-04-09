@@ -238,6 +238,11 @@ type PointEventRow = {
   created_at: string | null;
 };
 
+type AddPointsOptions = {
+  applyStreakBoost?: boolean;
+  applyReferralCommission?: boolean;
+};
+
 function genCode(): string {
   const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
   return (
@@ -874,6 +879,23 @@ export class PointsEngine {
     return (data as PointEventRow | null) ?? null;
   }
 
+  private async getExistingPointEventByUserIdAndAction(userId: number, action: string) {
+    const { data, error } = await supabase
+      .from("point_events")
+      .select("id, points, total_awarded, metadata, created_at")
+      .eq("user_id", userId)
+      .eq("action", action)
+      .order("created_at", { ascending: true })
+      .limit(1)
+      .maybeSingle();
+
+    if (error) {
+      throw new Error(`Load point event by action: ${error.message}`);
+    }
+
+    return (data as PointEventRow | null) ?? null;
+  }
+
   private normalizeFootprintClaim(
     address: string,
     event: PointEventRow
@@ -1194,7 +1216,7 @@ export class PointsEngine {
     action: string,
     txHash?: string,
     meta?: unknown,
-    options?: { applyStreakBoost?: boolean }
+    options?: AddPointsOptions
   ) {
     const user = await this.getOrCreate(address);
     const snapshot = buildStreakSnapshot(user);
@@ -1226,7 +1248,9 @@ export class PointsEngine {
       })
       .eq("id", user.id);
 
-    await this.awardReferralCommission(user, address, action, totalAwarded, txHash);
+    if (options?.applyReferralCommission !== false) {
+      await this.awardReferralCommission(user, address, action, totalAwarded, txHash);
+    }
 
     this.invalidateUserReadCaches(address);
 
@@ -1255,6 +1279,49 @@ export class PointsEngine {
 
     const result = await this.addPoints(address, pts, action, txHash, meta);
     return result.totalAwarded;
+  }
+
+  async awardOneTimeCampaignPoints(args: {
+    address: string;
+    points: number;
+    action: string;
+    metadata?: unknown;
+    txHash?: string;
+  }) {
+    const normalizedAddress = getAddress(args.address).toLowerCase();
+    const user = await this.getOrCreate(normalizedAddress);
+    const existingEvent = await this.getExistingPointEventByUserIdAndAction(
+      user.id,
+      args.action
+    );
+
+    if (existingEvent) {
+      return {
+        alreadyAwarded: true,
+        awardedAt: existingEvent.created_at || null,
+        totalAwarded: Number(existingEvent.total_awarded || existingEvent.points || 0),
+        user,
+      };
+    }
+
+    const award = await this.addPoints(
+      normalizedAddress,
+      args.points,
+      args.action,
+      args.txHash,
+      args.metadata,
+      {
+        applyStreakBoost: false,
+        applyReferralCommission: false,
+      }
+    );
+
+    return {
+      alreadyAwarded: false,
+      awardedAt: new Date().toISOString(),
+      totalAwarded: award.totalAwarded,
+      user: award.user,
+    };
   }
 
   private async todayBasePoints(address: string, action: string): Promise<number> {

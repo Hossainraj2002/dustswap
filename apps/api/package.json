@@ -7,7 +7,8 @@
     "dev": "nodemon --exec ts-node src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
-    "lint": "eslint src --ext .ts"
+    "lint": "eslint src --ext .ts",
+    "grant-existing-user-reward": "ts-node src/scripts/grantExistingUserReward.ts"
   },
   "dependencies": {
     "@base-org/account": "2.4.0",
