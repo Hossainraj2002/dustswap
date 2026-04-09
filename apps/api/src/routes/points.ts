@@ -59,6 +59,38 @@ pointsRoutes.post("/profile-cache", async (c) => {
   }
 });
 
+// POST /api/points/airdrop/lookup
+pointsRoutes.post("/airdrop/lookup", async (c) => {
+  const body = await c.req.json<{ address?: string }>();
+
+  if (!body.address) {
+    return c.json({ success: false, error: "address required" }, 400);
+  }
+
+  try {
+    const data = await pointsEngine.getFootprintAirdropStatus(body.address);
+    return c.json({ success: true, ...data });
+  } catch (e: unknown) {
+    return c.json({ success: false, error: (e as Error).message }, 500);
+  }
+});
+
+// POST /api/points/airdrop/claim
+pointsRoutes.post("/airdrop/claim", async (c) => {
+  const body = await c.req.json<{ address?: string }>();
+
+  if (!body.address) {
+    return c.json({ success: false, error: "address required" }, 400);
+  }
+
+  try {
+    const data = await pointsEngine.claimFootprintAirdrop(body.address);
+    return c.json({ success: true, ...data });
+  } catch (e: unknown) {
+    return c.json({ success: false, error: (e as Error).message }, 400);
+  }
+});
+
 // GET /api/points/:address/summary
 pointsRoutes.get("/:address/summary", async (c) => {
   try {

@@ -4,12 +4,18 @@ import {
   decodeEventLog,
   erc20Abi,
   formatUnits,
+  getAddress,
   http,
   parseAbi,
 } from "viem";
 import { base } from "viem/chains";
 import { getPaymentStatus } from "@base-org/account/payment";
 import { supabase } from "./supabase";
+import {
+  footprintAirdropService,
+  type FootprintLookupResult,
+  type FootprintLookupSource,
+} from "./footprintAirdrop";
 import { runtimeCache } from "../utils/runtimeCache";
 
 const CFG = {
@@ -222,6 +228,14 @@ type VolumeLeaderboardRow = {
   swap_volume: number | string | null;
   total_points: number | string | null;
   user_id: number | string;
+};
+
+type PointEventRow = {
+  id: number | string;
+  points: number | string | null;
+  total_awarded: number | string | null;
+  metadata: Record<string, unknown> | null;
+  created_at: string | null;
 };
 
 function genCode(): string {
@@ -825,6 +839,80 @@ export class PointsEngine {
     return {
       friendsJoined: Number(row?.friends_joined || 0),
       pointsEarned: Number(row?.points_earned || 0),
+    };
+  }
+
+  private async findExistingUser(address: string) {
+    const normalizedAddress = getAddress(address).toLowerCase();
+    const { data, error } = await supabase
+      .from("users")
+      .select("*")
+      .eq("address", normalizedAddress)
+      .maybeSingle();
+
+    if (error) {
+      throw new Error(`Load existing user: ${error.message}`);
+    }
+
+    return (data as UserRecord | null) ?? null;
+  }
+
+  private async getExistingFootprintClaimByUserId(userId: number) {
+    const { data, error } = await supabase
+      .from("point_events")
+      .select("id, points, total_awarded, metadata, created_at")
+      .eq("user_id", userId)
+      .eq("action", "footprint_airdrop_claim")
+      .order("created_at", { ascending: true })
+      .limit(1)
+      .maybeSingle();
+
+    if (error) {
+      throw new Error(`Load footprint claim event: ${error.message}`);
+    }
+
+    return (data as PointEventRow | null) ?? null;
+  }
+
+  private normalizeFootprintClaim(
+    address: string,
+    event: PointEventRow
+  ): FootprintLookupResult & {
+    claimed: boolean;
+    claimable: boolean;
+    claimedAt: string | null;
+  } {
+    const metadata =
+      event.metadata && typeof event.metadata === "object" && !Array.isArray(event.metadata)
+        ? event.metadata
+        : {};
+
+    const toNumberOrNull = (value: unknown) => {
+      const numeric = Number(value);
+      return Number.isFinite(numeric) ? numeric : null;
+    };
+
+    const source =
+      metadata.sourceKind === "saved_leaderboard" || metadata.sourceKind === "blockscout"
+        ? (metadata.sourceKind as FootprintLookupSource)
+        : null;
+
+    return {
+      address,
+      claimed: true,
+      claimable: false,
+      eligible: true,
+      rewardPoints: Number(event.total_awarded || event.points || 0),
+      source,
+      rangeMin: toNumberOrNull(metadata.rangeMin),
+      rangeMax: toNumberOrNull(metadata.rangeMax),
+      tierLabel: typeof metadata.tierLabel === "string" ? metadata.tierLabel : null,
+      reason: null,
+      allowlistTotalUsdc: toNumberOrNull(metadata.allowlistTotalUsdc),
+      transactionsCount: toNumberOrNull(metadata.transactionsCount),
+      tokenTransfersCount: toNumberOrNull(metadata.tokenTransfersCount),
+      totalActivity: toNumberOrNull(metadata.totalActivity),
+      claimedAt: event.created_at || null,
     };
   }
 
@@ -1816,6 +1904,95 @@ export class PointsEngine {
   async getBalance(address: string) {
     const user = await this.getOrCreate(address);
     return this.buildBalance(user);
+  }
+
+  async getFootprintAirdropStatus(address: string) {
+    const normalizedAddress = getAddress(address).toLowerCase();
+    const existingUser = await this.findExistingUser(normalizedAddress);
+
+    if (existingUser) {
+      const existingClaim = await this.getExistingFootprintClaimByUserId(existingUser.id);
+      if (existingClaim) {
+        return {
+          ...this.normalizeFootprintClaim(normalizedAddress, existingClaim),
+          referralCommissionPct: CFG.REFERRAL_COMMISSION_PCT,
+        };
+      }
+    }
+
+    const lookup = await footprintAirdropService.lookupReward(normalizedAddress);
+
+    return {
+      ...lookup,
+      claimed: false,
+      claimable: lookup.eligible,
+      claimedAt: null,
+      referralCommissionPct: CFG.REFERRAL_COMMISSION_PCT,
+    };
+  }
+
+  async claimFootprintAirdrop(address: string) {
+    const normalizedAddress = getAddress(address).toLowerCase();
+    const user = await this.getOrCreate(normalizedAddress);
+    const existingClaim = await this.getExistingFootprintClaimByUserId(user.id);
+
+    if (existingClaim) {
+      const normalizedClaim = this.normalizeFootprintClaim(
+        normalizedAddress,
+        existingClaim
+      );
+
+      return {
+        ...normalizedClaim,
+        alreadyClaimed: true,
+        totalPoints: user.total_points,
+        referralCommissionPct: CFG.REFERRAL_COMMISSION_PCT,
+      };
+    }
+
+    const lookup = await footprintAirdropService.lookupReward(normalizedAddress);
+
+    if (!lookup.eligible || lookup.rewardPoints <= 0) {
+      throw new Error(
+        lookup.reason || "This wallet is not eligible for the Footprint Drop."
+      );
+    }
+
+    const award = await this.addPoints(
+      normalizedAddress,
+      lookup.rewardPoints,
+      "footprint_airdrop_claim",
+      undefined,
+      {
+        dropName: "Footprint Drop",
+        sourceKind: lookup.source,
+        tierLabel: lookup.tierLabel,
+        rangeMin: lookup.rangeMin,
+        rangeMax: lookup.rangeMax,
+        allowlistTotalUsdc: lookup.allowlistTotalUsdc,
+        transactionsCount: lookup.transactionsCount,
+        tokenTransfersCount: lookup.tokenTransfersCount,
+        totalActivity: lookup.totalActivity,
+      },
+      { applyStreakBoost: false }
+    );
+
+    const storedClaim = await this.getExistingFootprintClaimByUserId(user.id);
+    const normalizedClaim = storedClaim
+      ? this.normalizeFootprintClaim(normalizedAddress, storedClaim)
+      : {
+          ...lookup,
+          claimed: true,
+          claimable: false,
+          claimedAt: new Date().toISOString(),
+        };
+
+    return {
+      ...normalizedClaim,
+      alreadyClaimed: false,
+      totalPoints: award.user.total_points,
+      referralCommissionPct: CFG.REFERRAL_COMMISSION_PCT,
+    };
   }
 
   async getPointsSummary(address: string) {

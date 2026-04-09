@@ -60,6 +60,8 @@ app.get("/", (c) => {
       "POST /api/tokens/batch-quote": "Get batch swap quotes",
       "GET /api/tokens/health": "Service health check",
       "GET /api/points/:address": "Get points balance",
+      "POST /api/points/airdrop/lookup": "Preview Footprint Drop eligibility",
+      "POST /api/points/airdrop/claim": "Claim Footprint Drop PP",
       "POST /api/points/check-in": "Daily check-in",
       "POST /api/points/record-sweep": "Record sweep for points",
       "GET /api/quests": "Get active quests and user progress",
