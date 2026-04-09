@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { useMemo } from "react";
 import {
   type SpinRewardKey,
@@ -20,9 +21,6 @@ export function SpinWheel({
   isSpinning = false,
 }: SpinWheelProps) {
   const gradient = useMemo(() => getSpinWheelGradient(), []);
-  const activeReward = activeRewardKey
-    ? SPIN_WHEEL_SEGMENTS.find((segment) => segment.key === activeRewardKey) || null
-    : null;
 
   return (
     <div className="relative mx-auto aspect-square w-full max-w-[420px]">
@@ -61,26 +59,23 @@ export function SpinWheel({
                   }}
                 />
                 <div
-                  className="absolute left-1/2 top-1/2 w-[32%] -translate-x-1/2 -translate-y-1/2 text-center"
+                  className="absolute left-1/2 top-1/2 w-[20%] min-w-[54px] max-w-[76px] -translate-x-1/2 -translate-y-1/2 text-center"
                   style={{
-                    transform: `translate(-50%, -50%) rotate(${labelAngle}deg) translateY(-145%) rotate(${-labelAngle}deg)`,
+                    transform: `translate(-50%, -50%) rotate(${labelAngle}deg) translateY(-182%) rotate(${-labelAngle}deg)`,
                   }}
                 >
                   <div
-                    className={`rounded-[18px] border px-2 py-2 shadow-[0_10px_20px_rgba(255,255,255,0.24)] ${
+                    className={`rounded-[16px] border px-1.5 py-1.5 shadow-[0_10px_20px_rgba(255,255,255,0.2)] ${
                       active
                         ? "border-sky-200 bg-white/95"
                         : "border-white/60 bg-white/78"
                     }`}
                   >
                     <p
-                      className="text-[11px] font-black uppercase tracking-[0.08em]"
+                      className="text-[10px] font-black uppercase leading-none tracking-[0.04em] sm:text-[11px]"
                       style={{ color: segment.accent }}
                     >
                       {segment.label}
-                    </p>
-                    <p className="mt-1 text-[10px] font-semibold text-slate-500">
-                      {segment.probability}%
                     </p>
                   </div>
                 </div>
@@ -88,27 +83,18 @@ export function SpinWheel({
             );
           })}
 
-          <div className="absolute inset-[34%] rounded-full border border-white/85 bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.98),rgba(239,246,255,0.96)_55%,rgba(191,219,254,0.86)_100%)] shadow-[0_20px_40px_rgba(59,130,246,0.18)]">
-            <div className="absolute inset-[12%] rounded-full border border-sky-100 bg-white/90" />
+          <div className="absolute left-1/2 top-1/2 z-20 h-[58px] w-[58px] -translate-x-1/2 -translate-y-1/2 rounded-full border border-slate-100 bg-white shadow-[0_16px_34px_rgba(59,130,246,0.18)] sm:h-[72px] sm:w-[72px]">
+            <div className="absolute inset-[8%] rounded-full border border-sky-100 bg-white" />
+            <div className="absolute inset-0 flex items-center justify-center">
+              <Image
+                src="/logo.png"
+                alt="DustSwap"
+                width={34}
+                height={34}
+                className="h-7 w-7 sm:h-9 sm:w-9"
+              />
+            </div>
           </div>
-        </div>
-      </div>
-
-      <div className="pointer-events-none absolute inset-[32%] z-20 flex items-center justify-center">
-        <div className="flex h-full w-full flex-col items-center justify-center rounded-full border border-white/90 bg-[radial-gradient(circle,rgba(255,255,255,0.98),rgba(219,234,254,0.94)_65%,rgba(147,197,253,0.8)_100%)] px-6 text-center shadow-[0_18px_40px_rgba(59,130,246,0.2)]">
-          <p className="text-[10px] font-black uppercase tracking-[0.32em] text-sky-600">
-            DustSpin
-          </p>
-          <p className="mt-2 text-lg font-black tracking-tight text-slate-950 sm:text-xl">
-            {isSpinning ? "Spinning..." : activeReward?.label || "Free Spin"}
-          </p>
-          <p className="mt-1 text-[11px] leading-4 text-slate-500 sm:text-xs">
-            {isSpinning
-              ? "Wheel is locking your onchain reward."
-              : activeReward
-                ? `${activeReward.probability}% probability`
-                : "Blue-white reward wheel"}
-          </p>
         </div>
       </div>
     </div>

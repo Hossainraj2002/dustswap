@@ -23,12 +23,12 @@ import {
   buildBasePaymasterCapabilities,
   isPaymasterEnabled,
   isUserRejectedRequest,
+  toRpcHexValue,
 } from "@/lib/paymaster";
 import {
   SPIN_CONTRACT_ADDRESS,
   SPIN_TRIGGER_ABI,
   SPIN_WHEEL_DURATION_MS,
-  SPIN_WHEEL_SEGMENTS,
   formatTicketLabel,
   getSpinTargetRotation,
   shortTxHash,
@@ -382,76 +382,90 @@ export default function SpinPage() {
     };
 
     if (isPaymasterEnabled() && isCoinbaseWallet) {
-      try {
-        if (!requestClient.account?.address || !requestClient.request) {
-          throw new Error("wallet_getCapabilities is unavailable");
-        }
+      const smartWalletAddress = requestClient.account?.address;
+      const request = requestClient.request;
 
-        const capabilitiesResult = (await requestClient.request({
-          method: "wallet_getCapabilities",
-          params: [requestClient.account.address],
-        })) as Record<
-          string,
-          {
-            paymasterService?: {
-              supported?: boolean;
-            };
-          }
-        > | null;
-        const chainCapabilities = capabilitiesResult
-          ? Object.entries(capabilitiesResult).find(
-              ([candidate]) => candidate.toLowerCase() === toHexChainId(BASE_CHAIN_ID).toLowerCase()
-            )?.[1]
-          : null;
-
-        if (!chainCapabilities?.paymasterService?.supported) {
-          throw new Error("wallet paymasterService capability is unavailable");
-        }
-
-        const sendCallsResult = await walletClient.sendCalls({
-          calls: [
+      if (smartWalletAddress && request) {
+        try {
+          const capabilitiesResult = (await request({
+            method: "wallet_getCapabilities",
+            params: [smartWalletAddress],
+          })) as Record<
+            string,
             {
-              to: SPIN_CONTRACT_ADDRESS,
-              data: txData,
-              value: 0n,
-              dataSuffix: DATA_SUFFIX,
-            },
-          ],
-          capabilities: buildBasePaymasterCapabilities(),
-        } as any);
+              paymasterService?: {
+                supported?: boolean;
+              };
+            }
+          > | null;
+          const chainCapabilities = capabilitiesResult
+            ? Object.entries(capabilitiesResult).find(
+                ([candidate]) => candidate.toLowerCase() === toHexChainId(BASE_CHAIN_ID).toLowerCase()
+              )?.[1]
+            : null;
 
-        const callId = resolveSendCallsId(sendCallsResult);
-        if (!callId) {
-          throw new Error("wallet_sendCalls did not return an id");
+          if (chainCapabilities?.paymasterService?.supported) {
+            const sendCallsResult = await request({
+              method: "wallet_sendCalls",
+              params: [
+                {
+                  version: "2.0.0",
+                  chainId: toHexChainId(BASE_CHAIN_ID),
+                  from: smartWalletAddress,
+                  atomicRequired: true,
+                  calls: [
+                    {
+                      to: SPIN_CONTRACT_ADDRESS,
+                      data: txData,
+                      value: toRpcHexValue(0n),
+                      dataSuffix: DATA_SUFFIX,
+                    },
+                  ],
+                  capabilities: buildBasePaymasterCapabilities(),
+                },
+              ],
+            });
+
+            const callId = resolveSendCallsId(sendCallsResult);
+            if (!callId) {
+              throw new Error("wallet_sendCalls did not return an id");
+            }
+
+            const status = await walletClient.waitForCallsStatus({
+              id: callId,
+              throwOnFailure: true,
+              timeout: 120_000,
+            });
+            const hash = status.receipts?.find((receipt) => isTxHash(receipt?.transactionHash))
+              ?.transactionHash;
+
+            if (!hash) {
+              throw new Error("Sponsored spin finished without a transaction hash");
+            }
+
+            const receipt = await publicClient.waitForTransactionReceipt({ hash });
+            if (receipt.status !== "success") {
+              throw new Error("Transaction reverted");
+            }
+
+            return hash;
+          }
+        } catch (error) {
+          if (isUserRejectedRequest(error)) {
+            throw error;
+          }
+          const message = getErrorMessage(error);
+          if (
+            message.toLowerCase().includes("wallet_sendcalls") ||
+            message.toLowerCase().includes("paymaster") ||
+            message.toLowerCase().includes("sponsored")
+          ) {
+            throw new Error(
+              message ||
+                "Sponsored smart wallet spin failed. Check paymaster allowlist and try again."
+            );
+          }
         }
-
-        const status = await walletClient.waitForCallsStatus({
-          id: callId,
-          throwOnFailure: true,
-          timeout: 120_000,
-        });
-        const hash = status.receipts?.find((receipt) => isTxHash(receipt?.transactionHash))
-          ?.transactionHash;
-
-        if (!hash) {
-          throw new Error("Sponsored spin finished without a transaction hash");
-        }
-
-        const receipt = await publicClient.waitForTransactionReceipt({ hash });
-        if (receipt.status !== "success") {
-          throw new Error("Transaction reverted");
-        }
-
-        return hash;
-      } catch (error) {
-        if (isUserRejectedRequest(error)) {
-          throw error;
-        }
-
-        console.warn(
-          "Paymaster sendCalls failed for spin, falling back to direct sendTransaction.",
-          error
-        );
       }
     }
 
@@ -533,17 +547,9 @@ export default function SpinPage() {
   const messageTone = hasTicket
     ? "border-sky-200 bg-[linear-gradient(135deg,#f8fbff,#dbeafe)] text-slate-800"
     : "border-slate-200 bg-[linear-gradient(135deg,#ffffff,#f8fafc)] text-slate-700";
-  const statusPill =
-    flowStage === "wallet"
-      ? "Waiting for wallet"
-      : flowStage === "verifying"
-        ? "Verifying onchain"
-        : flowStage === "spinning"
-          ? "Wheel spinning"
-          : null;
 
   const actionButtonClass =
-    "flex w-full items-center justify-center rounded-[22px] border border-transparent px-5 py-4 text-base font-black tracking-tight transition duration-200";
+    "flex w-full items-center justify-center rounded-[20px] border border-transparent px-5 py-3.5 text-base font-black tracking-tight transition duration-200";
 
   const renderActionButton = () =>
     hasTicket ? (
@@ -572,8 +578,8 @@ export default function SpinPage() {
 
   return (
     <>
-      <div className="min-h-[calc(100vh-4rem)] bg-[radial-gradient(circle_at_top_left,rgba(56,189,248,0.16),transparent_26%),radial-gradient(circle_at_top_right,rgba(191,219,254,0.52),transparent_30%),linear-gradient(180deg,#f7fbff,#eef5ff_48%,#f8fbff)] px-3 py-4 pb-32 sm:px-6 sm:py-8 sm:pb-36">
-        <div className="mx-auto flex w-full max-w-5xl flex-col gap-4 sm:gap-5">
+      <div className="min-h-[calc(100vh-4rem)] bg-[radial-gradient(circle_at_top_left,rgba(56,189,248,0.16),transparent_26%),radial-gradient(circle_at_top_right,rgba(191,219,254,0.52),transparent_30%),linear-gradient(180deg,#f7fbff,#eef5ff_48%,#f8fbff)] px-3 py-4 pb-24 sm:px-6 sm:py-8 sm:pb-28">
+        <div className="mx-auto flex w-full max-w-4xl flex-col gap-4 sm:gap-5">
           {toast ? (
             <div
               className={`rounded-[20px] border px-4 py-3 text-sm shadow-[0_16px_36px_rgba(15,23,42,0.08)] ${
@@ -587,27 +593,26 @@ export default function SpinPage() {
           ) : null}
 
           <section className="overflow-hidden rounded-[30px] border border-white/80 bg-white/82 px-4 py-4 shadow-[0_24px_80px_rgba(148,163,184,0.16)] backdrop-blur-xl sm:px-6 sm:py-6">
-            <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-              <div className="flex items-center gap-3">
-                <div className="rounded-[22px] border border-white/90 bg-white/90 px-4 py-3 shadow-[0_14px_34px_rgba(148,163,184,0.12)]">
-                  <Image
-                    src="/longlogo.png"
-                    alt="DustSwap"
-                    width={178}
-                    height={42}
-                    priority
-                    className="h-auto w-[150px] sm:w-[178px]"
-                  />
-                </div>
+            <div className="flex items-start justify-between gap-3">
+              <Image
+                src="/longlogo.png"
+                alt="DustSwap"
+                width={178}
+                height={42}
+                priority
+                className="h-auto w-[136px] sm:w-[178px]"
+              />
 
-                {statusPill ? (
-                  <span className="hidden rounded-full border border-sky-100 bg-sky-50 px-3 py-1.5 text-[11px] font-black uppercase tracking-[0.22em] text-sky-700 sm:inline-flex">
-                    {statusPill}
-                  </span>
-                ) : null}
-              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setHistoryOpen(true)}
+                  aria-label="Open spin history"
+                  className="inline-flex h-11 w-11 items-center justify-center rounded-full border border-sky-100 bg-white/92 text-sky-700 shadow-[0_12px_24px_rgba(148,163,184,0.12)] transition hover:-translate-y-0.5 hover:text-sky-900"
+                >
+                  <HistoryIcon className="h-4 w-4" />
+                </button>
 
-              <div className="flex items-center justify-between gap-2 sm:flex-col sm:items-end">
                 <div className="rounded-full border border-sky-100 bg-[linear-gradient(135deg,#eff6ff,#dbeafe)] px-4 py-2 text-right shadow-[0_12px_26px_rgba(59,130,246,0.12)]">
                   <p className="text-[10px] font-black uppercase tracking-[0.24em] text-sky-600">
                     Tickets
@@ -616,15 +621,6 @@ export default function SpinPage() {
                     {isLoading ? "Loading..." : formatTicketLabel(ticketCount)}
                   </p>
                 </div>
-
-                <button
-                  type="button"
-                  onClick={() => setHistoryOpen(true)}
-                  className="inline-flex items-center gap-2 rounded-full border border-white/90 bg-white/90 px-4 py-2 text-sm font-semibold text-slate-700 shadow-[0_12px_24px_rgba(148,163,184,0.12)] transition hover:-translate-y-0.5 hover:text-slate-950"
-                >
-                  <HistoryIcon className="h-4 w-4" />
-                  History
-                </button>
               </div>
             </div>
 
@@ -659,88 +655,31 @@ export default function SpinPage() {
             </div>
           </section>
 
-          <section className="rounded-[30px] border border-white/80 bg-white/78 px-4 py-5 shadow-[0_24px_80px_rgba(148,163,184,0.14)] backdrop-blur-xl sm:px-6 sm:py-6">
-            <div className="grid gap-8 lg:grid-cols-[1.05fr_0.95fr] lg:items-center">
-              <div>
-                <SpinWheel
-                  rotation={wheelRotation}
-                  activeRewardKey={latestReward?.key || null}
-                  isSpinning={flowStage === "spinning"}
-                />
+          <section className="rounded-[30px] border border-white/80 bg-white/78 px-4 py-6 shadow-[0_24px_80px_rgba(148,163,184,0.14)] backdrop-blur-xl sm:px-6 sm:py-8">
+            <div className="mx-auto max-w-[480px]">
+              <SpinWheel
+                rotation={wheelRotation}
+                activeRewardKey={latestReward?.key || null}
+                isSpinning={flowStage === "spinning"}
+              />
 
-                {latestReward ? (
-                  <div className="mt-5 rounded-[24px] border border-sky-100 bg-[linear-gradient(135deg,#eff6ff,#ffffff)] px-4 py-4 shadow-[0_18px_36px_rgba(59,130,246,0.12)]">
-                    <p className="text-[10px] font-black uppercase tracking-[0.28em] text-sky-600">
-                      Latest Reward
-                    </p>
-                    <div className="mt-2 flex items-center justify-between gap-3">
-                      <div>
-                        <h2 className="text-2xl font-black tracking-tight text-slate-950">
-                          {latestReward.label}
-                        </h2>
-                        <p className="mt-1 text-sm text-slate-500">
-                          Confirmed after your onchain spin verification.
-                        </p>
-                      </div>
-                      <span className="rounded-full border border-sky-100 bg-white px-3 py-1.5 text-[11px] font-black uppercase tracking-[0.22em] text-sky-700">
-                        {latestReward.probability}%
-                      </span>
-                    </div>
-                  </div>
-                ) : null}
+              <div className="mx-auto mt-14 max-w-sm">
+                {renderActionButton()}
               </div>
 
-              <div className="space-y-4">
-                <div className="rounded-[28px] border border-sky-100 bg-[linear-gradient(180deg,#f8fbff,#eef6ff)] p-5">
-                  <p className="text-[10px] font-black uppercase tracking-[0.28em] text-sky-600">
-                    Reward Table
-                  </p>
-                  <h2 className="mt-2 text-2xl font-black tracking-tight text-slate-950">
-                    8 outcomes on the wheel
-                  </h2>
-                  <p className="mt-2 text-sm leading-6 text-slate-500">
-                    The wheel visuals match the live reward distribution below.
-                  </p>
-                </div>
-
-                <div className="grid grid-cols-2 gap-3">
-                  {SPIN_WHEEL_SEGMENTS.map((segment) => (
-                    <div
-                      key={segment.key}
-                      className="rounded-[22px] border border-white/80 bg-white/92 p-4 shadow-[0_16px_34px_rgba(148,163,184,0.12)]"
-                    >
-                      <p
-                        className="text-[10px] font-black uppercase tracking-[0.22em]"
-                        style={{ color: segment.accent }}
-                      >
-                        Reward
-                      </p>
-                      <p className="mt-2 text-xl font-black tracking-tight text-slate-950">
-                        {segment.label}
-                      </p>
-                      <p className="mt-1 text-sm font-semibold text-slate-500">
-                        {segment.probability}%
-                      </p>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-
-            <div className="mt-8 hidden md:block">
-              {renderActionButton()}
+              {flowStage === "wallet" || flowStage === "verifying" || flowStage === "spinning" ? (
+                <p className="mt-4 text-center text-sm font-semibold text-sky-700">
+                  {flowStage === "wallet"
+                    ? "Confirm spin in wallet."
+                    : flowStage === "verifying"
+                      ? "Verifying spin transaction onchain."
+                      : "Wheel is spinning."}
+                </p>
+              ) : null}
             </div>
           </section>
         </div>
       </div>
-
-      {isConnected ? (
-        <div className="fixed inset-x-0 bottom-[calc(86px+env(safe-area-inset-bottom))] z-40 px-4 md:hidden">
-          <div className="mx-auto max-w-5xl rounded-[26px] border border-white/85 bg-white/90 p-3 shadow-[0_24px_60px_rgba(15,23,42,0.16)] backdrop-blur-xl">
-            {renderActionButton()}
-          </div>
-        </div>
-      ) : null}
 
       <SpinHistoryDrawer
         open={historyOpen}
