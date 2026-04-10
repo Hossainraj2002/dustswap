@@ -43,7 +43,7 @@ export default function ParticlesPage() {
   return (
     <div
       className="bg-slate-50 text-slate-900"
-      style={{ minHeight: 'var(--ds-viewport-height, 100dvh)' }}
+      style={{ minHeight: '100dvh' }}
     >
       <h1 className="text-3xl font-bold mb-4">Dust Particles Leaderboard</h1>
       {balance ? (

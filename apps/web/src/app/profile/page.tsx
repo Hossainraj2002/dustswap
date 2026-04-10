@@ -829,14 +829,14 @@ function ProfilePageContent() {
     return (
       <div
         className="relative overflow-hidden"
-        style={{ minHeight: "calc(var(--ds-viewport-height, 100dvh) - 4rem)" }}
+        style={{ minHeight: "calc(100dvh - 4rem)" }}
       >
 
         {/* ── Layer 1: Blurred fake profile background ── */}
         <div
           aria-hidden="true"
           className="pointer-events-none select-none bg-[radial-gradient(circle_at_top_left,rgba(56,189,248,0.14),transparent_28%),radial-gradient(circle_at_top_right,rgba(251,191,36,0.12),transparent_22%),linear-gradient(180deg,#f8fafc,#fef7ed_45%,#eff6ff)] px-3 py-4 pb-16 sm:px-6 sm:py-8 blur-sm opacity-60"
-          style={{ minHeight: "calc(var(--ds-viewport-height, 100dvh) - 4rem)" }}
+          style={{ minHeight: "calc(100dvh - 4rem)" }}
         >
           <div className="mx-auto flex w-full max-w-4xl flex-col gap-3 sm:gap-5">
 
@@ -948,7 +948,7 @@ function ProfilePageContent() {
   return (
     <div
       className="bg-[radial-gradient(circle_at_top_left,rgba(56,189,248,0.14),transparent_28%),radial-gradient(circle_at_top_right,rgba(251,191,36,0.12),transparent_22%),linear-gradient(180deg,#f8fafc,#fef7ed_45%,#eff6ff)] px-3 py-4 pb-16 sm:px-6 sm:py-8"
-      style={{ minHeight: "calc(var(--ds-viewport-height, 100dvh) - 4rem)" }}
+      style={{ minHeight: "calc(100dvh - 4rem)" }}
     >
       <div className="mx-auto flex w-full max-w-4xl flex-col gap-3 sm:gap-5">
         {toast ? (

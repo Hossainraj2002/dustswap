@@ -510,7 +510,7 @@ export default function DustSweepPage() {
     return (
       <div
         className="flex items-center justify-center bg-slate-50 p-4"
-        style={{ minHeight: 'var(--ds-viewport-height, 100dvh)' }}
+        style={{ minHeight: '100dvh' }}
       >
         <div className="text-center max-w-md">
           <div className="text-7xl mb-6">Ã°Å¸Â§Â¹</div>
@@ -530,7 +530,7 @@ export default function DustSweepPage() {
   return (
     <div
       className="bg-slate-50"
-      style={{ minHeight: 'var(--ds-viewport-height, 100dvh)' }}
+      style={{ minHeight: '100dvh' }}
     >
       {successData && <SuccessModal data={successData} onClose={clearSuccess} />}
 

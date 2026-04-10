@@ -419,17 +419,17 @@ export default function LeaderboardPage() {
   return (
     <main
       className="bg-[#f3f7fb] px-3 py-3 sm:px-4 sm:py-4 md:px-8 md:py-8"
-      style={{ minHeight: "var(--ds-viewport-height, 100dvh)" }}
+      style={{ minHeight: "100dvh" }}
     >
       <section
         className="relative mx-auto flex max-w-6xl flex-col overflow-hidden rounded-[30px] border border-white/85 bg-white/58 shadow-[0_28px_90px_rgba(148,163,184,0.18)] backdrop-blur-xl"
-        style={{ minHeight: "calc(var(--ds-viewport-height, 100dvh) - 1.5rem)" }}
+        style={{ minHeight: "calc(100dvh - 1.5rem)" }}
       >
         <InteractiveLeaderboardBackground />
 
         <div
           className="relative z-10 flex flex-col gap-3 px-3 py-3 sm:gap-4 sm:px-4 sm:py-4 md:px-8 md:py-8"
-          style={{ minHeight: "calc(var(--ds-viewport-height, 100dvh) - 1.5rem)" }}
+          style={{ minHeight: "calc(100dvh - 1.5rem)" }}
         >
           <div className="grid grid-cols-[132px_minmax(0,1fr)] gap-2 sm:grid-cols-[164px_minmax(0,1fr)]">
             <div className="flex h-[84px] items-center rounded-[22px] border border-white/90 bg-white/84 px-3 shadow-[0_14px_40px_rgba(148,163,184,0.10)] backdrop-blur-xl">

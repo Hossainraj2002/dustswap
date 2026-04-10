@@ -862,7 +862,7 @@ export function QuestBoard() {
   return (
     <div
       className="relative isolate overflow-hidden"
-      style={{ minHeight: "calc(var(--ds-viewport-height, 100dvh) - 74px)" }}
+      style={{ minHeight: "calc(100dvh - 74px)" }}
     >
       <PremiumQuestBackground />
 

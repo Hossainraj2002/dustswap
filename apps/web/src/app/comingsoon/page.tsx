@@ -13,7 +13,7 @@ export default function ComingSoonPage() {
   return (
     <main
       className="relative overflow-hidden px-4 py-8 sm:px-6 lg:px-10"
-      style={{ minHeight: "var(--ds-viewport-height, 100dvh)" }}
+      style={{ minHeight: "100dvh" }}
     >
       <div
         aria-hidden="true"
@@ -22,7 +22,7 @@ export default function ComingSoonPage() {
 
       <div
         className="mx-auto flex max-w-5xl items-center justify-center"
-        style={{ minHeight: "calc(var(--ds-viewport-height, 100dvh) - 6rem)" }}
+        style={{ minHeight: "calc(100dvh - 6rem)" }}
       >
         <section className="relative w-full overflow-hidden rounded-[32px] border border-white/70 bg-white/80 p-8 shadow-[0_28px_80px_rgba(148,163,184,0.22)] backdrop-blur-xl sm:p-12">
           <div

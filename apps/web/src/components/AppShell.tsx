@@ -91,8 +91,9 @@ export function AppShell({ children }: AppShellProps) {
     const root = document.documentElement;
     const visualViewport = window.visualViewport;
     let frameId: number | null = null;
+    let timeoutId: number | null = null;
 
-    const syncViewportVars = () => {
+    const syncNavOffset = () => {
       frameId = null;
 
       const currentVisualViewport = window.visualViewport;
@@ -100,52 +101,57 @@ export function AppShell({ children }: AppShellProps) {
         window.innerHeight,
         document.documentElement.clientHeight
       );
-      const visibleViewportHeight = Math.max(
-        0,
-        currentVisualViewport?.height ?? window.innerHeight
-      );
+      const visibleViewportHeight =
+        currentVisualViewport?.height ?? layoutViewportHeight;
       const visibleViewportTop = currentVisualViewport?.offsetTop ?? 0;
+      const rawBrowserBottomOffset = Math.round(
+        layoutViewportHeight - (visibleViewportTop + visibleViewportHeight)
+      );
       const browserBottomOffset = Math.max(
         0,
-        Math.round(
-          layoutViewportHeight - (visibleViewportTop + visibleViewportHeight)
-        )
+        rawBrowserBottomOffset > 8 ? rawBrowserBottomOffset : 0
       );
 
-      root.style.setProperty(
-        '--ds-viewport-height',
-        `${Math.round(visibleViewportHeight)}px`
-      );
       root.style.setProperty(
         '--ds-browser-bottom-offset',
         `${browserBottomOffset}px`
       );
     };
 
-    const scheduleViewportSync = () => {
+    const scheduleNavOffsetSync = () => {
       if (frameId !== null) {
         window.cancelAnimationFrame(frameId);
       }
-      frameId = window.requestAnimationFrame(syncViewportVars);
+      if (timeoutId !== null) {
+        window.clearTimeout(timeoutId);
+      }
+
+      frameId = window.requestAnimationFrame(() => {
+        frameId = null;
+        timeoutId = window.setTimeout(() => {
+          timeoutId = null;
+          syncNavOffset();
+        }, 80);
+      });
     };
 
-    scheduleViewportSync();
+    scheduleNavOffsetSync();
 
-    window.addEventListener('resize', scheduleViewportSync);
-    window.addEventListener('orientationchange', scheduleViewportSync);
-    visualViewport?.addEventListener('resize', scheduleViewportSync);
-    visualViewport?.addEventListener('scroll', scheduleViewportSync);
+    window.addEventListener('resize', scheduleNavOffsetSync);
+    window.addEventListener('orientationchange', scheduleNavOffsetSync);
+    visualViewport?.addEventListener('resize', scheduleNavOffsetSync);
 
     return () => {
       if (frameId !== null) {
         window.cancelAnimationFrame(frameId);
       }
+      if (timeoutId !== null) {
+        window.clearTimeout(timeoutId);
+      }
 
-      window.removeEventListener('resize', scheduleViewportSync);
-      window.removeEventListener('orientationchange', scheduleViewportSync);
-      visualViewport?.removeEventListener('resize', scheduleViewportSync);
-      visualViewport?.removeEventListener('scroll', scheduleViewportSync);
-      root.style.removeProperty('--ds-viewport-height');
+      window.removeEventListener('resize', scheduleNavOffsetSync);
+      window.removeEventListener('orientationchange', scheduleNavOffsetSync);
+      visualViewport?.removeEventListener('resize', scheduleNavOffsetSync);
       root.style.removeProperty('--ds-browser-bottom-offset');
     };
   }, []);
@@ -210,10 +216,9 @@ export function AppShell({ children }: AppShellProps) {
 
   return (
     <div
-      className={`relative flex transition-colors duration-300 ${
+      className={`relative flex min-h-screen transition-colors duration-300 ${
         isLightShell ? 'bg-[#f2f6fb] text-slate-900' : 'bg-[#06080d] text-white'
       }`}
-      style={{ minHeight: 'var(--ds-viewport-height, 100dvh)' }}
     >
       {!isLightShell && (
         <div
