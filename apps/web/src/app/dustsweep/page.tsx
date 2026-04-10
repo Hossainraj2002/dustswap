@@ -508,7 +508,10 @@ export default function DustSweepPage() {
 
   if (!isConnected) {
     return (
-      <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
+      <div
+        className="flex items-center justify-center bg-slate-50 p-4"
+        style={{ minHeight: 'var(--ds-viewport-height, 100dvh)' }}
+      >
         <div className="text-center max-w-md">
           <div className="text-7xl mb-6">Ã°Å¸Â§Â¹</div>
           <h1 className="text-3xl font-bold text-slate-900 mb-3">Dust Sweep</h1>
@@ -525,7 +528,10 @@ export default function DustSweepPage() {
   // Ã¢â€â‚¬Ã¢â€â‚¬ Main Render Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
   return (
-    <div className="min-h-screen bg-slate-50">
+    <div
+      className="bg-slate-50"
+      style={{ minHeight: 'var(--ds-viewport-height, 100dvh)' }}
+    >
       {successData && <SuccessModal data={successData} onClose={clearSuccess} />}
 
       {/* Ã¢â€â‚¬Ã¢â€â‚¬ Add padding so sticky panel doesn't cover tokens, with extra room for mobile nav Ã¢â€â‚¬Ã¢â€â‚¬ */}

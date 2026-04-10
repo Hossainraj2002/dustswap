@@ -85,6 +85,71 @@ export function AppShell({ children }: AppShellProps) {
   const [showReferralModal, setShowReferralModal] = useState(false);
   const checkedRef = useRef<string | null>(null);
 
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const root = document.documentElement;
+    const visualViewport = window.visualViewport;
+    let frameId: number | null = null;
+
+    const syncViewportVars = () => {
+      frameId = null;
+
+      const currentVisualViewport = window.visualViewport;
+      const layoutViewportHeight = Math.max(
+        window.innerHeight,
+        document.documentElement.clientHeight
+      );
+      const visibleViewportHeight = Math.max(
+        0,
+        currentVisualViewport?.height ?? window.innerHeight
+      );
+      const visibleViewportTop = currentVisualViewport?.offsetTop ?? 0;
+      const browserBottomOffset = Math.max(
+        0,
+        Math.round(
+          layoutViewportHeight - (visibleViewportTop + visibleViewportHeight)
+        )
+      );
+
+      root.style.setProperty(
+        '--ds-viewport-height',
+        `${Math.round(visibleViewportHeight)}px`
+      );
+      root.style.setProperty(
+        '--ds-browser-bottom-offset',
+        `${browserBottomOffset}px`
+      );
+    };
+
+    const scheduleViewportSync = () => {
+      if (frameId !== null) {
+        window.cancelAnimationFrame(frameId);
+      }
+      frameId = window.requestAnimationFrame(syncViewportVars);
+    };
+
+    scheduleViewportSync();
+
+    window.addEventListener('resize', scheduleViewportSync);
+    window.addEventListener('orientationchange', scheduleViewportSync);
+    visualViewport?.addEventListener('resize', scheduleViewportSync);
+    visualViewport?.addEventListener('scroll', scheduleViewportSync);
+
+    return () => {
+      if (frameId !== null) {
+        window.cancelAnimationFrame(frameId);
+      }
+
+      window.removeEventListener('resize', scheduleViewportSync);
+      window.removeEventListener('orientationchange', scheduleViewportSync);
+      visualViewport?.removeEventListener('resize', scheduleViewportSync);
+      visualViewport?.removeEventListener('scroll', scheduleViewportSync);
+      root.style.removeProperty('--ds-viewport-height');
+      root.style.removeProperty('--ds-browser-bottom-offset');
+    };
+  }, []);
+
   const checkReferralEligibility = useCallback(async (addr: string) => {
     if (typeof window === 'undefined') return;
     if (getPendingReferralCode()) return;
@@ -145,9 +210,10 @@ export function AppShell({ children }: AppShellProps) {
 
   return (
     <div
-      className={`relative flex min-h-screen transition-colors duration-300 ${
+      className={`relative flex transition-colors duration-300 ${
         isLightShell ? 'bg-[#f2f6fb] text-slate-900' : 'bg-[#06080d] text-white'
       }`}
+      style={{ minHeight: 'var(--ds-viewport-height, 100dvh)' }}
     >
       {!isLightShell && (
         <div
@@ -241,12 +307,15 @@ export function AppShell({ children }: AppShellProps) {
 
       {!isLandingPage && (
         <nav
-          className={`fixed bottom-0 left-0 right-0 z-50 border-t backdrop-blur-2xl md:hidden ${
+          className={`fixed left-0 right-0 z-50 border-t backdrop-blur-2xl md:hidden ${
             isLightShell
               ? 'border-slate-200/80 bg-[rgba(255,255,255,0.96)] shadow-[0_-18px_44px_rgba(148,163,184,0.16)]'
               : 'border-white/10 bg-[rgba(6,10,18,0.9)]'
           }`}
-          style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
+          style={{
+            bottom: 'var(--ds-browser-bottom-offset, 0px)',
+            paddingBottom: 'env(safe-area-inset-bottom)',
+          }}
         >
           <div className="grid h-[82px] w-full grid-cols-5 items-start px-2 pt-3">
             {NAV_ITEMS.map((item) => {

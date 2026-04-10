@@ -84,7 +84,10 @@ export default function SwapPageClient() {
   );
 
   return (
-    <main className="flex min-h-[calc(100vh-100px)] flex-col items-center justify-center bg-transparent px-0 sm:px-4 py-6 sm:py-8 overflow-x-hidden">
+    <main
+      className="flex flex-col items-center justify-center overflow-x-hidden bg-transparent px-0 py-6 sm:px-4 sm:py-8"
+      style={{ minHeight: "calc(var(--ds-viewport-height, 100dvh) - 100px)" }}
+    >
       <div className="mx-auto flex w-full max-w-[420px] justify-center">
         <div className="dustswap-openocean-widget w-full min-w-0">
           <OpenOceanWidget integrator="DustSwap" config={config as any} />

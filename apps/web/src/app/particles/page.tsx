@@ -41,7 +41,10 @@ export default function ParticlesPage() {
   }, [fetchBalance, fetchLeaderboard]);
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900">
+    <div
+      className="bg-slate-50 text-slate-900"
+      style={{ minHeight: 'var(--ds-viewport-height, 100dvh)' }}
+    >
       <h1 className="text-3xl font-bold mb-4">Dust Particles Leaderboard</h1>
       {balance ? (
         <div className="max-w-md mx-auto p-6 bg-white border border-slate-200 rounded-xl mb-8">

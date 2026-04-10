@@ -11,13 +11,19 @@ const statusCards = [
 
 export default function ComingSoonPage() {
   return (
-    <main className="relative min-h-screen overflow-hidden px-4 py-8 sm:px-6 lg:px-10">
+    <main
+      className="relative overflow-hidden px-4 py-8 sm:px-6 lg:px-10"
+      style={{ minHeight: "var(--ds-viewport-height, 100dvh)" }}
+    >
       <div
         aria-hidden="true"
         className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(59,130,246,0.18),transparent_28%),radial-gradient(circle_at_bottom_right,rgba(14,165,233,0.16),transparent_30%)]"
       />
 
-      <div className="mx-auto flex min-h-[calc(100vh-6rem)] max-w-5xl items-center justify-center">
+      <div
+        className="mx-auto flex max-w-5xl items-center justify-center"
+        style={{ minHeight: "calc(var(--ds-viewport-height, 100dvh) - 6rem)" }}
+      >
         <section className="relative w-full overflow-hidden rounded-[32px] border border-white/70 bg-white/80 p-8 shadow-[0_28px_80px_rgba(148,163,184,0.22)] backdrop-blur-xl sm:p-12">
           <div
             aria-hidden="true"

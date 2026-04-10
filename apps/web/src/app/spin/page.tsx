@@ -568,7 +568,10 @@ export default function SpinPage() {
 
   return (
     <>
-      <div className="min-h-[calc(100vh-4rem)] bg-[radial-gradient(circle_at_top_left,rgba(56,189,248,0.16),transparent_26%),radial-gradient(circle_at_top_right,rgba(191,219,254,0.52),transparent_30%),linear-gradient(180deg,#f7fbff,#eef5ff_48%,#f8fbff)] px-3 py-4 pb-24 sm:px-6 sm:py-8 sm:pb-28">
+      <div
+        className="bg-[radial-gradient(circle_at_top_left,rgba(56,189,248,0.16),transparent_26%),radial-gradient(circle_at_top_right,rgba(191,219,254,0.52),transparent_30%),linear-gradient(180deg,#f7fbff,#eef5ff_48%,#f8fbff)] px-3 py-4 pb-24 sm:px-6 sm:py-8 sm:pb-28"
+        style={{ minHeight: "calc(var(--ds-viewport-height, 100dvh) - 4rem)" }}
+      >
         <div className="mx-auto flex w-full max-w-4xl flex-col gap-4 sm:gap-5">
           {toast ? (
             <div
