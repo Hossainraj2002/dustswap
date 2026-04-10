@@ -3,12 +3,12 @@
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useAppKit } from "@reown/appkit/react";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import type { Address } from "viem";
 import { base } from "viem/chains";
 import { createSiweMessage } from "viem/siwe";
 import { useAccount, useSignMessage } from "wagmi";
+import { useWalletConnection } from "@/hooks/useWalletConnection";
 import {
   clearStoredSiweSession,
   hasStoredSiweSession,
@@ -137,7 +137,7 @@ function HydratedConnectWalletButton({
     open: (() => Promise<unknown>) | undefined;
   }) => void | Promise<void>;
 }) {
-  const { open } = useAppKit();
+  const { openWalletModal } = useWalletConnection();
   const { address, isConnected } = useAccount();
 
   const variantClasses = {
@@ -165,11 +165,11 @@ function HydratedConnectWalletButton({
           void onAction({
             address: address as Address | undefined,
             isConnected,
-            open,
+            open: openWalletModal,
           });
           return;
         }
-        void open?.();
+        void openWalletModal();
       }}
       className={cx(
         "inline-flex items-center justify-center gap-2 rounded-full px-5 py-3 text-sm font-semibold transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-70",

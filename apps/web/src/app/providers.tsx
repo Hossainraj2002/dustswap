@@ -1,64 +1,20 @@
 "use client";
 
 import { type ReactNode, useState } from "react";
-import { WagmiProvider } from "wagmi";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { createAppKit } from "@reown/appkit/react";
-import { WagmiAdapter } from "@reown/appkit-adapter-wagmi";
-import { BASE_ACCOUNT_WALLET_ID, projectId, wagmiConfig, wagmiConnectors } from "@/wagmi";
-import { INITIAL_WAGMI_CHAINS, getWagmiTransports } from "@/config/web3";
+import { type Chain as PrivyChain } from "@privy-io/chains";
+import { PrivyProvider } from "@privy-io/react-auth";
+import { WagmiProvider } from "@privy-io/wagmi";
+import { PRIVY_WALLET_LIST } from "@/hooks/useWalletConnection";
+import { INITIAL_WAGMI_CHAINS } from "@/config/web3";
 import { useSwapCapture } from "@/hooks/useSwapCapture";
-import { DATA_SUFFIX } from "@/lib/builderCode";
+import { wagmiConfig } from "@/wagmi";
 
-let hasInitializedAppKit = false;
-let wagmiAdapter: InstanceType<typeof WagmiAdapter> | null = null;
 const appUrl = process.env.NEXT_PUBLIC_APP_URL || "https://app.dustswap.wtf";
-
-function getAppKitAdapter() {
-  if (!wagmiAdapter) {
-    wagmiAdapter = new WagmiAdapter({
-      projectId,
-      networks: INITIAL_WAGMI_CHAINS as any,
-      connectors: wagmiConnectors,
-      transports: getWagmiTransports(INITIAL_WAGMI_CHAINS) as any,
-      dataSuffix: DATA_SUFFIX,
-      ssr: false,
-    });
-  }
-
-  return wagmiAdapter;
-}
-
-function ensureAppKit() {
-  if (hasInitializedAppKit || typeof window === "undefined") {
-    return;
-  }
-
-  createAppKit({
-    adapters: [getAppKitAdapter()],
-    projectId,
-    networks: INITIAL_WAGMI_CHAINS as any,
-    metadata: {
-      name: "Dustswap",
-      description:
-        "Swap and bridge aggregator with social quests and rewards for the Base community.",
-      url: appUrl,
-      icons: [`${appUrl}/logo.png`],
-    },
-    themeMode: "light",
-    features: {
-      analytics: true,
-      connectMethodsOrder: ["wallet", "email", "social"],
-      email: false,
-      socials: [],
-    },
-    featuredWalletIds: [BASE_ACCOUNT_WALLET_ID],
-    includeWalletIds: [BASE_ACCOUNT_WALLET_ID],
-    allWallets: "SHOW",
-  });
-
-  hasInitializedAppKit = true;
-}
+const privySupportedChains = INITIAL_WAGMI_CHAINS as unknown as PrivyChain[];
+const walletConnectCloudProjectId =
+  process.env.NEXT_PUBLIC_WALLET_CONNECT_PROJECT_ID ||
+  process.env.NEXT_PUBLIC_WC_PROJECT_ID;
 
 interface ProvidersProps {
   children: ReactNode;
@@ -70,8 +26,6 @@ function SwapCaptureBootstrap() {
 }
 
 export function Providers({ children }: ProvidersProps) {
-  ensureAppKit();
-
   const [queryClient] = useState(
     () =>
       new QueryClient({
@@ -87,11 +41,28 @@ export function Providers({ children }: ProvidersProps) {
   );
 
   return (
-    <WagmiProvider config={wagmiConfig} reconnectOnMount>
+    <PrivyProvider
+      appId={process.env.NEXT_PUBLIC_PRIVY_APP_ID ?? ""}
+      config={{
+        appearance: {
+          logo: `${appUrl}/logo.png`,
+          showWalletLoginFirst: true,
+          theme: "light",
+          walletChainType: "ethereum-only",
+          walletList: PRIVY_WALLET_LIST,
+        },
+        defaultChain: privySupportedChains[0],
+        loginMethods: ["wallet"],
+        supportedChains: privySupportedChains,
+        walletConnectCloudProjectId,
+      }}
+    >
       <QueryClientProvider client={queryClient}>
-        <SwapCaptureBootstrap />
-        {children}
+        <WagmiProvider config={wagmiConfig} reconnectOnMount>
+          <SwapCaptureBootstrap />
+          {children}
+        </WagmiProvider>
       </QueryClientProvider>
-    </WagmiProvider>
+    </PrivyProvider>
   );
 }

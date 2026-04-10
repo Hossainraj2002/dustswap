@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useAccount } from "wagmi";
 import { useEffect, useMemo, useState } from "react";
+import { WalletConnectButton } from "@/components/wallet/WalletConnectButton";
 import { applyReferralCode } from "@/lib/points";
 import {
   clearPendingReferralCode,
@@ -145,8 +146,10 @@ export function ReferralPageClient({ params }: ReferralPageClientProps) {
             {!isConnected ? (
               <div className="rounded-[22px] border border-slate-200 bg-[#fffdf7] p-4 text-center">
                 <div className="flex justify-center">
-                  {/* @ts-ignore */}
-                  <appkit-button />
+                  <WalletConnectButton
+                    className="bg-[linear-gradient(135deg,#0ea5e9,#22c55e)] text-white shadow-[0_14px_32px_rgba(14,165,233,0.18)] hover:border-transparent hover:bg-[linear-gradient(135deg,#0284c7,#16a34a)] hover:text-white"
+                    description="Connect your wallet to activate this referral code."
+                  />
                 </div>
               </div>
             ) : (

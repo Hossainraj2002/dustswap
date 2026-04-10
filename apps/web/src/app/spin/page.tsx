@@ -7,6 +7,8 @@ import { useAccount, usePublicClient, useWalletClient } from "wagmi";
 import { encodeFunctionData } from "viem";
 import { HistoryIcon } from "@/components/NavIcons";
 import { SpinWheel } from "@/components/spin/SpinWheel";
+import { WalletConnectButton } from "@/components/wallet/WalletConnectButton";
+import { useWalletConnection } from "@/hooks/useWalletConnection";
 import { emitDataInvalidation, subscribeToDataInvalidation } from "@/lib/clientEvents";
 import { explorerTxUrl } from "@/lib/contracts";
 import {
@@ -49,18 +51,6 @@ function getErrorMessage(error: unknown) {
   }
 
   return String(error ?? "Unknown error");
-}
-
-function isCoinbaseConnector(
-  connector: {
-    id?: string | null;
-    name?: string | null;
-  } | null | undefined
-) {
-  const id = connector?.id?.toLowerCase() ?? "";
-  const name = connector?.name?.toLowerCase() ?? "";
-
-  return id.includes("coinbase") || name.includes("coinbase") || name.includes("base account");
 }
 
 function isTxHash(value: unknown): value is `0x${string}` {
@@ -226,8 +216,9 @@ function SpinHistoryDrawer({
 }
 
 export default function SpinPage() {
-  const { address, isConnected, chainId, connector } = useAccount();
+  const { address, isConnected, chainId } = useAccount();
   const { data: walletClient } = useWalletClient();
+  const { supportsBaseAccountFeatures } = useWalletConnection();
   const publicClient = usePublicClient();
 
   const [isMounted, setIsMounted] = useState(false);
@@ -378,7 +369,8 @@ export default function SpinPage() {
       account?: { address?: `0x${string}` };
       request?: (args: { method: string; params?: unknown[] }) => Promise<unknown>;
     };
-    const requiresSponsoredSmartWallet = isPaymasterEnabled() && isCoinbaseConnector(connector);
+    const requiresSponsoredSmartWallet =
+      isPaymasterEnabled() && supportsBaseAccountFeatures;
 
     if (isPaymasterEnabled()) {
       try {
@@ -472,7 +464,7 @@ export default function SpinPage() {
     }
 
     return hash;
-  }, [address, chainId, connector, publicClient, walletClient]);
+  }, [address, chainId, publicClient, supportsBaseAccountFeatures, walletClient]);
 
   const handleSpin = useCallback(async () => {
     if (!address || !balance) {
@@ -640,8 +632,10 @@ export default function SpinPage() {
                     Connect your wallet to see your tickets and start spinning.
                   </p>
                   <div className="mt-4 flex justify-center">
-                    {/* @ts-ignore */}
-                    <appkit-button />
+                    <WalletConnectButton
+                      className="bg-[linear-gradient(135deg,#2563eb_0%,#0ea5e9_52%,#ffffff_180%)] text-white shadow-[0_20px_40px_rgba(37,99,235,0.28)] hover:border-transparent hover:text-white"
+                      description="Connect your wallet to view tickets and spin."
+                    />
                   </div>
                 </div>
               ) : null}

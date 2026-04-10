@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useAccount, useWalletClient } from 'wagmi';
 import { type Address } from 'viem';
+import { WalletConnectButton } from '@/components/wallet/WalletConnectButton';
 import {
   useDustSweep,
   type ThresholdValue,
@@ -518,8 +519,10 @@ export default function DustSweepPage() {
           <p className="text-slate-500 mb-8">
             Connect your wallet to find and sweep dust tokens into one useful asset.
           </p>
-          {/* @ts-ignore */}
-          <appkit-button />
+          <WalletConnectButton
+            className="bg-gradient-to-r from-purple-600 to-indigo-600 text-white hover:border-transparent hover:from-purple-500 hover:to-indigo-500 hover:text-white"
+            description="Connect your wallet to find dust tokens and sweep them."
+          />
         </div>
       </div>
     );

@@ -7,6 +7,8 @@ import { useAccount, usePublicClient, useReadContract, useWalletClient } from "w
 import { encodeFunctionData, erc20Abi } from "viem";
 import { DailyCheckInModule } from "@/components/profile/DailyCheckInModule";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
+import { WalletConnectButton } from "@/components/wallet/WalletConnectButton";
+import { useWalletConnection } from "@/hooks/useWalletConnection";
 import {
   applyReferralCode,
   clearPointsSummaryCache,
@@ -66,18 +68,6 @@ function getErrorMessage(error: unknown) {
   }
 
   return String(error ?? "Unknown error");
-}
-
-function isCoinbaseConnector(
-  connector: {
-    id?: string | null;
-    name?: string | null;
-  } | null | undefined
-) {
-  const id = connector?.id?.toLowerCase() ?? "";
-  const name = connector?.name?.toLowerCase() ?? "";
-
-  return id.includes("coinbase") || name.includes("coinbase") || name.includes("base account");
 }
 
 function shortAddress(address: string) {
@@ -208,8 +198,9 @@ const PROFILE_FAQ_ITEMS = [
 ] as const;
 
 function ProfilePageContent() {
-  const { address, isConnected, chainId, connector } = useAccount();
+  const { address, isConnected, chainId } = useAccount();
   const { data: walletClient } = useWalletClient();
+  const { supportsBaseAccountFeatures } = useWalletConnection();
   const publicClient = usePublicClient();
 
   const [isMounted, setIsMounted] = useState(false);
@@ -271,10 +262,9 @@ function ProfilePageContent() {
     return requiredUsdc > 0n && usdcBalance >= requiredUsdc ? "usdc" : "eth";
   }, [balance, usdcBalance]);
 
-  const isCoinbaseWallet = useMemo(() => isCoinbaseConnector(connector), [connector]);
   const usesBasePayForCheckIn =
-    isCoinbaseWallet && preferredCheckInAsset === "usdc";
-  const usesBasePayForSave = isCoinbaseWallet && preferredSaveAsset === "usdc";
+    supportsBaseAccountFeatures && preferredCheckInAsset === "usdc";
+  const usesBasePayForSave = supportsBaseAccountFeatures && preferredSaveAsset === "usdc";
   const referralLink = useMemo(
     () => (referral?.code ? buildReferralLink(referral.code) : ""),
     [referral?.code]
@@ -552,7 +542,7 @@ function ProfilePageContent() {
         request?: (args: { method: string; params?: unknown[] }) => Promise<unknown>;
       };
 
-      if (isPaymasterEnabled() && isCoinbaseWallet) {
+      if (isPaymasterEnabled() && supportsBaseAccountFeatures) {
         try {
           const capabilitiesResult =
             requestClient.account?.address
@@ -636,7 +626,7 @@ function ProfilePageContent() {
 
       return hash;
     },
-    [chainId, isCoinbaseWallet, publicClient, walletClient]
+    [chainId, publicClient, supportsBaseAccountFeatures, walletClient]
   );
 
   const sendBasePayTransaction = useCallback(async (config: FeeConfig) => {
@@ -935,8 +925,10 @@ function ProfilePageContent() {
               <span aria-hidden="true">&bull;</span> Repeat.
             </p>
             <div className="mt-7 flex origin-center justify-center scale-105 sm:scale-110">
-              {/* @ts-ignore */}
-              <appkit-button />
+              <WalletConnectButton
+                className="bg-[linear-gradient(135deg,#2563eb_0%,#0ea5e9_52%,#ffffff_180%)] text-white shadow-[0_20px_40px_rgba(37,99,235,0.28)] hover:border-transparent hover:text-white"
+                description="Connect your wallet to start your journey at DustSwap."
+              />
             </div>
           </section>
         </div>

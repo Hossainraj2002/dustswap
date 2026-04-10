@@ -1,8 +1,8 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useAppKit } from "@reown/appkit/react";
 import { useMemo } from "react";
+import { useWalletConnection } from "@/hooks/useWalletConnection";
 
 const OPENOCEAN_REFERRER_ADDRESS =
   process.env.NEXT_PUBLIC_OPENOCEAN_REFERRER_ADDRESS ||
@@ -14,7 +14,7 @@ const OpenOceanWidget = dynamic<{ integrator: string; config: any }>(
 );
 
 export default function SwapPageClient() {
-  const { open } = useAppKit();
+  const { openWalletModal } = useWalletConnection();
 
   const config = useMemo(
     () => ({
@@ -63,7 +63,7 @@ export default function SwapPageClient() {
       },
       walletConfig: {
         onConnect: () => {
-          open?.();
+          void openWalletModal("Connect your wallet to swap on DustSwap.");
         },
         usePartialWalletManagement: true,
       },
@@ -80,7 +80,7 @@ export default function SwapPageClient() {
       defaultFromToken: "0x0000000000000000000000000000000000000000",
       defaultToToken: "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
     }),
-    [open]
+    [openWalletModal]
   );
 
   return (

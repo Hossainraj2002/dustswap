@@ -4,6 +4,7 @@ import Image from "next/image";
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { useAccount } from "wagmi";
 import { InteractiveLeaderboardBackground } from "@/components/leaderboard/InteractiveLeaderboardBackground";
+import { WalletConnectButton } from "@/components/wallet/WalletConnectButton";
 import { subscribeToDataInvalidation } from "@/lib/clientEvents";
 import {
   fetchLeaderboardHub,
@@ -465,8 +466,10 @@ export default function LeaderboardPage() {
                     Connect to load your profile
                   </p>
                   <div className="mt-1.5 origin-left scale-[0.78] sm:scale-[0.84]">
-                    {/* @ts-ignore */}
-                    <appkit-button />
+                    <WalletConnectButton
+                      className="inline-flex min-h-[40px] items-center justify-center rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-[0_10px_24px_rgba(148,163,184,0.12)] transition-all duration-200 hover:-translate-y-0.5 hover:border-sky-200 hover:bg-sky-50 hover:text-slate-900"
+                      description="Connect your wallet to load your leaderboard profile."
+                    />
                   </div>
                 </div>
               )}
