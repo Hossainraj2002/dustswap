@@ -9,6 +9,8 @@ import { coinbaseWallet, injected, walletConnect } from "wagmi/connectors";
 import { INITIAL_WAGMI_CHAINS, getWagmiTransports } from "@/config/web3";
 import { DATA_SUFFIX } from "@/lib/builderCode";
 
+export const BASE_ACCOUNT_WALLET_ID =
+  "fd20dc426fb37566d803205b19bbc1d4096b248ac04548e3cfb6b3a38bd033aa";
 export const projectId =
   process.env.NEXT_PUBLIC_WALLET_CONNECT_PROJECT_ID || process.env.NEXT_PUBLIC_WC_PROJECT_ID || "e3ac88268c575d561fc945ca1e2a2874";
 const appUrl = process.env.NEXT_PUBLIC_APP_URL || "https://app.dustswap.wtf";
@@ -45,7 +47,7 @@ export const wagmiConnectors: CreateConnectorFn[] = [
     coinbaseWallet({
       appName: "DustSwap",
       appLogoUrl: appIconUrl,
-      preference: { options: "all" },
+      preference: { options: "smartWalletOnly" },
     })
   ),
   withBuilderCodeClient(

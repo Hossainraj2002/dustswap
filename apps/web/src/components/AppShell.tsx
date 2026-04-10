@@ -225,7 +225,7 @@ export function AppShell({ children }: AppShellProps) {
         className={`relative z-10 flex-1 transition-opacity duration-100 ease-in-out ${
           isLandingPage
             ? ''
-            : 'pb-[calc(78px+env(safe-area-inset-bottom))] md:ml-[236px] md:pb-0'
+            : 'pb-[calc(90px+env(safe-area-inset-bottom))] md:ml-[236px] md:pb-0'
         }`}
       >
         {!isLandingPage && <CofounderPassWelcomeModal />}
@@ -241,50 +241,43 @@ export function AppShell({ children }: AppShellProps) {
 
       {!isLandingPage && (
         <nav
-          className={`fixed bottom-0 left-0 right-0 z-50 flex h-[74px] border-t backdrop-blur-2xl md:hidden ${
+          className={`fixed bottom-0 left-0 right-0 z-50 border-t backdrop-blur-2xl md:hidden ${
             isLightShell
-              ? 'border-slate-200/80 bg-white/88 shadow-[0_-18px_44px_rgba(148,163,184,0.18)]'
+              ? 'border-slate-200/80 bg-[rgba(255,255,255,0.96)] shadow-[0_-18px_44px_rgba(148,163,184,0.16)]'
               : 'border-white/10 bg-[rgba(6,10,18,0.9)]'
           }`}
           style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
         >
-          {NAV_ITEMS.map((item) => {
-            const active = isActiveRoute(pathname, item.route);
-            const Icon = item.icon;
+          <div className="grid h-[82px] w-full grid-cols-5 items-start px-2 pt-3">
+            {NAV_ITEMS.map((item) => {
+              const active = isActiveRoute(pathname, item.route);
+              const Icon = item.icon;
 
-            return (
-              <Link
-                key={item.route}
-                href={item.route}
-                className="group relative flex flex-1 flex-col items-center justify-center gap-1 transition-transform active:scale-95"
-              >
-                <AppShellIcon Icon={Icon} active={active} light={isLightShell} />
-                <span
-                  className={`min-w-0 text-center text-[10px] font-medium leading-none tracking-[-0.01em] sm:text-xs ${
-                    isLightShell
-                      ? active
-                        ? 'text-slate-950'
-                        : 'text-slate-500'
-                      : active
-                        ? 'text-white'
-                        : 'text-slate-500'
-                  }`}
-                  style={{ fontFamily: 'DM Sans, sans-serif' }}
+              return (
+                <Link
+                  key={item.route}
+                  href={item.route}
+                  className="group flex min-w-0 flex-col items-center justify-start gap-2 transition-transform active:scale-95"
                 >
-                  {item.label}
-                </span>
-                {active && (
-                  <div
-                    className={`absolute top-0 h-[3px] w-9 rounded-b-full ${
+                  <AppShellIcon Icon={Icon} active={active} light={isLightShell} />
+                  <span
+                    className={`min-w-0 text-center text-[10px] font-medium leading-none tracking-[-0.01em] sm:text-xs ${
                       isLightShell
-                        ? 'bg-[#2563eb] shadow-[0_0_12px_rgba(37,99,235,0.35)]'
-                        : 'bg-[#3b82f6] shadow-[0_0_12px_rgba(59,130,246,0.55)]'
+                        ? active
+                          ? 'text-slate-950'
+                          : 'text-slate-500'
+                        : active
+                          ? 'text-white'
+                          : 'text-slate-500'
                     }`}
-                  />
-                )}
-              </Link>
-            );
-          })}
+                    style={{ fontFamily: 'DM Sans, sans-serif' }}
+                  >
+                    {item.label}
+                  </span>
+                </Link>
+              );
+            })}
+          </div>
         </nav>
       )}
     </div>

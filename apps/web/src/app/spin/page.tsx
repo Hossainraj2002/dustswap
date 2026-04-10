@@ -51,6 +51,18 @@ function getErrorMessage(error: unknown) {
   return String(error ?? "Unknown error");
 }
 
+function isCoinbaseConnector(
+  connector: {
+    id?: string | null;
+    name?: string | null;
+  } | null | undefined
+) {
+  const id = connector?.id?.toLowerCase() ?? "";
+  const name = connector?.name?.toLowerCase() ?? "";
+
+  return id.includes("coinbase") || name.includes("coinbase") || name.includes("base account");
+}
+
 function isTxHash(value: unknown): value is `0x${string}` {
   return typeof value === "string" && /^0x[a-fA-F0-9]{64}$/.test(value);
 }
@@ -214,7 +226,7 @@ function SpinHistoryDrawer({
 }
 
 export default function SpinPage() {
-  const { address, isConnected, chainId } = useAccount();
+  const { address, isConnected, chainId, connector } = useAccount();
   const { data: walletClient } = useWalletClient();
   const publicClient = usePublicClient();
 
@@ -366,6 +378,7 @@ export default function SpinPage() {
       account?: { address?: `0x${string}` };
       request?: (args: { method: string; params?: unknown[] }) => Promise<unknown>;
     };
+    const requiresSponsoredSmartWallet = isPaymasterEnabled() && isCoinbaseConnector(connector);
 
     if (isPaymasterEnabled()) {
       try {
@@ -436,6 +449,12 @@ export default function SpinPage() {
           throw error;
         }
 
+        if (requiresSponsoredSmartWallet) {
+          throw new Error(
+            "Smart wallet sponsorship is unavailable on this connection. Disconnect and reconnect using Base Account, then try the spin again."
+          );
+        }
+
         console.warn("Paymaster sendCalls failed for spin, falling back to direct sendTransaction.", error);
       }
     }
@@ -453,7 +472,7 @@ export default function SpinPage() {
     }
 
     return hash;
-  }, [address, chainId, publicClient, walletClient]);
+  }, [address, chainId, connector, publicClient, walletClient]);
 
   const handleSpin = useCallback(async () => {
     if (!address || !balance) {

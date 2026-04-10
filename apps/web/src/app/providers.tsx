@@ -5,7 +5,7 @@ import { WagmiProvider } from "wagmi";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createAppKit } from "@reown/appkit/react";
 import { WagmiAdapter } from "@reown/appkit-adapter-wagmi";
-import { projectId, wagmiConfig, wagmiConnectors } from "@/wagmi";
+import { BASE_ACCOUNT_WALLET_ID, projectId, wagmiConfig, wagmiConnectors } from "@/wagmi";
 import { INITIAL_WAGMI_CHAINS, getWagmiTransports } from "@/config/web3";
 import { useSwapCapture } from "@/hooks/useSwapCapture";
 import { DATA_SUFFIX } from "@/lib/builderCode";
@@ -48,15 +48,13 @@ function ensureAppKit() {
     themeMode: "light",
     features: {
       analytics: true,
+      connectMethodsOrder: ["wallet", "email", "social"],
       email: false,
       socials: [],
     },
-    featuredWalletIds: [
-      "fd20dc426fb37566d803205b19bbc1d4096b248ac04548e3cfb6b3a38bd033aa",
-      "20459438007b75f4f4acb98bf29aa3bbf66a1f896f20405e27d5af5eb3008afa",
-      "c57ca95b47569778a828d19178114f4db188b89b763c899ba0be274e97267d96",
-      "c286eebc74233261a8cbd3df3d517c5b652a926d83cf43bbde80cb2b1a0e14a1",
-    ],
+    featuredWalletIds: [BASE_ACCOUNT_WALLET_ID],
+    includeWalletIds: [BASE_ACCOUNT_WALLET_ID],
+    allWallets: "SHOW",
   });
 
   hasInitializedAppKit = true;
