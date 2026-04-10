@@ -63,20 +63,20 @@ export function Providers({ children }: ProvidersProps) {
         walletConnectCloudProjectId,
       }}
     >
-      <WalletConnectionProvider enabled>
-        <PrivyWagmiProvider config={wagmiConfig} reconnectOnMount>
+      <PrivyWagmiProvider config={wagmiConfig} reconnectOnMount>
+        <WalletConnectionProvider enabled>
           <SwapCaptureBootstrap />
           {children}
-        </PrivyWagmiProvider>
-      </WalletConnectionProvider>
+        </WalletConnectionProvider>
+      </PrivyWagmiProvider>
     </PrivyProvider>
   ) : (
-    <WalletConnectionProvider enabled={false}>
-      <BaseWagmiProvider config={fallbackWagmiConfig} reconnectOnMount>
+    <BaseWagmiProvider config={fallbackWagmiConfig} reconnectOnMount>
+      <WalletConnectionProvider enabled={false}>
         <SwapCaptureBootstrap />
         {children}
-      </BaseWagmiProvider>
-    </WalletConnectionProvider>
+      </WalletConnectionProvider>
+    </BaseWagmiProvider>
   );
 
   return (
