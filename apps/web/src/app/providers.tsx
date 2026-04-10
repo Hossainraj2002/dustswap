@@ -4,13 +4,19 @@ import { type ReactNode, useState } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { type Chain as PrivyChain } from "@privy-io/chains";
 import { PrivyProvider } from "@privy-io/react-auth";
-import { WagmiProvider } from "@privy-io/wagmi";
-import { PRIVY_WALLET_LIST } from "@/hooks/useWalletConnection";
+import { WagmiProvider as PrivyWagmiProvider } from "@privy-io/wagmi";
+import { WagmiProvider as BaseWagmiProvider } from "wagmi";
+import {
+  PRIVY_WALLET_LIST,
+  WalletConnectionProvider,
+} from "@/hooks/useWalletConnection";
 import { INITIAL_WAGMI_CHAINS } from "@/config/web3";
 import { useSwapCapture } from "@/hooks/useSwapCapture";
 import { wagmiConfig } from "@/wagmi";
 
 const appUrl = process.env.NEXT_PUBLIC_APP_URL || "https://app.dustswap.wtf";
+const privyAppId = process.env.NEXT_PUBLIC_PRIVY_APP_ID?.trim() || "";
+const hasPrivyAppId = privyAppId.length > 0;
 const privySupportedChains = INITIAL_WAGMI_CHAINS as unknown as PrivyChain[];
 const walletConnectCloudProjectId =
   process.env.NEXT_PUBLIC_WALLET_CONNECT_PROJECT_ID ||
@@ -40,9 +46,9 @@ export function Providers({ children }: ProvidersProps) {
       })
   );
 
-  return (
+  const appContent = hasPrivyAppId ? (
     <PrivyProvider
-      appId={process.env.NEXT_PUBLIC_PRIVY_APP_ID ?? ""}
+      appId={privyAppId}
       config={{
         appearance: {
           logo: `${appUrl}/logo.png`,
@@ -57,12 +63,23 @@ export function Providers({ children }: ProvidersProps) {
         walletConnectCloudProjectId,
       }}
     >
-      <QueryClientProvider client={queryClient}>
-        <WagmiProvider config={wagmiConfig} reconnectOnMount>
+      <WalletConnectionProvider enabled>
+        <PrivyWagmiProvider config={wagmiConfig} reconnectOnMount>
           <SwapCaptureBootstrap />
           {children}
-        </WagmiProvider>
-      </QueryClientProvider>
+        </PrivyWagmiProvider>
+      </WalletConnectionProvider>
     </PrivyProvider>
+  ) : (
+    <WalletConnectionProvider enabled={false}>
+      <BaseWagmiProvider config={wagmiConfig} reconnectOnMount>
+        <SwapCaptureBootstrap />
+        {children}
+      </BaseWagmiProvider>
+    </WalletConnectionProvider>
+  );
+
+  return (
+    <QueryClientProvider client={queryClient}>{appContent}</QueryClientProvider>
   );
 }
