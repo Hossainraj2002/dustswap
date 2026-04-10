@@ -12,7 +12,7 @@ import {
 } from "@/hooks/useWalletConnection";
 import { INITIAL_WAGMI_CHAINS } from "@/config/web3";
 import { useSwapCapture } from "@/hooks/useSwapCapture";
-import { wagmiConfig } from "@/wagmi";
+import { fallbackWagmiConfig, wagmiConfig } from "@/wagmi";
 
 const appUrl = process.env.NEXT_PUBLIC_APP_URL || "https://app.dustswap.wtf";
 const privyAppId = process.env.NEXT_PUBLIC_PRIVY_APP_ID?.trim() || "";
@@ -72,7 +72,7 @@ export function Providers({ children }: ProvidersProps) {
     </PrivyProvider>
   ) : (
     <WalletConnectionProvider enabled={false}>
-      <BaseWagmiProvider config={wagmiConfig} reconnectOnMount>
+      <BaseWagmiProvider config={fallbackWagmiConfig} reconnectOnMount>
         <SwapCaptureBootstrap />
         {children}
       </BaseWagmiProvider>
