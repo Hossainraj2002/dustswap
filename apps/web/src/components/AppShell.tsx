@@ -91,22 +91,33 @@ function MobileShellNav({
   const isTopNav = placement === 'top';
   const navClassName = `fixed left-0 right-0 z-50 backdrop-blur-2xl md:hidden ${
     isTopNav
-      ? 'top-0 border-b'
+      ? 'top-0'
       : 'bottom-0 border-t shadow-[0_-18px_44px_rgba(148,163,184,0.16)]'
   } ${
     isLightShell
       ? isTopNav
-        ? 'border-slate-200/80 bg-[rgba(255,255,255,0.96)] shadow-[0_18px_44px_rgba(148,163,184,0.14)]'
+        ? 'bg-[rgba(255,255,255,0.96)] shadow-[inset_0_-1px_0_rgba(226,232,240,0.8),0_18px_44px_rgba(148,163,184,0.14)]'
         : 'border-slate-200/80 bg-[rgba(255,255,255,0.96)]'
-      : 'border-white/10 bg-[rgba(6,10,18,0.9)]'
+      : isTopNav
+        ? 'bg-[rgba(6,10,18,0.9)] shadow-[inset_0_-1px_0_rgba(255,255,255,0.08)]'
+        : 'border-white/10 bg-[rgba(6,10,18,0.9)]'
   }`;
   const navStyle: CSSProperties = isTopNav
-    ? { paddingTop: 'env(safe-area-inset-top)' }
+    ? {
+        height: 'calc(60px + env(safe-area-inset-top))',
+        paddingTop: 'env(safe-area-inset-top)',
+      }
     : { paddingBottom: 'env(safe-area-inset-bottom)' };
+  const navRowClassName = isTopNav
+    ? 'grid h-[60px] w-full grid-cols-5 items-center px-2'
+    : 'grid h-[82px] w-full grid-cols-5 items-start px-2 pt-3';
+  const navLinkClassName = isTopNav
+    ? 'group flex min-w-0 flex-col items-center justify-center gap-1 transition-transform active:scale-95'
+    : 'group flex min-w-0 flex-col items-center justify-start gap-2 transition-transform active:scale-95';
 
   return (
     <nav className={navClassName} style={navStyle} aria-label="Primary navigation">
-      <div className="grid h-[82px] w-full grid-cols-5 items-start px-2 pt-3">
+      <div className={navRowClassName}>
         {NAV_ITEMS.map((item) => {
           const active = isActiveRoute(pathname, item.route);
           const Icon = item.icon;
@@ -115,7 +126,7 @@ function MobileShellNav({
             <Link
               key={item.route}
               href={item.route}
-              className="group flex min-w-0 flex-col items-center justify-start gap-2 transition-transform active:scale-95"
+              className={navLinkClassName}
             >
               <AppShellIcon Icon={Icon} active={active} light={isLightShell} />
               <span
@@ -222,7 +233,7 @@ export function AppShell({ children }: AppShellProps) {
   const mainShellClassName = isLandingPage
     ? ''
     : isTopNavMobileMode
-      ? 'pt-[calc(82px+env(safe-area-inset-top))] md:ml-[236px] md:pt-0'
+      ? 'pt-[calc(60px+env(safe-area-inset-top))] md:ml-[236px] md:pt-0'
       : 'pb-[calc(90px+env(safe-area-inset-bottom))] md:ml-[236px] md:pb-0';
 
   return (
