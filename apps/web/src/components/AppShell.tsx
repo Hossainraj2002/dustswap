@@ -144,11 +144,8 @@ export function AppShell({ children }: AppShellProps) {
   const pathname = usePathname();
   const isLightShell = true;
   const isLandingPage = pathname === '/';
-  const shellMode = useAppShellMode({
-    enableStartupDetection: !isLandingPage,
-    pathname,
-  });
-  const isBaseappTopMode = shellMode === 'baseapp-top';
+  const shellMode = useAppShellMode({ enabled: !isLandingPage });
+  const isTopNavMobileMode = shellMode === 'top';
   const { address, isConnected } = useAccount();
   const [showReferralModal, setShowReferralModal] = useState(false);
   const checkedRef = useRef<string | null>(null);
@@ -218,13 +215,13 @@ export function AppShell({ children }: AppShellProps) {
   }, [address]);
 
   const rootStyle = {
-    '--ds-mobile-fixed-bottom-offset': isBaseappTopMode
+    '--ds-mobile-fixed-bottom-offset': isTopNavMobileMode
       ? 'env(safe-area-inset-bottom)'
       : 'calc(64px + env(safe-area-inset-bottom))',
   } as CSSProperties;
   const mainShellClassName = isLandingPage
     ? ''
-    : isBaseappTopMode
+    : isTopNavMobileMode
       ? 'pt-[calc(82px+env(safe-area-inset-top))] md:ml-[236px] md:pt-0'
       : 'pb-[calc(90px+env(safe-area-inset-bottom))] md:ml-[236px] md:pb-0';
 
@@ -308,7 +305,7 @@ export function AppShell({ children }: AppShellProps) {
         </nav>
       )}
 
-      {!isLandingPage && isBaseappTopMode && (
+      {!isLandingPage && isTopNavMobileMode && (
         <MobileShellNav
           isLightShell={isLightShell}
           pathname={pathname}
@@ -330,7 +327,7 @@ export function AppShell({ children }: AppShellProps) {
         {children}
       </main>
 
-      {!isLandingPage && !isBaseappTopMode && (
+      {!isLandingPage && !isTopNavMobileMode && (
         <MobileShellNav
           isLightShell={isLightShell}
           pathname={pathname}

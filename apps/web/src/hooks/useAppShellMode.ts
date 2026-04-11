@@ -1,64 +1,132 @@
 'use client';
 
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useState } from 'react';
+import { useAccount, useConnection, useWalletClient } from 'wagmi';
 
-export type AppShellMode = 'normal' | 'baseapp-top';
+export type AppShellMode = 'top' | 'bottom';
 
-const BASEAPP_QUERY_VALUE = 'baseapp';
-const BASEAPP_TOP_MODE: AppShellMode = 'baseapp-top';
 const MOBILE_BREAKPOINT_PX = 768;
-const OFFSET_BUCKET_SIZE_PX = 8;
-const OFFSET_CHANGE_THRESHOLD = 2;
-const OFFSET_NOISE_THRESHOLD_PX = 4;
-const OFFSET_RANGE_THRESHOLD_PX = 24;
-const SESSION_STORAGE_KEY = 'ds-shell-mode';
-const STARTUP_DETECTION_WINDOW_MS = 900;
-const UNSTABLE_DISTINCT_VALUE_THRESHOLD = 3;
+const BOTTOM_GAP_BUCKET_SIZE_PX = 8;
+const BOTTOM_GAP_NOISE_THRESHOLD_PX = 8;
+const BOTTOM_GAP_TOP_NAV_THRESHOLD_PX = 48;
+const BOTTOM_GAP_TOP_SAMPLE_THRESHOLD = 2;
+const BROWSER_BAR_STORAGE_KEY = 'ds-mobile-shell-browser-bar';
+const SMART_WALLET_STORAGE_KEY_PREFIX = 'ds-smart-wallet-capability';
+const STARTUP_DETECTION_WINDOW_MS = 800;
 
 const useIsomorphicLayoutEffect =
   typeof window === 'undefined' ? useEffect : useLayoutEffect;
 
-function getSavedShellMode(): AppShellMode | null {
+type WalletCapabilitiesResult = Record<
+  string,
+  {
+    atomic?: {
+      supported?: string;
+    };
+    auxiliaryFunds?: {
+      supported?: boolean;
+    };
+    paymasterService?: {
+      supported?: boolean;
+    };
+  }
+>;
+
+type RequestArguments = {
+  method: string;
+  params?: unknown[];
+};
+
+type RequestCapableProvider = {
+  request: (args: RequestArguments) => Promise<unknown>;
+};
+
+interface UseAppShellModeOptions {
+  enabled: boolean;
+}
+
+function getSmartWalletStorageKey(address: string, chainId: number) {
+  return `${SMART_WALLET_STORAGE_KEY_PREFIX}:${address.toLowerCase()}:${chainId}`;
+}
+
+function isMobileViewport() {
+  return typeof window !== 'undefined' && window.innerWidth < MOBILE_BREAKPOINT_PX;
+}
+
+function readSessionValue(key: string) {
   try {
-    return window.sessionStorage.getItem(SESSION_STORAGE_KEY) === BASEAPP_TOP_MODE
-      ? BASEAPP_TOP_MODE
-      : null;
+    return window.sessionStorage.getItem(key);
   } catch {
     return null;
   }
 }
 
-function persistShellMode(mode: AppShellMode) {
+function writeSessionValue(key: string, value: string) {
   try {
-    window.sessionStorage.setItem(SESSION_STORAGE_KEY, mode);
+    window.sessionStorage.setItem(key, value);
   } catch {
-    // Ignore storage failures so navigation never breaks.
+    // Ignore storage failures so the shell still renders.
   }
 }
 
-function isLikelyEmbeddedLaunch() {
-  if (typeof window === 'undefined') return false;
+function toHexChainId(chainId: number) {
+  return `0x${chainId.toString(16)}`.toLowerCase();
+}
 
-  try {
-    if (window.self !== window.top) {
-      return true;
-    }
-  } catch {
+function getChainCapabilities(
+  capabilities: WalletCapabilitiesResult | null,
+  chainId: number
+) {
+  const targetChainId = toHexChainId(chainId);
+
+  return capabilities
+    ? Object.entries(capabilities).find(
+        ([candidateChainId]) => candidateChainId.toLowerCase() === targetChainId
+      )?.[1] ?? null
+    : null;
+}
+
+function hasSmartWalletCapabilities(
+  chainCapabilities: ReturnType<typeof getChainCapabilities>
+) {
+  if (!chainCapabilities) {
+    return false;
+  }
+
+  return (
+    chainCapabilities.paymasterService?.supported === true ||
+    chainCapabilities.auxiliaryFunds?.supported === true ||
+    chainCapabilities.atomic?.supported === 'supported' ||
+    chainCapabilities.atomic?.supported === 'ready'
+  );
+}
+
+function readBottomBrowserBarMode(): AppShellMode | null {
+  const storedValue = readSessionValue(BROWSER_BAR_STORAGE_KEY);
+  return storedValue === 'top' || storedValue === 'bottom' ? storedValue : null;
+}
+
+function readSmartWalletCapability(
+  address: string | undefined,
+  chainId: number | undefined
+) {
+  if (!address || !chainId) {
+    return null;
+  }
+
+  const storedValue = readSessionValue(getSmartWalletStorageKey(address, chainId));
+  if (storedValue === '1') {
     return true;
   }
 
-  if (!document.referrer) {
+  if (storedValue === '0') {
     return false;
   }
 
-  try {
-    return new URL(document.referrer).hostname === 'base.app';
-  } catch {
-    return false;
-  }
+  return null;
 }
 
-function readViewportBottomOffset() {
+function readViewportBottomGap() {
   const visualViewport = window.visualViewport;
   const layoutViewportHeight = Math.max(
     window.innerHeight,
@@ -75,126 +143,178 @@ function readViewportBottomOffset() {
   );
 }
 
-function normalizeBottomOffset(offset: number) {
-  if (offset <= OFFSET_NOISE_THRESHOLD_PX) {
+function normalizeBottomGap(bottomGap: number) {
+  if (bottomGap <= BOTTOM_GAP_NOISE_THRESHOLD_PX) {
     return 0;
   }
 
-  return Math.round(offset / OFFSET_BUCKET_SIZE_PX) * OFFSET_BUCKET_SIZE_PX;
+  return Math.round(bottomGap / BOTTOM_GAP_BUCKET_SIZE_PX) * BOTTOM_GAP_BUCKET_SIZE_PX;
 }
 
-function isUnstableOffsetHistory(
-  distinctOffsets: Set<number>,
-  offsetChanges: number
+async function resolveCapabilityRequester(
+  connector: { getProvider?: (args?: { chainId?: number }) => Promise<unknown> } | null,
+  chainId: number,
+  walletClient: RequestCapableProvider | null
 ) {
-  if (distinctOffsets.size >= UNSTABLE_DISTINCT_VALUE_THRESHOLD) {
-    return true;
+  if (connector && typeof connector.getProvider === 'function') {
+    try {
+      const provider = (await connector.getProvider({
+        chainId,
+      })) as RequestCapableProvider | null;
+
+      if (provider && typeof provider.request === 'function') {
+        return provider;
+      }
+    } catch {
+      // Fall through to the wallet client request path.
+    }
   }
 
-  if (distinctOffsets.size === 0) {
-    return false;
+  if (walletClient && typeof walletClient.request === 'function') {
+    return walletClient;
   }
 
-  const offsets = Array.from(distinctOffsets);
-  const offsetRange = Math.max(...offsets) - Math.min(...offsets);
-
-  return (
-    offsetRange >= OFFSET_RANGE_THRESHOLD_PX &&
-    offsetChanges >= OFFSET_CHANGE_THRESHOLD
-  );
+  return null;
 }
 
-interface UseAppShellModeOptions {
-  enableStartupDetection: boolean;
-  pathname: string;
-}
-
-function getShellParamFromLocation() {
-  if (typeof window === 'undefined') {
-    return null;
-  }
-
-  return new URLSearchParams(window.location.search).get('shell')?.toLowerCase() ?? null;
-}
-
-export function useAppShellMode({
-  enableStartupDetection,
-  pathname,
-}: UseAppShellModeOptions): AppShellMode {
-  const [mode, setMode] = useState<AppShellMode>('normal');
-  const didAttemptStartupDetectionRef = useRef(false);
+export function useAppShellMode({ enabled }: UseAppShellModeOptions): AppShellMode {
+  const { address, chainId, isConnected } = useAccount();
+  const connection = useConnection();
+  const { data: walletClient } = useWalletClient();
+  const [browserMode, setBrowserMode] = useState<AppShellMode>('bottom');
+  const [smartWalletCapable, setSmartWalletCapable] = useState(false);
 
   useIsomorphicLayoutEffect(() => {
-    if (typeof window === 'undefined') return;
-    const shellParam = getShellParamFromLocation();
-
-    if (shellParam === BASEAPP_QUERY_VALUE) {
-      persistShellMode(BASEAPP_TOP_MODE);
-      setMode(BASEAPP_TOP_MODE);
+    if (typeof window === 'undefined') {
       return;
     }
 
-    const savedMode = getSavedShellMode();
-    if (savedMode) {
-      setMode(savedMode);
+    if (!enabled || !isMobileViewport()) {
+      setBrowserMode('bottom');
       return;
     }
 
-    setMode('normal');
-
-    if (!enableStartupDetection || didAttemptStartupDetectionRef.current) {
+    const cachedBrowserMode = readBottomBrowserBarMode();
+    if (cachedBrowserMode) {
+      setBrowserMode(cachedBrowserMode);
       return;
     }
 
-    didAttemptStartupDetectionRef.current = true;
-
-    if (
-      window.innerWidth >= MOBILE_BREAKPOINT_PX ||
-      !window.visualViewport ||
-      !isLikelyEmbeddedLaunch()
-    ) {
+    const cachedSmartWalletCapability = readSmartWalletCapability(address, chainId);
+    if (cachedSmartWalletCapability === true) {
+      setBrowserMode('bottom');
       return;
     }
 
-    const startedAt = window.performance.now();
-    const distinctOffsets = new Set<number>();
+    if (!window.visualViewport) {
+      writeSessionValue(BROWSER_BAR_STORAGE_KEY, 'bottom');
+      setBrowserMode('bottom');
+      return;
+    }
+
     let frameId: number | null = null;
-    let lastOffset: number | null = null;
-    let offsetChanges = 0;
+    let topGapSamples = 0;
+    const startedAt = window.performance.now();
 
-    const sample = () => {
-      const normalizedOffset = normalizeBottomOffset(readViewportBottomOffset());
-
-      distinctOffsets.add(normalizedOffset);
-
-      if (lastOffset !== null && normalizedOffset !== lastOffset) {
-        offsetChanges += 1;
+    const sampleBottomBar = () => {
+      const normalizedBottomGap = normalizeBottomGap(readViewportBottomGap());
+      if (normalizedBottomGap >= BOTTOM_GAP_TOP_NAV_THRESHOLD_PX) {
+        topGapSamples += 1;
       }
-      lastOffset = normalizedOffset;
 
-      if (isUnstableOffsetHistory(distinctOffsets, offsetChanges)) {
-        persistShellMode(BASEAPP_TOP_MODE);
-        setMode(BASEAPP_TOP_MODE);
+      if (topGapSamples >= BOTTOM_GAP_TOP_SAMPLE_THRESHOLD) {
+        writeSessionValue(BROWSER_BAR_STORAGE_KEY, 'top');
+        setBrowserMode('top');
         return;
       }
 
-      if (
-        window.performance.now() - startedAt >= STARTUP_DETECTION_WINDOW_MS
-      ) {
+      if (window.performance.now() - startedAt >= STARTUP_DETECTION_WINDOW_MS) {
+        writeSessionValue(BROWSER_BAR_STORAGE_KEY, 'bottom');
+        setBrowserMode('bottom');
         return;
       }
 
-      frameId = window.requestAnimationFrame(sample);
+      frameId = window.requestAnimationFrame(sampleBottomBar);
     };
 
-    frameId = window.requestAnimationFrame(sample);
+    frameId = window.requestAnimationFrame(sampleBottomBar);
 
     return () => {
       if (frameId !== null) {
         window.cancelAnimationFrame(frameId);
       }
     };
-  }, [enableStartupDetection, pathname]);
+  }, [address, chainId, enabled]);
 
-  return mode;
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    if (!enabled || !isMobileViewport() || !isConnected || !address || !chainId) {
+      setSmartWalletCapable(false);
+      return;
+    }
+
+    const cachedCapability = readSmartWalletCapability(address, chainId);
+    if (cachedCapability !== null) {
+      setSmartWalletCapable(cachedCapability);
+      return;
+    }
+
+    let cancelled = false;
+    setSmartWalletCapable(false);
+
+    const loadCapabilities = async () => {
+      const requester = await resolveCapabilityRequester(
+        connection.connector ?? null,
+        chainId,
+        (walletClient as RequestCapableProvider | null) ?? null
+      );
+
+      if (!requester) {
+        return;
+      }
+
+      try {
+        const capabilities = (await requester.request({
+          method: 'wallet_getCapabilities',
+          params: [address],
+        })) as WalletCapabilitiesResult | null;
+
+        const nextSmartWalletCapable = hasSmartWalletCapabilities(
+          getChainCapabilities(capabilities, chainId)
+        );
+
+        if (cancelled) {
+          return;
+        }
+
+        writeSessionValue(
+          getSmartWalletStorageKey(address, chainId),
+          nextSmartWalletCapable ? '1' : '0'
+        );
+        setSmartWalletCapable(nextSmartWalletCapable);
+      } catch {
+        if (!cancelled) {
+          setSmartWalletCapable(false);
+        }
+      }
+    };
+
+    void loadCapabilities();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    address,
+    chainId,
+    connection.connector,
+    enabled,
+    isConnected,
+    walletClient,
+  ]);
+
+  return smartWalletCapable ? 'top' : browserMode;
 }
