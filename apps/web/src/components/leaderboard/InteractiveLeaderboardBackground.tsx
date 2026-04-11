@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 
 type Pulse = {
   x: number;
@@ -11,6 +11,7 @@ type Pulse = {
 
 const GRID_SIZE = 38;
 const LINE_COUNT = 4;
+const MOBILE_BREAKPOINT_PX = 768;
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), max);
@@ -48,10 +49,32 @@ function getLineY({
 }
 
 export function InteractiveLeaderboardBackground() {
+  const [isMobile, setIsMobile] = useState<boolean | null>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const planeRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const updateViewportMode = () => {
+      setIsMobile(window.innerWidth < MOBILE_BREAKPOINT_PX);
+    };
+
+    updateViewportMode();
+    window.addEventListener("resize", updateViewportMode);
+
+    return () => {
+      window.removeEventListener("resize", updateViewportMode);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (isMobile !== false) {
+      return;
+    }
+
     const canvas = canvasRef.current;
     const plane = planeRef.current;
     if (!canvas || !plane) return;
@@ -313,28 +336,59 @@ export function InteractiveLeaderboardBackground() {
       window.removeEventListener("touchstart", handleTouchStart);
       window.removeEventListener("touchend", resetPointer);
     };
-  }, []);
+  }, [isMobile]);
+
+  const useStaticMobileBackground = isMobile !== false;
 
   return (
     <div className="pointer-events-none absolute inset-0 overflow-hidden rounded-[32px]">
       <div className="absolute inset-0 bg-[linear-gradient(180deg,#ffffff_0%,#f7faff_44%,#eef4fb_100%)]" />
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(255,255,255,0.95),transparent_40%),radial-gradient(circle_at_80%_12%,rgba(186,230,253,0.3),transparent_28%),radial-gradient(circle_at_50%_90%,rgba(148,163,184,0.12),transparent_36%)]" />
       <div
-        ref={planeRef}
-        className="absolute inset-x-[-8%] bottom-[-24%] h-[72%] opacity-95"
-        style={{
-          backgroundImage:
-            "linear-gradient(to right, rgba(148,163,184,0.18) 1px, transparent 1px), linear-gradient(to bottom, rgba(148,163,184,0.18) 1px, transparent 1px)",
-          backgroundSize: `${GRID_SIZE}px ${GRID_SIZE}px`,
-          maskImage: "linear-gradient(180deg, transparent 0%, rgba(255,255,255,0.88) 20%, #ffffff 100%)",
-          WebkitMaskImage:
-            "linear-gradient(180deg, transparent 0%, rgba(255,255,255,0.88) 20%, #ffffff 100%)",
-          transform: "perspective(2200px) rotateX(74deg) scale(1.12)",
-          transformOrigin: "center bottom",
-        }}
+        className={`absolute inset-0 ${
+          useStaticMobileBackground
+            ? "bg-[radial-gradient(circle_at_top_left,rgba(255,255,255,0.97),transparent_42%),radial-gradient(circle_at_80%_12%,rgba(186,230,253,0.22),transparent_24%),radial-gradient(circle_at_50%_90%,rgba(148,163,184,0.08),transparent_32%)]"
+            : "bg-[radial-gradient(circle_at_top_left,rgba(255,255,255,0.95),transparent_40%),radial-gradient(circle_at_80%_12%,rgba(186,230,253,0.3),transparent_28%),radial-gradient(circle_at_50%_90%,rgba(148,163,184,0.12),transparent_36%)]"
+        }`}
       />
+      {useStaticMobileBackground ? (
+        <>
+          <div
+            className="absolute inset-x-[-8%] bottom-[-18%] h-[66%] opacity-70"
+            style={{
+              backgroundImage:
+                "linear-gradient(to right, rgba(148,163,184,0.14) 1px, transparent 1px), linear-gradient(to bottom, rgba(148,163,184,0.14) 1px, transparent 1px)",
+              backgroundSize: `${GRID_SIZE}px ${GRID_SIZE}px`,
+              maskImage:
+                "linear-gradient(180deg, transparent 0%, rgba(255,255,255,0.8) 24%, rgba(255,255,255,0.96) 100%)",
+              WebkitMaskImage:
+                "linear-gradient(180deg, transparent 0%, rgba(255,255,255,0.8) 24%, rgba(255,255,255,0.96) 100%)",
+              transform: "perspective(1800px) rotateX(74deg) scale(1.04)",
+              transformOrigin: "center bottom",
+            }}
+          />
+          <div className="absolute inset-x-[10%] top-[19%] h-px bg-gradient-to-r from-transparent via-sky-200/75 to-transparent" />
+          <div className="absolute inset-x-[18%] top-[31%] h-px bg-gradient-to-r from-transparent via-slate-200/70 to-transparent" />
+        </>
+      ) : (
+        <>
+          <div
+            ref={planeRef}
+            className="absolute inset-x-[-8%] bottom-[-24%] h-[72%] opacity-95"
+            style={{
+              backgroundImage:
+                "linear-gradient(to right, rgba(148,163,184,0.18) 1px, transparent 1px), linear-gradient(to bottom, rgba(148,163,184,0.18) 1px, transparent 1px)",
+              backgroundSize: `${GRID_SIZE}px ${GRID_SIZE}px`,
+              maskImage: "linear-gradient(180deg, transparent 0%, rgba(255,255,255,0.88) 20%, #ffffff 100%)",
+              WebkitMaskImage:
+                "linear-gradient(180deg, transparent 0%, rgba(255,255,255,0.88) 20%, #ffffff 100%)",
+              transform: "perspective(2200px) rotateX(74deg) scale(1.12)",
+              transformOrigin: "center bottom",
+            }}
+          />
+          <canvas ref={canvasRef} className="absolute inset-0 h-full w-full" />
+        </>
+      )}
       <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(255,255,255,0.76)_0%,rgba(255,255,255,0)_34%,rgba(255,255,255,0.14)_100%)]" />
-      <canvas ref={canvasRef} className="absolute inset-0 h-full w-full" />
     </div>
   );
 }

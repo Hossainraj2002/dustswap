@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 
 type Ripple = {
   x: number;
@@ -17,6 +17,8 @@ type Lane = {
   length: number;
   glow: number;
 };
+
+const MOBILE_BREAKPOINT_PX = 768;
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), max);
@@ -53,11 +55,33 @@ function createLanes(width: number, height: number) {
 }
 
 export function PremiumQuestBackground() {
+  const [isMobile, setIsMobile] = useState<boolean | null>(null);
   const hostRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const gridRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const updateViewportMode = () => {
+      setIsMobile(window.innerWidth < MOBILE_BREAKPOINT_PX);
+    };
+
+    updateViewportMode();
+    window.addEventListener("resize", updateViewportMode);
+
+    return () => {
+      window.removeEventListener("resize", updateViewportMode);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (isMobile !== false) {
+      return;
+    }
+
     const host = hostRef.current;
     const canvas = canvasRef.current;
     const grid = gridRef.current;
@@ -359,29 +383,60 @@ export function PremiumQuestBackground() {
       window.removeEventListener("touchstart", handleTouchStart);
       window.removeEventListener("touchend", resetPointer);
     };
-  }, []);
+  }, [isMobile]);
+
+  const useStaticMobileBackground = isMobile !== false;
 
   return (
     <div ref={hostRef} className="pointer-events-none absolute inset-0 overflow-hidden">
       <div className="absolute inset-0 bg-[linear-gradient(180deg,#ffffff_0%,#f7fbff_46%,#edf4fb_100%)]" />
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_18%_10%,rgba(255,255,255,0.96),transparent_34%),radial-gradient(circle_at_84%_14%,rgba(186,230,253,0.34),transparent_28%),radial-gradient(circle_at_50%_100%,rgba(191,219,254,0.22),transparent_34%)]" />
       <div
-        ref={gridRef}
-        className="absolute inset-x-[-10%] inset-y-[-8%] opacity-85"
-        style={{
-          backgroundImage:
-            "linear-gradient(to right, rgba(148,163,184,0.12) 1px, transparent 1px), linear-gradient(to bottom, rgba(148,163,184,0.12) 1px, transparent 1px)",
-          backgroundSize: "52px 52px",
-          maskImage:
-            "radial-gradient(circle at center, rgba(255,255,255,0.98) 0%, rgba(255,255,255,0.9) 58%, transparent 100%)",
-          WebkitMaskImage:
-            "radial-gradient(circle at center, rgba(255,255,255,0.98) 0%, rgba(255,255,255,0.9) 58%, transparent 100%)",
-          transform: "perspective(1800px) rotateX(66deg) scale(1.08)",
-          transformOrigin: "center center",
-        }}
+        className={`absolute inset-0 ${
+          useStaticMobileBackground
+            ? "bg-[radial-gradient(circle_at_18%_10%,rgba(255,255,255,0.98),transparent_36%),radial-gradient(circle_at_84%_14%,rgba(186,230,253,0.24),transparent_26%),radial-gradient(circle_at_50%_100%,rgba(191,219,254,0.18),transparent_30%)]"
+            : "bg-[radial-gradient(circle_at_18%_10%,rgba(255,255,255,0.96),transparent_34%),radial-gradient(circle_at_84%_14%,rgba(186,230,253,0.34),transparent_28%),radial-gradient(circle_at_50%_100%,rgba(191,219,254,0.22),transparent_34%)]"
+        }`}
       />
+      {useStaticMobileBackground ? (
+        <>
+          <div
+            className="absolute inset-x-[-12%] top-[22%] bottom-[-6%] opacity-55"
+            style={{
+              backgroundImage:
+                "linear-gradient(to right, rgba(148,163,184,0.1) 1px, transparent 1px), linear-gradient(to bottom, rgba(148,163,184,0.1) 1px, transparent 1px)",
+              backgroundSize: "54px 54px",
+              maskImage:
+                "linear-gradient(180deg, transparent 0%, rgba(255,255,255,0.92) 22%, rgba(255,255,255,0.88) 72%, transparent 100%)",
+              WebkitMaskImage:
+                "linear-gradient(180deg, transparent 0%, rgba(255,255,255,0.92) 22%, rgba(255,255,255,0.88) 72%, transparent 100%)",
+              transform: "perspective(1600px) rotateX(68deg) scale(1.02)",
+              transformOrigin: "center center",
+            }}
+          />
+          <div className="absolute inset-x-[12%] top-[18%] h-px bg-gradient-to-r from-transparent via-sky-200/80 to-transparent opacity-90" />
+          <div className="absolute inset-x-[18%] top-[34%] h-px bg-gradient-to-r from-transparent via-slate-200/75 to-transparent" />
+        </>
+      ) : (
+        <>
+          <div
+            ref={gridRef}
+            className="absolute inset-x-[-10%] inset-y-[-8%] opacity-85"
+            style={{
+              backgroundImage:
+                "linear-gradient(to right, rgba(148,163,184,0.12) 1px, transparent 1px), linear-gradient(to bottom, rgba(148,163,184,0.12) 1px, transparent 1px)",
+              backgroundSize: "52px 52px",
+              maskImage:
+                "radial-gradient(circle at center, rgba(255,255,255,0.98) 0%, rgba(255,255,255,0.9) 58%, transparent 100%)",
+              WebkitMaskImage:
+                "radial-gradient(circle at center, rgba(255,255,255,0.98) 0%, rgba(255,255,255,0.9) 58%, transparent 100%)",
+              transform: "perspective(1800px) rotateX(66deg) scale(1.08)",
+              transformOrigin: "center center",
+            }}
+          />
+          <canvas ref={canvasRef} className="absolute inset-0 h-full w-full" />
+        </>
+      )}
       <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(255,255,255,0.74)_0%,rgba(255,255,255,0.08)_34%,rgba(255,255,255,0.28)_100%)]" />
-      <canvas ref={canvasRef} className="absolute inset-0 h-full w-full" />
     </div>
   );
 }
