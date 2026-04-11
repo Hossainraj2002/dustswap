@@ -146,6 +146,7 @@ export function AppShell({ children }: AppShellProps) {
   const isLandingPage = pathname === '/';
   const shellMode = useAppShellMode({
     enableStartupDetection: !isLandingPage,
+    pathname,
   });
   const isBaseappTopMode = shellMode === 'baseapp-top';
   const { address, isConnected } = useAccount();

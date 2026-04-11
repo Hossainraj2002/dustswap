@@ -1,7 +1,6 @@
 'use client';
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { useSearchParams } from 'next/navigation';
 
 export type AppShellMode = 'normal' | 'baseapp-top';
 
@@ -107,18 +106,27 @@ function isUnstableOffsetHistory(
 
 interface UseAppShellModeOptions {
   enableStartupDetection: boolean;
+  pathname: string;
+}
+
+function getShellParamFromLocation() {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+
+  return new URLSearchParams(window.location.search).get('shell')?.toLowerCase() ?? null;
 }
 
 export function useAppShellMode({
   enableStartupDetection,
+  pathname,
 }: UseAppShellModeOptions): AppShellMode {
-  const searchParams = useSearchParams();
   const [mode, setMode] = useState<AppShellMode>('normal');
   const didAttemptStartupDetectionRef = useRef(false);
-  const shellParam = searchParams.get('shell')?.toLowerCase() ?? null;
 
   useIsomorphicLayoutEffect(() => {
     if (typeof window === 'undefined') return;
+    const shellParam = getShellParamFromLocation();
 
     if (shellParam === BASEAPP_QUERY_VALUE) {
       persistShellMode(BASEAPP_TOP_MODE);
@@ -186,7 +194,7 @@ export function useAppShellMode({
         window.cancelAnimationFrame(frameId);
       }
     };
-  }, [enableStartupDetection, shellParam]);
+  }, [enableStartupDetection, pathname]);
 
   return mode;
 }
