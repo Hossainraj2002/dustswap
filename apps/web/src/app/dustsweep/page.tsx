@@ -281,7 +281,13 @@ function StickySweepPanel({
   );
 
   return (
-    <div className="fixed md:bottom-0 bottom-[calc(64px+env(safe-area-inset-bottom))] left-0 right-0 z-40 bg-white/95 backdrop-blur border-t border-slate-200 shadow-lg shadow-slate-300/40">
+    <div
+      className="fixed left-0 right-0 z-40 border-t border-slate-200 bg-white/95 shadow-lg shadow-slate-300/40 backdrop-blur md:bottom-0"
+      style={{
+        bottom:
+          'var(--ds-mobile-fixed-bottom-offset, calc(64px + env(safe-area-inset-bottom)))',
+      }}
+    >
       <div className="max-w-2xl mx-auto px-4 py-4">
 
         {/* Ã¢â€â‚¬Ã¢â€â‚¬ Partial liquidity warning Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ */}

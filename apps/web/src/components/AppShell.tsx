@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import {
   type ComponentType,
+  type CSSProperties,
   type ReactNode,
   type SVGProps,
   useCallback,
@@ -22,6 +23,7 @@ import {
 } from '@/components/NavIcons';
 import { CofounderPassWelcomeModal } from '@/components/quests/CofounderPassWelcomeModal';
 import { ReferralOnboardingModal } from '@/components/referrals/ReferralOnboardingModal';
+import { useAppShellMode } from '@/hooks/useAppShellMode';
 import { clearPointsSummaryCache, fetchPointsSummary } from '@/lib/points';
 import {
   getPendingReferralCode,
@@ -77,84 +79,78 @@ function AppShellIcon({
   );
 }
 
+function MobileShellNav({
+  isLightShell,
+  pathname,
+  placement,
+}: {
+  isLightShell: boolean;
+  pathname: string;
+  placement: 'bottom' | 'top';
+}) {
+  const isTopNav = placement === 'top';
+  const navClassName = `fixed left-0 right-0 z-50 backdrop-blur-2xl md:hidden ${
+    isTopNav
+      ? 'top-0 border-b'
+      : 'bottom-0 border-t shadow-[0_-18px_44px_rgba(148,163,184,0.16)]'
+  } ${
+    isLightShell
+      ? isTopNav
+        ? 'border-slate-200/80 bg-[rgba(255,255,255,0.96)] shadow-[0_18px_44px_rgba(148,163,184,0.14)]'
+        : 'border-slate-200/80 bg-[rgba(255,255,255,0.96)]'
+      : 'border-white/10 bg-[rgba(6,10,18,0.9)]'
+  }`;
+  const navStyle: CSSProperties = isTopNav
+    ? { paddingTop: 'env(safe-area-inset-top)' }
+    : { paddingBottom: 'env(safe-area-inset-bottom)' };
+
+  return (
+    <nav className={navClassName} style={navStyle} aria-label="Primary navigation">
+      <div className="grid h-[82px] w-full grid-cols-5 items-start px-2 pt-3">
+        {NAV_ITEMS.map((item) => {
+          const active = isActiveRoute(pathname, item.route);
+          const Icon = item.icon;
+
+          return (
+            <Link
+              key={item.route}
+              href={item.route}
+              className="group flex min-w-0 flex-col items-center justify-start gap-2 transition-transform active:scale-95"
+            >
+              <AppShellIcon Icon={Icon} active={active} light={isLightShell} />
+              <span
+                className={`min-w-0 text-center text-[10px] font-medium leading-none tracking-[-0.01em] sm:text-xs ${
+                  isLightShell
+                    ? active
+                      ? 'text-slate-950'
+                      : 'text-slate-500'
+                    : active
+                      ? 'text-white'
+                      : 'text-slate-500'
+                }`}
+                style={{ fontFamily: 'DM Sans, sans-serif' }}
+              >
+                {item.label}
+              </span>
+            </Link>
+          );
+        })}
+      </div>
+    </nav>
+  );
+}
+
 export function AppShell({ children }: AppShellProps) {
   const pathname = usePathname();
   const isLightShell = true;
   const isLandingPage = pathname === '/';
+  const shellMode = useAppShellMode({
+    enableStartupDetection: !isLandingPage,
+  });
+  const isBaseappTopMode = shellMode === 'baseapp-top';
   const { address, isConnected } = useAccount();
   const [showReferralModal, setShowReferralModal] = useState(false);
   const checkedRef = useRef<string | null>(null);
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-
-    const root = document.documentElement;
-    const visualViewport = window.visualViewport;
-    let frameId: number | null = null;
-    let timeoutId: number | null = null;
-
-    const syncNavOffset = () => {
-      frameId = null;
-
-      const currentVisualViewport = window.visualViewport;
-      const layoutViewportHeight = Math.max(
-        window.innerHeight,
-        document.documentElement.clientHeight
-      );
-      const visibleViewportHeight =
-        currentVisualViewport?.height ?? layoutViewportHeight;
-      const visibleViewportTop = currentVisualViewport?.offsetTop ?? 0;
-      const rawBrowserBottomOffset = Math.round(
-        layoutViewportHeight - (visibleViewportTop + visibleViewportHeight)
-      );
-      const browserBottomOffset = Math.max(
-        0,
-        rawBrowserBottomOffset > 8 ? rawBrowserBottomOffset : 0
-      );
-
-      root.style.setProperty(
-        '--ds-browser-bottom-offset',
-        `${browserBottomOffset}px`
-      );
-    };
-
-    const scheduleNavOffsetSync = () => {
-      if (frameId !== null) {
-        window.cancelAnimationFrame(frameId);
-      }
-      if (timeoutId !== null) {
-        window.clearTimeout(timeoutId);
-      }
-
-      frameId = window.requestAnimationFrame(() => {
-        frameId = null;
-        timeoutId = window.setTimeout(() => {
-          timeoutId = null;
-          syncNavOffset();
-        }, 80);
-      });
-    };
-
-    scheduleNavOffsetSync();
-
-    window.addEventListener('resize', scheduleNavOffsetSync);
-    window.addEventListener('orientationchange', scheduleNavOffsetSync);
-    visualViewport?.addEventListener('resize', scheduleNavOffsetSync);
-
-    return () => {
-      if (frameId !== null) {
-        window.cancelAnimationFrame(frameId);
-      }
-      if (timeoutId !== null) {
-        window.clearTimeout(timeoutId);
-      }
-
-      window.removeEventListener('resize', scheduleNavOffsetSync);
-      window.removeEventListener('orientationchange', scheduleNavOffsetSync);
-      visualViewport?.removeEventListener('resize', scheduleNavOffsetSync);
-      root.style.removeProperty('--ds-browser-bottom-offset');
-    };
-  }, []);
 
   const checkReferralEligibility = useCallback(async (addr: string) => {
     if (typeof window === 'undefined') return;
@@ -198,7 +194,13 @@ export function AppShell({ children }: AppShellProps) {
     );
 
     return () => window.clearTimeout(timerId);
-  }, [address, checkReferralEligibility, isConnected, isLandingPage, pathname]);
+  }, [
+    address,
+    checkReferralEligibility,
+    isConnected,
+    isLandingPage,
+    pathname,
+  ]);
 
   const handleReferralApplied = useCallback(() => {
     setShowReferralModal(false);
@@ -214,11 +216,24 @@ export function AppShell({ children }: AppShellProps) {
     setShowReferralModal(false);
   }, [address]);
 
+  const rootStyle = {
+    '--ds-mobile-fixed-bottom-offset': isBaseappTopMode
+      ? 'env(safe-area-inset-bottom)'
+      : 'calc(64px + env(safe-area-inset-bottom))',
+  } as CSSProperties;
+  const mainShellClassName = isLandingPage
+    ? ''
+    : isBaseappTopMode
+      ? 'pt-[calc(82px+env(safe-area-inset-top))] md:ml-[236px] md:pt-0'
+      : 'pb-[calc(90px+env(safe-area-inset-bottom))] md:ml-[236px] md:pb-0';
+
   return (
     <div
       className={`relative flex min-h-screen transition-colors duration-300 ${
         isLightShell ? 'bg-[#f2f6fb] text-slate-900' : 'bg-[#06080d] text-white'
       }`}
+      style={rootStyle}
+      data-shell-mode={shellMode}
     >
       {!isLightShell && (
         <div
@@ -292,12 +307,16 @@ export function AppShell({ children }: AppShellProps) {
         </nav>
       )}
 
+      {!isLandingPage && isBaseappTopMode && (
+        <MobileShellNav
+          isLightShell={isLightShell}
+          pathname={pathname}
+          placement="top"
+        />
+      )}
+
       <main
-        className={`relative z-10 flex-1 transition-opacity duration-100 ease-in-out ${
-          isLandingPage
-            ? ''
-            : 'pb-[calc(90px+env(safe-area-inset-bottom))] md:ml-[236px] md:pb-0'
-        }`}
+        className={`relative z-10 flex-1 transition-opacity duration-100 ease-in-out ${mainShellClassName}`}
       >
         {!isLandingPage && <CofounderPassWelcomeModal />}
         {showReferralModal && address && (
@@ -310,49 +329,12 @@ export function AppShell({ children }: AppShellProps) {
         {children}
       </main>
 
-      {!isLandingPage && (
-        <nav
-          className={`fixed left-0 right-0 z-50 border-t backdrop-blur-2xl md:hidden ${
-            isLightShell
-              ? 'border-slate-200/80 bg-[rgba(255,255,255,0.96)] shadow-[0_-18px_44px_rgba(148,163,184,0.16)]'
-              : 'border-white/10 bg-[rgba(6,10,18,0.9)]'
-          }`}
-          style={{
-            bottom: 'var(--ds-browser-bottom-offset, 0px)',
-            paddingBottom: 'env(safe-area-inset-bottom)',
-          }}
-        >
-          <div className="grid h-[82px] w-full grid-cols-5 items-start px-2 pt-3">
-            {NAV_ITEMS.map((item) => {
-              const active = isActiveRoute(pathname, item.route);
-              const Icon = item.icon;
-
-              return (
-                <Link
-                  key={item.route}
-                  href={item.route}
-                  className="group flex min-w-0 flex-col items-center justify-start gap-2 transition-transform active:scale-95"
-                >
-                  <AppShellIcon Icon={Icon} active={active} light={isLightShell} />
-                  <span
-                    className={`min-w-0 text-center text-[10px] font-medium leading-none tracking-[-0.01em] sm:text-xs ${
-                      isLightShell
-                        ? active
-                          ? 'text-slate-950'
-                          : 'text-slate-500'
-                        : active
-                          ? 'text-white'
-                          : 'text-slate-500'
-                    }`}
-                    style={{ fontFamily: 'DM Sans, sans-serif' }}
-                  >
-                    {item.label}
-                  </span>
-                </Link>
-              );
-            })}
-          </div>
-        </nav>
+      {!isLandingPage && !isBaseappTopMode && (
+        <MobileShellNav
+          isLightShell={isLightShell}
+          pathname={pathname}
+          placement="bottom"
+        />
       )}
     </div>
   );
