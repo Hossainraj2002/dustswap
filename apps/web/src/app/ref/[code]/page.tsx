@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
-import { ReferralPageClient } from "./ReferralPageClient";
-import { normalizeReferralCode } from "@/lib/referrals";
+import { redirect } from "next/navigation";
+import { buildReferralLandingPath, normalizeReferralCode } from "@/lib/referrals";
 
 type ReferralPageProps = {
   params: Promise<{
@@ -16,8 +16,9 @@ export async function generateMetadata({
   params,
 }: ReferralPageProps): Promise<Metadata> {
   const { code } = await params;
-  const normalizedCode = normalizeReferralCode(decodeURIComponent(code));
-  const referralUrl = `${siteUrl}/ref/${encodeURIComponent(normalizedCode)}`;
+  const normalizedCode = normalizeReferralCode(code);
+  const landingPath = buildReferralLandingPath(normalizedCode);
+  const referralUrl = `${siteUrl}${landingPath}`;
   const title = "Join Dustswap | Referral Invite";
   const description = `Use referral code ${normalizedCode} to join Dustswap, swap and bridge on Base, and earn community rewards.`;
   const referralEmbed = JSON.stringify({
@@ -70,6 +71,8 @@ export async function generateMetadata({
   };
 }
 
-export default function ReferralPage({ params }: ReferralPageProps) {
-  return <ReferralPageClient params={params} />;
+export default async function ReferralPage({ params }: ReferralPageProps) {
+  const { code } = await params;
+  const normalizedCode = normalizeReferralCode(code);
+  redirect(buildReferralLandingPath(normalizedCode));
 }

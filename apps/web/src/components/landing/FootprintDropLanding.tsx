@@ -2,6 +2,7 @@
 
 import Image from "next/image";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { getAddress, type Address } from "viem";
 import { base } from "viem/chains";
@@ -10,7 +11,14 @@ import { useAccount, useSignMessage } from "wagmi";
 import { useWalletConnection } from "@/hooks/useWalletConnection";
 import { emitDataInvalidation } from "@/lib/clientEvents";
 import { claimFootprintDrop, lookupFootprintDrop, type FootprintDropStatus } from "@/lib/footprintDrop";
-import { clearPointsSummaryCache } from "@/lib/points";
+import { applyReferralCode, clearPointsSummaryCache, fetchPointsSummary } from "@/lib/points";
+import {
+  clearPendingReferralCode,
+  getPendingReferralCode,
+  isTerminalReferralError,
+  normalizeReferralCode,
+  storePendingReferralCode,
+} from "@/lib/referrals";
 import {
   clearStoredSiweSession,
   hasStoredSiweSession,
@@ -25,6 +33,13 @@ const NAV_ITEMS = [
   { href: "/swap", label: "Swap" },
   { href: "/leaderboard", label: "Leaderboard" },
 ] as const;
+
+type ReferralBanner =
+  | {
+      tone: "info" | "success" | "warning";
+      message: string;
+    }
+  | null;
 
 function cx(...parts: Array<string | false | null | undefined>) {
   return parts.filter(Boolean).join(" ");
@@ -334,6 +349,7 @@ function FootprintStatusPanel({
   connectedAddress,
   hasSiweSession,
   claimState,
+  isApplyingReferral,
   claimError,
   onClaim,
   onUseConnectedWallet,
@@ -342,6 +358,7 @@ function FootprintStatusPanel({
   connectedAddress?: string;
   hasSiweSession: boolean;
   claimState: "idle" | "claiming" | "claimed";
+  isApplyingReferral: boolean;
   claimError: string | null;
   onClaim: () => void | Promise<void>;
   onUseConnectedWallet: () => void | Promise<void>;
@@ -457,7 +474,11 @@ function FootprintStatusPanel({
             onClick={() => void onClaim()}
             className="inline-flex w-full items-center justify-center rounded-full bg-slate-950 px-5 py-3 text-sm font-semibold text-white transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-70"
           >
-            {claimState === "claiming" ? "Claiming PP..." : "Claim PP"}
+            {isApplyingReferral
+              ? "Linking invite..."
+              : claimState === "claiming"
+                ? "Claiming PP..."
+                : "Claim PP"}
           </button>
         </div>
       )}
@@ -491,6 +512,7 @@ function FootprintStatusPanel({
 }
 
 export default function FootprintDropLanding() {
+  const searchParams = useSearchParams();
   const { address, chainId, isConnected } = useAccount();
   const { signMessageAsync } = useSignMessage();
   const [addressInput, setAddressInput] = useState("");
@@ -507,15 +529,81 @@ export default function FootprintDropLanding() {
   >("idle");
   const [authError, setAuthError] = useState<string | null>(null);
   const [pendingNonce, setPendingNonce] = useState<string | null>(null);
+  const [pendingReferralCode, setPendingReferralCode] = useState<string | null>(null);
+  const [referralBanner, setReferralBanner] = useState<ReferralBanner>(null);
+  const [isApplyingReferral, setIsApplyingReferral] = useState(false);
 
   const connectedAddress = useMemo(
     () => (address ? getAddress(address) : undefined),
     [address]
   );
 
+  const clearPendingReferralState = useCallback((banner?: ReferralBanner) => {
+    clearPendingReferralCode();
+    setPendingReferralCode(null);
+    if (banner) {
+      setReferralBanner(banner);
+    }
+  }, []);
+
   useEffect(() => {
     setHasSiweSession(hasStoredSiweSession(address));
   }, [address, isConnected]);
+
+  useEffect(() => {
+    const storedCode = getPendingReferralCode();
+    if (!storedCode) {
+      return;
+    }
+
+    setPendingReferralCode(storedCode);
+  }, []);
+
+  useEffect(() => {
+    const rawReferralCode = searchParams.get("ref");
+    if (!rawReferralCode) {
+      return;
+    }
+
+    const normalizedCode = normalizeReferralCode(rawReferralCode);
+    if (!normalizedCode) {
+      return;
+    }
+
+    storePendingReferralCode(normalizedCode);
+    setPendingReferralCode(normalizedCode);
+    setReferralBanner(null);
+  }, [searchParams]);
+
+  useEffect(() => {
+    if (!connectedAddress || !pendingReferralCode) {
+      return;
+    }
+
+    let cancelled = false;
+
+    const syncReferralLock = async () => {
+      try {
+        const summary = await fetchPointsSummary(connectedAddress, { force: true });
+        if (cancelled || !summary.success || summary.referral?.hasReferrer !== true) {
+          return;
+        }
+
+        clearPendingReferralState({
+          tone: "info",
+          message: "This wallet already has an invite linked. Your PP claim can continue normally.",
+        });
+      } catch {
+        // Keep the landing flow resilient if the profile summary check fails.
+      }
+    };
+
+    void syncReferralLock();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [clearPendingReferralState, connectedAddress, pendingReferralCode]);
 
   const runLookup = useCallback(async (rawAddress: string) => {
     try {
@@ -650,6 +738,53 @@ export default function FootprintDropLanding() {
     }
   }, [addressInput, runLookup]);
 
+  const applyPendingReferralIfNeeded = useCallback(
+    async (normalizedAddress: Address) => {
+      if (!pendingReferralCode) {
+        return;
+      }
+
+      setIsApplyingReferral(true);
+
+      try {
+        const result = await applyReferralCode(normalizedAddress, pendingReferralCode);
+        if (result.success) {
+          clearPendingReferralState({
+            tone: "success",
+            message: `Invite code ${pendingReferralCode} linked. Both you and your inviter received 500 PP.`,
+          });
+          clearPointsSummaryCache(normalizedAddress);
+          emitDataInvalidation(["leaderboard", "points"], "referral-applied");
+          return;
+        }
+
+        const errorMessage = result.error || "Referral could not be applied.";
+        if (isTerminalReferralError(errorMessage)) {
+          clearPointsSummaryCache(normalizedAddress);
+
+          if (errorMessage.toLowerCase().includes("already referred")) {
+            clearPendingReferralState({
+              tone: "info",
+              message: "This wallet already has an invite linked. Your PP claim can continue normally.",
+            });
+            return;
+          }
+
+          clearPendingReferralState({
+            tone: "warning",
+            message: `Invite code ${pendingReferralCode} could not be applied. Your PP claim can continue without it.`,
+          });
+          return;
+        }
+
+        throw new Error(errorMessage);
+      } finally {
+        setIsApplyingReferral(false);
+      }
+    },
+    [clearPendingReferralState, pendingReferralCode]
+  );
+
   const handleClaim = useCallback(async () => {
     if (!connectedAddress) {
       setClaimError("Connect your wallet to claim PP.");
@@ -670,6 +805,7 @@ export default function FootprintDropLanding() {
     setClaimError(null);
 
     try {
+      await applyPendingReferralIfNeeded(connectedAddress);
       const result = await claimFootprintDrop(connectedAddress);
       setStatus(result);
       setClaimState("claimed");
@@ -751,6 +887,34 @@ export default function FootprintDropLanding() {
                 Are you a power onchain user on Base? Then check your PP airdrop.
               </p>
 
+              {pendingReferralCode ? (
+                <div className="mt-4 rounded-[22px] border border-sky-100 bg-sky-50/75 p-4">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-sky-700">
+                    Invite attached
+                  </p>
+                  <p className="mt-2 break-all font-mono text-sm font-semibold tracking-[0.08em] text-slate-900">
+                    {pendingReferralCode}
+                  </p>
+                  <p className="mt-2 text-sm leading-6 text-slate-600">
+                    This invite code is locked and will activate when you claim your PP airdrop.
+                  </p>
+                </div>
+              ) : referralBanner ? (
+                <div
+                  className={cx(
+                    "mt-4 rounded-[22px] border p-4 text-sm leading-6",
+                    referralBanner.tone === "success" &&
+                      "border-emerald-100 bg-emerald-50/80 text-emerald-900",
+                    referralBanner.tone === "warning" &&
+                      "border-amber-100 bg-amber-50/80 text-amber-900",
+                    referralBanner.tone === "info" &&
+                      "border-sky-100 bg-sky-50/75 text-sky-900"
+                  )}
+                >
+                  {referralBanner.message}
+                </div>
+              ) : null}
+
               <div className="mt-5 sm:mt-6">
                 <label
                   htmlFor="footprint-address"
@@ -791,6 +955,13 @@ export default function FootprintDropLanding() {
                 />
               </div>
 
+              <Link
+                href="/profile"
+                className="mt-3 inline-flex w-full items-center justify-center rounded-full border border-slate-200 bg-white px-5 py-3 text-sm font-semibold text-slate-900 shadow-[0_10px_24px_rgba(148,163,184,0.1)] transition-all duration-200 hover:-translate-y-0.5 hover:border-sky-200 hover:bg-sky-50"
+              >
+                Visit app
+              </Link>
+
               <p className="mt-3 text-sm leading-6 text-slate-500">
                 You can paste any Base wallet to preview. Claim works only for the connected wallet after sign-in.
               </p>
@@ -810,6 +981,7 @@ export default function FootprintDropLanding() {
                     connectedAddress={connectedAddress}
                     hasSiweSession={hasSiweSession}
                     claimState={claimState}
+                    isApplyingReferral={isApplyingReferral}
                     claimError={claimError}
                     onClaim={handleClaim}
                     onUseConnectedWallet={syncConnectedWalletLookup}

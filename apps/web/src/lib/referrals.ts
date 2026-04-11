@@ -25,8 +25,12 @@ export function getReferralBaseUrl() {
   return trimTrailingSlashes(DEFAULT_REFERRAL_BASE_URL);
 }
 
+export function buildReferralLandingPath(code: string) {
+  return `/?ref=${encodeURIComponent(normalizeReferralCode(code))}`;
+}
+
 export function buildReferralLink(code: string) {
-  return `${getReferralBaseUrl()}/ref/${encodeURIComponent(normalizeReferralCode(code))}`;
+  return `${getReferralBaseUrl()}${buildReferralLandingPath(code)}`;
 }
 
 export function storePendingReferralCode(code: string) {

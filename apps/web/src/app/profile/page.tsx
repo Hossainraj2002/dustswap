@@ -25,9 +25,9 @@ import {
 import { emitDataInvalidation } from "@/lib/clientEvents";
 import {
   buildReferralLink,
+  buildReferralLandingPath,
   clearPendingReferralCode,
   getPendingReferralCode,
-  isTerminalReferralError,
 } from "@/lib/referrals";
 import { BASE_CHAIN_ID, USDC_ADDRESS } from "@/lib/tokens";
 import { DATA_SUFFIX } from "@/lib/builderCode";
@@ -269,6 +269,10 @@ function ProfilePageContent() {
     () => (referral?.code ? buildReferralLink(referral.code) : ""),
     [referral?.code]
   );
+  const pendingReferralLandingPath = useMemo(
+    () => (pendingReferralCode ? buildReferralLandingPath(pendingReferralCode) : "/"),
+    [pendingReferralCode]
+  );
 
   const applySummary = useCallback((summary: PointsSummaryResponse) => {
     setBalance(summary.balance);
@@ -387,49 +391,13 @@ function ProfilePageContent() {
   }, [address, fetchProfileData]);
 
   useEffect(() => {
-    if (!address || !pendingReferralCode) {
+    if (!pendingReferralCode || referral?.hasReferrer !== true) {
       return;
     }
 
-    let cancelled = false;
-
-    const run = async () => {
-      const codeToApply = pendingReferralCode;
-      setPendingReferralCode(null);
-
-      const result = await applyReferralCode(address, codeToApply);
-      if (cancelled) {
-        return;
-      }
-
-      if (result.success) {
-        clearPendingReferralCode();
-        clearPointsSummaryCache(address);
-        setToast({
-          kind: "success",
-          message: "Referral linked successfully. Your inviter now earns 20% of your points.",
-        });
-        await fetchProfileData({ force: true, silent: true });
-        emitDataInvalidation(["leaderboard", "points"], "referral-applied");
-        return;
-      }
-
-      if (isTerminalReferralError(result.error)) {
-        clearPendingReferralCode();
-      }
-
-      setToast({
-        kind: "error",
-        message: result.error || "Referral could not be applied.",
-      });
-    };
-
-    void run();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [address, fetchProfileData, pendingReferralCode]);
+    clearPendingReferralCode();
+    setPendingReferralCode(null);
+  }, [pendingReferralCode, referral?.hasReferrer]);
 
   useEffect(() => {
     if (!toast) {
@@ -504,6 +472,8 @@ function ProfilePageContent() {
         return;
       }
       setInlineSuccess(true);
+      clearPendingReferralCode();
+      setPendingReferralCode(null);
       clearPointsSummaryCache(address);
       emitDataInvalidation(["leaderboard", "points"], "referral-applied");
       setToast({ kind: "success", message: "Referral linked! +500 PP on the way." });
@@ -1049,8 +1019,37 @@ function ProfilePageContent() {
             </div>
           </div>
 
+          {!isLoading && referral?.hasReferrer === false && pendingReferralCode && (
+            <div className="mt-2.5 rounded-[18px] border border-sky-100 bg-[radial-gradient(circle_at_top_right,rgba(99,102,241,0.08),transparent_50%),linear-gradient(180deg,#f0f9ff,#eff6ff)] p-3">
+              <div className="flex items-start gap-2">
+                <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-sky-200 bg-white shadow-sm">
+                  <svg className="h-3.5 w-3.5 text-sky-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 4v16m8-8H4" />
+                  </svg>
+                </div>
+                <div className="min-w-0">
+                  <p className="text-[10px] font-black uppercase tracking-[0.22em] text-sky-600">
+                    Invite attached
+                  </p>
+                  <p className="mt-1 break-all font-mono text-[12px] font-bold tracking-[0.04em] text-slate-800">
+                    {pendingReferralCode}
+                  </p>
+                  <p className="mt-1.5 text-[11px] leading-[1.6] text-slate-500">
+                    This invite code came from your referral link. Claim your PP airdrop on landing to activate it.
+                  </p>
+                </div>
+              </div>
+              <a
+                href={pendingReferralLandingPath}
+                className="mt-3 inline-flex w-full items-center justify-center rounded-[12px] bg-[linear-gradient(135deg,#0ea5e9,#6366f1)] px-4 py-2 text-[12px] font-black text-white shadow-[0_8px_20px_rgba(14,165,233,0.18)] transition hover:-translate-y-0.5 hover:shadow-md"
+              >
+                Open Airdrop Landing
+              </a>
+            </div>
+          )}
+
           {/* Inline referral code entry \u2014 shown only if user has no referrer yet */}
-          {!isLoading && referral?.hasReferrer === false && !inlineSuccess && (
+          {!isLoading && referral?.hasReferrer === false && !pendingReferralCode && !inlineSuccess && (
             <div className="mt-2.5 rounded-[18px] border border-sky-100 bg-[radial-gradient(circle_at_top_right,rgba(99,102,241,0.08),transparent_50%),linear-gradient(180deg,#f0f9ff,#eff6ff)] p-3">
               <div className="flex items-center gap-2">
                 <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-sky-200 bg-white shadow-sm">
