@@ -2,7 +2,6 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { getAddress, type Address } from "viem";
 import { base } from "viem/chains";
@@ -511,8 +510,11 @@ function FootprintStatusPanel({
   );
 }
 
-export default function FootprintDropLanding() {
-  const searchParams = useSearchParams();
+export default function FootprintDropLanding({
+  initialReferralCode = null,
+}: {
+  initialReferralCode?: string | null;
+}) {
   const { address, chainId, isConnected } = useAccount();
   const { signMessageAsync } = useSignMessage();
   const [addressInput, setAddressInput] = useState("");
@@ -560,12 +562,11 @@ export default function FootprintDropLanding() {
   }, []);
 
   useEffect(() => {
-    const rawReferralCode = searchParams.get("ref");
-    if (!rawReferralCode) {
+    if (!initialReferralCode) {
       return;
     }
 
-    const normalizedCode = normalizeReferralCode(rawReferralCode);
+    const normalizedCode = normalizeReferralCode(initialReferralCode);
     if (!normalizedCode) {
       return;
     }
@@ -573,7 +574,7 @@ export default function FootprintDropLanding() {
     storePendingReferralCode(normalizedCode);
     setPendingReferralCode(normalizedCode);
     setReferralBanner(null);
-  }, [searchParams]);
+  }, [initialReferralCode]);
 
   useEffect(() => {
     if (!connectedAddress || !pendingReferralCode) {
