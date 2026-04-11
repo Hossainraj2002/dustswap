@@ -1,4 +1,4 @@
-const DEFAULT_REFERRAL_BASE_URL = "https://base.app/app/app.dustswap.wtf";
+const DEFAULT_REFERRAL_BASE_URL = "https://app.dustswap.wtf";
 const PENDING_REFERRAL_CODE_KEY = "dustswap.pendingReferralCode";
 
 function trimTrailingSlashes(value: string) {
@@ -10,9 +10,9 @@ export function normalizeReferralCode(code: string) {
 }
 
 export function getReferralBaseUrl() {
-  const configuredBaseUrl = process.env.NEXT_PUBLIC_REFERRAL_BASE_URL?.trim();
-  if (configuredBaseUrl) {
-    return trimTrailingSlashes(configuredBaseUrl);
+  const configuredAppUrl = process.env.NEXT_PUBLIC_APP_URL?.trim();
+  if (configuredAppUrl) {
+    return trimTrailingSlashes(configuredAppUrl);
   }
 
   if (typeof window !== "undefined") {
@@ -20,6 +20,8 @@ export function getReferralBaseUrl() {
     if (hostname === "localhost" || hostname === "127.0.0.1") {
       return trimTrailingSlashes(window.location.origin);
     }
+
+    return trimTrailingSlashes(window.location.origin);
   }
 
   return trimTrailingSlashes(DEFAULT_REFERRAL_BASE_URL);
