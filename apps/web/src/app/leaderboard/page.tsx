@@ -281,6 +281,60 @@ function TableCellValue({
   );
 }
 
+function LeaderboardRow({
+  type,
+  entry,
+  columns,
+  label,
+  avatarSrc,
+  isViewer,
+  badge,
+  animationDelayMs = 0,
+}: {
+  type: LeaderboardBoardType;
+  entry: LeaderboardHubEntry;
+  columns: CSSProperties;
+  label: string;
+  avatarSrc?: string;
+  isViewer?: boolean;
+  badge?: string;
+  animationDelayMs?: number;
+}) {
+  return (
+    <div
+      className={`grid h-10 items-center rounded-[14px] border px-3 ${
+        isViewer
+          ? "border-sky-200 bg-[linear-gradient(135deg,rgba(255,255,255,0.96),rgba(239,246,255,0.94))]"
+          : "border-white/90 bg-white/82"
+      }`}
+      style={{
+        ...columns,
+        animation: "leaderboard-row-in 480ms cubic-bezier(0.22,1,0.36,1) both",
+        animationDelay: `${animationDelayMs}ms`,
+      }}
+    >
+      <div className="truncate text-[11px] font-semibold text-slate-700">#{entry.rank}</div>
+      <div className="flex min-w-0 items-center gap-2">
+        <Avatar
+          src={avatarSrc || ""}
+          label={label}
+          sizeClass="h-[22px] w-[22px]"
+          textClass="text-[8px]"
+        />
+        <div className="min-w-0 flex-1 truncate text-[11px] font-semibold text-slate-950">
+          {label}
+        </div>
+        {badge ? (
+          <span className="rounded-full border border-sky-200 bg-sky-50 px-1.5 py-0.5 text-[8px] font-semibold uppercase tracking-[0.14em] text-sky-700">
+            {badge}
+          </span>
+        ) : null}
+      </div>
+      <TableCellValue type={type} entry={entry} />
+    </div>
+  );
+}
+
 export default function LeaderboardPage() {
   const { address } = useAccount();
   const [selectedBoard, setSelectedBoard] = useState<LeaderboardBoardType>("particle_points");
@@ -301,6 +355,11 @@ export default function LeaderboardPage() {
   const boardColumns = getBoardColumns(selectedBoard);
   const boardHeaders = getBoardHeaders(selectedBoard);
   const tableEntries = leaderboard?.entries ?? [];
+  const pinnedViewerEntry = normalizedAddress && viewer ? viewer : null;
+  const displayEntries = pinnedViewerEntry
+    ? tableEntries.filter((entry) => entry.address.toLowerCase() !== normalizedAddress)
+    : tableEntries;
+  const hasVisibleEntries = Boolean(pinnedViewerEntry) || displayEntries.length > 0;
   const totalPages = leaderboard?.totalPages ?? 1;
   const visiblePages = getVisiblePages(currentPage, totalPages);
 
@@ -575,50 +634,42 @@ export default function LeaderboardPage() {
                 </div>
               ) : null}
 
-              {!isLoadingBoard && !error && !tableEntries.length ? (
+              {!isLoadingBoard && !error && !hasVisibleEntries ? (
                 <div className="rounded-[14px] border border-slate-200/80 bg-white/84 px-3 py-4 text-center text-sm text-slate-500">
                   No leaderboard data yet.
                 </div>
               ) : null}
 
-              {!isLoadingBoard && !error && tableEntries.length ? (
+              {!isLoadingBoard && !error && hasVisibleEntries ? (
                 <div className="space-y-1.5">
-                  {tableEntries.map((entry, index) => {
+                  {pinnedViewerEntry ? (
+                    <LeaderboardRow
+                      type={selectedBoard}
+                      entry={pinnedViewerEntry}
+                      columns={boardColumns}
+                      label={getRowUsername(viewerProfile, pinnedViewerEntry.address)}
+                      avatarSrc={viewerAvatar || pinnedViewerEntry.profile?.pfpUrl || ""}
+                      isViewer
+                      badge="You"
+                    />
+                  ) : null}
+
+                  {displayEntries.map((entry, index) => {
                     const isViewer =
                       Boolean(normalizedAddress) &&
                       entry.address.toLowerCase() === normalizedAddress;
 
                     return (
-                      <div
+                      <LeaderboardRow
                         key={`${selectedBoard}-${entry.userId}-${entry.rank}-${index}`}
-                        className={`grid h-10 items-center rounded-[14px] border px-3 ${
-                          isViewer
-                            ? "border-sky-200 bg-[linear-gradient(135deg,rgba(255,255,255,0.96),rgba(239,246,255,0.94))]"
-                            : "border-white/90 bg-white/82"
-                        }`}
-                        style={{
-                          ...boardColumns,
-                          animation:
-                            "leaderboard-row-in 480ms cubic-bezier(0.22,1,0.36,1) both",
-                          animationDelay: `${index * 40}ms`,
-                        }}
-                      >
-                        <div className="truncate text-[11px] font-semibold text-slate-700">
-                          #{entry.rank}
-                        </div>
-                        <div className="flex min-w-0 items-center gap-2">
-                          <Avatar
-                            src={entry.profile?.pfpUrl || ""}
-                            label={getRowUsername(entry.profile, entry.address)}
-                            sizeClass="h-[22px] w-[22px]"
-                            textClass="text-[8px]"
-                          />
-                          <div className="truncate text-[11px] font-semibold text-slate-950">
-                            {getRowUsername(entry.profile, entry.address)}
-                          </div>
-                        </div>
-                        <TableCellValue type={selectedBoard} entry={entry} />
-                      </div>
+                        type={selectedBoard}
+                        entry={entry}
+                        columns={boardColumns}
+                        label={getRowUsername(entry.profile, entry.address)}
+                        avatarSrc={entry.profile?.pfpUrl || ""}
+                        isViewer={isViewer}
+                        animationDelayMs={index * 40}
+                      />
                     );
                   })}
                 </div>
