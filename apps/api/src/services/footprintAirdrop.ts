@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { getAddress } from "viem";
+import { blockscoutClient } from "./blockscoutClient";
 import { runtimeCache } from "../utils/runtimeCache";
 
 type AllowlistRow = {
@@ -33,10 +34,6 @@ export type FootprintLookupResult = {
 };
 
 const LOOKUP_TTL_MS = 6 * 60 * 60 * 1000;
-const BLOCKSCOUT_BASE_URL = (
-  process.env.BLOCKSCOUT_BASE_URL || "https://api.blockscout.com/8453"
-).replace(/\/+$/, "");
-const BLOCKSCOUT_API_KEY = process.env.BLOCKSCOUT_API_KEY || "";
 
 function normalizeAddress(value: string) {
   return getAddress(value).toLowerCase();
@@ -173,26 +170,7 @@ export class FootprintAirdropService {
         };
       }
 
-      if (!BLOCKSCOUT_API_KEY) {
-        throw new Error("BLOCKSCOUT_API_KEY is not configured for fallback checks");
-      }
-
-      const response = await fetch(
-        `${BLOCKSCOUT_BASE_URL}/api/v2/addresses/${normalizedAddress}/counters?apikey=${encodeURIComponent(
-          BLOCKSCOUT_API_KEY
-        )}`,
-        {
-          headers: {
-            Accept: "application/json",
-          },
-        }
-      );
-
-      if (!response.ok) {
-        throw new Error(`Blockscout counters request failed with ${response.status}`);
-      }
-
-      const payload = (await response.json()) as {
+      const payload = (await blockscoutClient.getAddressCounters(normalizedAddress)) as {
         transactions_count?: unknown;
         token_transfers_count?: unknown;
       };
