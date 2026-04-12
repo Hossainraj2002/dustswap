@@ -8,6 +8,7 @@ import { encodeFunctionData } from "viem";
 import { HistoryIcon } from "@/components/NavIcons";
 import { SpinWheel } from "@/components/spin/SpinWheel";
 import { WalletConnectButton } from "@/components/wallet/WalletConnectButton";
+import { useBaseChainSwitch } from "@/hooks/useBaseChainSwitch";
 import { useWalletConnection } from "@/hooks/useWalletConnection";
 import { emitDataInvalidation, subscribeToDataInvalidation } from "@/lib/clientEvents";
 import { explorerTxUrl } from "@/lib/contracts";
@@ -216,9 +217,10 @@ function SpinHistoryDrawer({
 }
 
 export default function SpinPage() {
-  const { address, isConnected, chainId } = useAccount();
+  const { address, isConnected } = useAccount();
   const { data: walletClient } = useWalletClient();
   const { supportsBaseAccountFeatures } = useWalletConnection();
+  const { isOnBase, isSwitching: isSwitchingToBase, switchToBase } = useBaseChainSwitch();
   const publicClient = usePublicClient();
 
   const [isMounted, setIsMounted] = useState(false);
@@ -241,6 +243,7 @@ export default function SpinPage() {
     !SPIN_CONTRACT_ADDRESS ||
     !walletClient ||
     !publicClient ||
+    isSwitchingToBase ||
     isBusy;
 
   const loadBalance = useCallback(
@@ -352,12 +355,33 @@ export default function SpinPage() {
     }
   }, [historyOpen, loadHistory]);
 
+  const promptSwitchToBase = useCallback(async (successMessage: string) => {
+    try {
+      const switched = await switchToBase();
+
+      if (switched) {
+        setToast({
+          kind: "success",
+          message: successMessage,
+        });
+      }
+
+      return switched;
+    } catch (error) {
+      setToast({
+        kind: "error",
+        message: getErrorMessage(error) || "Please switch your wallet to Base to continue.",
+      });
+      return false;
+    }
+  }, [switchToBase]);
+
   const sendSpinTransaction = useCallback(async () => {
     if (!walletClient || !publicClient || !SPIN_CONTRACT_ADDRESS) {
       throw new Error("Spin contract is not ready yet");
     }
 
-    if (chainId !== BASE_CHAIN_ID) {
+    if (!isOnBase) {
       throw new Error("Switch your wallet to Base before spinning");
     }
 
@@ -464,7 +488,7 @@ export default function SpinPage() {
     }
 
     return hash;
-  }, [address, chainId, publicClient, supportsBaseAccountFeatures, walletClient]);
+  }, [address, isOnBase, publicClient, supportsBaseAccountFeatures, walletClient]);
 
   const handleSpin = useCallback(async () => {
     if (!address || !balance) {
@@ -474,6 +498,15 @@ export default function SpinPage() {
 
     if (balance.spinTickets <= 0) {
       setToast({ kind: "error", message: "You don't have any ticket to spin right now." });
+      return;
+    }
+
+    if (isSwitchingToBase) {
+      return;
+    }
+
+    if (!isOnBase) {
+      await promptSwitchToBase("Wallet switched to Base. Tap spin again to continue.");
       return;
     }
 
@@ -520,7 +553,16 @@ export default function SpinPage() {
         message: getErrorMessage(error) || "Spin transaction failed. Try again.",
       });
     }
-  }, [address, balance, historyOpen, loadHistory, sendSpinTransaction]);
+  }, [
+    address,
+    balance,
+    historyOpen,
+    isOnBase,
+    isSwitchingToBase,
+    loadHistory,
+    promptSwitchToBase,
+    sendSpinTransaction,
+  ]);
 
   if (!isMounted) {
     return null;
@@ -575,6 +617,32 @@ export default function SpinPage() {
             >
               {toast.message}
             </div>
+          ) : null}
+
+          {isConnected && !isOnBase ? (
+            <section className="rounded-[22px] border border-amber-200 bg-amber-50/95 px-4 py-3 shadow-[0_16px_36px_rgba(245,158,11,0.12)]">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <p className="text-[10px] font-black uppercase tracking-[0.24em] text-amber-700">
+                    Base Network Required
+                  </p>
+                  <p className="mt-1 text-sm leading-6 text-amber-900">
+                    Spinning only works on Base. Switch your wallet to Base before using the wheel on this page.
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() =>
+                    void promptSwitchToBase("Wallet switched to Base. You can continue now.")
+                  }
+                  disabled={isSwitchingToBase}
+                  className="inline-flex shrink-0 items-center justify-center rounded-[14px] bg-[linear-gradient(135deg,#f59e0b,#f97316)] px-4 py-2.5 text-sm font-black text-white shadow-[0_12px_28px_rgba(249,115,22,0.22)] transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {isSwitchingToBase ? "Switching..." : "Switch to Base"}
+                </button>
+              </div>
+            </section>
           ) : null}
 
           <section className="overflow-hidden rounded-[30px] border border-white/80 bg-white/82 px-4 py-4 shadow-[0_24px_80px_rgba(148,163,184,0.16)] backdrop-blur-xl sm:px-6 sm:py-6">

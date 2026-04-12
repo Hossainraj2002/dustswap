@@ -8,6 +8,7 @@ import { encodeFunctionData, erc20Abi } from "viem";
 import { DailyCheckInModule } from "@/components/profile/DailyCheckInModule";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { WalletConnectButton } from "@/components/wallet/WalletConnectButton";
+import { useBaseChainSwitch } from "@/hooks/useBaseChainSwitch";
 import { useWalletConnection } from "@/hooks/useWalletConnection";
 import {
   applyReferralCode,
@@ -198,9 +199,10 @@ const PROFILE_FAQ_ITEMS = [
 ] as const;
 
 function ProfilePageContent() {
-  const { address, isConnected, chainId } = useAccount();
+  const { address, isConnected } = useAccount();
   const { data: walletClient } = useWalletClient();
   const { supportsBaseAccountFeatures } = useWalletConnection();
+  const { isOnBase, isSwitching: isSwitchingToBase, switchToBase } = useBaseChainSwitch();
   const publicClient = usePublicClient();
 
   const [isMounted, setIsMounted] = useState(false);
@@ -484,13 +486,34 @@ function ProfilePageContent() {
     }
   }, [address, fetchProfileData, inlineCode, isApplyingInline]);
 
+  const promptSwitchToBase = useCallback(async (successMessage: string) => {
+    try {
+      const switched = await switchToBase();
+
+      if (switched) {
+        setToast({
+          kind: "success",
+          message: successMessage,
+        });
+      }
+
+      return switched;
+    } catch (error) {
+      setToast({
+        kind: "error",
+        message: getErrorMessage(error) || "Please switch your wallet to Base to continue.",
+      });
+      return false;
+    }
+  }, [switchToBase]);
+
   const sendFeeTransaction = useCallback(
     async (config: FeeConfig, asset: "eth" | "usdc") => {
       if (!walletClient || !publicClient) {
         throw new Error("Wallet is not ready");
       }
 
-      if (chainId !== BASE_CHAIN_ID) {
+      if (!isOnBase) {
         throw new Error("Switch your wallet to Base before sending this check-in transaction");
       }
 
@@ -596,7 +619,7 @@ function ProfilePageContent() {
 
       return hash;
     },
-    [chainId, publicClient, supportsBaseAccountFeatures, walletClient]
+    [isOnBase, publicClient, supportsBaseAccountFeatures, walletClient]
   );
 
   const sendBasePayTransaction = useCallback(async (config: FeeConfig) => {
@@ -659,6 +682,15 @@ function ProfilePageContent() {
       return;
     }
 
+    if (isSwitchingToBase) {
+      return;
+    }
+
+    if (!isOnBase) {
+      await promptSwitchToBase("Wallet switched to Base. Tap check-in again to continue.");
+      return;
+    }
+
     setIsCheckingIn(true);
     setCheckInStage("wallet");
 
@@ -699,7 +731,16 @@ function ProfilePageContent() {
       setCheckInStage("idle");
       setIsCheckingIn(false);
     }
-  }, [address, balance, sendCheckInPayment, updateBalanceAndStats, usesBasePayForCheckIn]);
+  }, [
+    address,
+    balance,
+    isOnBase,
+    isSwitchingToBase,
+    promptSwitchToBase,
+    sendCheckInPayment,
+    updateBalanceAndStats,
+    usesBasePayForCheckIn,
+  ]);
 
   const handleReset = useCallback(async () => {
     if (!address) {
@@ -743,6 +784,15 @@ function ProfilePageContent() {
       return;
     }
 
+    if (isSwitchingToBase) {
+      return;
+    }
+
+    if (!isOnBase) {
+      await promptSwitchToBase("Wallet switched to Base. Tap save again to continue.");
+      return;
+    }
+
     setIsSaving(true);
     setRecoveryStage("wallet");
 
@@ -779,7 +829,16 @@ function ProfilePageContent() {
       setRecoveryStage("idle");
       setIsSaving(false);
     }
-  }, [address, balance, sendSavePayment, updateBalanceAndStats, usesBasePayForSave]);
+  }, [
+    address,
+    balance,
+    isOnBase,
+    isSwitchingToBase,
+    promptSwitchToBase,
+    sendSavePayment,
+    updateBalanceAndStats,
+    usesBasePayForSave,
+  ]);
 
   if (!isMounted) {
     return null;
@@ -925,6 +984,32 @@ function ProfilePageContent() {
           </div>
         ) : null}
 
+        {isConnected && !isOnBase ? (
+          <section className="rounded-[22px] border border-amber-200 bg-amber-50/95 px-4 py-3 shadow-[0_16px_36px_rgba(245,158,11,0.12)]">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <p className="text-[10px] font-black uppercase tracking-[0.24em] text-amber-700">
+                  Base Network Required
+                </p>
+                <p className="mt-1 text-sm leading-6 text-amber-900">
+                  Daily check-in and streak save only work on Base. Switch your wallet to Base to continue on this page.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={() =>
+                  void promptSwitchToBase("Wallet switched to Base. You can continue now.")
+                }
+                disabled={isSwitchingToBase}
+                className="inline-flex shrink-0 items-center justify-center rounded-[14px] bg-[linear-gradient(135deg,#f59e0b,#f97316)] px-4 py-2.5 text-sm font-black text-white shadow-[0_12px_28px_rgba(249,115,22,0.22)] transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {isSwitchingToBase ? "Switching..." : "Switch to Base"}
+              </button>
+            </div>
+          </section>
+        ) : null}
+
         <section className="rounded-[28px] border border-white/70 bg-white/82 px-4 py-3 shadow-[0_20px_70px_rgba(15,23,42,0.08)] backdrop-blur sm:px-5 sm:py-4">
           <div className="flex items-center gap-3">
             {profile?.pfp_url ? (
@@ -991,7 +1076,7 @@ function ProfilePageContent() {
           checkInStage={checkInStage}
           recoveryStage={recoveryStage}
           celebration={celebration}
-          walletReady={Boolean(address)}
+          walletReady={Boolean(address) && !isSwitchingToBase}
           onCheckIn={() => void handleCheckIn()}
           onSave={() => void handleSave()}
           onReset={() => void handleReset()}
