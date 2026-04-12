@@ -7,8 +7,10 @@ import {
   isAddress,
   parseAbi,
   type Hex,
+  type SignedAuthorizationList,
 } from "viem";
 import { base } from "viem/chains";
+import { recoverAuthorizationAddress } from "viem/utils";
 import { pointsEngine } from "./pointsEngine";
 import { supabase } from "./supabase";
 
@@ -25,10 +27,23 @@ const WETH_BASE = "0x4200000000000000000000000000000000000006";
 const OPENOCEAN_EXCHANGE_V2 = "0x6352a56caadc4f1e25cd6c75970fa768a3304e64";
 const OPENOCEAN_AGGREGATION_ROUTER = "0x6dd434082eab5cd134628d4b9a6e4d0813ef8b07";
 const ENTRY_POINT_V06_ADDRESS = "0x5ff137d4b0fdcd49dca30c7cf57e578a026d2789";
+const DEFAULT_EIP7702_DELEGATION_MANAGER_ADDRESSES = [
+  "0xdb9b1e94b5b69df7e401ddbede43491141047db3",
+];
 const OPENOCEAN_ROUTER_ADDRESSES = new Set([
   OPENOCEAN_EXCHANGE_V2,
   OPENOCEAN_AGGREGATION_ROUTER,
 ]);
+const EIP7702_DELEGATION_MANAGER_ADDRESSES = new Set(
+  (
+    process.env.EIP7702_DELEGATION_MANAGER_ADDRESSES ||
+    DEFAULT_EIP7702_DELEGATION_MANAGER_ADDRESSES.join(",")
+  )
+    .split(",")
+    .map((address) => address.trim())
+    .filter((address) => isAddress(address))
+    .map((address) => normalizeAddress(address))
+);
 const SWAP_EVENT_ABI = parseAbi([
   "event Swapped(address indexed sender, address indexed srcToken, address indexed dstToken, address dstReceiver, uint256 amount, uint256 spentAmount, uint256 returnAmount, uint256 minReturnAmount, uint256 guaranteedAmount, address referrer)",
 ]);
@@ -466,12 +481,47 @@ function decodeSmartWalletCalls(callData: Hex): SmartWalletExecutionCall[] {
   }));
 }
 
-function resolveSwapRoutingContext(args: {
+function isSupportedDelegationManager(address: string) {
+  return EIP7702_DELEGATION_MANAGER_ADDRESSES.has(normalizeAddress(address));
+}
+
+function isEip7702Transaction(
+  transaction: TransactionRecord
+): transaction is TransactionRecord & { type: "eip7702"; authorizationList?: SignedAuthorizationList } {
+  return transaction.type === "eip7702";
+}
+
+async function resolveAuthorizedEip7702Addresses(
+  transaction: TransactionRecord & { type: "eip7702"; authorizationList?: SignedAuthorizationList }
+) {
+  const authorizationList = transaction.authorizationList;
+  if (!authorizationList?.length) {
+    return [] as string[];
+  }
+
+  try {
+    const addresses = await Promise.all(
+      authorizationList.map(async (authorization) =>
+        normalizeAddress(
+          await recoverAuthorizationAddress({
+            authorization,
+          })
+        )
+      )
+    );
+
+    return [...new Set(addresses)];
+  } catch {
+    throw new UnprocessableSwapError("Unable to validate delegated transaction authorization");
+  }
+}
+
+async function resolveSwapRoutingContext(args: {
   expectedAddress: string;
   transaction: TransactionRecord;
   decodedSwap: DecodedSwapEvent;
   resolvedTransaction: ResolvedSubmittedTransaction;
-}): SwapRoutingContext {
+}): Promise<SwapRoutingContext> {
   const normalizedExpectedAddress = normalizeAddress(args.expectedAddress);
   const transactionTo = args.transaction.to ? normalizeAddress(args.transaction.to) : "";
   const transactionFrom = normalizeAddress(args.transaction.from);
@@ -486,6 +536,35 @@ function resolveSwapRoutingContext(args: {
 
     return {
       routerAddress: transactionTo,
+      senderAddress: args.decodedSwap.sender,
+      viaSmartWallet: false,
+      userOperationHash: args.resolvedTransaction.userOperationHash,
+    };
+  }
+
+  if (isEip7702Transaction(args.transaction) && isSupportedDelegationManager(transactionTo)) {
+    if (!OPENOCEAN_ROUTER_ADDRESSES.has(args.decodedSwap.emitterAddress)) {
+      throw new UnprocessableSwapError(
+        "Delegated transaction did not execute a supported OpenOcean swap"
+      );
+    }
+
+    if (args.decodedSwap.sender !== normalizedExpectedAddress) {
+      throw new UnprocessableSwapError("Swap event sender does not match the connected wallet");
+    }
+
+    const authorizedAddresses = await resolveAuthorizedEip7702Addresses(args.transaction);
+    if (
+      authorizedAddresses.length > 0 &&
+      !authorizedAddresses.includes(normalizedExpectedAddress)
+    ) {
+      throw new UnprocessableSwapError(
+        "Delegated transaction authorization does not belong to this wallet"
+      );
+    }
+
+    return {
+      routerAddress: args.decodedSwap.emitterAddress,
       senderAddress: args.decodedSwap.sender,
       viaSmartWallet: false,
       userOperationHash: args.resolvedTransaction.userOperationHash,
@@ -1149,7 +1228,7 @@ export async function recordSwap(input: {
   const block = await baseClient.getBlock({ blockNumber: receipt.blockNumber });
 
   const decodedSwap = decodeSwapEvent(receipt);
-  const routingContext = resolveSwapRoutingContext({
+  const routingContext = await resolveSwapRoutingContext({
     expectedAddress: normalizedAddress,
     transaction,
     decodedSwap,
