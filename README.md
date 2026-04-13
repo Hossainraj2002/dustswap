@@ -1,226 +1,206 @@
-# 🧹 DustSweep Protocol
+# DustSwap
 
-Turn wallet dust into gold on Base — batch sweep up to 25 dust tokens into ETH/USDC in one Smart Wallet signature, gas sponsored.
+**Trade on Base. Earn progress for the activity you already do.**
 
----
+DustSwap is a Base-first app that combines swapping, quests, daily check-ins, referrals, spin rewards, and leaderboard progress in one product experience.
 
-## Base UX Integrations
+It is built for users who are already active on Base and want something more useful than a simple points page. You use the app, complete actions, track your account, and build momentum over time.
 
-This project uses three Base-specific UX improvements:
+This README is for users and visitors. It covers the live public app only.
 
-### 1. Batch Transactions
-All token approvals + the sweep call are bundled into a single `wallet_sendCalls` batch via `useWriteContracts` (wagmi experimental). Users sign **once** instead of N+1 times.
+## Open DustSwap
 
-- Hook: `apps/web/src/hooks/useDustSweep.ts`
-- Docs: https://docs.base.org/base-account/improve-ux/batch-transactions
+**App**  
+`https://app.dustswap.wtf`
 
-### 2. Sponsored Gas (Paymaster)
-When `NEXT_PUBLIC_PAYMASTER_URL` is set, the batch call includes `paymasterService` capabilities. The paymaster covers gas so users pay **$0 ETH**.
+**Inside Base App**  
+`https://base.app/app/app.dustswap.wtf`
 
-- Set up a paymaster: https://portal.cdp.coinbase.com → Paymaster
-- Docs: https://docs.base.org/base-account/improve-ux/sponsor-gas/paymasters
+**X**  
+`https://x.com/DustswapOnBase`  
+`https://x.com/akbarX402`
 
-### 3. Builder Codes
-`NEXT_PUBLIC_BASE_BUILDER_CODE` is appended as `?builderCode=<code>` to every Alchemy RPC URL. Base rebates a share of gas fees to DustSweep.
+## What DustSwap offers
 
-- Apply at: https://base.org/builders/builder-codes
-- Docs: https://docs.base.org/base-chain/builder-codes/app-developers
+DustSwap brings the public user experience into a few clear surfaces:
 
----
+- Footprint Drop
+- Profile
+- Swap
+- Quests
+- Spin
+- Leaderboard
 
-## Project Structure
+The goal is simple.
 
-```
-dustsweep/
-├── packages/
-│   └── contracts/          ← Foundry smart contracts
-│       ├── src/
-│       │   ├── FeeCollector.sol
-│       │   ├── BurnVault.sol
-│       │   └── DustSweepRouter.sol
-│       ├── test/
-│       │   └── DustSweepRouter.t.sol
-│       └── script/
-│           └── Deploy.s.sol
-└── apps/
-    ├── web/                ← Next.js 14 frontend
-    │   └── src/
-    │       ├── app/
-    │       │   ├── providers.tsx   ← wagmi + paymaster + builder code
-    │       │   ├── page.tsx        ← Landing page
-    │       │   └── app/
-    │       │       ├── dust-sweep/ ← Main feature
-    │       │       ├── particles/  ← Points dashboard
-    │       │       ├── swap/       ← OnchainKit swap
-    │       │       ├── burn/       ← Burn & reclaim
-    │       │       └── dust-bridge/
-    │       ├── components/
-    │       │   └── Navbar.tsx
-    │       ├── hooks/
-    │       │   ├── useDustSweep.ts  ← Batch TX + paymaster
-    │       │   └── useBurnVault.ts  ← Batch TX + paymaster
-    │       └── lib/
-    │           └── contracts.ts
-    └── api/                ← Express backend
-        └── src/
-            ├── index.ts
-            ├── schema.sql          ← Run in Supabase SQL Editor
-            ├── routes/
-            │   ├── health.ts
-            │   ├── tokens.ts
-            │   └── points.ts
-            └── services/
-                ├── tokenDiscovery.ts
-                └── pointsEngine.ts
-```
+Instead of trading in one place, tracking rewards in another place, and checking campaign progress somewhere else, DustSwap connects those actions inside one Base-focused flow.
 
----
+## Why people use DustSwap
 
-## Quick Start
+Users come to DustSwap to:
 
-### 1. Prerequisites
-- Node.js v20+, pnpm, Git
-- Foundry (`curl -L https://foundry.paradigm.xyz | bash && foundryup`)
-- Accounts: Alchemy, Supabase, Coinbase CDP
+- swap through a live Base-first interface
+- claim eligible Footprint Drop rewards
+- check in daily and build streaks
+- complete quests
+- use spin tickets
+- invite friends through referrals
+- track rank and progress over time
 
-### 2. Install dependencies
+DustSwap adds a progression layer around normal user activity so the app feels active every day, not just during one campaign.
 
-```bash
-# Frontend
-cd apps/web && pnpm install
+## Public app flow
 
-# Backend
-cd apps/api && pnpm install
-```
+### 1. Footprint Drop
 
-### 3. Configure environment
+The landing flow lets you check whether a wallet is eligible for a PP airdrop.
 
-```bash
-# Contracts
-cp packages/contracts/.env.example packages/contracts/.env
-# Fill in BASE_SEPOLIA_RPC_URL and DEPLOYER_PRIVATE_KEY
+You can paste an address to preview eligibility. Claiming is tied to the connected wallet.
 
-# Frontend
-cp apps/web/.env.example apps/web/.env.local
-# Fill in ALCHEMY, ONCHAINKIT keys, contract addresses after deploy
+This is the main entry point for new users who want to see whether they already qualify before exploring the rest of the app.
 
-# Backend
-cp apps/api/.env.example apps/api/.env
-# Fill in ALCHEMY, SUPABASE, REDIS
-```
+### 2. Profile
 
-### 4. Deploy contracts to Base Sepolia
+Profile is your main account hub.
 
-```bash
-cd packages/contracts
+This is where you can see your current standing inside DustSwap, including things like:
 
-# Install dependencies
-forge install OpenZeppelin/openzeppelin-contracts --no-commit
+- total PP
+- rank
+- all-time swap volume
+- referral progress
+- daily streak status
+- personal referral link
 
-# Run tests
-forge test -vvv
+If you want to understand your account at a glance, this is the page that matters most.
 
-# Deploy
-forge script script/Deploy.s.sol:Deploy \
-  --rpc-url $BASE_SEPOLIA_RPC_URL \
-  --broadcast --verify -vvv
+### 3. Daily check-in
 
-# Copy printed addresses into apps/web/.env.local
-```
+DustSwap rewards consistency through daily check-ins.
 
-### 5. Set up Supabase database
+A successful check-in currently gives users:
 
-1. Go to https://app.supabase.com → your project → SQL Editor
-2. Open and run `apps/api/src/schema.sql`
+- 100 base PP
+- 3 spin tickets
+- a 10% boost step on self-earned PP, up to the in-app cap
 
-### 6. Start development
+There is also a very small anti-abuse fee attached to check-in.
 
-```bash
-# Terminal 1: Backend
-cd apps/api && pnpm dev
+For regular users, this is one of the easiest daily actions to keep account progress moving.
 
-# Terminal 2: Frontend
-cd apps/web && pnpm dev
+### 4. Swap
 
-# Open http://localhost:3000
-```
+Swap is one of the core public surfaces of the app.
 
----
+DustSwap uses OpenOcean in the backend for routing, while DustSwap adds the user-facing product layer around it through quests, points, streaks, referrals, and leaderboard progression.
 
-## Environment Variables Reference
+For users, the flow is straightforward:
 
-### `apps/web/.env.local`
+- connect wallet
+- open Swap
+- trade on Base
+- let activity feed into the rest of the app experience
 
-| Variable | Required | Description |
-|---|---|---|
-| `NEXT_PUBLIC_ALCHEMY_API_KEY` | ✅ | Alchemy API key |
-| `NEXT_PUBLIC_ONCHAINKIT_API_KEY` | ✅ | From portal.cdp.coinbase.com |
-| `NEXT_PUBLIC_PAYMASTER_URL` | Optional | Enables sponsored gas |
-| `NEXT_PUBLIC_BASE_BUILDER_CODE` | Optional | Earns gas fee rebates |
-| `NEXT_PUBLIC_ROUTER_ADDRESS` | ✅ | Deployed DustSweepRouter |
-| `NEXT_PUBLIC_BURN_VAULT_ADDRESS` | ✅ | Deployed BurnVault |
-| `NEXT_PUBLIC_NETWORK` | ✅ | `testnet` or `mainnet` |
+### 5. Quests
 
-### `apps/api/.env`
+Quests turn activity into structured progress.
 
-| Variable | Required | Description |
-|---|---|---|
-| `ALCHEMY_API_KEY` | ✅ | For token scanning |
-| `SUPABASE_URL` | ✅ | Database |
-| `SUPABASE_ANON_KEY` | ✅ | Database auth |
-| `REDIS_URL` | Optional | Caching |
+Depending on what is live, quests can include onchain actions, social tasks, campaign goals, and progression milestones. Completing them helps users earn PP and move forward in the app.
 
----
+The coFounder Pass path also lives here.
 
-## Points System
+### 6. Spin
 
-| Action | Points | Multiplier | Daily Cap |
-|---|---|---|---|
-| Daily check-in | 50 | 1× | 50 |
-| Swap | 50 | 1× | 500 |
-| Dust sweep (per token) | 50 | **5×** = 250 | 5,000 |
-| Dust bridge (per token) | 50 | **10×** = 500 | 10,000 |
-| Burn (per token) | 50 | **2×** = 100 | 2,000 |
-| Referral signup | 500 | — | — |
-| Referral commission | 10% of referee | ongoing | — |
-| 7-day streak bonus | 500 | — | — |
-| 30-day streak bonus | 5,000 | — | — |
-| 90-day streak bonus | 20,000 | — | — |
+Spin tickets are earned through daily check-in.
 
----
+On the Spin page, users can spend tickets on the reward wheel. This adds a light daily reward loop on top of the main product usage.
 
-## Deployment
+Spin is not the core of DustSwap. It works best as a companion to the rest of the app.
 
-### Frontend → Vercel
-```bash
-# Push to GitHub, then import at vercel.com
-# Set root directory: apps/web
-# Add all NEXT_PUBLIC_ env vars
-```
+### 7. Leaderboard
 
-### Backend → Railway
-```bash
-# Import GitHub repo at railway.app
-# Set root directory: apps/api
-# Start command: pnpm start
-# Add all env vars
-```
+The leaderboard shows how users rank across the app.
 
-### Contracts → Base Mainnet
-```bash
-# Update .env with BASE_RPC_URL
-# Change Deploy.s.sol uniRouter to mainnet address
-# forge script script/Deploy.s.sol:Deploy --rpc-url $BASE_RPC_URL --broadcast --verify
-```
+The public experience is centered around performance across areas such as:
 
----
+- total PP
+- referrals
+- volume-related progress
 
-## Security Notes
+This is where users can compare their standing with the wider community.
 
-- Contracts use OpenZeppelin ReentrancyGuard on all state-changing functions
-- Emergency pause on DustSweepRouter for incident response
-- Token rescue functions for stuck funds
-- Max batch size: 25 tokens per sweep
-- Fee ceiling: 5% (hardcoded `MAX_FEE_BPS`)
-- Run `slither packages/contracts/src/` before mainnet deployment
-# dustswap
+## How PP works
+
+PP is the main progression unit inside DustSwap.
+
+In the live app, PP can come from multiple sources, including:
+
+- Footprint Drop claims
+- daily check-ins
+- quests
+- referrals
+- spin rewards
+
+PP is used to reflect account participation across the DustSwap experience.
+
+Because campaign mechanics can change, the live app and official X accounts should always be treated as the current source of truth.
+
+## Referrals
+
+DustSwap includes a built-in referral system.
+
+If a new user joins with a valid referral code, both sides receive the signup reward shown in the app. After that, inviters can continue earning according to the live referral rules.
+
+Each user can access their referral link directly from Profile.
+
+## coFounder Pass
+
+DustSwap also includes a coFounder Pass path for early users.
+
+This appears in the public app through a dedicated quest track. Users complete the required tasks, and the app tracks completion against the live requirements.
+
+If you care about early user positioning, Quests is the place to watch.
+
+## Public navigation summary
+
+For most users, the product is easy to understand:
+
+**Landing**  
+Check Footprint Drop eligibility and enter from the official app.
+
+**Profile**  
+Track your account, rank, streak, referrals, and PP.
+
+**Swap**  
+Use the live swap experience on Base.
+
+**Quests**  
+Complete social and onchain tasks.
+
+**Spin**  
+Use daily tickets.
+
+**Leaderboard**  
+Track rankings and community progress.
+
+This README intentionally leaves out non-public and experimental areas.
+
+## Trust and safety
+
+Always use the official links listed above.
+
+Before connecting your wallet, verify the domain and review transaction details carefully. As with any onchain app, users should pay attention to network selection, token approvals, wallet prompts, and transaction confirmations.
+
+## Stay updated
+
+For launches, campaign changes, and public product updates, follow:
+
+**DustSwap on X**  
+`https://x.com/DustswapOnBase`
+
+**Founder updates**  
+`https://x.com/akbarX402`
+
+## One-line version
+
+DustSwap is a Base-first app that turns swapping, quests, check-ins, referrals, and account progress into one connected user experience.
