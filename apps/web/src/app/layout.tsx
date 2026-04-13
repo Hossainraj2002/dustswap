@@ -67,6 +67,8 @@ export const metadata: Metadata = {
     "base:app_id": "6992d2eae0d5d2cf831b5db6",
     "fc:miniapp": baseEmbed,
     "fc:frame": baseEmbed,
+    "talentapp:project_verification":
+      "e88e47328a568a737d6e72f1e0603703a0b9af09f56f7cd67ce4cce5c4bf0ae1dc639c4aa5a9644a06c5e0c3f93e41637edf05f3bab1db80201c71ebf3afb86a",
   },
   manifest: "/manifest.json",
 };
