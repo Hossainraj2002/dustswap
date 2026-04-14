@@ -343,14 +343,25 @@ pointsRoutes.get("/leaderboard", async (c) => {
 // POST /api/points/referral/apply
 pointsRoutes.post("/referral/apply", async (c) => {
   const body = await c.req.json<{ address?: string; referralCode?: string }>();
-  if (!body.address || !body.referralCode) {
-    return c.json({ error: "address and referralCode required" }, 400);
+  const address = body.address?.trim();
+  const referralCode = body.referralCode?.trim();
+
+  if (!address || !referralCode) {
+    return c.json({ success: false, error: "address and referralCode required" }, 400);
   }
+
   try {
-    await pointsEngine.applyReferral(body.address, body.referralCode);
-    return c.json({ success: true, message: "Referral applied!" });
+    const result = await pointsEngine.applyReferral(address, referralCode);
+    return c.json({
+      success: true,
+      message: result.message,
+      idempotent: result.idempotent === true,
+    });
   } catch (e: unknown) {
-    return c.json({ success: false, error: (e as Error).message }, 400);
+    const message = (e as Error).message;
+    const status = message === "Referral application already in progress" ? 409 : 400;
+
+    return c.json({ success: false, error: message }, status);
   }
 });
 

@@ -78,6 +78,7 @@ const SPIN_CONTRACT_ADDRESS = (
 ).toLowerCase();
 const ENTRY_POINT_V06_ADDRESS = "0x5ff137d4b0fdcd49dca30c7cf57e578a026d2789";
 const DEFAULT_ETH_PRICE_USD = Number(process.env.DEFAULT_ETH_PRICE_USD || "3500");
+const REFERRAL_APPLY_IDEMPOTENCY_TTL_MS = 10 * 60 * 1000;
 const PRICE_SCALE = 100_000_000;
 const WEI_PER_ETH = 10n ** 18n;
 const POINTS_SUMMARY_CACHE_TTL_MS = 15_000;
@@ -162,6 +163,12 @@ type LeaderboardHubResponse = {
   totalParticlePoints: number;
   viewer: LeaderboardEntry | null;
   entries: LeaderboardEntry[];
+};
+
+type ReferralApplyResult = {
+  applied: boolean;
+  message: string;
+  idempotent?: boolean;
 };
 
 type DailyAssetPriceRecord = {
@@ -570,6 +577,54 @@ function pickSpinReward() {
 }
 
 export class PointsEngine {
+  private readonly referralApplyInflight = new Map<
+    string,
+    {
+      code: string;
+      promise: Promise<ReferralApplyResult>;
+    }
+  >();
+  private readonly referralApplyRecent = new Map<
+    string,
+    {
+      code: string;
+      result: ReferralApplyResult;
+      expiresAt: number;
+    }
+  >();
+
+  private getReferralApplyKey(address: string) {
+    return address.trim().toLowerCase();
+  }
+
+  private getRecentReferralApply(address: string) {
+    const key = this.getReferralApplyKey(address);
+    const cached = this.referralApplyRecent.get(key);
+
+    if (!cached) {
+      return null;
+    }
+
+    if (cached.expiresAt <= Date.now()) {
+      this.referralApplyRecent.delete(key);
+      return null;
+    }
+
+    return cached;
+  }
+
+  private rememberReferralApply(
+    address: string,
+    code: string,
+    result: ReferralApplyResult
+  ) {
+    this.referralApplyRecent.set(this.getReferralApplyKey(address), {
+      code,
+      result,
+      expiresAt: Date.now() + REFERRAL_APPLY_IDEMPOTENCY_TTL_MS,
+    });
+  }
+
   async getOrCreate(address: string): Promise<UserRecord> {
     const norm = address.toLowerCase();
     const { data } = await supabase.from("users").select("*").eq("address", norm).single();
@@ -2758,13 +2813,68 @@ export class PointsEngine {
     return { valid: true, normalizedCode, message: "Valid referral code! Apply to get 500 PP." };
   }
 
-  async applyReferral(userAddress: string, code: string): Promise<void> {
-    const user = await this.getOrCreate(userAddress);
-    if (user.referred_by) {
-      throw new Error("Already referred");
+  async applyReferral(
+    userAddress: string,
+    code: string
+  ): Promise<ReferralApplyResult> {
+    const normalizedAddress = this.getReferralApplyKey(userAddress);
+    const normalizedCode = code.trim().toUpperCase();
+
+    if (!normalizedAddress || !normalizedCode) {
+      throw new Error("address and referralCode required");
     }
 
-    const normalizedCode = code.trim().toUpperCase();
+    const recent = this.getRecentReferralApply(normalizedAddress);
+    if (recent && recent.code === normalizedCode) {
+      return {
+        ...recent.result,
+        idempotent: true,
+      };
+    }
+
+    const inflight = this.referralApplyInflight.get(normalizedAddress);
+    if (inflight) {
+      if (inflight.code === normalizedCode) {
+        return inflight.promise;
+      }
+
+      throw new Error("Referral application already in progress");
+    }
+
+    const request = this.applyReferralOnce(
+      normalizedAddress,
+      normalizedCode
+    ).finally(() => {
+      const current = this.referralApplyInflight.get(normalizedAddress);
+      if (current?.promise === request) {
+        this.referralApplyInflight.delete(normalizedAddress);
+      }
+    });
+
+    this.referralApplyInflight.set(normalizedAddress, {
+      code: normalizedCode,
+      promise: request,
+    });
+
+    return request;
+  }
+
+  private async applyReferralOnce(
+    userAddress: string,
+    normalizedCode: string
+  ): Promise<ReferralApplyResult> {
+    const user = await this.getOrCreate(userAddress);
+    if (user.referred_by) {
+      const recent = this.getRecentReferralApply(userAddress);
+      if (recent && recent.code === normalizedCode) {
+        return {
+          ...recent.result,
+          idempotent: true,
+        };
+      }
+
+      throw new Error("Already referred");
+    }
 
     const { data: referrer } = await supabase
       .from("users")
@@ -2814,6 +2924,15 @@ export class PointsEngine {
 
     this.invalidateUserReadCaches(userAddress);
     this.invalidateUserReadCaches((referrer as UserRecord).address);
+
+    const result = {
+      applied: true,
+      message: "Referral applied!",
+    } satisfies ReferralApplyResult;
+
+    this.rememberReferralApply(userAddress, normalizedCode, result);
+
+    return result;
   }
 }
 
