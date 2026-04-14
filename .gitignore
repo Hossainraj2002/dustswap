@@ -12,6 +12,7 @@ node_modules/
 # Build outputs
 dist/
 .next/
+.open-next/
 out/
 build/
 
