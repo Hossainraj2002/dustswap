@@ -1,18 +1,5 @@
 import type { AdminQuestInput, QuestBoardResponse } from "@/types/quests";
-
-const DEFAULT_API_URL = "http://localhost:3001";
-
-function normalizeApiOrigin(value: string) {
-  return value.replace(/\/+$/, "").replace(/\/api$/, "");
-}
-
-function getApiOrigin() {
-  if (typeof window !== "undefined") {
-    return window.location.origin;
-  }
-
-  return normalizeApiOrigin(process.env.NEXT_PUBLIC_API_URL || DEFAULT_API_URL);
-}
+import { buildPublicApiUrl } from "@/lib/apiBase";
 
 async function parseJson<T>(response: Response): Promise<T> {
   const text = await response.text();
@@ -20,7 +7,7 @@ async function parseJson<T>(response: Response): Promise<T> {
 }
 
 export function getQuestsApiUrl(path = "") {
-  return `${getApiOrigin()}/api/quests${path}`;
+  return buildPublicApiUrl(`/api/quests${path}`);
 }
 
 export async function fetchQuestBoard(address?: string) {

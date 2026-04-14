@@ -47,8 +47,6 @@ interface PointsData {
   totalPoints: number;
 }
 
-const POINTS_FALLBACK_REFRESH_MS = 180000;
-
 function NavBadgeIcon({
   Icon,
   active,
@@ -124,11 +122,6 @@ export function Navbar() {
         void fetchPoints({ force: true });
       }
     };
-    const interval = window.setInterval(() => {
-      if (document.visibilityState === "visible") {
-        void fetchPoints({ force: true });
-      }
-    }, POINTS_FALLBACK_REFRESH_MS);
 
     window.addEventListener("focus", handleFocus);
     document.addEventListener("visibilitychange", handleVisibilityChange);
@@ -137,7 +130,6 @@ export function Navbar() {
       unsubscribe();
       window.removeEventListener("focus", handleFocus);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
-      window.clearInterval(interval);
     };
   }, [fetchPoints, address]);
 

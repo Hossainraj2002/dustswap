@@ -21,7 +21,6 @@ type PendingState = Record<string, boolean>;
 type PostInputState = Record<string, string>;
 type QuestInlineErrorState = Record<string, string>;
 
-const BOARD_FALLBACK_REFRESH_MS = 120000;
 const GENERAL_CAMPAIGN_KEY = "general";
 const COFOUNDER_PASS_CAMPAIGN_KEY = "cofounder_pass";
 
@@ -338,13 +337,22 @@ export function QuestBoard() {
   }, []);
 
   useEffect(() => {
-    const interval = window.setInterval(() => {
+    const handleFocus = () => {
+      void loadBoard({ silent: true });
+    };
+    const handleVisibilityChange = () => {
       if (document.visibilityState === "visible") {
         void loadBoard({ silent: true });
       }
-    }, BOARD_FALLBACK_REFRESH_MS);
+    };
 
-    return () => window.clearInterval(interval);
+    window.addEventListener("focus", handleFocus);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      window.removeEventListener("focus", handleFocus);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
   }, [loadBoard]);
 
   useEffect(() => {

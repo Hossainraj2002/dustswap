@@ -13,6 +13,7 @@ import {
 } from "@/lib/paymaster";
 import { BASE_CHAIN_ID } from "@/lib/tokens";
 import { emitDataInvalidation } from "@/lib/clientEvents";
+import { buildPublicApiUrl } from "@/lib/apiBase";
 import { clearPointsSummaryCache } from "@/lib/points";
 
 const STORAGE_KEY = "dustswap.swap.capture.queue";
@@ -397,7 +398,7 @@ function getProviderCandidates(
 }
 
 async function postSwapRecord(item: CaptureQueueItem) {
-  const response = await fetch("/api/swaps/record", {
+  const response = await fetch(buildPublicApiUrl("/api/swaps/record"), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",

@@ -23,7 +23,7 @@ import {
   type ReferralStats,
   type UserStats,
 } from "@/lib/points";
-import { emitDataInvalidation } from "@/lib/clientEvents";
+import { emitDataInvalidation, subscribeToDataInvalidation } from "@/lib/clientEvents";
 import {
   buildReferralLink,
   buildReferralLandingPath,
@@ -61,7 +61,6 @@ type CelebrationState =
 
 type FlowStage = "idle" | "wallet" | "verifying";
 type FeeConfig = NonNullable<PointsBalance["checkInConfig"]>;
-const PROFILE_FALLBACK_REFRESH_MS = 180000;
 
 function getErrorMessage(error: unknown) {
   if (error instanceof Error && error.message) {
@@ -228,6 +227,8 @@ function ProfilePageContent() {
   const [inlineSuccess, setInlineSuccess] = useState(false);
   const [inlineValidation, setInlineValidation] = useState<InlineValidation>({ status: "idle" });
   const inlineDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const silentRefreshPromiseRef = useRef<Promise<void> | null>(null);
+  const lastSilentRefreshAtRef = useRef(0);
   const [isCheckingIn, setIsCheckingIn] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isResetting, setIsResetting] = useState(false);
@@ -321,6 +322,32 @@ function ProfilePageContent() {
     [address, applySummary]
   );
 
+  const refreshProfileDataSilently = useCallback(() => {
+    if (!address) {
+      return Promise.resolve();
+    }
+
+    if (silentRefreshPromiseRef.current) {
+      return silentRefreshPromiseRef.current;
+    }
+
+    const now = Date.now();
+    if (now - lastSilentRefreshAtRef.current < 250) {
+      return Promise.resolve();
+    }
+
+    lastSilentRefreshAtRef.current = now;
+
+    const request = fetchProfileData({ force: true, silent: true }).finally(() => {
+      if (silentRefreshPromiseRef.current === request) {
+        silentRefreshPromiseRef.current = null;
+      }
+    });
+
+    silentRefreshPromiseRef.current = request;
+    return request;
+  }, [address, fetchProfileData]);
+
   const fetchNeynarProfile = useCallback(async () => {
     if (!address) {
       setProfile(null);
@@ -364,23 +391,23 @@ function ProfilePageContent() {
   }, [fetchNeynarProfile, fetchProfileData, isConnected]);
 
   useEffect(() => {
+    silentRefreshPromiseRef.current = null;
+    lastSilentRefreshAtRef.current = 0;
+  }, [address]);
+
+  useEffect(() => {
     if (!address) {
       return;
     }
 
     const handleFocus = () => {
-      void fetchProfileData({ force: true, silent: true });
+      void refreshProfileDataSilently();
     };
     const handleVisibilityChange = () => {
       if (document.visibilityState === "visible") {
-        void fetchProfileData({ force: true, silent: true });
+        void refreshProfileDataSilently();
       }
     };
-    const interval = window.setInterval(() => {
-      if (document.visibilityState === "visible") {
-        void fetchProfileData({ force: true, silent: true });
-      }
-    }, PROFILE_FALLBACK_REFRESH_MS);
 
     window.addEventListener("focus", handleFocus);
     document.addEventListener("visibilitychange", handleVisibilityChange);
@@ -388,9 +415,25 @@ function ProfilePageContent() {
     return () => {
       window.removeEventListener("focus", handleFocus);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
-      window.clearInterval(interval);
     };
-  }, [address, fetchProfileData]);
+  }, [address, refreshProfileDataSilently]);
+
+  useEffect(() => {
+    if (!address) {
+      return;
+    }
+
+    const handleInvalidation = () => {
+      void refreshProfileDataSilently();
+    };
+    const unsubscribeProfile = subscribeToDataInvalidation("profile", handleInvalidation);
+    const unsubscribePoints = subscribeToDataInvalidation("points", handleInvalidation);
+
+    return () => {
+      unsubscribeProfile();
+      unsubscribePoints();
+    };
+  }, [address, refreshProfileDataSilently]);
 
   useEffect(() => {
     if (!pendingReferralCode || referral?.hasReferrer !== true) {
@@ -479,12 +522,12 @@ function ProfilePageContent() {
       clearPointsSummaryCache(address);
       emitDataInvalidation(["leaderboard", "points"], "referral-applied");
       setToast({ kind: "success", message: "Referral linked! +500 PP on the way." });
-      await fetchProfileData({ force: true, silent: true });
+      await refreshProfileDataSilently();
     } catch {
       setInlineError("Something went wrong. Please try again.");
       setIsApplyingInline(false);
     }
-  }, [address, fetchProfileData, inlineCode, isApplyingInline]);
+  }, [address, inlineCode, isApplyingInline, refreshProfileDataSilently]);
 
   const promptSwitchToBase = useCallback(async (successMessage: string) => {
     try {

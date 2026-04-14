@@ -1,18 +1,5 @@
 import type { SpinRewardKey, SpinRewardKind } from "@/lib/spin";
-
-const DEFAULT_API_URL = "http://localhost:3001";
-
-function normalizeApiOrigin(value: string) {
-  return value.replace(/\/+$/, "").replace(/\/api$/, "");
-}
-
-function getApiOrigin() {
-  if (typeof window !== "undefined") {
-    return window.location.origin;
-  }
-
-  return normalizeApiOrigin(process.env.NEXT_PUBLIC_API_URL || DEFAULT_API_URL);
-}
+import { buildPublicApiUrl } from "@/lib/apiBase";
 
 async function parseJson<T>(response: Response): Promise<T> {
   const text = await response.text();
@@ -193,7 +180,7 @@ export function clearPointsSummaryCache(address?: string) {
 }
 
 export function getPointsApiUrl(path = "") {
-  return `${getApiOrigin()}/api/points${path}`;
+  return buildPublicApiUrl(`/api/points${path}`);
 }
 
 export async function fetchPointsBalance(address: string) {
