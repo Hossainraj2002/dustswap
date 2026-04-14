@@ -4,10 +4,13 @@
   "private": true,
   "scripts": {
     "dev": "next dev --port 3000",
-    "build": "next build",
+    "build": "node --max-old-space-size=4096 ./node_modules/next/dist/bin/next build",
     "start": "next start --port 3000",
     "lint": "next lint",
-    "type-check": "tsc --noEmit"
+    "type-check": "tsc --noEmit",
+    "preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
+    "deploy": "opennextjs-cloudflare build && opennextjs-cloudflare deploy -- --keep-vars",
+    "cf-typegen": "wrangler types --env-interface CloudflareEnv cloudflare-env.d.ts"
   },
   "dependencies": {
     "@base-org/account": "2.4.0",
@@ -24,6 +27,7 @@
     "@privy-io/chains": "^0.1.4",
     "@privy-io/react-auth": "^3.21.0",
     "@privy-io/wagmi": "^4.0.4",
+    "pino-pretty": "^10.3.1",
     "@solana/wallet-adapter-react": "^0.15.39",
     "@solana/web3.js": "^1.98.4",
     "@tanstack/react-query": "^5.62.0",
@@ -37,6 +41,7 @@
     "wagmi": "^3.0.0"
   },
   "devDependencies": {
+    "@opennextjs/cloudflare": "1.8.2",
     "@tailwindcss/forms": "^0.5.9",
     "@types/lodash": "^4.17.24",
     "@types/node": "^22.10.5",
@@ -47,6 +52,7 @@
     "eslint-config-next": "15.1.3",
     "postcss": "^8.4.49",
     "tailwindcss": "^3.4.17",
-    "typescript": "^5.7.3"
+    "typescript": "^5.7.3",
+    "wrangler": "^4.37.0"
   }
 }
