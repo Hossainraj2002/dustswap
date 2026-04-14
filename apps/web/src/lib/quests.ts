@@ -1,6 +1,27 @@
 import type { AdminQuestInput, QuestBoardResponse } from "@/types/quests";
 import { buildPublicApiUrl } from "@/lib/apiBase";
 
+const SAVE_X_USERNAME_RECENT_TTL_MS = 15_000;
+const saveXUsernameRecent = new Map<
+  string,
+  {
+    expiresAt: number;
+    value: {
+      success: boolean;
+      username?: string;
+      error?: string;
+    };
+  }
+>();
+const saveXUsernameInflight = new Map<
+  string,
+  Promise<{
+    success: boolean;
+    username?: string;
+    error?: string;
+  }>
+>();
+
 async function parseJson<T>(response: Response): Promise<T> {
   const text = await response.text();
   return text ? (JSON.parse(text) as T) : ({} as T);
@@ -16,6 +37,10 @@ function normalizeQuestsPath(path = "") {
 
 export function getQuestsApiUrl(path = "") {
   return buildPublicApiUrl(normalizeQuestsPath(path));
+}
+
+function getSaveXUsernameCacheKey(address: string, username: string) {
+  return `${address.toLowerCase()}:${username.trim().toLowerCase()}`;
 }
 
 export async function fetchQuestBoard(address?: string) {
@@ -135,19 +160,52 @@ export async function syncSwapQuestActivity(
 }
 
 export async function saveXUsername(address: string, username: string) {
-  const response = await fetch(getQuestsApiUrl("/x/username"), {
+  const cacheKey = getSaveXUsernameCacheKey(address, username);
+  const recent = saveXUsernameRecent.get(cacheKey);
+
+  if (recent && recent.expiresAt > Date.now()) {
+    return recent.value;
+  }
+
+  if (recent) {
+    saveXUsernameRecent.delete(cacheKey);
+  }
+
+  const inflight = saveXUsernameInflight.get(cacheKey);
+  if (inflight) {
+    return inflight;
+  }
+
+  const request = fetch(getQuestsApiUrl("/x/username"), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
     },
     body: JSON.stringify({ address, username }),
-  });
+  })
+    .then((response) =>
+      parseJson<{
+        success: boolean;
+        username?: string;
+        error?: string;
+      }>(response)
+    )
+    .then((data) => {
+      if (data.success) {
+        saveXUsernameRecent.set(cacheKey, {
+          expiresAt: Date.now() + SAVE_X_USERNAME_RECENT_TTL_MS,
+          value: data,
+        });
+      }
 
-  return parseJson<{
-    success: boolean;
-    username?: string;
-    error?: string;
-  }>(response);
+      return data;
+    })
+    .finally(() => {
+      saveXUsernameInflight.delete(cacheKey);
+    });
+
+  saveXUsernameInflight.set(cacheKey, request);
+  return request;
 }
 
 export async function fetchAdminQuests(adminToken: string) {

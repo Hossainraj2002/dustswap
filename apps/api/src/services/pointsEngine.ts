@@ -81,8 +81,11 @@ const DEFAULT_ETH_PRICE_USD = Number(process.env.DEFAULT_ETH_PRICE_USD || "3500"
 const REFERRAL_APPLY_IDEMPOTENCY_TTL_MS = 10 * 60 * 1000;
 const PRICE_SCALE = 100_000_000;
 const WEI_PER_ETH = 10n ** 18n;
+const USER_CREATE_MAX_ATTEMPTS = 5;
+const REFERRAL_LEDGER_UPDATE_MAX_ATTEMPTS = 5;
 const POINTS_SUMMARY_CACHE_TTL_MS = 15_000;
 const LEADERBOARD_CACHE_TTL_MS = 60_000;
+const FOOTPRINT_STATUS_CACHE_TTL_MS = 12_000;
 const ENTRY_POINT_HANDLE_OPS_ABI = parseAbi([
   "function handleOps((address sender,uint256 nonce,bytes initCode,bytes callData,uint256 callGasLimit,uint256 verificationGasLimit,uint256 preVerificationGas,uint256 maxFeePerGas,uint256 maxPriorityFeePerGas,bytes paymasterAndData,bytes signature)[] ops,address beneficiary)",
 ]);
@@ -625,36 +628,120 @@ export class PointsEngine {
     });
   }
 
-  async getOrCreate(address: string): Promise<UserRecord> {
-    const norm = address.toLowerCase();
-    const { data } = await supabase.from("users").select("*").eq("address", norm).single();
-    if (data) {
-      const user = data as UserRecord;
-      if (!user.referral_code) {
-        const code = genCode();
-        await supabase.from("users").update({ referral_code: code }).eq("id", user.id);
-        user.referral_code = code;
-      }
+  private normalizeStoredAddress(address: string) {
+    return address.trim().toLowerCase();
+  }
+
+  private async loadUserByNormalizedAddress(normalizedAddress: string) {
+    const { data, error } = await supabase
+      .from("users")
+      .select("*")
+      .eq("address", normalizedAddress)
+      .maybeSingle();
+
+    if (error) {
+      throw new Error(`Load existing user: ${error.message}`);
+    }
+
+    return (data as UserRecord | null) ?? null;
+  }
+
+  private async ensureReferralCode(user: UserRecord) {
+    if (user.referral_code) {
       return user;
     }
 
-    const { data: nu, error } = await supabase
-      .from("users")
-      .insert({
-        address: norm,
-        referral_code: genCode(),
-        total_points: 0,
-        current_streak: 0,
-        longest_streak: 0,
-      })
-      .select()
-      .single();
+    const normalizedAddress = this.normalizeStoredAddress(user.address);
 
-    if (error) {
-      throw new Error(`Create user: ${error.message}`);
+    for (let attempt = 0; attempt < USER_CREATE_MAX_ATTEMPTS; attempt += 1) {
+      const existing = await this.loadUserByNormalizedAddress(normalizedAddress);
+      if (existing?.referral_code) {
+        return existing;
+      }
+
+      const { error } = await supabase
+        .from("users")
+        .update({
+          referral_code: genCode(),
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", user.id);
+
+      if (error) {
+        const message = error.message.toLowerCase();
+        if (
+          message.includes("duplicate key") ||
+          message.includes("unique") ||
+          message.includes("referral_code")
+        ) {
+          continue;
+        }
+
+        throw new Error(`Backfill user referral code: ${error.message}`);
+      }
     }
 
-    return nu as UserRecord;
+    const refreshed = await this.loadUserByNormalizedAddress(normalizedAddress);
+    if (refreshed?.referral_code) {
+      return refreshed;
+    }
+
+    throw new Error("Backfill user referral code: failed to allocate referral code");
+  }
+
+  async getOrCreate(address: string): Promise<UserRecord> {
+    const normalizedAddress = this.normalizeStoredAddress(address);
+    const existing = await this.loadUserByNormalizedAddress(normalizedAddress);
+
+    if (existing) {
+      return this.ensureReferralCode(existing);
+    }
+
+    let lastError: Error | null = null;
+
+    for (let attempt = 0; attempt < USER_CREATE_MAX_ATTEMPTS; attempt += 1) {
+      const { error } = await supabase.from("users").upsert(
+        {
+          address: normalizedAddress,
+          referral_code: genCode(),
+          total_points: 0,
+          spin_tickets: 0,
+          current_streak: 0,
+          longest_streak: 0,
+        },
+        {
+          onConflict: "address",
+          ignoreDuplicates: true,
+        }
+      );
+
+      if (error) {
+        lastError = new Error(`Create user: ${error.message}`);
+        const message = error.message.toLowerCase();
+
+        if (
+          message.includes("duplicate key") ||
+          message.includes("unique") ||
+          message.includes("referral_code")
+        ) {
+          continue;
+        }
+
+        throw lastError;
+      }
+
+      const created = await this.loadUserByNormalizedAddress(normalizedAddress);
+      if (created) {
+        return this.ensureReferralCode(created);
+      }
+    }
+
+    const created = await this.loadUserByNormalizedAddress(normalizedAddress);
+    if (created) {
+      return this.ensureReferralCode(created);
+    }
+
+    throw lastError ?? new Error("Create user: failed to create or load user");
   }
 
   private getPointsSummaryCacheKey(address: string) {
@@ -670,6 +757,10 @@ export class PointsEngine {
     return `leaderboard:${type}:${page}:${pageSize}:${(viewerAddress || "").toLowerCase()}`;
   }
 
+  private getFootprintStatusCacheKey(address: string) {
+    return `footprint-status:${address.toLowerCase()}`;
+  }
+
   invalidateSummaryCache(address?: string | null) {
     if (!address) {
       runtimeCache.invalidatePrefix("points-summary:");
@@ -683,9 +774,19 @@ export class PointsEngine {
     runtimeCache.invalidatePrefix("leaderboard:");
   }
 
+  invalidateFootprintStatusCache(address?: string | null) {
+    if (!address) {
+      runtimeCache.invalidatePrefix("footprint-status:");
+      return;
+    }
+
+    runtimeCache.invalidate(this.getFootprintStatusCacheKey(address));
+  }
+
   invalidateUserReadCaches(address?: string | null) {
     this.invalidateSummaryCache(address);
     this.invalidateLeaderboardCache();
+    this.invalidateFootprintStatusCache(address);
   }
 
   private async fetchCurrentEthPriceUsd(): Promise<PriceFeedQuote> {
@@ -1097,6 +1198,24 @@ export class PointsEngine {
     return (data as PointEventRow | null) ?? null;
   }
 
+  private async getReferralSignupEventByRefereeId(referrerId: number, refereeId: number) {
+    const { data, error } = await supabase
+      .from("point_events")
+      .select("id, points, total_awarded, metadata, created_at")
+      .eq("user_id", referrerId)
+      .eq("action", "referral_new_user")
+      .contains("metadata", { refereeId })
+      .order("created_at", { ascending: true })
+      .limit(1)
+      .maybeSingle();
+
+    if (error) {
+      throw new Error(`Load referral signup event: ${error.message}`);
+    }
+
+    return (data as PointEventRow | null) ?? null;
+  }
+
   private normalizeFootprintClaim(
     address: string,
     event: PointEventRow
@@ -1321,31 +1440,234 @@ export class PointsEngine {
     pointsAwarded: number,
     options?: { markFirstSweep?: boolean }
   ) {
-    const { data: existingReferral } = await supabase
-      .from("referrals")
-      .select("id, referrer_earned, referee_first_sweep")
-      .eq("referrer_id", referrerId)
-      .eq("referee_id", refereeId)
-      .maybeSingle();
+    const safePointsAwarded = Math.max(0, Number(pointsAwarded || 0));
+    const shouldMarkFirstSweep = Boolean(options?.markFirstSweep);
 
-    if (!existingReferral) {
-      await supabase.from("referrals").insert({
+    const { error: ensureError } = await supabase.from("referrals").upsert(
+      {
         referrer_id: referrerId,
         referee_id: refereeId,
-        referrer_earned: pointsAwarded,
-        referee_first_sweep: Boolean(options?.markFirstSweep),
-      });
+        referrer_earned: 0,
+        referee_first_sweep: false,
+      },
+      {
+        onConflict: "referee_id",
+        ignoreDuplicates: true,
+      }
+    );
+
+    if (ensureError) {
+      throw new Error(`Ensure referral ledger: ${ensureError.message}`);
+    }
+
+    for (let attempt = 0; attempt < REFERRAL_LEDGER_UPDATE_MAX_ATTEMPTS; attempt += 1) {
+      const { data: existingReferral, error: loadError } = await supabase
+        .from("referrals")
+        .select("id, referrer_id, referrer_earned, referee_first_sweep")
+        .eq("referee_id", refereeId)
+        .maybeSingle();
+
+      if (loadError) {
+        throw new Error(`Load referral ledger: ${loadError.message}`);
+      }
+
+      if (!existingReferral) {
+        continue;
+      }
+
+      if (Number(existingReferral.referrer_id) !== referrerId) {
+        throw new Error("Referral ledger mismatch");
+      }
+
+      const currentEarned = Number(existingReferral.referrer_earned || 0);
+      const currentFirstSweep = Boolean(existingReferral.referee_first_sweep);
+      const nextEarned = currentEarned + safePointsAwarded;
+      const nextFirstSweep = currentFirstSweep || shouldMarkFirstSweep;
+
+      if (nextEarned === currentEarned && nextFirstSweep === currentFirstSweep) {
+        return;
+      }
+
+      const { data: updatedReferral, error: updateError } = await supabase
+        .from("referrals")
+        .update({
+          referrer_earned: nextEarned,
+          referee_first_sweep: nextFirstSweep,
+        })
+        .eq("referee_id", refereeId)
+        .eq("referrer_id", referrerId)
+        .eq("referrer_earned", currentEarned)
+        .eq("referee_first_sweep", currentFirstSweep)
+        .select("id")
+        .maybeSingle();
+
+      if (updateError) {
+        throw new Error(`Update referral ledger: ${updateError.message}`);
+      }
+
+      if (updatedReferral) {
+        return;
+      }
+    }
+
+    throw new Error("Update referral ledger: concurrent update retry exhausted");
+  }
+
+  private async ensureReferralSignupLedgerBaseline(
+    referrerId: number,
+    refereeId: number,
+    minimumEarned: number
+  ) {
+    const safeMinimum = Math.max(0, Number(minimumEarned || 0));
+    if (safeMinimum <= 0) {
       return;
     }
 
-    await supabase
-      .from("referrals")
-      .update({
-        referrer_earned: Number(existingReferral.referrer_earned || 0) + pointsAwarded,
-        referee_first_sweep:
-          Boolean(existingReferral.referee_first_sweep) || Boolean(options?.markFirstSweep),
-      })
-      .eq("id", Number(existingReferral.id));
+    const { error: ensureError } = await supabase.from("referrals").upsert(
+      {
+        referrer_id: referrerId,
+        referee_id: refereeId,
+        referrer_earned: 0,
+        referee_first_sweep: false,
+      },
+      {
+        onConflict: "referee_id",
+        ignoreDuplicates: true,
+      }
+    );
+
+    if (ensureError) {
+      throw new Error(`Ensure referral ledger: ${ensureError.message}`);
+    }
+
+    for (let attempt = 0; attempt < REFERRAL_LEDGER_UPDATE_MAX_ATTEMPTS; attempt += 1) {
+      const { data: existingReferral, error: loadError } = await supabase
+        .from("referrals")
+        .select("referrer_id, referrer_earned")
+        .eq("referee_id", refereeId)
+        .maybeSingle();
+
+      if (loadError) {
+        throw new Error(`Load referral ledger: ${loadError.message}`);
+      }
+
+      if (!existingReferral) {
+        continue;
+      }
+
+      if (Number(existingReferral.referrer_id) !== referrerId) {
+        throw new Error("Referral ledger mismatch");
+      }
+
+      const currentEarned = Number(existingReferral.referrer_earned || 0);
+      if (currentEarned >= safeMinimum) {
+        return;
+      }
+
+      const { data: updatedReferral, error: updateError } = await supabase
+        .from("referrals")
+        .update({
+          referrer_earned: safeMinimum,
+        })
+        .eq("referee_id", refereeId)
+        .eq("referrer_id", referrerId)
+        .eq("referrer_earned", currentEarned)
+        .select("id")
+        .maybeSingle();
+
+      if (updateError) {
+        throw new Error(`Repair referral ledger: ${updateError.message}`);
+      }
+
+      if (updatedReferral) {
+        return;
+      }
+    }
+
+    throw new Error("Repair referral ledger: concurrent update retry exhausted");
+  }
+
+  private async finalizeReferralLink(
+    user: UserRecord,
+    referrer: UserRecord,
+    normalizedCode: string
+  ) {
+    const { error: ledgerError } = await supabase.from("referrals").upsert(
+      {
+        referrer_id: referrer.id,
+        referee_id: user.id,
+        referrer_earned: 0,
+        referee_first_sweep: false,
+      },
+      {
+        onConflict: "referee_id",
+        ignoreDuplicates: true,
+      }
+    );
+
+    if (ledgerError) {
+      throw new Error(`Ensure referral ledger: ${ledgerError.message}`);
+    }
+
+    const welcomeEvent = await this.getExistingPointEventByUserIdAndAction(
+      user.id,
+      "referral_welcome"
+    );
+
+    if (!welcomeEvent) {
+      await this.addPoints(
+        user.address,
+        CFG.REFERRAL_SIGNUP,
+        "referral_welcome",
+        undefined,
+        {
+          referralCode: normalizedCode,
+          referrerId: referrer.id,
+          referrerAddress: referrer.address,
+        },
+        { applyStreakBoost: false }
+      );
+    }
+
+    const referralSignupEvent = await this.getReferralSignupEventByRefereeId(
+      referrer.id,
+      user.id
+    );
+
+    if (referralSignupEvent) {
+      await this.ensureReferralSignupLedgerBaseline(
+        referrer.id,
+        user.id,
+        Number(referralSignupEvent.total_awarded || referralSignupEvent.points || 0)
+      );
+    } else {
+      const referrerAward = await this.addPoints(
+        referrer.address,
+        CFG.REFERRAL_SIGNUP,
+        "referral_new_user",
+        undefined,
+        {
+          referralCode: normalizedCode,
+          refereeId: user.id,
+          refereeAddress: user.address,
+        },
+        { applyStreakBoost: false }
+      );
+
+      await this.updateReferralLedger(
+        referrer.id,
+        user.id,
+        referrerAward.totalAwarded
+      );
+    }
+
+    this.invalidateUserReadCaches(user.address);
+    this.invalidateUserReadCaches(referrer.address);
+
+    return {
+      applied: true,
+      message: "Referral applied!",
+    } satisfies ReferralApplyResult;
   }
 
   private async awardReferralCommission(
@@ -2476,27 +2798,31 @@ export class PointsEngine {
 
   async getFootprintAirdropStatus(address: string) {
     const normalizedAddress = getAddress(address).toLowerCase();
-    const existingUser = await this.findExistingUser(normalizedAddress);
+    const cacheKey = this.getFootprintStatusCacheKey(normalizedAddress);
 
-    if (existingUser) {
-      const existingClaim = await this.getExistingFootprintClaimByUserId(existingUser.id);
-      if (existingClaim) {
-        return {
-          ...this.normalizeFootprintClaim(normalizedAddress, existingClaim),
-          referralCommissionPct: CFG.REFERRAL_COMMISSION_PCT,
-        };
+    return runtimeCache.getOrSet(cacheKey, FOOTPRINT_STATUS_CACHE_TTL_MS, async () => {
+      const existingUser = await this.findExistingUser(normalizedAddress);
+
+      if (existingUser) {
+        const existingClaim = await this.getExistingFootprintClaimByUserId(existingUser.id);
+        if (existingClaim) {
+          return {
+            ...this.normalizeFootprintClaim(normalizedAddress, existingClaim),
+            referralCommissionPct: CFG.REFERRAL_COMMISSION_PCT,
+          };
+        }
       }
-    }
 
-    const lookup = await footprintAirdropService.lookupReward(normalizedAddress);
+      const lookup = await footprintAirdropService.lookupReward(normalizedAddress);
 
-    return {
-      ...lookup,
-      claimed: false,
-      claimable: lookup.eligible,
-      claimedAt: null,
-      referralCommissionPct: CFG.REFERRAL_COMMISSION_PCT,
-    };
+      return {
+        ...lookup,
+        claimed: false,
+        claimable: lookup.eligible,
+        claimedAt: null,
+        referralCommissionPct: CFG.REFERRAL_COMMISSION_PCT,
+      };
+    });
   }
 
   async claimFootprintAirdrop(address: string) {
@@ -2554,6 +2880,8 @@ export class PointsEngine {
           claimable: false,
           claimedAt: new Date().toISOString(),
         };
+
+    this.invalidateFootprintStatusCache(normalizedAddress);
 
     return {
       ...normalizedClaim,
@@ -2864,6 +3192,23 @@ export class PointsEngine {
     normalizedCode: string
   ): Promise<ReferralApplyResult> {
     const user = await this.getOrCreate(userAddress);
+    const { data: referrer, error: referrerError } = await supabase
+      .from("users")
+      .select("*")
+      .eq("referral_code", normalizedCode)
+      .maybeSingle();
+
+    if (referrerError) {
+      throw new Error(`Load referrer: ${referrerError.message}`);
+    }
+
+    if (!referrer) {
+      throw new Error("Invalid referral code");
+    }
+    if (String((referrer as UserRecord).address).toLowerCase() === userAddress.toLowerCase()) {
+      throw new Error("Cannot self-refer");
+    }
+
     if (user.referred_by) {
       const recent = this.getRecentReferralApply(userAddress);
       if (recent && recent.code === normalizedCode) {
@@ -2873,62 +3218,65 @@ export class PointsEngine {
         };
       }
 
+      if (user.referred_by === (referrer as UserRecord).id) {
+        const result = await this.finalizeReferralLink(
+          user,
+          referrer as UserRecord,
+          normalizedCode
+        );
+
+        this.rememberReferralApply(userAddress, normalizedCode, result);
+
+        return {
+          ...result,
+          idempotent: true,
+        };
+      }
+
       throw new Error("Already referred");
     }
 
-    const { data: referrer } = await supabase
+    const { data: linkedUser, error: linkError } = await supabase
       .from("users")
+      .update({
+        referred_by: (referrer as UserRecord).id,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", user.id)
+      .is("referred_by", null)
       .select("*")
-      .eq("referral_code", normalizedCode)
-      .single();
+      .maybeSingle();
 
-    if (!referrer) {
-      throw new Error("Invalid referral code");
-    }
-    if (String((referrer as UserRecord).address).toLowerCase() === userAddress.toLowerCase()) {
-      throw new Error("Cannot self-refer");
+    if (linkError) {
+      throw new Error(`Link referral: ${linkError.message}`);
     }
 
-    await supabase
-      .from("users")
-      .update({ referred_by: (referrer as UserRecord).id })
-      .eq("id", user.id);
-    await supabase.from("referrals").insert({
-      referrer_id: (referrer as UserRecord).id,
-      referee_id: user.id,
-    });
+    if (!linkedUser) {
+      const latestUser = await this.getOrCreate(userAddress);
 
-    await this.addPoints(
-      userAddress,
-      CFG.REFERRAL_SIGNUP,
-      "referral_welcome",
-      undefined,
-      undefined,
-      { applyStreakBoost: false }
+      if (latestUser.referred_by === (referrer as UserRecord).id) {
+        const result = await this.finalizeReferralLink(
+          latestUser,
+          referrer as UserRecord,
+          normalizedCode
+        );
+
+        this.rememberReferralApply(userAddress, normalizedCode, result);
+
+        return {
+          ...result,
+          idempotent: true,
+        };
+      }
+
+      throw new Error("Already referred");
+    }
+
+    const result = await this.finalizeReferralLink(
+      linkedUser as UserRecord,
+      referrer as UserRecord,
+      normalizedCode
     );
-
-    const referrerAward = await this.addPoints(
-      (referrer as UserRecord).address,
-      CFG.REFERRAL_SIGNUP,
-      "referral_new_user",
-      undefined,
-      undefined,
-      { applyStreakBoost: false }
-    );
-
-    await this.updateReferralLedger(
-      (referrer as UserRecord).id,
-      user.id,
-      referrerAward.totalAwarded
-    );
-
-    this.invalidateUserReadCaches(userAddress);
-    this.invalidateUserReadCaches((referrer as UserRecord).address);
-
-    const result = {
-      applied: true,
-      message: "Referral applied!",
-    } satisfies ReferralApplyResult;
 
     this.rememberReferralApply(userAddress, normalizedCode, result);
 

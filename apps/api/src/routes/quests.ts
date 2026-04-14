@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { questEngine, type AdminQuestInput } from "../services/questEngine";
+import { runtimeCache } from "../utils/runtimeCache";
 
 const questsRoutes = new Hono();
 
@@ -118,9 +119,11 @@ questsRoutes.post("/x/username", async (c) => {
       );
     }
 
-    const data = await questEngine.saveManualXUsername(
-      body.address,
-      body.username
+    const guardKey = `quests:x-username:${body.address.trim().toLowerCase()}:${body.username
+      .trim()
+      .toLowerCase()}`;
+    const data = await runtimeCache.singleFlight(guardKey, () =>
+      questEngine.saveManualXUsername(body.address!, body.username!)
     );
     return c.json(data);
   } catch (error) {

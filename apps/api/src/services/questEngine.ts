@@ -180,6 +180,7 @@ const GENERAL_CAMPAIGN_KEY = "general";
 const COFOUNDER_PASS_CAMPAIGN_KEY = "cofounder_pass";
 const QUEST_BOARD_CACHE_TTL_MS = 10_000;
 const SWAP_SYNC_DEDUPE_TTL_MS = 25_000;
+const MANUAL_X_USERNAME_DEDUPE_TTL_MS = 15_000;
 
 const baseClient = createPublicClient({
   chain: base,
@@ -655,6 +656,10 @@ export class QuestEngine {
     return `quest-swap-sync:${normalizeAddress(address)}`;
   }
 
+  private getManualXUsernameCacheKey(address: string, usernameKey: string) {
+    return `quest-manual-x:${normalizeAddress(address)}:${usernameKey}`;
+  }
+
   private invalidateQuestBoardCache(address?: string | null) {
     if (!address) {
       runtimeCache.invalidatePrefix("quest-board:");
@@ -822,55 +827,93 @@ export class QuestEngine {
 
     const normalizedAddress = normalizeAddress(address);
     const normalizedUsername = normalizeXUsernameInput(username);
-    const user = await pointsEngine.getOrCreate(normalizedAddress);
-
-    const { data: existingUsername, error: existingUsernameError } = await supabase
-      .from("social_accounts")
-      .select("user_id")
-      .eq("platform", "x")
-      .eq("platform_user_id", normalizedUsername.key)
-      .maybeSingle();
-
-    if (existingUsernameError) {
-      throw new Error(`Failed to check X username: ${existingUsernameError.message}`);
-    }
-
-    if (existingUsername && existingUsername.user_id !== user.id) {
-      throw new Error("That X username is already linked to another wallet");
-    }
-
-    const { error } = await supabase.from("social_accounts").upsert(
-      {
-        user_id: user.id,
-        platform: "x",
-        platform_user_id: normalizedUsername.key,
-        username: normalizedUsername.display,
-        display_name: null,
-        profile_image_url: null,
-        access_token: null,
-        refresh_token: null,
-        scope: null,
-        token_expires_at: null,
-        metadata: {
-          linkedAt: new Date().toISOString(),
-          linkedManually: true,
-        },
-        updated_at: new Date().toISOString(),
-      },
-      {
-        onConflict: "user_id,platform",
-      }
+    const cacheKey = this.getManualXUsernameCacheKey(
+      normalizedAddress,
+      normalizedUsername.key
     );
+    const recent = runtimeCache.get<{ success: true; username: string }>(cacheKey);
 
-    if (error) {
-      throw new Error(`Failed to save X username: ${error.message}`);
+    if (recent) {
+      return recent;
     }
 
-    this.invalidateQuestBoardCache(normalizedAddress);
-    return {
-      success: true,
-      username: normalizedUsername.display,
-    };
+    return runtimeCache.singleFlight(`${cacheKey}:inflight`, async () => {
+      const user = await pointsEngine.getOrCreate(normalizedAddress);
+      const { data: existingAccount, error: existingAccountError } = await supabase
+        .from("social_accounts")
+        .select("*")
+        .eq("user_id", user.id)
+        .eq("platform", "x")
+        .maybeSingle();
+
+      if (existingAccountError) {
+        throw new Error(`Failed to load linked X username: ${existingAccountError.message}`);
+      }
+
+      if (existingAccount) {
+        const linkedKeys = getNormalizedLinkedXKeys(existingAccount as SocialAccountRecord);
+        if (linkedKeys.includes(normalizedUsername.key)) {
+          const result = {
+            success: true,
+            username: normalizedUsername.display,
+          } as const;
+
+          runtimeCache.set(cacheKey, result, MANUAL_X_USERNAME_DEDUPE_TTL_MS);
+          return result;
+        }
+      }
+
+      const { data: existingUsername, error: existingUsernameError } = await supabase
+        .from("social_accounts")
+        .select("user_id")
+        .eq("platform", "x")
+        .eq("platform_user_id", normalizedUsername.key)
+        .maybeSingle();
+
+      if (existingUsernameError) {
+        throw new Error(`Failed to check X username: ${existingUsernameError.message}`);
+      }
+
+      if (existingUsername && existingUsername.user_id !== user.id) {
+        throw new Error("That X username is already linked to another wallet");
+      }
+
+      const { error } = await supabase.from("social_accounts").upsert(
+        {
+          user_id: user.id,
+          platform: "x",
+          platform_user_id: normalizedUsername.key,
+          username: normalizedUsername.display,
+          display_name: null,
+          profile_image_url: null,
+          access_token: null,
+          refresh_token: null,
+          scope: null,
+          token_expires_at: null,
+          metadata: {
+            linkedAt: new Date().toISOString(),
+            linkedManually: true,
+          },
+          updated_at: new Date().toISOString(),
+        },
+        {
+          onConflict: "user_id,platform",
+        }
+      );
+
+      if (error) {
+        throw new Error(`Failed to save X username: ${error.message}`);
+      }
+
+      const result = {
+        success: true,
+        username: normalizedUsername.display,
+      } as const;
+
+      runtimeCache.set(cacheKey, result, MANUAL_X_USERNAME_DEDUPE_TTL_MS);
+      this.invalidateQuestBoardCache(normalizedAddress);
+      return result;
+    });
   }
 
   async createXAuthUrl(address: string, returnTo: string) {

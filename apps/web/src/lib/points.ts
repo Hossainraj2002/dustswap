@@ -154,6 +154,7 @@ export type LeaderboardHubResponse = {
 };
 
 const POINTS_SUMMARY_TTL_MS = 10_000;
+const REFERRAL_APPLY_RECENT_TTL_MS = 15_000;
 const pointsSummaryCache = new Map<
   string,
   {
@@ -162,9 +163,34 @@ const pointsSummaryCache = new Map<
   }
 >();
 const pointsSummaryInflight = new Map<string, Promise<PointsSummaryResponse>>();
+const referralApplyRecent = new Map<
+  string,
+  {
+    expiresAt: number;
+    value: {
+      success: boolean;
+      message?: string;
+      error?: string;
+      idempotent?: boolean;
+    };
+  }
+>();
+const referralApplyInflight = new Map<
+  string,
+  Promise<{
+    success: boolean;
+    message?: string;
+    error?: string;
+    idempotent?: boolean;
+  }>
+>();
 
 function getPointsSummaryCacheKey(address: string) {
   return address.toLowerCase();
+}
+
+function getReferralApplyCacheKey(address: string, referralCode: string) {
+  return `${address.toLowerCase()}:${referralCode.trim().toUpperCase()}`;
 }
 
 export function clearPointsSummaryCache(address?: string) {
@@ -279,19 +305,53 @@ export async function previewReferralCode(address: string, referralCode: string)
 }
 
 export async function applyReferralCode(address: string, referralCode: string) {
-  const response = await fetch(getPointsApiUrl("/referral/apply"), {
+  const cacheKey = getReferralApplyCacheKey(address, referralCode);
+  const recent = referralApplyRecent.get(cacheKey);
+
+  if (recent && recent.expiresAt > Date.now()) {
+    return recent.value;
+  }
+
+  if (recent) {
+    referralApplyRecent.delete(cacheKey);
+  }
+
+  const inflight = referralApplyInflight.get(cacheKey);
+  if (inflight) {
+    return inflight;
+  }
+
+  const request = fetch(getPointsApiUrl("/referral/apply"), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
     },
     body: JSON.stringify({ address, referralCode }),
-  });
+  })
+    .then((response) =>
+      parseJson<{
+        success: boolean;
+        message?: string;
+        error?: string;
+        idempotent?: boolean;
+      }>(response)
+    )
+    .then((data) => {
+      if (data.success) {
+        referralApplyRecent.set(cacheKey, {
+          expiresAt: Date.now() + REFERRAL_APPLY_RECENT_TTL_MS,
+          value: data,
+        });
+      }
 
-  return parseJson<{
-    success: boolean;
-    message?: string;
-    error?: string;
-  }>(response);
+      return data;
+    })
+    .finally(() => {
+      referralApplyInflight.delete(cacheKey);
+    });
+
+  referralApplyInflight.set(cacheKey, request);
+  return request;
 }
 
 export async function fetchLeaderboard(limit = 50) {
