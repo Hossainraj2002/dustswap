@@ -33,12 +33,40 @@ const NAV_ITEMS = [
   { href: "/leaderboard", label: "Leaderboard" },
 ] as const;
 
+const FOLLOW_VERIFY_DELAY_MS = 20_000;
+const FOLLOW_GATE_STORAGE_PREFIX = "dustswap:footprint-follow-gate";
+const FOOTPRINT_FOLLOW_TARGETS = [
+  {
+    key: "founder",
+    label: "Follow founder on X",
+    handle: "@akbarX402",
+    href: "https://x.com/akbarX402",
+    description: "Follow the DustSwap founder account.",
+  },
+  {
+    key: "dustswap",
+    label: "Follow DustSwap on X",
+    handle: "@dustswaponbase",
+    href: "https://x.com/dustswaponbase",
+    description: "Follow the official DustSwap account.",
+  },
+] as const;
+
 type ReferralBanner =
   | {
       tone: "info" | "success" | "warning";
       message: string;
     }
   | null;
+
+type FootprintFollowTaskKey = (typeof FOOTPRINT_FOLLOW_TARGETS)[number]["key"];
+
+type FootprintFollowGateState = {
+  founderOpened: boolean;
+  dustswapOpened: boolean;
+  startedAt: number | null;
+  verifiedAt: number | null;
+};
 
 function cx(...parts: Array<string | false | null | undefined>) {
   return parts.filter(Boolean).join(" ");
@@ -77,6 +105,86 @@ function getErrorMessage(error: unknown) {
 
 function normalizeAddressInput(value: string) {
   return getAddress(value.trim());
+}
+
+function createEmptyFollowGateState(): FootprintFollowGateState {
+  return {
+    founderOpened: false,
+    dustswapOpened: false,
+    startedAt: null,
+    verifiedAt: null,
+  };
+}
+
+function isFollowGateStateEmpty(state: FootprintFollowGateState) {
+  return (
+    !state.founderOpened &&
+    !state.dustswapOpened &&
+    !state.startedAt &&
+    !state.verifiedAt
+  );
+}
+
+function getFollowGateStorageKey(address: string) {
+  return `${FOLLOW_GATE_STORAGE_PREFIX}:${address.toLowerCase()}`;
+}
+
+function readFollowGateState(address?: string): FootprintFollowGateState {
+  if (typeof window === "undefined" || !address) {
+    return createEmptyFollowGateState();
+  }
+
+  try {
+    const raw = window.localStorage.getItem(getFollowGateStorageKey(address));
+    if (!raw) {
+      return createEmptyFollowGateState();
+    }
+
+    const parsed = JSON.parse(raw) as Partial<FootprintFollowGateState>;
+    return {
+      founderOpened: parsed.founderOpened === true,
+      dustswapOpened: parsed.dustswapOpened === true,
+      startedAt: typeof parsed.startedAt === "number" ? parsed.startedAt : null,
+      verifiedAt: typeof parsed.verifiedAt === "number" ? parsed.verifiedAt : null,
+    };
+  } catch {
+    return createEmptyFollowGateState();
+  }
+}
+
+function writeFollowGateState(
+  address: string,
+  state: FootprintFollowGateState
+) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  if (isFollowGateStateEmpty(state)) {
+    window.localStorage.removeItem(getFollowGateStorageKey(address));
+    return;
+  }
+
+  window.localStorage.setItem(getFollowGateStorageKey(address), JSON.stringify(state));
+}
+
+function clearFollowGateState(address?: string) {
+  if (typeof window === "undefined" || !address) {
+    return;
+  }
+
+  window.localStorage.removeItem(getFollowGateStorageKey(address));
+}
+
+function openExternalTask(url: string) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  const opened = window.open(url, "_blank", "noopener,noreferrer");
+  if (!opened) {
+    window.location.assign(url);
+  }
 }
 
 function HydratedConnectWalletButton({
@@ -343,6 +451,118 @@ function StatusMetric({
   );
 }
 
+function ClaimFollowGate({
+  followGateState,
+  remainingSeconds,
+  isVerified,
+  isApplyingReferral,
+  claimState,
+  onOpenTask,
+  onVerify,
+}: {
+  followGateState: FootprintFollowGateState;
+  remainingSeconds: number;
+  isVerified: boolean;
+  isApplyingReferral: boolean;
+  claimState: "idle" | "claiming" | "claimed";
+  onOpenTask: (taskKey: FootprintFollowTaskKey, href: string) => void;
+  onVerify: () => void | Promise<void>;
+}) {
+  const allTasksOpened =
+    followGateState.founderOpened && followGateState.dustswapOpened;
+  const verifyDisabled =
+    claimState === "claiming" ||
+    isVerified ||
+    !allTasksOpened ||
+    remainingSeconds > 0;
+
+  return (
+    <div className="mt-4 rounded-[24px] border border-sky-100 bg-sky-50/70 p-4 sm:p-5">
+      <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-sky-700">
+        Claim step
+      </p>
+      <h3 className="mt-2 text-lg font-semibold tracking-[-0.02em] text-slate-950">
+        Follow both X accounts before claiming
+      </h3>
+      <p className="mt-2 text-sm leading-6 text-slate-600">
+        These tasks stay hidden until you tap claim. Follow both accounts on X,
+        then wait 20 seconds before verifying this step.
+      </p>
+
+      <div className="mt-4 grid gap-3">
+        {FOOTPRINT_FOLLOW_TARGETS.map((task) => {
+          const opened =
+            task.key === "founder"
+              ? followGateState.founderOpened
+              : followGateState.dustswapOpened;
+
+          return (
+            <div
+              key={task.key}
+              className="rounded-[20px] border border-white/90 bg-white/90 p-4 shadow-[0_12px_28px_rgba(148,163,184,0.08)]"
+            >
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-slate-950">{task.label}</p>
+                  <p className="mt-1 text-sm leading-6 text-slate-500">
+                    {task.description} <span className="font-semibold">{task.handle}</span>
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <span
+                    className={cx(
+                      "rounded-full border px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em]",
+                      opened
+                        ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                        : "border-slate-200 bg-slate-50 text-slate-500"
+                    )}
+                  >
+                    {opened ? "Opened" : "Pending"}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => onOpenTask(task.key, task.href)}
+                    className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-900 transition-colors hover:bg-slate-100"
+                  >
+                    {opened ? "Open Again" : "Follow on X"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="mt-4 rounded-[20px] border border-white/90 bg-white/90 p-4 shadow-[0_12px_28px_rgba(148,163,184,0.08)]">
+        <p className="text-sm font-medium text-slate-700">
+          {isVerified
+            ? "Follow step verified. Your claim button is unlocked now."
+            : !allTasksOpened
+              ? "Open both follow tasks to start the 20 second verify timer."
+              : remainingSeconds > 0
+                ? `Verify unlocks in ${remainingSeconds}s.`
+                : "You can verify this step now."}
+        </p>
+        <button
+          type="button"
+          onClick={() => void onVerify()}
+          disabled={verifyDisabled}
+          className="mt-3 inline-flex w-full items-center justify-center rounded-full bg-slate-950 px-5 py-3 text-sm font-semibold text-white transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          {isApplyingReferral || claimState === "claiming"
+            ? "Claiming PP..."
+            : isVerified
+              ? "Verified"
+              : remainingSeconds > 0
+                ? `Verify in ${remainingSeconds}s`
+                : "Verify follows"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function FootprintStatusPanel({
   status,
   connectedAddress,
@@ -350,7 +570,13 @@ function FootprintStatusPanel({
   claimState,
   isApplyingReferral,
   claimError,
+  followGateVisible,
+  followGateState,
+  followGateRemainingSeconds,
+  isFollowGateVerified,
   onClaim,
+  onOpenFollowTask,
+  onVerifyFollowGate,
   onUseConnectedWallet,
 }: {
   status: FootprintDropStatus;
@@ -359,7 +585,16 @@ function FootprintStatusPanel({
   claimState: "idle" | "claiming" | "claimed";
   isApplyingReferral: boolean;
   claimError: string | null;
+  followGateVisible: boolean;
+  followGateState: FootprintFollowGateState;
+  followGateRemainingSeconds: number;
+  isFollowGateVerified: boolean;
   onClaim: () => void | Promise<void>;
+  onOpenFollowTask: (
+    taskKey: FootprintFollowTaskKey,
+    href: string
+  ) => void | Promise<void>;
+  onVerifyFollowGate: () => void | Promise<void>;
   onUseConnectedWallet: () => void | Promise<void>;
 }) {
   const matchesConnectedWallet =
@@ -469,7 +704,10 @@ function FootprintStatusPanel({
         <div className="mt-5">
           <button
             type="button"
-            disabled={claimState === "claiming"}
+            disabled={
+              claimState === "claiming" ||
+              (followGateVisible && !isFollowGateVerified)
+            }
             onClick={() => void onClaim()}
             className="inline-flex w-full items-center justify-center rounded-full bg-slate-950 px-5 py-3 text-sm font-semibold text-white transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-70"
           >
@@ -477,10 +715,24 @@ function FootprintStatusPanel({
               ? "Linking invite..."
               : claimState === "claiming"
                 ? "Claiming PP..."
+                : followGateVisible && !isFollowGateVerified
+                  ? "Finish X tasks first"
                 : "Claim PP"}
           </button>
         </div>
       )}
+
+      {showClaimButton && followGateVisible && !status.claimed ? (
+        <ClaimFollowGate
+          followGateState={followGateState}
+          remainingSeconds={followGateRemainingSeconds}
+          isVerified={isFollowGateVerified}
+          isApplyingReferral={isApplyingReferral}
+          claimState={claimState}
+          onOpenTask={onOpenFollowTask}
+          onVerify={onVerifyFollowGate}
+        />
+      ) : null}
 
       {claimError && (
         <p className="mt-4 text-sm font-medium text-rose-600">{claimError}</p>
@@ -534,11 +786,28 @@ export default function FootprintDropLanding({
   const [pendingReferralCode, setPendingReferralCode] = useState<string | null>(null);
   const [referralBanner, setReferralBanner] = useState<ReferralBanner>(null);
   const [isApplyingReferral, setIsApplyingReferral] = useState(false);
+  const [followGateVisible, setFollowGateVisible] = useState(false);
+  const [followGateState, setFollowGateState] = useState<FootprintFollowGateState>(
+    createEmptyFollowGateState
+  );
+  const [followGateTick, setFollowGateTick] = useState(0);
 
   const connectedAddress = useMemo(
     () => (address ? getAddress(address) : undefined),
     [address]
   );
+  const areFollowTasksOpened =
+    followGateState.founderOpened && followGateState.dustswapOpened;
+  const followGateRemainingSeconds = useMemo(() => {
+    if (!areFollowTasksOpened || !followGateState.startedAt || followGateState.verifiedAt) {
+      return 0;
+    }
+
+    const remainingMs =
+      followGateState.startedAt + FOLLOW_VERIFY_DELAY_MS - Date.now();
+    return Math.max(0, Math.ceil(remainingMs / 1000));
+  }, [areFollowTasksOpened, followGateState.startedAt, followGateState.verifiedAt, followGateTick]);
+  const isFollowGateVerified = Boolean(followGateState.verifiedAt);
 
   const clearPendingReferralState = useCallback((banner?: ReferralBanner) => {
     clearPendingReferralCode();
@@ -551,6 +820,55 @@ export default function FootprintDropLanding({
   useEffect(() => {
     setHasSiweSession(hasStoredSiweSession(address));
   }, [address, isConnected]);
+
+  useEffect(() => {
+    if (!connectedAddress) {
+      setFollowGateState(createEmptyFollowGateState());
+      setFollowGateVisible(false);
+      return;
+    }
+
+    setFollowGateState(readFollowGateState(connectedAddress));
+    setFollowGateVisible(false);
+  }, [connectedAddress]);
+
+  useEffect(() => {
+    if (!connectedAddress) {
+      return;
+    }
+
+    writeFollowGateState(connectedAddress, followGateState);
+  }, [connectedAddress, followGateState]);
+
+  useEffect(() => {
+    if (!followGateVisible || isFollowGateVerified || !followGateState.startedAt) {
+      return;
+    }
+
+    const interval = window.setInterval(() => {
+      setFollowGateTick((current) => current + 1);
+    }, 1000);
+
+    return () => window.clearInterval(interval);
+  }, [followGateVisible, isFollowGateVerified, followGateState.startedAt]);
+
+  useEffect(() => {
+    setFollowGateVisible(false);
+  }, [status?.address]);
+
+  useEffect(() => {
+    if (
+      !connectedAddress ||
+      !status?.claimed ||
+      status.address.toLowerCase() !== connectedAddress.toLowerCase()
+    ) {
+      return;
+    }
+
+    clearFollowGateState(connectedAddress);
+    setFollowGateState(createEmptyFollowGateState());
+    setFollowGateVisible(false);
+  }, [connectedAddress, status?.address, status?.claimed]);
 
   useEffect(() => {
     const storedCode = getPendingReferralCode();
@@ -786,7 +1104,7 @@ export default function FootprintDropLanding({
     [clearPendingReferralState, pendingReferralCode]
   );
 
-  const handleClaim = useCallback(async () => {
+  const executeClaim = useCallback(async () => {
     if (!connectedAddress) {
       setClaimError("Connect your wallet to claim PP.");
       return;
@@ -810,13 +1128,89 @@ export default function FootprintDropLanding({
       const result = await claimFootprintDrop(connectedAddress);
       setStatus(result);
       setClaimState("claimed");
+      clearFollowGateState(connectedAddress);
+      setFollowGateState(createEmptyFollowGateState());
+      setFollowGateVisible(false);
       clearPointsSummaryCache(connectedAddress);
       emitDataInvalidation(["leaderboard", "points"], "footprint-drop-claimed");
     } catch (error) {
       setClaimState("idle");
       setClaimError(getErrorMessage(error));
     }
-  }, [connectedAddress, hasSiweSession, status]);
+  }, [applyPendingReferralIfNeeded, connectedAddress, hasSiweSession, status]);
+
+  const handleOpenFollowTask = useCallback(
+    (taskKey: FootprintFollowTaskKey, href: string) => {
+      setFollowGateVisible(true);
+      setClaimError(null);
+      openExternalTask(href);
+      setFollowGateState((current) => {
+        const next = {
+          ...current,
+          founderOpened:
+            taskKey === "founder" ? true : current.founderOpened,
+          dustswapOpened:
+            taskKey === "dustswap" ? true : current.dustswapOpened,
+        };
+
+        if (next.founderOpened && next.dustswapOpened && !next.startedAt) {
+          next.startedAt = Date.now();
+        }
+
+        return next;
+      });
+    },
+    []
+  );
+
+  const handleVerifyFollowGate = useCallback(async () => {
+    if (!connectedAddress) {
+      setClaimError("Connect your wallet to claim PP.");
+      return;
+    }
+
+    if (!hasSiweSession) {
+      setClaimError("Sign in with your wallet before claiming.");
+      return;
+    }
+
+    if (!status || status.address.toLowerCase() !== connectedAddress.toLowerCase()) {
+      setClaimError("Check your connected wallet before claiming.");
+      return;
+    }
+
+    if (!areFollowTasksOpened) {
+      setClaimError("Follow both X accounts before verifying.");
+      return;
+    }
+
+    if (followGateRemainingSeconds > 0) {
+      setClaimError(`Please wait ${followGateRemainingSeconds}s more before verifying.`);
+      return;
+    }
+
+    setClaimError(null);
+    setFollowGateState((current) => ({
+      ...current,
+      verifiedAt: current.verifiedAt || Date.now(),
+    }));
+  }, [
+    areFollowTasksOpened,
+    connectedAddress,
+    followGateRemainingSeconds,
+    hasSiweSession,
+    status,
+  ]);
+
+  const handleClaim = useCallback(async () => {
+    if (!isFollowGateVerified) {
+      setFollowGateVisible(true);
+      setClaimError(null);
+      return;
+    }
+
+    await executeClaim();
+  }, [executeClaim, isFollowGateVerified]);
 
   useEffect(() => {
     if (!connectedAddress) {
@@ -984,7 +1378,13 @@ export default function FootprintDropLanding({
                     claimState={claimState}
                     isApplyingReferral={isApplyingReferral}
                     claimError={claimError}
+                    followGateVisible={followGateVisible}
+                    followGateState={followGateState}
+                    followGateRemainingSeconds={followGateRemainingSeconds}
+                    isFollowGateVerified={isFollowGateVerified}
                     onClaim={handleClaim}
+                    onOpenFollowTask={handleOpenFollowTask}
+                    onVerifyFollowGate={handleVerifyFollowGate}
                     onUseConnectedWallet={syncConnectedWalletLookup}
                   />
                 </div>
