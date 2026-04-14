@@ -6,12 +6,20 @@ async function parseJson<T>(response: Response): Promise<T> {
   return text ? (JSON.parse(text) as T) : ({} as T);
 }
 
+function normalizeQuestsPath(path = "") {
+  if (!path || path === "/") {
+    return "/api/quests";
+  }
+
+  return `/api/quests${path.startsWith("/") ? path : `/${path}`}`;
+}
+
 export function getQuestsApiUrl(path = "") {
-  return buildPublicApiUrl(`/api/quests${path}`);
+  return buildPublicApiUrl(normalizeQuestsPath(path));
 }
 
 export async function fetchQuestBoard(address?: string) {
-  const url = new URL(getQuestsApiUrl("/"));
+  const url = new URL(getQuestsApiUrl());
   if (address) {
     url.searchParams.set("address", address);
   }
