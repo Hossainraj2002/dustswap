@@ -71,7 +71,18 @@ pointsRoutes.post("/airdrop/lookup", async (c) => {
     const data = await pointsEngine.getFootprintAirdropStatus(body.address);
     return c.json({ success: true, ...data });
   } catch (e: unknown) {
-    return c.json({ success: false, error: (e as Error).message }, 500);
+    const message = (e as Error).message;
+    if (message.toLowerCase().includes("blockscout")) {
+      return c.json(
+        {
+          success: false,
+          error: "Footprint Drop lookup is temporarily unavailable. Please try again shortly.",
+        },
+        503
+      );
+    }
+
+    return c.json({ success: false, error: message }, 500);
   }
 });
 

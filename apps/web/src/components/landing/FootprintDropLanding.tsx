@@ -807,6 +807,9 @@ export default function FootprintDropLanding({
   const [followGateTick, setFollowGateTick] = useState(0);
   const blockedAutoLookupRef = useRef<Set<string>>(new Set());
   const blockedReferralApplyRef = useRef<Set<string>>(new Set());
+  const lookupInFlightRef = useRef<Map<string, Promise<void>>>(new Map());
+  const signInInFlightRef = useRef<{ key: string; promise: Promise<void> } | null>(null);
+  const referralApplyInFlightRef = useRef<Map<string, Promise<void>>>(new Map());
 
   const connectedAddress = useMemo(
     () => (address ? getAddress(address) : undefined),
@@ -941,39 +944,56 @@ export default function FootprintDropLanding({
   }, [clearPendingReferralState, connectedAddress, pendingReferralCode]);
 
   const runLookup = useCallback(async (rawAddress: string, options?: { manual?: boolean }) => {
+    let normalizedAddress: Address;
+
     try {
-      const normalizedAddress = normalizeAddressInput(rawAddress);
-      const lookupKey = normalizedAddress.toLowerCase();
-
-      if (!options?.manual && blockedAutoLookupRef.current.has(lookupKey)) {
-        return;
-      }
-
-      if (options?.manual) {
-        blockedAutoLookupRef.current.delete(lookupKey);
-      }
-
-      setLookupState("checking");
-      setLookupError(null);
-      setClaimError(null);
-      const result = await lookupFootprintDrop(normalizedAddress);
-      blockedAutoLookupRef.current.delete(lookupKey);
-      setStatus(result);
-      setClaimState(result.claimed ? "claimed" : "idle");
-      setAddressInput(normalizedAddress);
+      normalizedAddress = normalizeAddressInput(rawAddress);
     } catch (error) {
-      try {
-        const normalizedAddress = normalizeAddressInput(rawAddress);
-        blockedAutoLookupRef.current.add(normalizedAddress.toLowerCase());
-      } catch {
-        // Ignore invalid addresses here and let the visible error message explain the failure.
-      }
       setStatus(null);
       setClaimState("idle");
       setLookupError(getErrorMessage(error));
-    } finally {
       setLookupState("idle");
+      return;
     }
+
+    const lookupKey = normalizedAddress.toLowerCase();
+    if (!options?.manual && blockedAutoLookupRef.current.has(lookupKey)) {
+      return;
+    }
+
+    const existingLookup = lookupInFlightRef.current.get(lookupKey);
+    if (existingLookup) {
+      return existingLookup;
+    }
+
+    if (options?.manual) {
+      blockedAutoLookupRef.current.delete(lookupKey);
+    }
+
+    const request = (async () => {
+      setLookupState("checking");
+      setLookupError(null);
+      setClaimError(null);
+
+      try {
+        const result = await lookupFootprintDrop(normalizedAddress);
+        blockedAutoLookupRef.current.delete(lookupKey);
+        setStatus(result);
+        setClaimState(result.claimed ? "claimed" : "idle");
+        setAddressInput(normalizedAddress);
+      } catch (error) {
+        blockedAutoLookupRef.current.add(lookupKey);
+        setStatus(null);
+        setClaimState("idle");
+        setLookupError(getErrorMessage(error));
+      } finally {
+        setLookupState("idle");
+        lookupInFlightRef.current.delete(lookupKey);
+      }
+    })();
+
+    lookupInFlightRef.current.set(lookupKey, request);
+    return request;
   }, []);
 
   const syncConnectedWalletLookup = useCallback(async () => {
@@ -986,41 +1006,55 @@ export default function FootprintDropLanding({
 
   const completeSignIn = useCallback(
     async (nonce: string, connectedWalletAddress: Address) => {
-      setPendingNonce(null);
-      setAuthError(null);
-
-      try {
-        setAuthState("signing");
-        const message = createSiweMessage({
-          address: connectedWalletAddress,
-          chainId: chainId ?? base.id,
-          domain: window.location.host,
-          issuedAt: new Date(),
-          nonce,
-          statement: "Sign in to DustSwap to claim the Footprint Drop.",
-          uri: window.location.origin,
-          version: "1",
-        });
-        const signature = await signMessageAsync({ message });
-
-        setAuthState("verifying");
-        const session = await verifySiweSession({
-          address: connectedWalletAddress,
-          message,
-          signature,
-        });
-
-        saveStoredSiweSession(session);
-        setHasSiweSession(true);
-        setAuthState("idle");
-        setAddressInput(connectedWalletAddress);
-        await runLookup(connectedWalletAddress, { manual: true });
-      } catch (error) {
-        clearStoredSiweSession();
-        setHasSiweSession(false);
-        setAuthState("idle");
-        setAuthError(getErrorMessage(error));
+      const signInKey = `${connectedWalletAddress.toLowerCase()}:${nonce}`;
+      if (signInInFlightRef.current?.key === signInKey) {
+        return signInInFlightRef.current.promise;
       }
+
+      const request = (async () => {
+        setPendingNonce(null);
+        setAuthError(null);
+
+        try {
+          setAuthState("signing");
+          const message = createSiweMessage({
+            address: connectedWalletAddress,
+            chainId: chainId ?? base.id,
+            domain: window.location.host,
+            issuedAt: new Date(),
+            nonce,
+            statement: "Sign in to DustSwap to claim the Footprint Drop.",
+            uri: window.location.origin,
+            version: "1",
+          });
+          const signature = await signMessageAsync({ message });
+
+          setAuthState("verifying");
+          const session = await verifySiweSession({
+            address: connectedWalletAddress,
+            message,
+            signature,
+          });
+
+          saveStoredSiweSession(session);
+          setHasSiweSession(true);
+          setAuthState("idle");
+          setAddressInput(connectedWalletAddress);
+          await runLookup(connectedWalletAddress, { manual: true });
+        } catch (error) {
+          clearStoredSiweSession();
+          setHasSiweSession(false);
+          setAuthState("idle");
+          setAuthError(getErrorMessage(error));
+        } finally {
+          if (signInInFlightRef.current?.key === signInKey) {
+            signInInFlightRef.current = null;
+          }
+        }
+      })();
+
+      signInInFlightRef.current = { key: signInKey, promise: request };
+      return request;
     },
     [chainId, runLookup, signMessageAsync]
   );
@@ -1041,7 +1075,11 @@ export default function FootprintDropLanding({
       isConnected: boolean;
       open: (() => Promise<unknown>) | undefined;
     }) => {
-      if (authState === "signing" || authState === "verifying") {
+      if (
+        authState === "preparing" ||
+        authState === "signing" ||
+        authState === "verifying"
+      ) {
         return;
       }
 
@@ -1053,9 +1091,11 @@ export default function FootprintDropLanding({
         return;
       }
 
-      if (authState === "waitingForWallet" && !walletConnected) {
-        setAuthError(null);
-        await open?.();
+      if (authState === "waitingForWallet") {
+        if (!walletConnected) {
+          setAuthError(null);
+          await open?.();
+        }
         return;
       }
 
@@ -1112,30 +1152,45 @@ export default function FootprintDropLanding({
         return;
       }
 
-      setIsApplyingReferral(true);
+      const existingApply = referralApplyInFlightRef.current.get(
+        normalizedAddress.toLowerCase()
+      );
+      if (existingApply) {
+        return existingApply;
+      }
 
-      try {
-        const result = await applyReferralCode(normalizedAddress, referralCode);
-        if (result.success) {
-          clearPendingReferralState({
-            tone: "success",
-            message: `Invite code ${referralCode} linked. Both you and your inviter received 500 PP.`,
-          });
-          clearPointsSummaryCache(normalizedAddress);
-          emitDataInvalidation(["leaderboard", "points"], "referral-applied");
-          return;
-        }
+      const request = (async () => {
+        setIsApplyingReferral(true);
 
-        const errorMessage = result.error || "Referral could not be applied.";
-        blockedReferralApplyRef.current.add(applyGuardKey);
-
-        if (isTerminalReferralError(errorMessage)) {
-          clearPointsSummaryCache(normalizedAddress);
-
-          if (errorMessage.toLowerCase().includes("already referred")) {
+        try {
+          const result = await applyReferralCode(normalizedAddress, referralCode);
+          if (result.success) {
             clearPendingReferralState({
-              tone: "info",
-              message: "This wallet already has an invite linked. Your PP claim can continue normally.",
+              tone: "success",
+              message: `Invite code ${referralCode} linked. Both you and your inviter received 500 PP.`,
+            });
+            clearPointsSummaryCache(normalizedAddress);
+            emitDataInvalidation(["leaderboard", "points"], "referral-applied");
+            return;
+          }
+
+          const errorMessage = result.error || "Referral could not be applied.";
+          blockedReferralApplyRef.current.add(applyGuardKey);
+
+          if (isTerminalReferralError(errorMessage)) {
+            clearPointsSummaryCache(normalizedAddress);
+
+            if (errorMessage.toLowerCase().includes("already referred")) {
+              clearPendingReferralState({
+                tone: "info",
+                message: "This wallet already has an invite linked. Your PP claim can continue normally.",
+              });
+              return;
+            }
+
+            clearPendingReferralState({
+              tone: "warning",
+              message: `Invite code ${referralCode} could not be applied. Your PP claim can continue without it.`,
             });
             return;
           }
@@ -1144,22 +1199,20 @@ export default function FootprintDropLanding({
             tone: "warning",
             message: `Invite code ${referralCode} could not be applied. Your PP claim can continue without it.`,
           });
-          return;
+        } catch {
+          blockedReferralApplyRef.current.add(applyGuardKey);
+          clearPendingReferralState({
+            tone: "warning",
+            message: `Invite code ${referralCode} could not be applied. Your PP claim can continue without it.`,
+          });
+        } finally {
+          setIsApplyingReferral(false);
+          referralApplyInFlightRef.current.delete(normalizedAddress.toLowerCase());
         }
+      })();
 
-        clearPendingReferralState({
-          tone: "warning",
-          message: `Invite code ${referralCode} could not be applied. Your PP claim can continue without it.`,
-        });
-      } catch {
-        blockedReferralApplyRef.current.add(applyGuardKey);
-        clearPendingReferralState({
-          tone: "warning",
-          message: `Invite code ${referralCode} could not be applied. Your PP claim can continue without it.`,
-        });
-      } finally {
-        setIsApplyingReferral(false);
-      }
+      referralApplyInFlightRef.current.set(normalizedAddress.toLowerCase(), request);
+      return request;
     },
     [clearPendingReferralState, pendingReferralCode]
   );

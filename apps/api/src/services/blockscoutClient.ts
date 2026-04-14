@@ -5,6 +5,7 @@ type BlockscoutCountersResponse = {
 
 const DEFAULT_BLOCKSCOUT_BASE_URL = "https://api.blockscout.com/8453";
 const DEFAULT_MAX_REQUESTS_PER_KEY = 100;
+const DEFAULT_REQUEST_TIMEOUT_MS = 10_000;
 const BLOCKSCOUT_RETRY_STATUS_CODES = new Set([401, 402, 403, 429]);
 
 function parseBlockscoutApiKeys() {
@@ -33,12 +34,21 @@ function parseMaxRequestsPerKey() {
     : DEFAULT_MAX_REQUESTS_PER_KEY;
 }
 
+function parseRequestTimeoutMs() {
+  const parsed = Number.parseInt(process.env.BLOCKSCOUT_REQUEST_TIMEOUT_MS || "", 10);
+
+  return Number.isFinite(parsed) && parsed >= 1_000
+    ? parsed
+    : DEFAULT_REQUEST_TIMEOUT_MS;
+}
+
 export class BlockscoutClient {
   private readonly baseUrl = (
     process.env.BLOCKSCOUT_BASE_URL || DEFAULT_BLOCKSCOUT_BASE_URL
   ).replace(/\/+$/, "");
   private readonly apiKeys = parseBlockscoutApiKeys();
   private readonly maxRequestsPerKey = parseMaxRequestsPerKey();
+  private readonly requestTimeoutMs = parseRequestTimeoutMs();
   private currentKeyIndex = 0;
   private currentKeyRequestCount = 0;
 
@@ -94,6 +104,8 @@ export class BlockscoutClient {
     for (let attempts = 0; attempts < this.apiKeys.length; attempts += 1) {
       const { apiKey, keyIndex } = this.takeApiKey();
       let response: Response;
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), this.requestTimeoutMs);
 
       try {
         response = await fetch(
@@ -104,12 +116,21 @@ export class BlockscoutClient {
             headers: {
               Accept: "application/json",
             },
+            signal: controller.signal,
           }
         );
       } catch (error) {
+        clearTimeout(timeoutId);
+        if (error instanceof Error && error.name === "AbortError") {
+          throw new Error(
+            `Blockscout counters request timed out after ${this.requestTimeoutMs}ms`
+          );
+        }
         const message = error instanceof Error ? error.message : "Unknown error";
         throw new Error(`Blockscout counters request failed: ${message}`);
       }
+
+      clearTimeout(timeoutId);
 
       if (response.ok) {
         return (await response.json()) as BlockscoutCountersResponse;
