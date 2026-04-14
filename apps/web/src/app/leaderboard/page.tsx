@@ -344,33 +344,58 @@ export default function LeaderboardPage() {
   const [isLoadingBoard, setIsLoadingBoard] = useState(true);
   const [isLoadingProfile, setIsLoadingProfile] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [refreshNotice, setRefreshNotice] = useState<string | null>(null);
   const isMountedRef = useRef(true);
+  const leaderboardRef = useRef<LeaderboardHubResponse | null>(null);
+  const autoRefreshPausedRef = useRef(false);
+  const loadRequestIdRef = useRef(0);
 
   const normalizedAddress = address?.toLowerCase();
-  const viewer = leaderboard?.viewer ?? null;
+  const visibleLeaderboard =
+    leaderboard?.type === selectedBoard && leaderboard?.page === currentPage
+      ? leaderboard
+      : null;
+  const viewer = visibleLeaderboard?.viewer ?? null;
   const viewerProfile = viewer?.profile ?? null;
   const viewerName = getViewerName(profile, viewerProfile, address);
   const viewerSubtitle = getViewerSubtitle(profile, viewerProfile, address);
   const viewerAvatar = getViewerAvatar(profile, viewerProfile);
   const boardColumns = getBoardColumns(selectedBoard);
   const boardHeaders = getBoardHeaders(selectedBoard);
-  const tableEntries = leaderboard?.entries ?? [];
+  const tableEntries = visibleLeaderboard?.entries ?? [];
   const pinnedViewerEntry = normalizedAddress && viewer ? viewer : null;
   const displayEntries = pinnedViewerEntry
     ? tableEntries.filter((entry) => entry.address.toLowerCase() !== normalizedAddress)
     : tableEntries;
   const hasVisibleEntries = Boolean(pinnedViewerEntry) || displayEntries.length > 0;
-  const totalPages = leaderboard?.totalPages ?? 1;
+  const totalPages = visibleLeaderboard?.totalPages ?? 1;
   const visiblePages = getVisiblePages(currentPage, totalPages);
+  const shouldShowBoardSkeleton = isLoadingBoard && !visibleLeaderboard;
 
   const loadLeaderboard = useCallback(
-    async (options?: { silent?: boolean }) => {
+    async (options?: { manual?: boolean; silent?: boolean }) => {
       const silent = options?.silent ?? false;
+      const manual = options?.manual ?? false;
+
+      if (silent && autoRefreshPausedRef.current) {
+        return;
+      }
+
+      if (manual) {
+        autoRefreshPausedRef.current = false;
+      }
+
+      const requestId = loadRequestIdRef.current + 1;
+      loadRequestIdRef.current = requestId;
 
       if (!silent) {
         setIsLoadingBoard(true);
       }
-      setError(null);
+
+      if (!silent || manual) {
+        setError(null);
+        setRefreshNotice(null);
+      }
 
       try {
         const response = await fetchLeaderboardHub(selectedBoard, {
@@ -383,17 +408,33 @@ export default function LeaderboardPage() {
           throw new Error(response.error || "Failed to load leaderboard");
         }
 
-        if (isMountedRef.current) {
+        if (isMountedRef.current && loadRequestIdRef.current === requestId) {
+          autoRefreshPausedRef.current = false;
+          setError(null);
+          setRefreshNotice(null);
           setLeaderboard(response);
           setCurrentPage(response.page);
         }
       } catch (loadError) {
-        if (isMountedRef.current && !silent) {
-          setError((loadError as Error).message || "Failed to load leaderboard");
-          setLeaderboard(null);
+        if (isMountedRef.current && loadRequestIdRef.current === requestId) {
+          const message = (loadError as Error).message || "Failed to load leaderboard";
+          const currentLeaderboard = leaderboardRef.current;
+          const hasCompatibleLeaderboard =
+            currentLeaderboard?.type === selectedBoard &&
+            currentLeaderboard?.page === currentPage;
+
+          autoRefreshPausedRef.current = true;
+
+          if (hasCompatibleLeaderboard) {
+            setRefreshNotice(
+              "Leaderboard refresh paused after a server error. Retry manually when ready."
+            );
+          } else {
+            setError(message);
+          }
         }
       } finally {
-        if (isMountedRef.current && !silent) {
+        if (isMountedRef.current && loadRequestIdRef.current === requestId && !silent) {
           setIsLoadingBoard(false);
         }
       }
@@ -407,6 +448,10 @@ export default function LeaderboardPage() {
       isMountedRef.current = false;
     };
   }, []);
+
+  useEffect(() => {
+    leaderboardRef.current = leaderboard;
+  }, [leaderboard]);
 
   useEffect(() => {
     void loadLeaderboard();
@@ -547,13 +592,13 @@ export default function LeaderboardPage() {
           <div className="grid grid-cols-2 gap-2">
             <CompactStatCard
               label="Total Particle Points"
-              value={`${formatWhole(leaderboard?.totalParticlePoints || 0)} PP`}
-              isLoading={isLoadingBoard}
+              value={`${formatWhole(visibleLeaderboard?.totalParticlePoints || 0)} PP`}
+              isLoading={shouldShowBoardSkeleton}
             />
             <CompactStatCard
               label="Total Users"
-              value={formatWhole(leaderboard?.totalUserCount || 0)}
-              isLoading={isLoadingBoard}
+              value={formatWhole(visibleLeaderboard?.totalUserCount || 0)}
+              isLoading={shouldShowBoardSkeleton}
             />
           </div>
 
@@ -605,7 +650,7 @@ export default function LeaderboardPage() {
                 </p>
               </div>
               <div className="rounded-full border border-sky-100 bg-sky-50/90 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-sky-700">
-                Page {leaderboard?.page ?? currentPage}/{totalPages}
+                Page {visibleLeaderboard?.page ?? currentPage}/{totalPages}
               </div>
             </div>
 
@@ -626,21 +671,41 @@ export default function LeaderboardPage() {
             </div>
 
             <div className="mt-1.5">
-              {isLoadingBoard ? <SkeletonTable type={selectedBoard} /> : null}
-
-              {!isLoadingBoard && error ? (
-                <div className="rounded-[14px] border border-rose-100 bg-rose-50/90 px-3 py-3 text-sm text-rose-700">
-                  {error}
+              {refreshNotice ? (
+                <div className="mb-1.5 flex flex-col gap-2 rounded-[14px] border border-amber-100 bg-amber-50/90 px-3 py-3 text-sm text-amber-800 sm:flex-row sm:items-center sm:justify-between">
+                  <span>{refreshNotice}</span>
+                  <button
+                    type="button"
+                    onClick={() => void loadLeaderboard({ manual: true })}
+                    className="inline-flex items-center justify-center rounded-full border border-amber-200 bg-white px-3 py-1.5 text-[11px] font-semibold text-amber-800 transition-colors hover:bg-amber-100"
+                  >
+                    Retry
+                  </button>
                 </div>
               ) : null}
 
-              {!isLoadingBoard && !error && !hasVisibleEntries ? (
+              {shouldShowBoardSkeleton ? <SkeletonTable type={selectedBoard} /> : null}
+
+              {!shouldShowBoardSkeleton && error ? (
+                <div className="rounded-[14px] border border-rose-100 bg-rose-50/90 px-3 py-3 text-sm text-rose-700">
+                  <p>{error}</p>
+                  <button
+                    type="button"
+                    onClick={() => void loadLeaderboard({ manual: true })}
+                    className="mt-3 inline-flex items-center justify-center rounded-full border border-rose-200 bg-white px-3 py-1.5 text-[11px] font-semibold text-rose-700 transition-colors hover:bg-rose-100"
+                  >
+                    Retry leaderboard
+                  </button>
+                </div>
+              ) : null}
+
+              {!shouldShowBoardSkeleton && !error && !hasVisibleEntries ? (
                 <div className="rounded-[14px] border border-slate-200/80 bg-white/84 px-3 py-4 text-center text-sm text-slate-500">
                   No leaderboard data yet.
                 </div>
               ) : null}
 
-              {!isLoadingBoard && !error && hasVisibleEntries ? (
+              {!shouldShowBoardSkeleton && !error && hasVisibleEntries ? (
                 <div className="space-y-1.5">
                   {pinnedViewerEntry ? (
                     <LeaderboardRow
@@ -676,7 +741,7 @@ export default function LeaderboardPage() {
               ) : null}
             </div>
 
-            {!isLoadingBoard && !error && totalPages > 1 ? (
+            {!shouldShowBoardSkeleton && !error && totalPages > 1 ? (
               <div className="mt-3 flex flex-wrap items-center justify-center gap-1.5">
                 <button
                   type="button"

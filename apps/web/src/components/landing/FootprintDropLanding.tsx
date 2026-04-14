@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { getAddress, type Address } from "viem";
 import { base } from "viem/chains";
 import { createSiweMessage } from "viem/siwe";
@@ -35,6 +35,7 @@ const NAV_ITEMS = [
 
 const FOLLOW_VERIFY_DELAY_MS = 20_000;
 const FOLLOW_GATE_STORAGE_PREFIX = "dustswap:footprint-follow-gate";
+const REFERRAL_CODE_PATTERN = /^DUST-[A-Z0-9]{5}$/;
 const FOOTPRINT_FOLLOW_TARGETS = [
   {
     key: "founder",
@@ -78,6 +79,19 @@ function shortAddress(address: string) {
 
 function formatWhole(value: number | null | undefined) {
   return Number(value || 0).toLocaleString();
+}
+
+function getValidReferralCode(code?: string | null) {
+  if (!code) {
+    return null;
+  }
+
+  const normalizedCode = normalizeReferralCode(code);
+  return REFERRAL_CODE_PATTERN.test(normalizedCode) ? normalizedCode : null;
+}
+
+function buildReferralApplyGuardKey(address: Address, referralCode: string) {
+  return `${address.toLowerCase()}:${referralCode}`;
 }
 
 function SectionKicker({ children }: { children: ReactNode }) {
@@ -791,6 +805,8 @@ export default function FootprintDropLanding({
     createEmptyFollowGateState
   );
   const [followGateTick, setFollowGateTick] = useState(0);
+  const blockedAutoLookupRef = useRef<Set<string>>(new Set());
+  const blockedReferralApplyRef = useRef<Set<string>>(new Set());
 
   const connectedAddress = useMemo(
     () => (address ? getAddress(address) : undefined),
@@ -871,8 +887,9 @@ export default function FootprintDropLanding({
   }, [connectedAddress, status?.address, status?.claimed]);
 
   useEffect(() => {
-    const storedCode = getPendingReferralCode();
+    const storedCode = getValidReferralCode(getPendingReferralCode());
     if (!storedCode) {
+      clearPendingReferralCode();
       return;
     }
 
@@ -880,19 +897,18 @@ export default function FootprintDropLanding({
   }, []);
 
   useEffect(() => {
-    if (!initialReferralCode) {
-      return;
-    }
-
-    const normalizedCode = normalizeReferralCode(initialReferralCode);
+    const normalizedCode = getValidReferralCode(initialReferralCode);
     if (!normalizedCode) {
+      if (initialReferralCode) {
+        clearPendingReferralState();
+      }
       return;
     }
 
     storePendingReferralCode(normalizedCode);
     setPendingReferralCode(normalizedCode);
     setReferralBanner(null);
-  }, [initialReferralCode]);
+  }, [clearPendingReferralState, initialReferralCode]);
 
   useEffect(() => {
     if (!connectedAddress || !pendingReferralCode) {
@@ -924,17 +940,34 @@ export default function FootprintDropLanding({
     };
   }, [clearPendingReferralState, connectedAddress, pendingReferralCode]);
 
-  const runLookup = useCallback(async (rawAddress: string) => {
+  const runLookup = useCallback(async (rawAddress: string, options?: { manual?: boolean }) => {
     try {
       const normalizedAddress = normalizeAddressInput(rawAddress);
+      const lookupKey = normalizedAddress.toLowerCase();
+
+      if (!options?.manual && blockedAutoLookupRef.current.has(lookupKey)) {
+        return;
+      }
+
+      if (options?.manual) {
+        blockedAutoLookupRef.current.delete(lookupKey);
+      }
+
       setLookupState("checking");
       setLookupError(null);
       setClaimError(null);
       const result = await lookupFootprintDrop(normalizedAddress);
+      blockedAutoLookupRef.current.delete(lookupKey);
       setStatus(result);
       setClaimState(result.claimed ? "claimed" : "idle");
       setAddressInput(normalizedAddress);
     } catch (error) {
+      try {
+        const normalizedAddress = normalizeAddressInput(rawAddress);
+        blockedAutoLookupRef.current.add(normalizedAddress.toLowerCase());
+      } catch {
+        // Ignore invalid addresses here and let the visible error message explain the failure.
+      }
       setStatus(null);
       setClaimState("idle");
       setLookupError(getErrorMessage(error));
@@ -948,7 +981,7 @@ export default function FootprintDropLanding({
       return;
     }
 
-    await runLookup(connectedAddress);
+    await runLookup(connectedAddress, { manual: true });
   }, [connectedAddress, runLookup]);
 
   const completeSignIn = useCallback(
@@ -981,7 +1014,7 @@ export default function FootprintDropLanding({
         setHasSiweSession(true);
         setAuthState("idle");
         setAddressInput(connectedWalletAddress);
-        await runLookup(connectedWalletAddress);
+        await runLookup(connectedWalletAddress, { manual: true });
       } catch (error) {
         clearStoredSiweSession();
         setHasSiweSession(false);
@@ -1016,7 +1049,7 @@ export default function FootprintDropLanding({
         setHasSiweSession(true);
         setAuthError(null);
         setAddressInput(currentAddress);
-        await runLookup(currentAddress);
+        await runLookup(currentAddress, { manual: true });
         return;
       }
 
@@ -1051,7 +1084,7 @@ export default function FootprintDropLanding({
 
   const handleAddressCheck = useCallback(async () => {
     try {
-      await runLookup(addressInput);
+      await runLookup(addressInput, { manual: true });
     } catch {
       // runLookup already owns the error state updates
     }
@@ -1059,18 +1092,34 @@ export default function FootprintDropLanding({
 
   const applyPendingReferralIfNeeded = useCallback(
     async (normalizedAddress: Address) => {
-      if (!pendingReferralCode) {
+      const referralCode = getValidReferralCode(pendingReferralCode);
+      if (!referralCode) {
+        if (pendingReferralCode) {
+          clearPendingReferralState({
+            tone: "warning",
+            message: "Invite code could not be verified locally. Your PP claim can continue without it.",
+          });
+        }
+        return;
+      }
+
+      const applyGuardKey = buildReferralApplyGuardKey(normalizedAddress, referralCode);
+      if (blockedReferralApplyRef.current.has(applyGuardKey)) {
+        clearPendingReferralState({
+          tone: "warning",
+          message: `Invite code ${referralCode} could not be applied. Your PP claim can continue without it.`,
+        });
         return;
       }
 
       setIsApplyingReferral(true);
 
       try {
-        const result = await applyReferralCode(normalizedAddress, pendingReferralCode);
+        const result = await applyReferralCode(normalizedAddress, referralCode);
         if (result.success) {
           clearPendingReferralState({
             tone: "success",
-            message: `Invite code ${pendingReferralCode} linked. Both you and your inviter received 500 PP.`,
+            message: `Invite code ${referralCode} linked. Both you and your inviter received 500 PP.`,
           });
           clearPointsSummaryCache(normalizedAddress);
           emitDataInvalidation(["leaderboard", "points"], "referral-applied");
@@ -1078,6 +1127,8 @@ export default function FootprintDropLanding({
         }
 
         const errorMessage = result.error || "Referral could not be applied.";
+        blockedReferralApplyRef.current.add(applyGuardKey);
+
         if (isTerminalReferralError(errorMessage)) {
           clearPointsSummaryCache(normalizedAddress);
 
@@ -1091,12 +1142,21 @@ export default function FootprintDropLanding({
 
           clearPendingReferralState({
             tone: "warning",
-            message: `Invite code ${pendingReferralCode} could not be applied. Your PP claim can continue without it.`,
+            message: `Invite code ${referralCode} could not be applied. Your PP claim can continue without it.`,
           });
           return;
         }
 
-        throw new Error(errorMessage);
+        clearPendingReferralState({
+          tone: "warning",
+          message: `Invite code ${referralCode} could not be applied. Your PP claim can continue without it.`,
+        });
+      } catch {
+        blockedReferralApplyRef.current.add(applyGuardKey);
+        clearPendingReferralState({
+          tone: "warning",
+          message: `Invite code ${referralCode} could not be applied. Your PP claim can continue without it.`,
+        });
       } finally {
         setIsApplyingReferral(false);
       }
