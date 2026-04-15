@@ -1216,6 +1216,30 @@ export class PointsEngine {
     return (data as PointEventRow | null) ?? null;
   }
 
+  private async getReferralLedgerByRefereeId(refereeId: number) {
+    const { data, error } = await supabase
+      .from("referrals")
+      .select("referrer_id, referee_id, referrer_earned, referee_first_sweep, created_at")
+      .eq("referee_id", refereeId)
+      .maybeSingle();
+
+    if (error) {
+      throw new Error(`Load referral ledger: ${error.message}`);
+    }
+
+    return (
+      data as
+        | {
+            referrer_id: number;
+            referee_id: number;
+            referrer_earned: number | string | null;
+            referee_first_sweep: boolean | null;
+            created_at?: string | null;
+          }
+        | null
+    ) ?? null;
+  }
+
   private normalizeFootprintClaim(
     address: string,
     event: PointEventRow
@@ -1664,6 +1688,13 @@ export class PointsEngine {
     this.invalidateUserReadCaches(user.address);
     this.invalidateUserReadCaches(referrer.address);
 
+    return {
+      applied: true,
+      message: "Referral applied!",
+    } satisfies ReferralApplyResult;
+  }
+
+  private getAppliedReferralResult() {
     return {
       applied: true,
       message: "Referral applied!",
@@ -3192,6 +3223,14 @@ export class PointsEngine {
     normalizedCode: string
   ): Promise<ReferralApplyResult> {
     const user = await this.getOrCreate(userAddress);
+    const recent = this.getRecentReferralApply(userAddress);
+    if (recent && recent.code === normalizedCode) {
+      return {
+        ...recent.result,
+        idempotent: true,
+      };
+    }
+
     const { data: referrer, error: referrerError } = await supabase
       .from("users")
       .select("*")
@@ -3210,23 +3249,25 @@ export class PointsEngine {
     }
 
     if (user.referred_by) {
-      const recent = this.getRecentReferralApply(userAddress);
-      if (recent && recent.code === normalizedCode) {
+      if (user.referred_by === (referrer as UserRecord).id) {
+        const result = this.getAppliedReferralResult();
+
+        this.rememberReferralApply(userAddress, normalizedCode, result);
+
         return {
-          ...recent.result,
+          ...result,
           idempotent: true,
         };
       }
 
-      if (user.referred_by === (referrer as UserRecord).id) {
-        const result = await this.finalizeReferralLink(
-          user,
-          referrer as UserRecord,
-          normalizedCode
-        );
+      throw new Error("Already referred");
+    }
 
+    const existingReferral = await this.getReferralLedgerByRefereeId(user.id);
+    if (existingReferral) {
+      if (Number(existingReferral.referrer_id) === (referrer as UserRecord).id) {
+        const result = this.getAppliedReferralResult();
         this.rememberReferralApply(userAddress, normalizedCode, result);
-
         return {
           ...result,
           idempotent: true,
@@ -3255,14 +3296,18 @@ export class PointsEngine {
       const latestUser = await this.getOrCreate(userAddress);
 
       if (latestUser.referred_by === (referrer as UserRecord).id) {
-        const result = await this.finalizeReferralLink(
-          latestUser,
-          referrer as UserRecord,
-          normalizedCode
-        );
-
+        const result = this.getAppliedReferralResult();
         this.rememberReferralApply(userAddress, normalizedCode, result);
+        return {
+          ...result,
+          idempotent: true,
+        };
+      }
 
+      const latestReferral = await this.getReferralLedgerByRefereeId(user.id);
+      if (latestReferral && Number(latestReferral.referrer_id) === (referrer as UserRecord).id) {
+        const result = this.getAppliedReferralResult();
+        this.rememberReferralApply(userAddress, normalizedCode, result);
         return {
           ...result,
           idempotent: true,

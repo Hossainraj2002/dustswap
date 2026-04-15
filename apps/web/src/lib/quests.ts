@@ -2,6 +2,7 @@ import type { AdminQuestInput, QuestBoardResponse } from "@/types/quests";
 import { buildPublicApiUrl } from "@/lib/apiBase";
 
 const SAVE_X_USERNAME_RECENT_TTL_MS = 15_000;
+const START_QUEST_RECENT_TTL_MS = 15_000;
 const saveXUsernameRecent = new Map<
   string,
   {
@@ -19,6 +20,27 @@ const saveXUsernameInflight = new Map<
     success: boolean;
     username?: string;
     error?: string;
+  }>
+>();
+const startQuestRecent = new Map<
+  string,
+  {
+    expiresAt: number;
+    value: {
+      success: boolean;
+      nextVerificationAt?: string;
+      error?: string;
+      idempotent?: boolean;
+    };
+  }
+>();
+const startQuestInflight = new Map<
+  string,
+  Promise<{
+    success: boolean;
+    nextVerificationAt?: string;
+    error?: string;
+    idempotent?: boolean;
   }>
 >();
 
@@ -43,6 +65,10 @@ function getSaveXUsernameCacheKey(address: string, username: string) {
   return `${address.toLowerCase()}:${username.trim().toLowerCase()}`;
 }
 
+function getStartQuestCacheKey(questId: string, address: string) {
+  return `${questId}:${address.toLowerCase()}`;
+}
+
 export async function fetchQuestBoard(address?: string) {
   const url = new URL(getQuestsApiUrl());
   if (address) {
@@ -60,19 +86,53 @@ export async function fetchQuestBoard(address?: string) {
 }
 
 export async function startQuest(questId: string, address: string) {
-  const response = await fetch(getQuestsApiUrl(`/${questId}/start`), {
+  const cacheKey = getStartQuestCacheKey(questId, address);
+  const recent = startQuestRecent.get(cacheKey);
+
+  if (recent && recent.expiresAt > Date.now()) {
+    return recent.value;
+  }
+
+  if (recent) {
+    startQuestRecent.delete(cacheKey);
+  }
+
+  const inflight = startQuestInflight.get(cacheKey);
+  if (inflight) {
+    return inflight;
+  }
+
+  const request = fetch(getQuestsApiUrl(`/${questId}/start`), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
     },
     body: JSON.stringify({ address }),
-  });
+  })
+    .then((response) =>
+      parseJson<{
+        success: boolean;
+        nextVerificationAt?: string;
+        error?: string;
+        idempotent?: boolean;
+      }>(response)
+    )
+    .then((data) => {
+      if (data.success) {
+        startQuestRecent.set(cacheKey, {
+          expiresAt: Date.now() + START_QUEST_RECENT_TTL_MS,
+          value: data,
+        });
+      }
 
-  return parseJson<{
-    success: boolean;
-    nextVerificationAt?: string;
-    error?: string;
-  }>(response);
+      return data;
+    })
+    .finally(() => {
+      startQuestInflight.delete(cacheKey);
+    });
+
+  startQuestInflight.set(cacheKey, request);
+  return request;
 }
 
 export async function verifyDelayQuest(questId: string, address: string) {
