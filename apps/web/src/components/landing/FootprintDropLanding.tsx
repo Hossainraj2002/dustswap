@@ -52,6 +52,7 @@ const FOOTPRINT_FOLLOW_TARGETS = [
     description: "Follow the official DustSwap account.",
   },
 ] as const;
+const LANDING_TERMINAL_REFERRAL_BLOCKS = new Set<string>();
 
 type ReferralBanner =
   | {
@@ -1144,7 +1145,10 @@ export default function FootprintDropLanding({
       }
 
       const applyGuardKey = buildReferralApplyGuardKey(normalizedAddress, referralCode);
-      if (blockedReferralApplyRef.current.has(applyGuardKey)) {
+      if (
+        blockedReferralApplyRef.current.has(applyGuardKey) ||
+        LANDING_TERMINAL_REFERRAL_BLOCKS.has(applyGuardKey)
+      ) {
         clearPendingReferralState({
           tone: "warning",
           message: `Invite code ${referralCode} could not be applied. Your PP claim can continue without it.`,
@@ -1175,9 +1179,10 @@ export default function FootprintDropLanding({
           }
 
           const errorMessage = result.error || "Referral could not be applied.";
-          blockedReferralApplyRef.current.add(applyGuardKey);
 
           if (isTerminalReferralError(errorMessage)) {
+            blockedReferralApplyRef.current.add(applyGuardKey);
+            LANDING_TERMINAL_REFERRAL_BLOCKS.add(applyGuardKey);
             clearPointsSummaryCache(normalizedAddress);
 
             if (errorMessage.toLowerCase().includes("already referred")) {
@@ -1200,7 +1205,6 @@ export default function FootprintDropLanding({
             message: `Invite code ${referralCode} could not be applied. Your PP claim can continue without it.`,
           });
         } catch {
-          blockedReferralApplyRef.current.add(applyGuardKey);
           clearPendingReferralState({
             tone: "warning",
             message: `Invite code ${referralCode} could not be applied. Your PP claim can continue without it.`,

@@ -1,5 +1,6 @@
 import type { SpinRewardKey, SpinRewardKind } from "@/lib/spin";
 import { buildPublicApiUrl } from "@/lib/apiBase";
+import { isTerminalReferralError } from "@/lib/referrals";
 
 async function parseJson<T>(response: Response): Promise<T> {
   const text = await response.text();
@@ -337,7 +338,7 @@ export async function applyReferralCode(address: string, referralCode: string) {
       }>(response)
     )
     .then((data) => {
-      if (data.success) {
+      if (data.success || isTerminalReferralError(data.error)) {
         referralApplyRecent.set(cacheKey, {
           expiresAt: Date.now() + REFERRAL_APPLY_RECENT_TTL_MS,
           value: data,

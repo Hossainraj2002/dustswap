@@ -119,7 +119,24 @@ questsRoutes.post("/x/username", async (c) => {
       );
     }
 
-    const guardKey = `quests:x-username:${body.address.trim().toLowerCase()}:${body.username
+    const normalizedAddress = body.address.trim().toLowerCase();
+    const usernameRateLimit = runtimeCache.consumeRateLimit(
+      `quests:x-username:cooldown:${normalizedAddress}`,
+      4,
+      10_000
+    );
+
+    if (!usernameRateLimit.allowed) {
+      return c.json(
+        {
+          success: false,
+          error: "X username save is cooling down. Please wait a few seconds.",
+        },
+        429
+      );
+    }
+
+    const guardKey = `quests:x-username:${normalizedAddress}:${body.username
       .trim()
       .toLowerCase()}`;
     const data = await runtimeCache.singleFlight(guardKey, () =>
@@ -245,7 +262,25 @@ questsRoutes.post("/:id/start", async (c) => {
       return c.json({ success: false, error: "address is required" }, 400);
     }
 
-    const data = await questEngine.startDelayQuest(body.address, c.req.param("id"));
+    const questId = c.req.param("id");
+    const normalizedAddress = body.address.trim().toLowerCase();
+    const questStartRateLimit = runtimeCache.consumeRateLimit(
+      `quests:start:cooldown:${normalizedAddress}:${questId}`,
+      4,
+      10_000
+    );
+
+    if (!questStartRateLimit.allowed) {
+      return c.json(
+        {
+          success: false,
+          error: "Quest start is cooling down. Please wait a few seconds.",
+        },
+        429
+      );
+    }
+
+    const data = await questEngine.startDelayQuest(body.address, questId);
     return c.json(data);
   } catch (error) {
     return c.json(

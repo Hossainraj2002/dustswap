@@ -3,6 +3,7 @@
 
 import { Hono } from "hono";
 import { pointsEngine } from "../services/pointsEngine";
+import { runtimeCache } from "../utils/runtimeCache";
 
 const pointsRoutes = new Hono();
 
@@ -361,8 +362,36 @@ pointsRoutes.post("/referral/apply", async (c) => {
     return c.json({ success: false, error: "address and referralCode required" }, 400);
   }
 
+  const referralApplyRateLimit = runtimeCache.consumeRateLimit(
+    `points:referral-apply:${address.toLowerCase()}`,
+    4,
+    10_000
+  );
+
+  if (!referralApplyRateLimit.allowed) {
+    return c.json(
+      {
+        success: false,
+        error: "Referral apply is cooling down. Please wait a few seconds.",
+      },
+      429
+    );
+  }
+
   try {
     const result = await pointsEngine.applyReferral(address, referralCode);
+
+    if (!result.applied) {
+      return c.json(
+        {
+          success: false,
+          error: result.message,
+          idempotent: result.idempotent === true,
+        },
+        400
+      );
+    }
+
     return c.json({
       success: true,
       message: result.message,

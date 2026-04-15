@@ -79,6 +79,7 @@ const SPIN_CONTRACT_ADDRESS = (
 const ENTRY_POINT_V06_ADDRESS = "0x5ff137d4b0fdcd49dca30c7cf57e578a026d2789";
 const DEFAULT_ETH_PRICE_USD = Number(process.env.DEFAULT_ETH_PRICE_USD || "3500");
 const REFERRAL_APPLY_IDEMPOTENCY_TTL_MS = 10 * 60 * 1000;
+const REFERRAL_APPLY_TERMINAL_TTL_MS = 30 * 1000;
 const PRICE_SCALE = 100_000_000;
 const WEI_PER_ETH = 10n ** 18n;
 const USER_CREATE_MAX_ATTEMPTS = 5;
@@ -619,13 +620,34 @@ export class PointsEngine {
   private rememberReferralApply(
     address: string,
     code: string,
-    result: ReferralApplyResult
+    result: ReferralApplyResult,
+    ttlMs = REFERRAL_APPLY_IDEMPOTENCY_TTL_MS
   ) {
     this.referralApplyRecent.set(this.getReferralApplyKey(address), {
       code,
       result,
-      expiresAt: Date.now() + REFERRAL_APPLY_IDEMPOTENCY_TTL_MS,
+      expiresAt: Date.now() + ttlMs,
     });
+  }
+
+  private rememberTerminalReferralApply(
+    address: string,
+    code: string,
+    message: string
+  ) {
+    const result = {
+      applied: false,
+      message,
+    } satisfies ReferralApplyResult;
+
+    this.rememberReferralApply(
+      address,
+      code,
+      result,
+      REFERRAL_APPLY_TERMINAL_TTL_MS
+    );
+
+    return result;
   }
 
   private normalizeStoredAddress(address: string) {
@@ -3231,6 +3253,29 @@ export class PointsEngine {
       };
     }
 
+    if (user.referred_by) {
+      return {
+        ...this.rememberTerminalReferralApply(
+          userAddress,
+          normalizedCode,
+          "Already referred"
+        ),
+        idempotent: true,
+      };
+    }
+
+    const existingReferral = await this.getReferralLedgerByRefereeId(user.id);
+    if (existingReferral) {
+      const result = {
+        ...this.getAppliedReferralResult(),
+        idempotent: true,
+      } satisfies ReferralApplyResult;
+
+      this.rememberReferralApply(userAddress, normalizedCode, result);
+
+      return result;
+    }
+
     const { data: referrer, error: referrerError } = await supabase
       .from("users")
       .select("*")
@@ -3242,39 +3287,18 @@ export class PointsEngine {
     }
 
     if (!referrer) {
-      throw new Error("Invalid referral code");
+      return this.rememberTerminalReferralApply(
+        userAddress,
+        normalizedCode,
+        "Invalid referral code"
+      );
     }
     if (String((referrer as UserRecord).address).toLowerCase() === userAddress.toLowerCase()) {
-      throw new Error("Cannot self-refer");
-    }
-
-    if (user.referred_by) {
-      if (user.referred_by === (referrer as UserRecord).id) {
-        const result = this.getAppliedReferralResult();
-
-        this.rememberReferralApply(userAddress, normalizedCode, result);
-
-        return {
-          ...result,
-          idempotent: true,
-        };
-      }
-
-      throw new Error("Already referred");
-    }
-
-    const existingReferral = await this.getReferralLedgerByRefereeId(user.id);
-    if (existingReferral) {
-      if (Number(existingReferral.referrer_id) === (referrer as UserRecord).id) {
-        const result = this.getAppliedReferralResult();
-        this.rememberReferralApply(userAddress, normalizedCode, result);
-        return {
-          ...result,
-          idempotent: true,
-        };
-      }
-
-      throw new Error("Already referred");
+      return this.rememberTerminalReferralApply(
+        userAddress,
+        normalizedCode,
+        "Cannot self-refer"
+      );
     }
 
     const { data: linkedUser, error: linkError } = await supabase
@@ -3304,6 +3328,17 @@ export class PointsEngine {
         };
       }
 
+      if (latestUser.referred_by) {
+        return {
+          ...this.rememberTerminalReferralApply(
+            userAddress,
+            normalizedCode,
+            "Already referred"
+          ),
+          idempotent: true,
+        };
+      }
+
       const latestReferral = await this.getReferralLedgerByRefereeId(user.id);
       if (latestReferral && Number(latestReferral.referrer_id) === (referrer as UserRecord).id) {
         const result = this.getAppliedReferralResult();
@@ -3314,7 +3349,25 @@ export class PointsEngine {
         };
       }
 
-      throw new Error("Already referred");
+      if (latestReferral) {
+        return {
+          ...this.rememberTerminalReferralApply(
+            userAddress,
+            normalizedCode,
+            "Already referred"
+          ),
+          idempotent: true,
+        };
+      }
+
+      return {
+        ...this.rememberTerminalReferralApply(
+          userAddress,
+          normalizedCode,
+          "Already referred"
+        ),
+        idempotent: true,
+      };
     }
 
     const result = await this.finalizeReferralLink(

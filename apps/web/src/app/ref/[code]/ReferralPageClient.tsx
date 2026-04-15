@@ -21,6 +21,9 @@ type ReferralPageClientProps = {
 
 type ApplyState = "idle" | "applying" | "success" | "error";
 
+const referralAutoApplyAttemptedSession = new Set<string>();
+const referralAutoApplyTerminalSession = new Set<string>();
+
 export function ReferralPageClient({ params }: ReferralPageClientProps) {
   const router = useRouter();
   const { address, isConnected } = useAccount();
@@ -54,7 +57,17 @@ export function ReferralPageClient({ params }: ReferralPageClientProps) {
       return;
     }
 
+    const applyKey = `${address.toLowerCase()}:${referralCode}`;
+    if (referralAutoApplyTerminalSession.has(applyKey)) {
+      return;
+    }
+
+    if (attempt === 0 && referralAutoApplyAttemptedSession.has(applyKey)) {
+      return;
+    }
+
     let cancelled = false;
+    referralAutoApplyAttemptedSession.add(applyKey);
 
     const run = async () => {
       setState("applying");
@@ -82,6 +95,7 @@ export function ReferralPageClient({ params }: ReferralPageClientProps) {
       }
 
       if (isTerminalReferralError(result.error)) {
+        referralAutoApplyTerminalSession.add(applyKey);
         clearPendingReferralCode();
       }
 
@@ -164,7 +178,16 @@ export function ReferralPageClient({ params }: ReferralPageClientProps) {
             {state === "error" ? (
               <button
                 type="button"
-                onClick={() => setAttempt((current) => current + 1)}
+                onClick={() => {
+                  if (!address || !referralCode) {
+                    return;
+                  }
+
+                  const applyKey = `${address.toLowerCase()}:${referralCode}`;
+                  referralAutoApplyAttemptedSession.delete(applyKey);
+                  referralAutoApplyTerminalSession.delete(applyKey);
+                  setAttempt((current) => current + 1);
+                }}
                 disabled={!isConnected}
                 className="rounded-[18px] bg-[linear-gradient(135deg,#0ea5e9,#22c55e)] px-4 py-3 text-sm font-black text-white shadow-[0_14px_32px_rgba(14,165,233,0.18)] transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-50"
               >

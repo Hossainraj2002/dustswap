@@ -669,6 +669,10 @@ export class QuestEngine {
     return `quest-start:${normalizeAddress(address)}:${questId}:${cycleKey}`;
   }
 
+  private getStartDelayQuestEarlyCacheKey(address: string, questId: string) {
+    return `quest-start:early:${normalizeAddress(address)}:${questId}`;
+  }
+
   private invalidateQuestBoardCache(address?: string | null) {
     if (!address) {
       runtimeCache.invalidatePrefix("quest-board:");
@@ -1065,73 +1069,117 @@ export class QuestEngine {
   }
 
   async startDelayQuest(address: string, questId: string) {
-    const quest = await this.getQuestById(questId);
-    const rules = safeRules(quest.rules);
     const normalizedAddress = normalizeAddress(address);
-    const user = await pointsEngine.getOrCreate(normalizedAddress);
-
-    if (quest.platform === "x") {
-      await this.assertLinkedSocialAccount(user.id, "x");
-    }
-
-    const delaySeconds = toNumber(rules.delaySeconds, 20);
-    const now = getNow();
-    const cycleKey = getCycleKey(quest.progress_window, now);
-    const cacheKey = this.getStartDelayQuestCacheKey(
+    const earlyCacheKey = this.getStartDelayQuestEarlyCacheKey(
       normalizedAddress,
-      quest.id,
-      cycleKey
+      questId
     );
-    const recent = runtimeCache.get<{
+    const earlyRecent = runtimeCache.get<{
       success: true;
       questId: string;
       nextVerificationAt?: string | null;
       idempotent?: boolean;
-    }>(cacheKey);
+    }>(earlyCacheKey);
 
-    if (recent) {
-      return recent;
+    if (earlyRecent) {
+      return {
+        ...earlyRecent,
+        idempotent: true,
+      };
     }
 
-    return runtimeCache.singleFlight(`${cacheKey}:inflight`, async () => {
-      const existing = await this.getProgress(user.id, quest.id, cycleKey);
-      if (
-        existing &&
-        existing.status !== "not_started" &&
-        (existing.opened_at || existing.next_verification_at || existing.completed_at)
-      ) {
-        const result = {
-          success: true,
-          questId,
-          nextVerificationAt: existing.next_verification_at,
-          idempotent: true,
-        } as const;
+    return runtimeCache.singleFlight(`${earlyCacheKey}:inflight`, async () => {
+      const cachedDuringFlight = runtimeCache.get<{
+        success: true;
+        questId: string;
+        nextVerificationAt?: string | null;
+        idempotent?: boolean;
+      }>(earlyCacheKey);
 
-        runtimeCache.set(cacheKey, result, START_DELAY_QUEST_DEDUPE_TTL_MS);
-        return result;
+      if (cachedDuringFlight) {
+        return {
+          ...cachedDuringFlight,
+          idempotent: true,
+        };
       }
 
-      const progress = await this.upsertProgress({
-        userId: user.id,
-        quest,
-        cycleKey,
-        updates: {
-          status: "in_progress",
-          opened_at: now.toISOString(),
-          next_verification_at: new Date(
-            now.getTime() + delaySeconds * 1000
-          ).toISOString(),
-        },
+      const quest = await this.getQuestById(questId);
+      const rules = safeRules(quest.rules);
+      const user = await pointsEngine.getOrCreate(normalizedAddress);
+
+      if (quest.platform === "x") {
+        await this.assertLinkedSocialAccount(user.id, "x");
+      }
+
+      const delaySeconds = toNumber(rules.delaySeconds, 20);
+      const now = getNow();
+      const cycleKey = getCycleKey(quest.progress_window, now);
+      const cacheKey = this.getStartDelayQuestCacheKey(
+        normalizedAddress,
+        quest.id,
+        cycleKey
+      );
+      const recent = runtimeCache.get<{
+        success: true;
+        questId: string;
+        nextVerificationAt?: string | null;
+        idempotent?: boolean;
+      }>(cacheKey);
+
+      if (recent) {
+        runtimeCache.set(
+          earlyCacheKey,
+          recent,
+          START_DELAY_QUEST_DEDUPE_TTL_MS
+        );
+        return {
+          ...recent,
+          idempotent: true,
+        };
+      }
+
+      const result = await runtimeCache.singleFlight(`${cacheKey}:inflight`, async () => {
+        const existing = await this.getProgress(user.id, quest.id, cycleKey);
+        if (
+          existing &&
+          existing.status !== "not_started" &&
+          (existing.opened_at || existing.next_verification_at || existing.completed_at)
+        ) {
+          return {
+            success: true,
+            questId,
+            nextVerificationAt: existing.next_verification_at,
+            idempotent: true,
+          } as const;
+        }
+
+        const progress = await this.upsertProgress({
+          userId: user.id,
+          quest,
+          cycleKey,
+          updates: {
+            status: "in_progress",
+            opened_at: now.toISOString(),
+            next_verification_at: new Date(
+              now.getTime() + delaySeconds * 1000
+            ).toISOString(),
+          },
+        });
+
+        this.invalidateQuestBoardCache(normalizedAddress);
+        return {
+          success: true,
+          questId,
+          nextVerificationAt: progress.next_verification_at,
+        } as const;
       });
 
-      this.invalidateQuestBoardCache(normalizedAddress);
-      const result = {
-        success: true,
-        questId,
-        nextVerificationAt: progress.next_verification_at,
-      } as const;
-
       runtimeCache.set(cacheKey, result, START_DELAY_QUEST_DEDUPE_TTL_MS);
+      runtimeCache.set(
+        earlyCacheKey,
+        result,
+        START_DELAY_QUEST_DEDUPE_TTL_MS
+      );
       return result;
     });
   }
