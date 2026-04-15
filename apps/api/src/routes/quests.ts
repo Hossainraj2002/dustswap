@@ -34,6 +34,10 @@ function assertAdmin(c: any) {
 }
 
 questsRoutes.get("/", async (c) => {
+  if (isMaintenanceModeEnabled()) {
+    return maintenanceUnavailable(c);
+  }
+
   try {
     const address = c.req.query("address") || undefined;
     const data = await questEngine.getQuestBoard(address);

@@ -19,6 +19,10 @@ function maintenanceUnavailable(c: Context) {
 
 // GET /api/points/leaderboards
 pointsRoutes.get("/leaderboards", async (c) => {
+  if (isMaintenanceModeEnabled()) {
+    return maintenanceUnavailable(c);
+  }
+
   const rawType = c.req.query("type") ?? "particle_points";
   const type =
     rawType === "referral" || rawType === "volume" || rawType === "particle_points"
@@ -103,6 +107,10 @@ pointsRoutes.post("/airdrop/lookup", async (c) => {
 
 // POST /api/points/airdrop/claim
 pointsRoutes.post("/airdrop/claim", async (c) => {
+  if (isMaintenanceModeEnabled()) {
+    return maintenanceUnavailable(c);
+  }
+
   const body = await c.req.json<{ address?: string }>();
 
   if (!body.address) {
@@ -138,6 +146,10 @@ pointsRoutes.post("/spin", async (c) => {
 
 // GET /api/points/:address/summary
 pointsRoutes.get("/:address/summary", async (c) => {
+  if (isMaintenanceModeEnabled()) {
+    return maintenanceUnavailable(c);
+  }
+
   try {
     const data = await pointsEngine.getPointsSummary(c.req.param("address"));
     return c.json({ success: true, ...data });
