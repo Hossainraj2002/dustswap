@@ -1,8 +1,18 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { questEngine, type AdminQuestInput } from "../services/questEngine";
 import { runtimeCache } from "../utils/runtimeCache";
 
 const questsRoutes = new Hono();
+const MAINTENANCE_ERROR_MESSAGE =
+  "DustSwap is under maintenance. Please try again soon.";
+
+function isMaintenanceModeEnabled() {
+  return process.env.MAINTENANCE_MODE === "1";
+}
+
+function maintenanceUnavailable(c: Context) {
+  return c.json({ success: false, error: MAINTENANCE_ERROR_MESSAGE }, 503);
+}
 
 function getAdminToken() {
   const token = process.env.QUEST_ADMIN_TOKEN;
@@ -106,6 +116,10 @@ questsRoutes.delete("/admin/:id", async (c) => {
 });
 
 questsRoutes.post("/x/username", async (c) => {
+  if (isMaintenanceModeEnabled()) {
+    return maintenanceUnavailable(c);
+  }
+
   try {
     const body = (await c.req.json()) as {
       address?: string;
@@ -256,6 +270,10 @@ questsRoutes.post("/activities/swap/sync", async (c) => {
 });
 
 questsRoutes.post("/:id/start", async (c) => {
+  if (isMaintenanceModeEnabled()) {
+    return maintenanceUnavailable(c);
+  }
+
   try {
     const body = (await c.req.json()) as { address?: string };
     if (!body.address) {

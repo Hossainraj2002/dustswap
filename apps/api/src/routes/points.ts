@@ -1,11 +1,21 @@
 // apps/api/src/routes/points.ts
 // ✅ Fixed: rewritten from Express to Hono (matches the rest of the API)
 
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { pointsEngine } from "../services/pointsEngine";
 import { runtimeCache } from "../utils/runtimeCache";
 
 const pointsRoutes = new Hono();
+const MAINTENANCE_ERROR_MESSAGE =
+  "DustSwap is under maintenance. Please try again soon.";
+
+function isMaintenanceModeEnabled() {
+  return process.env.MAINTENANCE_MODE === "1";
+}
+
+function maintenanceUnavailable(c: Context) {
+  return c.json({ success: false, error: MAINTENANCE_ERROR_MESSAGE }, 503);
+}
 
 // GET /api/points/leaderboards
 pointsRoutes.get("/leaderboards", async (c) => {
@@ -62,6 +72,10 @@ pointsRoutes.post("/profile-cache", async (c) => {
 
 // POST /api/points/airdrop/lookup
 pointsRoutes.post("/airdrop/lookup", async (c) => {
+  if (isMaintenanceModeEnabled()) {
+    return maintenanceUnavailable(c);
+  }
+
   const body = await c.req.json<{ address?: string }>();
 
   if (!body.address) {
@@ -354,6 +368,10 @@ pointsRoutes.get("/leaderboard", async (c) => {
 
 // POST /api/points/referral/apply
 pointsRoutes.post("/referral/apply", async (c) => {
+  if (isMaintenanceModeEnabled()) {
+    return maintenanceUnavailable(c);
+  }
+
   const body = await c.req.json<{ address?: string; referralCode?: string }>();
   const address = body.address?.trim();
   const referralCode = body.referralCode?.trim();

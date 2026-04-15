@@ -155,7 +155,9 @@ export function AppShell({ children }: AppShellProps) {
   const pathname = usePathname();
   const isLightShell = true;
   const isLandingPage = pathname === '/';
-  const shellMode = useAppShellMode({ enabled: !isLandingPage });
+  const isMaintenancePage = pathname === '/maintenance';
+  const isShelllessPage = isLandingPage || isMaintenancePage;
+  const shellMode = useAppShellMode({ enabled: !isShelllessPage });
   const isTopNavMobileMode = shellMode === 'top';
   const { address, isConnected } = useAccount();
   const [showReferralModal, setShowReferralModal] = useState(false);
@@ -178,7 +180,7 @@ export function AppShell({ children }: AppShellProps) {
 
   useEffect(() => {
     if (
-      isLandingPage ||
+      isShelllessPage ||
       pathname.startsWith('/admin') ||
       pathname.startsWith('/ref/')
     ) {
@@ -207,7 +209,7 @@ export function AppShell({ children }: AppShellProps) {
     address,
     checkReferralEligibility,
     isConnected,
-    isLandingPage,
+    isShelllessPage,
     pathname,
   ]);
 
@@ -230,7 +232,7 @@ export function AppShell({ children }: AppShellProps) {
       ? 'env(safe-area-inset-bottom)'
       : 'calc(64px + env(safe-area-inset-bottom))',
   } as CSSProperties;
-  const mainShellClassName = isLandingPage
+  const mainShellClassName = isShelllessPage
     ? ''
     : isTopNavMobileMode
       ? 'pt-[calc(60px+env(safe-area-inset-top))] md:ml-[236px] md:pt-0'
@@ -251,7 +253,7 @@ export function AppShell({ children }: AppShellProps) {
         />
       )}
 
-      {!isLandingPage && (
+      {!isShelllessPage && (
         <nav
           className={`fixed inset-y-0 left-0 z-50 hidden w-[236px] flex-col border-r backdrop-blur-2xl md:flex ${
             isLightShell
@@ -316,7 +318,7 @@ export function AppShell({ children }: AppShellProps) {
         </nav>
       )}
 
-      {!isLandingPage && isTopNavMobileMode && (
+      {!isShelllessPage && isTopNavMobileMode && (
         <MobileShellNav
           isLightShell={isLightShell}
           pathname={pathname}
@@ -327,7 +329,7 @@ export function AppShell({ children }: AppShellProps) {
       <main
         className={`relative z-10 flex-1 transition-opacity duration-100 ease-in-out ${mainShellClassName}`}
       >
-        {!isLandingPage && <CofounderPassWelcomeModal />}
+        {!isShelllessPage && <CofounderPassWelcomeModal />}
         {showReferralModal && address && (
           <ReferralOnboardingModal
             address={address}
@@ -338,7 +340,7 @@ export function AppShell({ children }: AppShellProps) {
         {children}
       </main>
 
-      {!isLandingPage && !isTopNavMobileMode && (
+      {!isShelllessPage && !isTopNavMobileMode && (
         <MobileShellNav
           isLightShell={isLightShell}
           pathname={pathname}

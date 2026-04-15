@@ -1,6 +1,7 @@
 "use client";
 
 import { type ReactNode, useState } from "react";
+import { usePathname } from "next/navigation";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { type Chain as PrivyChain } from "@privy-io/chains";
 import { PrivyProvider } from "@privy-io/react-auth";
@@ -32,6 +33,8 @@ function SwapCaptureBootstrap() {
 }
 
 export function Providers({ children }: ProvidersProps) {
+  const pathname = usePathname();
+  const isMaintenancePage = pathname === "/maintenance";
   const [queryClient] = useState(
     () =>
       new QueryClient({
@@ -65,7 +68,7 @@ export function Providers({ children }: ProvidersProps) {
     >
       <PrivyWagmiProvider config={wagmiConfig} reconnectOnMount>
         <WalletConnectionProvider enabled>
-          <SwapCaptureBootstrap />
+          {!isMaintenancePage && <SwapCaptureBootstrap />}
           {children}
         </WalletConnectionProvider>
       </PrivyWagmiProvider>
@@ -73,7 +76,7 @@ export function Providers({ children }: ProvidersProps) {
   ) : (
     <BaseWagmiProvider config={fallbackWagmiConfig} reconnectOnMount>
       <WalletConnectionProvider enabled={false}>
-        <SwapCaptureBootstrap />
+        {!isMaintenancePage && <SwapCaptureBootstrap />}
         {children}
       </WalletConnectionProvider>
     </BaseWagmiProvider>
