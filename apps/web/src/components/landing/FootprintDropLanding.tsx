@@ -46,13 +46,6 @@ const FOLLOW_GATE_STORAGE_PREFIX = "dustswap:footprint-follow-gate";
 const REFERRAL_CODE_PATTERN = /^DUST-[A-Z0-9]{5}$/;
 const FOOTPRINT_FOLLOW_TARGETS = [
   {
-    key: "founder",
-    label: "Follow founder on X",
-    handle: "@akbarX402",
-    href: "https://x.com/akbarX402",
-    description: "Follow the DustSwap founder account.",
-  },
-  {
     key: "dustswap",
     label: "Follow DustSwap on X",
     handle: "@dustswaponbase",
@@ -75,10 +68,7 @@ type FootprintFollowTaskState = {
   verifiedAt: number | null;
 };
 
-type FootprintFollowGateState = {
-  founder: FootprintFollowTaskState;
-  dustswap: FootprintFollowTaskState;
-};
+type FootprintFollowGateState = Record<FootprintFollowTaskKey, FootprintFollowTaskState>;
 
 type ClaimConfig = NonNullable<FootprintDropStatus["claimConfig"]>;
 type ClaimPaymentAsset = "eth" | "usdc";
@@ -179,18 +169,18 @@ function createEmptyFollowTaskState(): FootprintFollowTaskState {
 }
 
 function createEmptyFollowGateState(): FootprintFollowGateState {
-  return {
-    founder: createEmptyFollowTaskState(),
-    dustswap: createEmptyFollowTaskState(),
-  };
+  return FOOTPRINT_FOLLOW_TARGETS.reduce(
+    (state, { key }) => {
+      state[key] = createEmptyFollowTaskState();
+      return state;
+    },
+    {} as FootprintFollowGateState
+  );
 }
 
 function isFollowGateStateEmpty(state: FootprintFollowGateState) {
-  return (
-    !state.founder.openedAt &&
-    !state.founder.verifiedAt &&
-    !state.dustswap.openedAt &&
-    !state.dustswap.verifiedAt
+  return Object.values(state).every(
+    (taskState) => !taskState.openedAt && !taskState.verifiedAt
   );
 }
 
@@ -235,36 +225,32 @@ function readFollowGateState(address?: string): FootprintFollowGateState {
       return createEmptyFollowGateState();
     }
 
-    const parsed = JSON.parse(raw) as Partial<
-      FootprintFollowGateState & {
-        founderOpened: boolean;
-        dustswapOpened: boolean;
-        startedAt: number | null;
-        verifiedAt: number | null;
-      }
-    >;
+    const parsed = JSON.parse(raw) as Partial<Record<FootprintFollowTaskKey, unknown>> & {
+      founder?: unknown;
+      dustswap?: unknown;
+      founderOpened?: boolean;
+      dustswapOpened?: boolean;
+      startedAt?: number | null;
+      verifiedAt?: number | null;
+    };
 
     const legacyStartedAt =
       typeof parsed.startedAt === "number" ? parsed.startedAt : null;
     const legacyVerifiedAt =
       typeof parsed.verifiedAt === "number" ? parsed.verifiedAt : null;
-    const founder = parsed.founder
-      ? normalizeStoredFollowTaskState(parsed.founder)
-      : {
-          openedAt: getLegacyFollowOpenedAt(parsed.founderOpened, legacyStartedAt),
-          verifiedAt: parsed.founderOpened ? legacyVerifiedAt : null,
-        };
-    const dustswap = parsed.dustswap
-      ? normalizeStoredFollowTaskState(parsed.dustswap)
-      : {
-          openedAt: getLegacyFollowOpenedAt(parsed.dustswapOpened, legacyStartedAt),
-          verifiedAt: parsed.dustswapOpened ? legacyVerifiedAt : null,
-        };
+    const nextState = createEmptyFollowGateState();
 
-    return {
-      founder,
-      dustswap,
-    };
+    for (const { key } of FOOTPRINT_FOLLOW_TARGETS) {
+      const storedTask = parsed[key];
+      nextState[key] = storedTask
+        ? normalizeStoredFollowTaskState(storedTask)
+        : {
+            openedAt: getLegacyFollowOpenedAt(parsed.dustswapOpened, legacyStartedAt),
+            verifiedAt: parsed.dustswapOpened ? legacyVerifiedAt : null,
+          };
+    }
+
+    return nextState;
   } catch {
     return createEmptyFollowGateState();
   }
@@ -298,7 +284,7 @@ function getFollowTaskState(
   state: FootprintFollowGateState,
   taskKey: FootprintFollowTaskKey
 ) {
-  return taskKey === "founder" ? state.founder : state.dustswap;
+  return state[taskKey];
 }
 
 function getFollowTaskRemainingSeconds(taskState: FootprintFollowTaskState) {
@@ -604,14 +590,15 @@ function ClaimFollowGate({
   onOpenTask: (taskKey: FootprintFollowTaskKey, href: string) => void;
   onVerifyTask: (taskKey: FootprintFollowTaskKey) => void | Promise<void>;
 }) {
+  const totalTaskCount = FOOTPRINT_FOLLOW_TARGETS.length;
   const statusMessage = isVerified
     ? "Follow step verified. Your claim button is unlocked now."
     : verifiedTasksCount === 0
-      ? "Open each follow task, wait 20 seconds, then verify them one by one."
-      : `${verifiedTasksCount}/2 follow tasks verified.`;
+      ? "Open the DustSwap follow task, wait 20 seconds, then verify it."
+      : `${verifiedTasksCount}/${totalTaskCount} follow task verified.`;
   const mobileStatusMessage = isVerified
     ? "Done. Claim is unlocked."
-    : `${verifiedTasksCount}/2 verified`;
+    : `${verifiedTasksCount}/${totalTaskCount} verified`;
 
   return (
     <>
@@ -622,17 +609,17 @@ function ClaimFollowGate({
               Claim step
             </p>
             <h3 className="mt-1 text-[15px] font-semibold leading-5 tracking-[-0.02em] text-slate-950">
-              Follow both X accounts
+              Follow DustSwap on X
             </h3>
           </div>
 
           <span className="inline-flex shrink-0 items-center rounded-full border border-sky-200 bg-white/95 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-sky-700">
-            {verifiedTasksCount}/2
+            {verifiedTasksCount}/{totalTaskCount}
           </span>
         </div>
 
         <p className="mt-1.5 text-[11px] leading-4 text-slate-600">
-          Open each X task, wait 20s, then verify it.
+          Open the DustSwap X task, wait 20s, then verify it.
         </p>
 
         <div className="mt-2.5 space-y-2">
@@ -641,7 +628,6 @@ function ClaimFollowGate({
             const opened = Boolean(taskState.openedAt);
             const verified = Boolean(taskState.verifiedAt);
             const remainingSeconds = remainingSecondsByTask[task.key];
-            const shortLabel = task.key === "founder" ? "Founder" : "DustSwap";
             const actionDisabled =
               claimState === "claiming" ||
               isApplyingReferral ||
@@ -670,7 +656,7 @@ function ClaimFollowGate({
 
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-[12px] font-semibold leading-4 text-slate-950">
-                    {shortLabel}
+                    DustSwap
                   </p>
                   <p className="truncate text-[10px] leading-4 text-slate-500">
                     <span className="font-semibold">{task.handle}</span>
@@ -735,11 +721,11 @@ function ClaimFollowGate({
           Claim step
         </p>
         <h3 className="mt-2 text-lg font-semibold tracking-[-0.02em] text-slate-950">
-          Follow both X accounts before claiming
+          Follow DustSwap on X before claiming
         </h3>
         <p className="mt-2 text-sm leading-6 text-slate-600">
-          These tasks stay hidden until you tap claim. Follow both accounts on X,
-          then wait 20 seconds before verifying this step.
+          This task stays hidden until you tap claim. Follow DustSwap on X, then
+          wait 20 seconds before verifying this step.
         </p>
 
         <div className="mt-4 grid gap-3">
@@ -983,7 +969,7 @@ function FootprintStatusPanel({
               : claimState === "claiming"
                 ? "Claiming PP..."
                 : followGateVisible && !isFollowGateVerified
-                  ? "Finish X tasks first"
+                  ? "Finish X task first"
                 : "Claim PP"}
           </button>
         </div>
@@ -1093,10 +1079,16 @@ export default function FootprintDropLanding({
     return requiredUsdc > 0n && claimUsdcBalance >= requiredUsdc ? "usdc" : "eth";
   }, [claimUsdcBalance, status?.claimConfig]);
   const followTaskRemainingSeconds = useMemo(
-    () => ({
-      founder: getFollowTaskRemainingSeconds(followGateState.founder),
-      dustswap: getFollowTaskRemainingSeconds(followGateState.dustswap),
-    }),
+    () =>
+      FOOTPRINT_FOLLOW_TARGETS.reduce(
+        (remainingByTask, { key }) => {
+          remainingByTask[key] = getFollowTaskRemainingSeconds(
+            getFollowTaskState(followGateState, key)
+          );
+          return remainingByTask;
+        },
+        {} as Record<FootprintFollowTaskKey, number>
+      ),
     [followGateState, followGateTick]
   );
   const verifiedFollowTasksCount = FOOTPRINT_FOLLOW_TARGETS.reduce(
@@ -1772,7 +1764,7 @@ export default function FootprintDropLanding({
 
     const taskState = getFollowTaskState(followGateState, taskKey);
     if (!taskState.openedAt) {
-      setClaimError("Open the X follow task before verifying it.");
+      setClaimError("Open the DustSwap follow task before verifying it.");
       return;
     }
 
