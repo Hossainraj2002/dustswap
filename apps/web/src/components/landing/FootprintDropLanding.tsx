@@ -1590,7 +1590,17 @@ export default function FootprintDropLanding({
             return;
           }
 
-          const errorMessage = result.error || "Referral could not be applied.";
+          if (result.deferred) {
+            setReferralBanner({
+              tone: "info",
+              message:
+                "Invite code saved. It will activate after your first onchain check-in or PP claim.",
+            });
+            return;
+          }
+
+          const errorMessage =
+            result.error || result.message || "Referral could not be applied.";
 
           if (isTerminalReferralError(errorMessage)) {
             clearPointsSummaryCache(normalizedAddress);
@@ -1610,14 +1620,17 @@ export default function FootprintDropLanding({
             return;
           }
 
-          throw new Error(
-            `Invite code ${referralCode} could not be linked yet. Retry your PP claim to preserve referral rewards.`
-          );
-        } catch (error) {
-          throw new Error(
-            getErrorMessage(error) ||
-              `Invite code ${referralCode} could not be linked yet. Retry your PP claim to preserve referral rewards.`
-          );
+          setReferralBanner({
+            tone: "info",
+            message:
+              "Your PP claim succeeded. This invite code is still saved and can activate after your first onchain check-in or PP claim.",
+          });
+        } catch {
+          setReferralBanner({
+            tone: "info",
+            message:
+              "Your PP claim succeeded. This invite code is still saved and can activate after your first onchain check-in or PP claim.",
+          });
         } finally {
           setIsApplyingReferral(false);
           referralApplyInFlightRef.current.delete(applyGuardKey);
@@ -1662,8 +1675,6 @@ export default function FootprintDropLanding({
     setClaimError(null);
 
     try {
-      await applyPendingReferralIfNeeded(connectedAddress);
-
       let paymentVerification = reusableVerification;
       if (!paymentVerification) {
         if (!isOnBase) {
@@ -1694,6 +1705,7 @@ export default function FootprintDropLanding({
       setFollowGateVisible(false);
       clearPointsSummaryCache(connectedAddress);
       emitDataInvalidation(["leaderboard", "points"], "footprint-drop-claimed");
+      await applyPendingReferralIfNeeded(connectedAddress);
     } catch (error) {
       setClaimState("idle");
       const message = getErrorMessage(error);

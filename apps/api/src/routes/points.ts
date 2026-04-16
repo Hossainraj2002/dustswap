@@ -420,13 +420,16 @@ pointsRoutes.post("/referral/apply", async (c) => {
     const result = await pointsEngine.applyReferral(address, referralCode);
 
     if (!result.applied) {
+      const status = result.deferred ? 202 : 400;
       return c.json(
         {
           success: false,
+          deferred: result.deferred === true,
+          message: result.message,
           error: result.message,
           idempotent: result.idempotent === true,
         },
-        400
+        status
       );
     }
 

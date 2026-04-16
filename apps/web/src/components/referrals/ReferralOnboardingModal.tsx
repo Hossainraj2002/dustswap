@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { applyReferralCode, clearPointsSummaryCache, previewReferralCode } from "@/lib/points";
-import { normalizeReferralCode } from "@/lib/referrals";
+import { normalizeReferralCode, storePendingReferralCode } from "@/lib/referrals";
 import { emitDataInvalidation } from "@/lib/clientEvents";
 
 interface ReferralOnboardingModalProps {
@@ -25,6 +25,7 @@ export function ReferralOnboardingModal({
   const [code, setCode] = useState("");
   const [isApplying, setIsApplying] = useState(false);
   const [applyError, setApplyError] = useState<string | null>(null);
+  const [applyInfo, setApplyInfo] = useState<string | null>(null);
   const [applySuccess, setApplySuccess] = useState(false);
   const [validation, setValidation] = useState<ValidationState>({ status: "idle" });
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -78,13 +79,27 @@ export function ReferralOnboardingModal({
 
     setIsApplying(true);
     setApplyError(null);
+    setApplyInfo(null);
 
     try {
-      const result = await applyReferralCode(address, normalizeReferralCode(trimmed));
+      const normalizedCode = normalizeReferralCode(trimmed);
+      const result = await applyReferralCode(address, normalizedCode);
 
       if (!result.success) {
+        if (result.deferred) {
+          storePendingReferralCode(normalizedCode);
+          clearPointsSummaryCache(address);
+          setApplyInfo(
+            "Invite code saved. It will activate after your first onchain check-in or PP claim."
+          );
+
+          window.setTimeout(() => {
+            onApplied();
+          }, 1200);
+          return;
+        }
+
         setApplyError(result.error || "Could not apply code. Try again.");
-        setIsApplying(false);
         return;
       }
 
@@ -97,6 +112,7 @@ export function ReferralOnboardingModal({
       }, 1200);
     } catch {
       setApplyError("Something went wrong. Please try again.");
+    } finally {
       setIsApplying(false);
     }
   }, [address, code, isApplying, onApplied]);
@@ -189,6 +205,7 @@ export function ReferralOnboardingModal({
                     onChange={(e) => {
                       setCode(e.target.value.toUpperCase());
                       setApplyError(null);
+                      setApplyInfo(null);
                     }}
                     onKeyDown={handleKeyDown}
                     placeholder="e.g. DUST-XXXXX"
@@ -235,6 +252,10 @@ export function ReferralOnboardingModal({
                       ? (validation as { status: "valid"; message: string }).message
                       : (validation as { status: "invalid"; message: string }).message}
                   </p>
+                )}
+
+                {applyInfo && (
+                  <p className="mt-1.5 text-[11px] font-semibold text-sky-600">{applyInfo}</p>
                 )}
 
                 {/* apply error */}

@@ -170,6 +170,7 @@ const referralApplyRecent = new Map<
     expiresAt: number;
     value: {
       success: boolean;
+      deferred?: boolean;
       message?: string;
       error?: string;
       idempotent?: boolean;
@@ -180,6 +181,7 @@ const referralApplyInflight = new Map<
   string,
   Promise<{
     success: boolean;
+    deferred?: boolean;
     message?: string;
     error?: string;
     idempotent?: boolean;
@@ -332,6 +334,7 @@ export async function applyReferralCode(address: string, referralCode: string) {
     .then((response) =>
       parseJson<{
         success: boolean;
+        deferred?: boolean;
         message?: string;
         error?: string;
         idempotent?: boolean;

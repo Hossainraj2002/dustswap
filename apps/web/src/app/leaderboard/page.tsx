@@ -1,6 +1,7 @@
 "use client";
 
 import Image from "next/image";
+import Link from "next/link";
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { useAccount } from "wagmi";
 import { InteractiveLeaderboardBackground } from "@/components/leaderboard/InteractiveLeaderboardBackground";
@@ -8,6 +9,7 @@ import { WalletConnectButton } from "@/components/wallet/WalletConnectButton";
 import { subscribeToDataInvalidation } from "@/lib/clientEvents";
 import {
   fetchLeaderboardHub,
+  fetchPointsSummary,
   type CachedLeaderboardProfile,
   type LeaderboardBoardType,
   type LeaderboardHubEntry,
@@ -341,6 +343,8 @@ export default function LeaderboardPage() {
   const [currentPage, setCurrentPage] = useState(1);
   const [leaderboard, setLeaderboard] = useState<LeaderboardHubResponse | null>(null);
   const [profile, setProfile] = useState<NeynarProfile | null>(null);
+  const [isCheckingAccess, setIsCheckingAccess] = useState(true);
+  const [hasLeaderboardAccess, setHasLeaderboardAccess] = useState(false);
   const [isLoadingBoard, setIsLoadingBoard] = useState(true);
   const [isLoadingProfile, setIsLoadingProfile] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -370,10 +374,17 @@ export default function LeaderboardPage() {
   const hasVisibleEntries = Boolean(pinnedViewerEntry) || displayEntries.length > 0;
   const totalPages = visibleLeaderboard?.totalPages ?? 1;
   const visiblePages = getVisiblePages(currentPage, totalPages);
-  const shouldShowBoardSkeleton = isLoadingBoard && !visibleLeaderboard;
+  const shouldShowBoardSkeleton = hasLeaderboardAccess && isLoadingBoard && !visibleLeaderboard;
 
   const loadLeaderboard = useCallback(
     async (options?: { manual?: boolean; silent?: boolean }) => {
+      if (!normalizedAddress || !hasLeaderboardAccess) {
+        if (!(options?.silent ?? false)) {
+          setIsLoadingBoard(false);
+        }
+        return;
+      }
+
       const silent = options?.silent ?? false;
       const manual = options?.manual ?? false;
 
@@ -439,7 +450,7 @@ export default function LeaderboardPage() {
         }
       }
     },
-    [currentPage, normalizedAddress, selectedBoard]
+    [currentPage, hasLeaderboardAccess, normalizedAddress, selectedBoard]
   );
 
   useEffect(() => {
@@ -454,11 +465,74 @@ export default function LeaderboardPage() {
   }, [leaderboard]);
 
   useEffect(() => {
-    void loadLeaderboard();
-  }, [loadLeaderboard]);
+    let cancelled = false;
+
+    if (!normalizedAddress) {
+      setIsCheckingAccess(false);
+      setHasLeaderboardAccess(false);
+      setLeaderboard(null);
+      setError(null);
+      setRefreshNotice(null);
+      setIsLoadingBoard(false);
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    setIsCheckingAccess(true);
+
+    void fetchPointsSummary(normalizedAddress, { force: true })
+      .then((summary) => {
+        if (cancelled) {
+          return;
+        }
+
+        const hasAccess = Boolean(summary.success && summary.balance?.lastCheckIn);
+        setHasLeaderboardAccess(hasAccess);
+
+        if (!hasAccess) {
+          setLeaderboard(null);
+          setError(null);
+          setRefreshNotice(null);
+          setIsLoadingBoard(false);
+        }
+      })
+      .catch(() => {
+        if (cancelled) {
+          return;
+        }
+
+        setHasLeaderboardAccess(false);
+        setLeaderboard(null);
+        setError(null);
+        setRefreshNotice(null);
+        setIsLoadingBoard(false);
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setIsCheckingAccess(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [normalizedAddress]);
 
   useEffect(() => {
-    if (!normalizedAddress) {
+    if (!normalizedAddress || !hasLeaderboardAccess) {
+      setLeaderboard(null);
+      setError(null);
+      setRefreshNotice(null);
+      setIsLoadingBoard(false);
+      return;
+    }
+
+    void loadLeaderboard();
+  }, [hasLeaderboardAccess, loadLeaderboard, normalizedAddress]);
+
+  useEffect(() => {
+    if (!normalizedAddress || !hasLeaderboardAccess) {
       setProfile(null);
       setIsLoadingProfile(false);
       return;
@@ -490,7 +564,7 @@ export default function LeaderboardPage() {
     return () => {
       cancelled = true;
     };
-  }, [normalizedAddress]);
+  }, [hasLeaderboardAccess, normalizedAddress]);
 
   useEffect(() => {
     const unsubscribe = subscribeToDataInvalidation("leaderboard", () => {
@@ -639,154 +713,203 @@ export default function LeaderboardPage() {
             })}
           </div>
 
-          <div className="rounded-[22px] border border-white/90 bg-white/72 p-2.5 shadow-[0_16px_48px_rgba(148,163,184,0.12)] backdrop-blur-xl sm:p-3">
-            <div className="flex items-center justify-between gap-2 px-1 pb-2">
-              <div>
-                <p className="text-[9px] font-semibold uppercase tracking-[0.22em] text-slate-400">
-                  Leaderboard
-                </p>
-                <p className="mt-1 text-sm font-semibold tracking-[-0.03em] text-slate-950">
-                  {BOARD_OPTIONS.find((option) => option.id === selectedBoard)?.label}
-                </p>
+          {isCheckingAccess ? (
+            <div className="rounded-[22px] border border-white/90 bg-white/72 p-6 text-center shadow-[0_16px_48px_rgba(148,163,184,0.12)] backdrop-blur-xl sm:p-7">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-slate-400">
+                Checking access
+              </p>
+              <p className="mt-2 text-sm font-semibold text-slate-900">
+                Verifying your first onchain check-in before loading the leaderboard.
+              </p>
+            </div>
+          ) : !normalizedAddress ? (
+            <div className="rounded-[22px] border border-white/90 bg-white/72 p-6 text-center shadow-[0_16px_48px_rgba(148,163,184,0.12)] backdrop-blur-xl sm:p-7">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-slate-400">
+                Connect wallet
+              </p>
+              <h2 className="mt-2 text-xl font-semibold tracking-[-0.04em] text-slate-950">
+                Connect your wallet, then complete one check-in to unlock the leaderboard.
+              </h2>
+              <p className="mt-2 text-sm leading-6 text-slate-600">
+                Leaderboard access starts after your first onchain check-in.
+              </p>
+              <div className="mt-4 flex justify-center">
+                <WalletConnectButton
+                  className="inline-flex min-h-[44px] items-center justify-center rounded-full border border-slate-200 bg-white px-5 py-2.5 text-sm font-semibold text-slate-700 shadow-[0_10px_24px_rgba(148,163,184,0.12)] transition-all duration-200 hover:-translate-y-0.5 hover:border-sky-200 hover:bg-sky-50 hover:text-slate-900"
+                  description="Connect your wallet, then complete one check-in to unlock the leaderboard."
+                />
               </div>
-              <div className="rounded-full border border-sky-100 bg-sky-50/90 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-sky-700">
-                Page {visibleLeaderboard?.page ?? currentPage}/{totalPages}
+            </div>
+          ) : !hasLeaderboardAccess ? (
+            <div className="rounded-[22px] border border-white/90 bg-white/72 p-6 text-center shadow-[0_16px_48px_rgba(148,163,184,0.12)] backdrop-blur-xl sm:p-7">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-slate-400">
+                Leaderboard locked
+              </p>
+              <h2 className="mt-2 text-xl font-semibold tracking-[-0.04em] text-slate-950">
+                Complete your first onchain check-in to unlock leaderboard access.
+              </h2>
+              <p className="mt-2 text-sm leading-6 text-slate-600">
+                After your first check-in, you&apos;ll be able to view Particle Point, Referral, and Volume rankings.
+              </p>
+              <div className="mt-4 flex justify-center">
+                <Link
+                  href="/profile"
+                  className="inline-flex min-h-[44px] items-center justify-center rounded-full border border-sky-200 bg-sky-50 px-5 py-2.5 text-sm font-semibold text-sky-800 shadow-[0_10px_24px_rgba(14,165,233,0.12)] transition-all duration-200 hover:-translate-y-0.5 hover:bg-sky-100"
+                >
+                  Go to Profile Check-In
+                </Link>
               </div>
             </div>
-
-            <div
-              className="grid h-9 items-center rounded-[14px] border border-slate-200/80 bg-white/86 px-3"
-              style={boardColumns}
-            >
-              {boardHeaders.map((header, index) => (
-                <div
-                  key={header}
-                  className={`truncate text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400 ${
-                    index === 0 ? "" : index === 1 ? "" : "text-right"
-                  }`}
-                >
-                  {header}
+          ) : (
+            <div className="rounded-[22px] border border-white/90 bg-white/72 p-2.5 shadow-[0_16px_48px_rgba(148,163,184,0.12)] backdrop-blur-xl sm:p-3">
+              <div className="flex items-center justify-between gap-2 px-1 pb-2">
+                <div>
+                  <p className="text-[9px] font-semibold uppercase tracking-[0.22em] text-slate-400">
+                    Leaderboard
+                  </p>
+                  <p className="mt-1 text-sm font-semibold tracking-[-0.03em] text-slate-950">
+                    {BOARD_OPTIONS.find((option) => option.id === selectedBoard)?.label}
+                  </p>
                 </div>
-              ))}
-            </div>
+                <div className="rounded-full border border-sky-100 bg-sky-50/90 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-sky-700">
+                  Page {visibleLeaderboard?.page ?? currentPage}/{totalPages}
+                </div>
+              </div>
 
-            <div className="mt-1.5">
-              {refreshNotice ? (
-                <div className="mb-1.5 flex flex-col gap-2 rounded-[14px] border border-amber-100 bg-amber-50/90 px-3 py-3 text-sm text-amber-800 sm:flex-row sm:items-center sm:justify-between">
-                  <span>{refreshNotice}</span>
-                  <button
-                    type="button"
-                    onClick={() => void loadLeaderboard({ manual: true })}
-                    className="inline-flex items-center justify-center rounded-full border border-amber-200 bg-white px-3 py-1.5 text-[11px] font-semibold text-amber-800 transition-colors hover:bg-amber-100"
+              <div
+                className="grid h-9 items-center rounded-[14px] border border-slate-200/80 bg-white/86 px-3"
+                style={boardColumns}
+              >
+                {boardHeaders.map((header, index) => (
+                  <div
+                    key={header}
+                    className={`truncate text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400 ${
+                      index === 0 ? "" : index === 1 ? "" : "text-right"
+                    }`}
                   >
-                    Retry
-                  </button>
-                </div>
-              ) : null}
+                    {header}
+                  </div>
+                ))}
+              </div>
 
-              {shouldShowBoardSkeleton ? <SkeletonTable type={selectedBoard} /> : null}
-
-              {!shouldShowBoardSkeleton && error ? (
-                <div className="rounded-[14px] border border-rose-100 bg-rose-50/90 px-3 py-3 text-sm text-rose-700">
-                  <p>{error}</p>
-                  <button
-                    type="button"
-                    onClick={() => void loadLeaderboard({ manual: true })}
-                    className="mt-3 inline-flex items-center justify-center rounded-full border border-rose-200 bg-white px-3 py-1.5 text-[11px] font-semibold text-rose-700 transition-colors hover:bg-rose-100"
-                  >
-                    Retry leaderboard
-                  </button>
-                </div>
-              ) : null}
-
-              {!shouldShowBoardSkeleton && !error && !hasVisibleEntries ? (
-                <div className="rounded-[14px] border border-slate-200/80 bg-white/84 px-3 py-4 text-center text-sm text-slate-500">
-                  No leaderboard data yet.
-                </div>
-              ) : null}
-
-              {!shouldShowBoardSkeleton && !error && hasVisibleEntries ? (
-                <div className="space-y-1.5">
-                  {pinnedViewerEntry ? (
-                    <LeaderboardRow
-                      type={selectedBoard}
-                      entry={pinnedViewerEntry}
-                      columns={boardColumns}
-                      label={getRowUsername(viewerProfile, pinnedViewerEntry.address)}
-                      avatarSrc={viewerAvatar || pinnedViewerEntry.profile?.pfpUrl || ""}
-                      isViewer
-                      badge="You"
-                    />
-                  ) : null}
-
-                  {displayEntries.map((entry, index) => {
-                    const isViewer =
-                      Boolean(normalizedAddress) &&
-                      entry.address.toLowerCase() === normalizedAddress;
-
-                    return (
-                      <LeaderboardRow
-                        key={`${selectedBoard}-${entry.userId}-${entry.rank}-${index}`}
-                        type={selectedBoard}
-                        entry={entry}
-                        columns={boardColumns}
-                        label={getRowUsername(entry.profile, entry.address)}
-                        avatarSrc={entry.profile?.pfpUrl || ""}
-                        isViewer={isViewer}
-                        animationDelayMs={index * 40}
-                      />
-                    );
-                  })}
-                </div>
-              ) : null}
-            </div>
-
-            {!shouldShowBoardSkeleton && !error && totalPages > 1 ? (
-              <div className="mt-3 flex flex-wrap items-center justify-center gap-1.5">
-                <button
-                  type="button"
-                  onClick={() => setCurrentPage((page) => Math.max(1, page - 1))}
-                  disabled={currentPage <= 1}
-                  className="flex h-8 items-center justify-center rounded-full border border-slate-200/90 bg-white/88 px-3 text-[11px] font-semibold text-slate-700 shadow-[0_8px_22px_rgba(148,163,184,0.08)] disabled:cursor-not-allowed disabled:opacity-45"
-                >
-                  Prev
-                </button>
-
-                {visiblePages.map((page, index) =>
-                  page === "ellipsis" ? (
-                    <span
-                      key={`ellipsis-${index}`}
-                      className="flex h-8 w-8 items-center justify-center text-[11px] font-semibold text-slate-400"
-                    >
-                      ...
-                    </span>
-                  ) : (
+              <div className="mt-1.5">
+                {refreshNotice ? (
+                  <div className="mb-1.5 flex flex-col gap-2 rounded-[14px] border border-amber-100 bg-amber-50/90 px-3 py-3 text-sm text-amber-800 sm:flex-row sm:items-center sm:justify-between">
+                    <span>{refreshNotice}</span>
                     <button
-                      key={page}
                       type="button"
-                      onClick={() => setCurrentPage(page)}
-                      className={`flex h-8 w-8 items-center justify-center rounded-full border text-[11px] font-semibold ${
-                        page === currentPage
-                          ? "border-slate-900 bg-slate-950 text-white shadow-[0_12px_28px_rgba(15,23,42,0.16)]"
-                          : "border-slate-200/90 bg-white/88 text-slate-700 shadow-[0_8px_22px_rgba(148,163,184,0.08)]"
-                      }`}
+                      onClick={() => void loadLeaderboard({ manual: true })}
+                      className="inline-flex items-center justify-center rounded-full border border-amber-200 bg-white px-3 py-1.5 text-[11px] font-semibold text-amber-800 transition-colors hover:bg-amber-100"
                     >
-                      {page}
+                      Retry
                     </button>
-                  )
-                )}
+                  </div>
+                ) : null}
 
-                <button
-                  type="button"
-                  onClick={() => setCurrentPage((page) => Math.min(totalPages, page + 1))}
-                  disabled={currentPage >= totalPages}
-                  className="flex h-8 items-center justify-center rounded-full border border-slate-200/90 bg-white/88 px-3 text-[11px] font-semibold text-slate-700 shadow-[0_8px_22px_rgba(148,163,184,0.08)] disabled:cursor-not-allowed disabled:opacity-45"
-                >
-                  Next
-                </button>
+                {shouldShowBoardSkeleton ? <SkeletonTable type={selectedBoard} /> : null}
+
+                {!shouldShowBoardSkeleton && error ? (
+                  <div className="rounded-[14px] border border-rose-100 bg-rose-50/90 px-3 py-3 text-sm text-rose-700">
+                    <p>{error}</p>
+                    <button
+                      type="button"
+                      onClick={() => void loadLeaderboard({ manual: true })}
+                      className="mt-3 inline-flex items-center justify-center rounded-full border border-rose-200 bg-white px-3 py-1.5 text-[11px] font-semibold text-rose-700 transition-colors hover:bg-rose-100"
+                    >
+                      Retry leaderboard
+                    </button>
+                  </div>
+                ) : null}
+
+                {!shouldShowBoardSkeleton && !error && !hasVisibleEntries ? (
+                  <div className="rounded-[14px] border border-slate-200/80 bg-white/84 px-3 py-4 text-center text-sm text-slate-500">
+                    No leaderboard data yet.
+                  </div>
+                ) : null}
+
+                {!shouldShowBoardSkeleton && !error && hasVisibleEntries ? (
+                  <div className="space-y-1.5">
+                    {pinnedViewerEntry ? (
+                      <LeaderboardRow
+                        type={selectedBoard}
+                        entry={pinnedViewerEntry}
+                        columns={boardColumns}
+                        label={getRowUsername(viewerProfile, pinnedViewerEntry.address)}
+                        avatarSrc={viewerAvatar || pinnedViewerEntry.profile?.pfpUrl || ""}
+                        isViewer
+                        badge="You"
+                      />
+                    ) : null}
+
+                    {displayEntries.map((entry, index) => {
+                      const isViewer =
+                        Boolean(normalizedAddress) &&
+                        entry.address.toLowerCase() === normalizedAddress;
+
+                      return (
+                        <LeaderboardRow
+                          key={`${selectedBoard}-${entry.userId}-${entry.rank}-${index}`}
+                          type={selectedBoard}
+                          entry={entry}
+                          columns={boardColumns}
+                          label={getRowUsername(entry.profile, entry.address)}
+                          avatarSrc={entry.profile?.pfpUrl || ""}
+                          isViewer={isViewer}
+                          animationDelayMs={index * 40}
+                        />
+                      );
+                    })}
+                  </div>
+                ) : null}
               </div>
-            ) : null}
-          </div>
+
+              {!shouldShowBoardSkeleton && !error && totalPages > 1 ? (
+                <div className="mt-3 flex flex-wrap items-center justify-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setCurrentPage((page) => Math.max(1, page - 1))}
+                    disabled={currentPage <= 1}
+                    className="flex h-8 items-center justify-center rounded-full border border-slate-200/90 bg-white/88 px-3 text-[11px] font-semibold text-slate-700 shadow-[0_8px_22px_rgba(148,163,184,0.08)] disabled:cursor-not-allowed disabled:opacity-45"
+                  >
+                    Prev
+                  </button>
+
+                  {visiblePages.map((page, index) =>
+                    page === "ellipsis" ? (
+                      <span
+                        key={`ellipsis-${index}`}
+                        className="flex h-8 w-8 items-center justify-center text-[11px] font-semibold text-slate-400"
+                      >
+                        ...
+                      </span>
+                    ) : (
+                      <button
+                        key={page}
+                        type="button"
+                        onClick={() => setCurrentPage(page)}
+                        className={`flex h-8 w-8 items-center justify-center rounded-full border text-[11px] font-semibold ${
+                          page === currentPage
+                            ? "border-slate-900 bg-slate-950 text-white shadow-[0_12px_28px_rgba(15,23,42,0.16)]"
+                            : "border-slate-200/90 bg-white/88 text-slate-700 shadow-[0_8px_22px_rgba(148,163,184,0.08)]"
+                        }`}
+                      >
+                        {page}
+                      </button>
+                    )
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={() => setCurrentPage((page) => Math.min(totalPages, page + 1))}
+                    disabled={currentPage >= totalPages}
+                    className="flex h-8 items-center justify-center rounded-full border border-slate-200/90 bg-white/88 px-3 text-[11px] font-semibold text-slate-700 shadow-[0_8px_22px_rgba(148,163,184,0.08)] disabled:cursor-not-allowed disabled:opacity-45"
+                  >
+                    Next
+                  </button>
+                </div>
+              ) : null}
+            </div>
+          )}
         </div>
       </section>
     </main>

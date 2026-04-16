@@ -181,6 +181,7 @@ type LeaderboardHubResponse = {
 type ReferralApplyResult = {
   applied: boolean;
   message: string;
+  deferred?: boolean;
   idempotent?: boolean;
 };
 
@@ -672,6 +673,15 @@ export class PointsEngine {
     );
 
     return result;
+  }
+
+  private getDeferredReferralApplyResult() {
+    return {
+      applied: false,
+      deferred: true,
+      message:
+        "Complete your first onchain check-in or PP claim to activate this invite code.",
+    } satisfies ReferralApplyResult;
   }
 
   private normalizeStoredAddress(address: string) {
@@ -1366,6 +1376,15 @@ export class PointsEngine {
     }
 
     return (data as PointEventRow | null) ?? null;
+  }
+
+  private async hasReferralActivation(user: UserRecord) {
+    if (user.last_check_in) {
+      return true;
+    }
+
+    const existingClaim = await this.getExistingFootprintClaimByUserId(user.id);
+    return Boolean(existingClaim);
   }
 
   private async getExistingPointEventByUserIdAndAction(userId: number, action: string) {
@@ -3520,29 +3539,6 @@ export class PointsEngine {
       };
     }
 
-    const user = await this.getOrCreate(userAddress);
-
-    if (user.referred_by) {
-      return {
-        ...this.rememberTerminalReferralApply(
-          userAddress,
-          normalizedCode,
-          "Already referred"
-        ),
-        idempotent: true,
-      };
-    }
-
-    const existingReferral = await this.getReferralLedgerByRefereeId(user.id);
-    if (existingReferral) {
-      const result = this.rememberReferralApply(userAddress, normalizedCode, {
-        ...this.getAppliedReferralResult(),
-        idempotent: true,
-      });
-
-      return result;
-    }
-
     const { data: referrer, error: referrerError } = await supabase
       .from("users")
       .select("id, address")
@@ -3568,6 +3564,36 @@ export class PointsEngine {
       );
     }
 
+    const user = await this.findExistingUser(userAddress);
+    if (!user) {
+      return this.getDeferredReferralApplyResult();
+    }
+
+    if (user.referred_by) {
+      return {
+        ...this.rememberTerminalReferralApply(
+          userAddress,
+          normalizedCode,
+          "Already referred"
+        ),
+        idempotent: true,
+      };
+    }
+
+    const existingReferral = await this.getReferralLedgerByRefereeId(user.id);
+    if (existingReferral) {
+      const result = this.rememberReferralApply(userAddress, normalizedCode, {
+        ...this.getAppliedReferralResult(),
+        idempotent: true,
+      });
+
+      return result;
+    }
+
+    if (!(await this.hasReferralActivation(user))) {
+      return this.getDeferredReferralApplyResult();
+    }
+
     const { data: linkedUser, error: linkError } = await supabase
       .from("users")
       .update({
@@ -3584,7 +3610,10 @@ export class PointsEngine {
     }
 
     if (!linkedUser) {
-      const latestUser = await this.getOrCreate(userAddress);
+      const latestUser = await this.findExistingUser(userAddress);
+      if (!latestUser) {
+        return this.getDeferredReferralApplyResult();
+      }
 
       if (latestUser.referred_by === Number((referrer as { id: number }).id)) {
         const result = this.rememberReferralApply(
@@ -3598,6 +3627,10 @@ export class PointsEngine {
         };
       }
 
+      if (!(await this.hasReferralActivation(latestUser))) {
+        return this.getDeferredReferralApplyResult();
+      }
+
       if (latestUser.referred_by) {
         return {
           ...this.rememberTerminalReferralApply(
@@ -3609,7 +3642,7 @@ export class PointsEngine {
         };
       }
 
-      const latestReferral = await this.getReferralLedgerByRefereeId(user.id);
+      const latestReferral = await this.getReferralLedgerByRefereeId(latestUser.id);
       if (
         latestReferral &&
         Number(latestReferral.referrer_id) === Number((referrer as { id: number }).id)

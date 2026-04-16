@@ -29,6 +29,8 @@ import {
   buildReferralLandingPath,
   clearPendingReferralCode,
   getPendingReferralCode,
+  isTerminalReferralError,
+  storePendingReferralCode,
 } from "@/lib/referrals";
 import { BASE_CHAIN_ID, USDC_ADDRESS } from "@/lib/tokens";
 import { DATA_SUFFIX } from "@/lib/builderCode";
@@ -224,6 +226,7 @@ function ProfilePageContent() {
   const [inlineCode, setInlineCode] = useState("");
   const [isApplyingInline, setIsApplyingInline] = useState(false);
   const [inlineError, setInlineError] = useState<string | null>(null);
+  const [inlineInfo, setInlineInfo] = useState<string | null>(null);
   const [inlineSuccess, setInlineSuccess] = useState(false);
   const [inlineValidation, setInlineValidation] = useState<InlineValidation>({ status: "idle" });
   const inlineDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -272,6 +275,7 @@ function ProfilePageContent() {
     () => (referral?.code ? buildReferralLink(referral.code) : ""),
     [referral?.code]
   );
+  const hasCompletedFirstCheckIn = Boolean(balance?.lastCheckIn);
   const pendingReferralLandingPath = useMemo(
     () => (pendingReferralCode ? buildReferralLandingPath(pendingReferralCode) : "/"),
     [pendingReferralCode]
@@ -442,6 +446,7 @@ function ProfilePageContent() {
 
     clearPendingReferralCode();
     setPendingReferralCode(null);
+    setInlineInfo(null);
   }, [pendingReferralCode, referral?.hasReferrer]);
 
   useEffect(() => {
@@ -509,14 +514,32 @@ function ProfilePageContent() {
     if (!trimmed || isApplyingInline || !address) return;
     setIsApplyingInline(true);
     setInlineError(null);
+    setInlineInfo(null);
     try {
-      const result = await applyReferralCode(address, trimmed.toUpperCase());
+      const normalizedCode = trimmed.toUpperCase();
+      const result = await applyReferralCode(address, normalizedCode);
       if (!result.success) {
+        if (result.deferred) {
+          storePendingReferralCode(normalizedCode);
+          setPendingReferralCode(normalizedCode);
+          setInlineCode("");
+          setInlineInfo(
+            "Invite code saved. It will activate after your first onchain check-in or PP claim."
+          );
+          setToast({
+            kind: "success",
+            message:
+              "Invite code saved. It will activate after your first onchain check-in or PP claim.",
+          });
+          return;
+        }
+
         setInlineError(result.error || "Could not apply code. Please try again.");
-        setIsApplyingInline(false);
         return;
       }
       setInlineSuccess(true);
+      setInlineCode("");
+      setInlineInfo(null);
       clearPendingReferralCode();
       setPendingReferralCode(null);
       clearPointsSummaryCache(address);
@@ -525,6 +548,7 @@ function ProfilePageContent() {
       await refreshProfileDataSilently();
     } catch {
       setInlineError("Something went wrong. Please try again.");
+    } finally {
       setIsApplyingInline(false);
     }
   }, [address, inlineCode, isApplyingInline, refreshProfileDataSilently]);
@@ -751,17 +775,51 @@ function ProfilePageContent() {
         throw new Error(result.error || "Onchain check-in failed");
       }
 
+      const baseSuccessMessage =
+        asset === "usdc"
+          ? `Onchain check-in complete with ${balance.checkInConfig.usdcAmount} USDC.`
+          : `Onchain check-in complete with $${balance.checkInConfig.usdTarget.toFixed(2)} in ETH.`;
+
       updateBalanceAndStats(result);
       clearPointsSummaryCache(address);
       setCelebration({ kind: "checkin", id: Date.now() });
+      emitDataInvalidation(["leaderboard", "points"], "check-in");
+
+      let successMessage = baseSuccessMessage;
+
+      if (pendingReferralCode && referral?.hasReferrer !== true) {
+        try {
+          const referralResult = await applyReferralCode(address, pendingReferralCode);
+
+          if (referralResult.success) {
+            clearPendingReferralCode();
+            setPendingReferralCode(null);
+            setInlineInfo(null);
+            clearPointsSummaryCache(address);
+            emitDataInvalidation(["leaderboard", "points"], "referral-applied");
+            await refreshProfileDataSilently();
+            successMessage = `${baseSuccessMessage} Invite code activated.`;
+          } else if (referralResult.deferred) {
+            storePendingReferralCode(pendingReferralCode);
+            setPendingReferralCode(pendingReferralCode);
+          } else if (isTerminalReferralError(referralResult.error || referralResult.message)) {
+            clearPendingReferralCode();
+            setPendingReferralCode(null);
+            setInlineInfo(null);
+            if ((referralResult.error || referralResult.message || "").toLowerCase().includes("already referred")) {
+              clearPointsSummaryCache(address);
+              await refreshProfileDataSilently();
+            }
+          }
+        } catch (referralError) {
+          console.error("Referral activation after check-in failed", referralError);
+        }
+      }
+
       setToast({
         kind: "success",
-        message:
-          asset === "usdc"
-            ? `Onchain check-in complete with ${balance.checkInConfig.usdcAmount} USDC.`
-            : `Onchain check-in complete with $${balance.checkInConfig.usdTarget.toFixed(2)} in ETH.`,
+        message: successMessage,
       });
-      emitDataInvalidation(["leaderboard", "points"], "check-in");
     } catch (error) {
       console.error(error);
       setToast({
@@ -779,7 +837,10 @@ function ProfilePageContent() {
     balance,
     isOnBase,
     isSwitchingToBase,
+    pendingReferralCode,
     promptSwitchToBase,
+    referral?.hasReferrer,
+    refreshProfileDataSilently,
     sendCheckInPayment,
     updateBalanceAndStats,
     usesBasePayForCheckIn,
@@ -1163,7 +1224,7 @@ function ProfilePageContent() {
                     {pendingReferralCode}
                   </p>
                   <p className="mt-1.5 text-[11px] leading-[1.6] text-slate-500">
-                    This invite code came from your referral link. Claim your PP airdrop on landing to activate it.
+                    This invite code is saved and will activate after your first onchain check-in or PP claim.
                   </p>
                 </div>
               </div>
@@ -1197,7 +1258,11 @@ function ProfilePageContent() {
                   <input
                     type="text"
                     value={inlineCode}
-                    onChange={(e) => { setInlineCode(e.target.value.toUpperCase()); setInlineError(null); }}
+                    onChange={(e) => {
+                      setInlineCode(e.target.value.toUpperCase());
+                      setInlineError(null);
+                      setInlineInfo(null);
+                    }}
                     onKeyDown={(e) => { if (e.key === "Enter") void handleApplyInline(); }}
                     placeholder="e.g. DUST-XXXXX"
                     maxLength={32}
@@ -1250,6 +1315,7 @@ function ProfilePageContent() {
                     : (inlineValidation as { status: "invalid"; message: string }).message}
                 </p>
               )}
+              {inlineInfo && <p className="mt-1 text-[11px] font-semibold text-sky-600">{inlineInfo}</p>}
               {inlineError && <p className="mt-1 text-[11px] font-semibold text-rose-600">{inlineError}</p>}
             </div>
           )}
@@ -1278,26 +1344,43 @@ function ProfilePageContent() {
             <p className="text-[9px] font-black uppercase tracking-[0.24em] text-slate-500">
               Your Link
             </p>
-            <div className="mt-1.5 flex flex-col gap-2 sm:flex-row">
-              <div className="flex-1 break-all rounded-[12px] border border-slate-200 bg-white px-2.5 py-2 font-mono text-[11px] font-semibold leading-5 text-sky-700">
-                {referralLink || "LOADING..."}
+            {hasCompletedFirstCheckIn ? (
+              <div className="mt-1.5 flex flex-col gap-2 sm:flex-row">
+                <div className="flex-1 break-all rounded-[12px] border border-slate-200 bg-white px-2.5 py-2 font-mono text-[11px] font-semibold leading-5 text-sky-700">
+                  {referralLink || "LOADING..."}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!referralLink) {
+                      return;
+                    }
+                    navigator.clipboard.writeText(referralLink);
+                    setIsCopied(true);
+                    setToast({ kind: "success", message: "Referral link copied." });
+                    window.setTimeout(() => setIsCopied(false), 1800);
+                  }}
+                  className="rounded-[12px] bg-[linear-gradient(135deg,#0ea5e9,#22c55e)] px-4 py-2 text-sm font-black text-white shadow-[0_8px_20px_rgba(14,165,233,0.18)] transition hover:-translate-y-0.5"
+                >
+                  {isCopied ? "Copied!" : "Copy Link"}
+                </button>
               </div>
-              <button
-                type="button"
-                onClick={() => {
-                  if (!referralLink) {
-                    return;
-                  }
-                  navigator.clipboard.writeText(referralLink);
-                  setIsCopied(true);
-                  setToast({ kind: "success", message: "Referral link copied." });
-                  window.setTimeout(() => setIsCopied(false), 1800);
-                }}
-                className="rounded-[12px] bg-[linear-gradient(135deg,#0ea5e9,#22c55e)] px-4 py-2 text-sm font-black text-white shadow-[0_8px_20px_rgba(14,165,233,0.18)] transition hover:-translate-y-0.5"
-              >
-                {isCopied ? "Copied!" : "Copy Link"}
-              </button>
-            </div>
+            ) : (
+              <div className="mt-1.5 rounded-[14px] border border-amber-100 bg-amber-50 px-3 py-3">
+                <p className="text-[10px] font-black uppercase tracking-[0.22em] text-amber-700">
+                  Referral link locked
+                </p>
+                <p className="mt-1.5 text-sm font-black text-amber-900">
+                  Complete your first onchain check-in to unlock your invite link.
+                </p>
+                <p className="mt-1.5 text-[12px] leading-5 text-amber-800">
+                  After your first check-in, your personal referral link will unlock here and you can invite friends to earn 20% of their points.
+                </p>
+                <p className="mt-1.5 text-[11px] font-semibold text-amber-700">
+                  Your first check-in unlocks referrals.
+                </p>
+              </div>
+            )}
           </div>
         </section>
 
