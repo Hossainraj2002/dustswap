@@ -484,6 +484,8 @@ function ClaimFollowGate({
 }) {
   const allTasksOpened =
     followGateState.founderOpened && followGateState.dustswapOpened;
+  const completedTasksCount =
+    Number(followGateState.founderOpened) + Number(followGateState.dustswapOpened);
   const verifyDisabled =
     claimState === "claiming" ||
     isVerified ||
@@ -504,82 +506,180 @@ function ClaimFollowGate({
         : remainingSeconds > 0
           ? `Verify in ${remainingSeconds}s`
           : "Verify follows";
+  const mobileStatusMessage = isVerified
+    ? "Done. Claim is unlocked."
+    : !allTasksOpened
+      ? `${completedTasksCount}/2 tasks opened`
+      : remainingSeconds > 0
+        ? `Wait ${remainingSeconds}s before verify`
+        : "Ready to verify";
+  const mobileVerifyLabel =
+    isApplyingReferral || claimState === "claiming"
+      ? "Working..."
+      : isVerified
+        ? "Done"
+        : remainingSeconds > 0
+          ? `${remainingSeconds}s`
+          : "Verify";
 
   return (
-    <div className="mt-4 max-h-[6cm] overflow-y-auto rounded-[24px] border border-sky-100 bg-sky-50/70 p-3.5 overscroll-contain sm:max-h-none sm:overflow-visible sm:p-5">
-      <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-sky-700">
-        Claim step
-      </p>
-      <h3 className="mt-1.5 text-base font-semibold tracking-[-0.02em] text-slate-950 sm:mt-2 sm:text-lg">
-        Follow both X accounts before claiming
-      </h3>
-      <p className="mt-1.5 text-xs leading-5 text-slate-600 sm:mt-2 sm:text-sm sm:leading-6">
-        These tasks stay hidden until you tap claim. Follow both accounts on X,
-        then wait 20 seconds before verifying this step.
-      </p>
+    <>
+      <div className="mt-4 max-h-[6cm] overflow-hidden rounded-[22px] border border-sky-100 bg-[linear-gradient(180deg,rgba(240,249,255,0.94),rgba(255,255,255,0.96))] p-3 sm:hidden">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-sky-700">
+              Claim step
+            </p>
+            <h3 className="mt-1 text-[15px] font-semibold leading-5 tracking-[-0.02em] text-slate-950">
+              Follow both X accounts
+            </h3>
+          </div>
 
-      <div className="mt-3 grid gap-2 sm:mt-4 sm:gap-3">
-        {FOOTPRINT_FOLLOW_TARGETS.map((task) => {
-          const opened =
-            task.key === "founder"
-              ? followGateState.founderOpened
-              : followGateState.dustswapOpened;
+          <span className="inline-flex shrink-0 items-center rounded-full border border-sky-200 bg-white/95 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-sky-700">
+            {completedTasksCount}/2
+          </span>
+        </div>
 
-          return (
-            <div
-              key={task.key}
-              className="rounded-[18px] border border-white/90 bg-white/90 p-3 shadow-[0_12px_28px_rgba(148,163,184,0.08)] sm:rounded-[20px] sm:p-4"
-            >
-              <div className="flex items-center justify-between gap-3">
+        <p className="mt-1.5 text-[11px] leading-4 text-slate-600">
+          Open both, wait 20s, then verify.
+        </p>
+
+        <div className="mt-2.5 space-y-2">
+          {FOOTPRINT_FOLLOW_TARGETS.map((task) => {
+            const opened =
+              task.key === "founder"
+                ? followGateState.founderOpened
+                : followGateState.dustswapOpened;
+            const shortLabel = task.key === "founder" ? "Founder" : "DustSwap";
+
+            return (
+              <div
+                key={task.key}
+                className="flex items-center gap-2 rounded-[16px] border border-white/90 bg-white/92 px-2.5 py-2 shadow-[0_10px_24px_rgba(148,163,184,0.08)]"
+              >
+                <span
+                  className={cx(
+                    "h-2.5 w-2.5 shrink-0 rounded-full",
+                    opened ? "bg-emerald-500" : "bg-slate-300"
+                  )}
+                  aria-hidden="true"
+                />
+
                 <div className="min-w-0 flex-1">
-                  <p className="truncate text-[13px] font-semibold text-slate-950 sm:text-sm">
-                    {task.label}
+                  <p className="truncate text-[12px] font-semibold leading-4 text-slate-950">
+                    {shortLabel}
                   </p>
-                  <p className="mt-0.5 truncate text-xs leading-5 text-slate-500 sm:text-sm sm:leading-6">
-                    <span className="hidden sm:inline">{task.description} </span>
+                  <p className="truncate text-[10px] leading-4 text-slate-500">
                     <span className="font-semibold">{task.handle}</span>
+                    <span className={cx("ml-1.5", opened ? "text-emerald-600" : "text-slate-400")}>
+                      {opened ? "Opened" : "Pending"}
+                    </span>
                   </p>
                 </div>
 
-                <div className="flex shrink-0 items-center gap-1.5 sm:gap-2">
-                  <span
-                    className={cx(
-                      "rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] sm:px-3 sm:text-[11px] sm:tracking-[0.18em]",
-                      opened
-                        ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-                        : "border-slate-200 bg-slate-50 text-slate-500"
-                    )}
-                  >
-                    {opened ? "Opened" : "Pending"}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => onOpenTask(task.key, task.href)}
-                    className="inline-flex items-center justify-center whitespace-nowrap rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-900 transition-colors hover:bg-slate-100 sm:px-4 sm:py-2 sm:text-sm"
-                  >
-                    {opened ? "Open Again" : "Follow on X"}
-                  </button>
+                <button
+                  type="button"
+                  onClick={() => onOpenTask(task.key, task.href)}
+                  className="inline-flex shrink-0 items-center justify-center rounded-full border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-semibold text-slate-900 transition-colors hover:bg-slate-100"
+                >
+                  {opened ? "Again" : "Open"}
+                </button>
+              </div>
+            );
+          })}
+        </div>
+
+        <div className="mt-2.5 flex items-center gap-2 rounded-[16px] border border-white/90 bg-white/94 px-2.5 py-2.5 shadow-[0_10px_24px_rgba(148,163,184,0.08)]">
+          <div className="min-w-0 flex-1">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">
+              Verify
+            </p>
+            <p className="mt-0.5 truncate text-[12px] font-medium leading-4 text-slate-700">
+              {mobileStatusMessage}
+            </p>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => void onVerify()}
+            disabled={verifyDisabled}
+            className="inline-flex min-w-[92px] shrink-0 items-center justify-center rounded-full bg-slate-950 px-3 py-2 text-[11px] font-semibold text-white transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            {mobileVerifyLabel}
+          </button>
+        </div>
+      </div>
+
+      <div className="mt-4 hidden rounded-[24px] border border-sky-100 bg-sky-50/70 p-5 sm:block">
+        <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-sky-700">
+          Claim step
+        </p>
+        <h3 className="mt-2 text-lg font-semibold tracking-[-0.02em] text-slate-950">
+          Follow both X accounts before claiming
+        </h3>
+        <p className="mt-2 text-sm leading-6 text-slate-600">
+          These tasks stay hidden until you tap claim. Follow both accounts on X,
+          then wait 20 seconds before verifying this step.
+        </p>
+
+        <div className="mt-4 grid gap-3">
+          {FOOTPRINT_FOLLOW_TARGETS.map((task) => {
+            const opened =
+              task.key === "founder"
+                ? followGateState.founderOpened
+                : followGateState.dustswapOpened;
+
+            return (
+              <div
+                key={task.key}
+                className="rounded-[20px] border border-white/90 bg-white/90 p-4 shadow-[0_12px_28px_rgba(148,163,184,0.08)]"
+              >
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold text-slate-950">{task.label}</p>
+                    <p className="mt-1 text-sm leading-6 text-slate-500">
+                      {task.description} <span className="font-semibold">{task.handle}</span>
+                    </p>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <span
+                      className={cx(
+                        "rounded-full border px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em]",
+                        opened
+                          ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                          : "border-slate-200 bg-slate-50 text-slate-500"
+                      )}
+                    >
+                      {opened ? "Opened" : "Pending"}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => onOpenTask(task.key, task.href)}
+                      className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-900 transition-colors hover:bg-slate-100"
+                    >
+                      {opened ? "Open Again" : "Follow on X"}
+                    </button>
+                  </div>
                 </div>
               </div>
-            </div>
-          );
-        })}
-      </div>
+            );
+          })}
+        </div>
 
-      <div className="sticky bottom-0 mt-3 rounded-[18px] border border-white/90 bg-white/95 p-3 shadow-[0_12px_28px_rgba(148,163,184,0.08)] backdrop-blur sm:static sm:mt-4 sm:rounded-[20px] sm:p-4">
-        <p className="text-xs font-medium leading-5 text-slate-700 sm:text-sm sm:leading-6">
-          {statusMessage}
-        </p>
-        <button
-          type="button"
-          onClick={() => void onVerify()}
-          disabled={verifyDisabled}
-          className="mt-2.5 inline-flex w-full items-center justify-center rounded-full bg-slate-950 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-40 sm:mt-3 sm:px-5 sm:py-3"
-        >
-          {verifyLabel}
-        </button>
+        <div className="mt-4 rounded-[20px] border border-white/90 bg-white/95 p-4 shadow-[0_12px_28px_rgba(148,163,184,0.08)]">
+          <p className="text-sm font-medium leading-6 text-slate-700">{statusMessage}</p>
+          <button
+            type="button"
+            onClick={() => void onVerify()}
+            disabled={verifyDisabled}
+            className="mt-3 inline-flex w-full items-center justify-center rounded-full bg-slate-950 px-5 py-3 text-sm font-semibold text-white transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            {verifyLabel}
+          </button>
+        </div>
       </div>
-    </div>
+    </>
   );
 }
 
