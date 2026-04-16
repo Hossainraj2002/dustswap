@@ -70,11 +70,14 @@ type ReferralBanner =
 
 type FootprintFollowTaskKey = (typeof FOOTPRINT_FOLLOW_TARGETS)[number]["key"];
 
-type FootprintFollowGateState = {
-  founderOpened: boolean;
-  dustswapOpened: boolean;
-  startedAt: number | null;
+type FootprintFollowTaskState = {
+  openedAt: number | null;
   verifiedAt: number | null;
+};
+
+type FootprintFollowGateState = {
+  founder: FootprintFollowTaskState;
+  dustswap: FootprintFollowTaskState;
 };
 
 type ClaimConfig = NonNullable<FootprintDropStatus["claimConfig"]>;
@@ -168,26 +171,57 @@ function normalizeAddressInput(value: string) {
   return getAddress(value.trim());
 }
 
+function createEmptyFollowTaskState(): FootprintFollowTaskState {
+  return {
+    openedAt: null,
+    verifiedAt: null,
+  };
+}
+
 function createEmptyFollowGateState(): FootprintFollowGateState {
   return {
-    founderOpened: false,
-    dustswapOpened: false,
-    startedAt: null,
-    verifiedAt: null,
+    founder: createEmptyFollowTaskState(),
+    dustswap: createEmptyFollowTaskState(),
   };
 }
 
 function isFollowGateStateEmpty(state: FootprintFollowGateState) {
   return (
-    !state.founderOpened &&
-    !state.dustswapOpened &&
-    !state.startedAt &&
-    !state.verifiedAt
+    !state.founder.openedAt &&
+    !state.founder.verifiedAt &&
+    !state.dustswap.openedAt &&
+    !state.dustswap.verifiedAt
   );
 }
 
 function getFollowGateStorageKey(address: string) {
   return `${FOLLOW_GATE_STORAGE_PREFIX}:${address.toLowerCase()}`;
+}
+
+function normalizeStoredFollowTaskState(value: unknown): FootprintFollowTaskState {
+  if (!value || typeof value !== "object") {
+    return createEmptyFollowTaskState();
+  }
+
+  const candidate = value as {
+    openedAt?: unknown;
+    verifiedAt?: unknown;
+  };
+
+  return {
+    openedAt: typeof candidate.openedAt === "number" ? candidate.openedAt : null,
+    verifiedAt: typeof candidate.verifiedAt === "number" ? candidate.verifiedAt : null,
+  };
+}
+
+function getLegacyFollowOpenedAt(opened: boolean | undefined, startedAt: number | null) {
+  if (!opened) {
+    return null;
+  }
+
+  return typeof startedAt === "number"
+    ? startedAt
+    : Date.now() - FOLLOW_VERIFY_DELAY_MS;
 }
 
 function readFollowGateState(address?: string): FootprintFollowGateState {
@@ -201,12 +235,35 @@ function readFollowGateState(address?: string): FootprintFollowGateState {
       return createEmptyFollowGateState();
     }
 
-    const parsed = JSON.parse(raw) as Partial<FootprintFollowGateState>;
+    const parsed = JSON.parse(raw) as Partial<
+      FootprintFollowGateState & {
+        founderOpened: boolean;
+        dustswapOpened: boolean;
+        startedAt: number | null;
+        verifiedAt: number | null;
+      }
+    >;
+
+    const legacyStartedAt =
+      typeof parsed.startedAt === "number" ? parsed.startedAt : null;
+    const legacyVerifiedAt =
+      typeof parsed.verifiedAt === "number" ? parsed.verifiedAt : null;
+    const founder = parsed.founder
+      ? normalizeStoredFollowTaskState(parsed.founder)
+      : {
+          openedAt: getLegacyFollowOpenedAt(parsed.founderOpened, legacyStartedAt),
+          verifiedAt: parsed.founderOpened ? legacyVerifiedAt : null,
+        };
+    const dustswap = parsed.dustswap
+      ? normalizeStoredFollowTaskState(parsed.dustswap)
+      : {
+          openedAt: getLegacyFollowOpenedAt(parsed.dustswapOpened, legacyStartedAt),
+          verifiedAt: parsed.dustswapOpened ? legacyVerifiedAt : null,
+        };
+
     return {
-      founderOpened: parsed.founderOpened === true,
-      dustswapOpened: parsed.dustswapOpened === true,
-      startedAt: typeof parsed.startedAt === "number" ? parsed.startedAt : null,
-      verifiedAt: typeof parsed.verifiedAt === "number" ? parsed.verifiedAt : null,
+      founder,
+      dustswap,
     };
   } catch {
     return createEmptyFollowGateState();
@@ -235,6 +292,22 @@ function clearFollowGateState(address?: string) {
   }
 
   window.localStorage.removeItem(getFollowGateStorageKey(address));
+}
+
+function getFollowTaskState(
+  state: FootprintFollowGateState,
+  taskKey: FootprintFollowTaskKey
+) {
+  return taskKey === "founder" ? state.founder : state.dustswap;
+}
+
+function getFollowTaskRemainingSeconds(taskState: FootprintFollowTaskState) {
+  if (!taskState.openedAt || taskState.verifiedAt) {
+    return 0;
+  }
+
+  const remainingMs = taskState.openedAt + FOLLOW_VERIFY_DELAY_MS - Date.now();
+  return Math.max(0, Math.ceil(remainingMs / 1000));
 }
 
 function openExternalTask(url: string) {
@@ -514,60 +587,31 @@ function StatusMetric({
 
 function ClaimFollowGate({
   followGateState,
-  remainingSeconds,
+  remainingSecondsByTask,
+  verifiedTasksCount,
   isVerified,
   isApplyingReferral,
   claimState,
   onOpenTask,
-  onVerify,
+  onVerifyTask,
 }: {
   followGateState: FootprintFollowGateState;
-  remainingSeconds: number;
+  remainingSecondsByTask: Record<FootprintFollowTaskKey, number>;
+  verifiedTasksCount: number;
   isVerified: boolean;
   isApplyingReferral: boolean;
   claimState: "idle" | "claiming" | "claimed";
   onOpenTask: (taskKey: FootprintFollowTaskKey, href: string) => void;
-  onVerify: () => void | Promise<void>;
+  onVerifyTask: (taskKey: FootprintFollowTaskKey) => void | Promise<void>;
 }) {
-  const allTasksOpened =
-    followGateState.founderOpened && followGateState.dustswapOpened;
-  const completedTasksCount =
-    Number(followGateState.founderOpened) + Number(followGateState.dustswapOpened);
-  const verifyDisabled =
-    claimState === "claiming" ||
-    isVerified ||
-    !allTasksOpened ||
-    remainingSeconds > 0;
   const statusMessage = isVerified
     ? "Follow step verified. Your claim button is unlocked now."
-    : !allTasksOpened
-      ? "Open both follow tasks to start the 20 second verify timer."
-      : remainingSeconds > 0
-        ? `Verify unlocks in ${remainingSeconds}s.`
-        : "You can verify this step now.";
-  const verifyLabel =
-    isApplyingReferral || claimState === "claiming"
-      ? "Claiming PP..."
-      : isVerified
-        ? "Verified"
-        : remainingSeconds > 0
-          ? `Verify in ${remainingSeconds}s`
-          : "Verify follows";
+    : verifiedTasksCount === 0
+      ? "Open each follow task, wait 20 seconds, then verify them one by one."
+      : `${verifiedTasksCount}/2 follow tasks verified.`;
   const mobileStatusMessage = isVerified
     ? "Done. Claim is unlocked."
-    : !allTasksOpened
-      ? `${completedTasksCount}/2 tasks opened`
-      : remainingSeconds > 0
-        ? `Wait ${remainingSeconds}s before verify`
-        : "Ready to verify";
-  const mobileVerifyLabel =
-    isApplyingReferral || claimState === "claiming"
-      ? "Working..."
-      : isVerified
-        ? "Done"
-        : remainingSeconds > 0
-          ? `${remainingSeconds}s`
-          : "Verify";
+    : `${verifiedTasksCount}/2 verified`;
 
   return (
     <>
@@ -583,21 +627,33 @@ function ClaimFollowGate({
           </div>
 
           <span className="inline-flex shrink-0 items-center rounded-full border border-sky-200 bg-white/95 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-sky-700">
-            {completedTasksCount}/2
+            {verifiedTasksCount}/2
           </span>
         </div>
 
         <p className="mt-1.5 text-[11px] leading-4 text-slate-600">
-          Open both, wait 20s, then verify.
+          Open each X task, wait 20s, then verify it.
         </p>
 
         <div className="mt-2.5 space-y-2">
           {FOOTPRINT_FOLLOW_TARGETS.map((task) => {
-            const opened =
-              task.key === "founder"
-                ? followGateState.founderOpened
-                : followGateState.dustswapOpened;
+            const taskState = getFollowTaskState(followGateState, task.key);
+            const opened = Boolean(taskState.openedAt);
+            const verified = Boolean(taskState.verifiedAt);
+            const remainingSeconds = remainingSecondsByTask[task.key];
             const shortLabel = task.key === "founder" ? "Founder" : "DustSwap";
+            const actionDisabled =
+              claimState === "claiming" ||
+              isApplyingReferral ||
+              verified ||
+              (opened && !verified && remainingSeconds > 0);
+            const actionLabel = verified
+              ? "Done"
+              : !opened
+                ? "Open"
+                : remainingSeconds > 0
+                  ? `${remainingSeconds}s`
+                  : "Verify";
 
             return (
               <div
@@ -618,18 +674,46 @@ function ClaimFollowGate({
                   </p>
                   <p className="truncate text-[10px] leading-4 text-slate-500">
                     <span className="font-semibold">{task.handle}</span>
-                    <span className={cx("ml-1.5", opened ? "text-emerald-600" : "text-slate-400")}>
-                      {opened ? "Opened" : "Pending"}
+                    <span
+                      className={cx(
+                        "ml-1.5",
+                        verified
+                          ? "text-emerald-600"
+                          : opened
+                            ? "text-sky-600"
+                            : "text-slate-400"
+                      )}
+                    >
+                      {verified
+                        ? "Verified"
+                        : opened
+                          ? remainingSeconds > 0
+                            ? `${remainingSeconds}s left`
+                            : "Ready"
+                          : "Pending"}
                     </span>
                   </p>
                 </div>
 
                 <button
                   type="button"
-                  onClick={() => onOpenTask(task.key, task.href)}
-                  className="inline-flex shrink-0 items-center justify-center rounded-full border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-semibold text-slate-900 transition-colors hover:bg-slate-100"
+                  onClick={() =>
+                    void (verified || (opened && remainingSeconds === 0)
+                      ? onVerifyTask(task.key)
+                      : onOpenTask(task.key, task.href))
+                  }
+                  disabled={actionDisabled}
+                  className={cx(
+                    "inline-flex min-w-[76px] shrink-0 items-center justify-center rounded-full border px-3 py-1.5 text-[11px] font-semibold transition-colors",
+                    verified
+                      ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                      : opened && remainingSeconds > 0
+                        ? "border-sky-200 bg-sky-50 text-sky-700"
+                        : "border-slate-200 bg-white text-slate-900 hover:bg-slate-100",
+                    actionDisabled && "cursor-not-allowed hover:bg-inherit"
+                  )}
                 >
-                  {opened ? "Again" : "Open"}
+                  {actionLabel}
                 </button>
               </div>
             );
@@ -638,22 +722,11 @@ function ClaimFollowGate({
 
         <div className="mt-2.5 flex items-center gap-2 rounded-[16px] border border-white/90 bg-white/94 px-2.5 py-2.5 shadow-[0_10px_24px_rgba(148,163,184,0.08)]">
           <div className="min-w-0 flex-1">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">
-              Verify
-            </p>
+            <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">Status</p>
             <p className="mt-0.5 truncate text-[12px] font-medium leading-4 text-slate-700">
               {mobileStatusMessage}
             </p>
           </div>
-
-          <button
-            type="button"
-            onClick={() => void onVerify()}
-            disabled={verifyDisabled}
-            className="inline-flex min-w-[92px] shrink-0 items-center justify-center rounded-full bg-slate-950 px-3 py-2 text-[11px] font-semibold text-white transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            {mobileVerifyLabel}
-          </button>
         </div>
       </div>
 
@@ -671,10 +744,22 @@ function ClaimFollowGate({
 
         <div className="mt-4 grid gap-3">
           {FOOTPRINT_FOLLOW_TARGETS.map((task) => {
-            const opened =
-              task.key === "founder"
-                ? followGateState.founderOpened
-                : followGateState.dustswapOpened;
+            const taskState = getFollowTaskState(followGateState, task.key);
+            const opened = Boolean(taskState.openedAt);
+            const verified = Boolean(taskState.verifiedAt);
+            const remainingSeconds = remainingSecondsByTask[task.key];
+            const actionDisabled =
+              claimState === "claiming" ||
+              isApplyingReferral ||
+              verified ||
+              (opened && !verified && remainingSeconds > 0);
+            const actionLabel = verified
+              ? "Verified"
+              : !opened
+                ? "Follow on X"
+                : remainingSeconds > 0
+                  ? `Wait ${remainingSeconds}s`
+                  : "Verify";
 
             return (
               <div
@@ -693,19 +778,40 @@ function ClaimFollowGate({
                     <span
                       className={cx(
                         "rounded-full border px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em]",
-                        opened
+                        verified
                           ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-                          : "border-slate-200 bg-slate-50 text-slate-500"
+                          : opened
+                            ? "border-sky-200 bg-sky-50 text-sky-700"
+                            : "border-slate-200 bg-slate-50 text-slate-500"
                       )}
                     >
-                      {opened ? "Opened" : "Pending"}
+                      {verified
+                        ? "Verified"
+                        : opened
+                          ? remainingSeconds > 0
+                            ? `${remainingSeconds}s left`
+                            : "Ready to verify"
+                          : "Pending"}
                     </span>
                     <button
                       type="button"
-                      onClick={() => onOpenTask(task.key, task.href)}
-                      className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-900 transition-colors hover:bg-slate-100"
+                      onClick={() =>
+                        void (verified || (opened && remainingSeconds === 0)
+                          ? onVerifyTask(task.key)
+                          : onOpenTask(task.key, task.href))
+                      }
+                      disabled={actionDisabled}
+                      className={cx(
+                        "inline-flex items-center justify-center rounded-full border px-4 py-2 text-sm font-semibold transition-colors",
+                        verified
+                          ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                          : opened && remainingSeconds > 0
+                            ? "border-sky-200 bg-sky-50 text-sky-700"
+                            : "border-slate-200 bg-white text-slate-900 hover:bg-slate-100",
+                        actionDisabled && "cursor-not-allowed hover:bg-inherit"
+                      )}
                     >
-                      {opened ? "Open Again" : "Follow on X"}
+                      {actionLabel}
                     </button>
                   </div>
                 </div>
@@ -716,14 +822,6 @@ function ClaimFollowGate({
 
         <div className="mt-4 rounded-[20px] border border-white/90 bg-white/95 p-4 shadow-[0_12px_28px_rgba(148,163,184,0.08)]">
           <p className="text-sm font-medium leading-6 text-slate-700">{statusMessage}</p>
-          <button
-            type="button"
-            onClick={() => void onVerify()}
-            disabled={verifyDisabled}
-            className="mt-3 inline-flex w-full items-center justify-center rounded-full bg-slate-950 px-5 py-3 text-sm font-semibold text-white transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            {verifyLabel}
-          </button>
         </div>
       </div>
     </>
@@ -736,15 +834,15 @@ function FootprintStatusPanel({
   hasSiweSession,
   claimState,
   isApplyingReferral,
-  preferredClaimAsset,
   claimError,
   followGateVisible,
   followGateState,
-  followGateRemainingSeconds,
+  followTaskRemainingSeconds,
+  verifiedFollowTasksCount,
   isFollowGateVerified,
   onClaim,
   onOpenFollowTask,
-  onVerifyFollowGate,
+  onVerifyFollowTask,
   onUseConnectedWallet,
 }: {
   status: FootprintDropStatus;
@@ -752,18 +850,18 @@ function FootprintStatusPanel({
   hasSiweSession: boolean;
   claimState: "idle" | "claiming" | "claimed";
   isApplyingReferral: boolean;
-  preferredClaimAsset: ClaimPaymentAsset;
   claimError: string | null;
   followGateVisible: boolean;
   followGateState: FootprintFollowGateState;
-  followGateRemainingSeconds: number;
+  followTaskRemainingSeconds: Record<FootprintFollowTaskKey, number>;
+  verifiedFollowTasksCount: number;
   isFollowGateVerified: boolean;
   onClaim: () => void | Promise<void>;
   onOpenFollowTask: (
     taskKey: FootprintFollowTaskKey,
     href: string
   ) => void | Promise<void>;
-  onVerifyFollowGate: () => void | Promise<void>;
+  onVerifyFollowTask: (taskKey: FootprintFollowTaskKey) => void | Promise<void>;
   onUseConnectedWallet: () => void | Promise<void>;
 }) {
   const matchesConnectedWallet =
@@ -871,15 +969,6 @@ function FootprintStatusPanel({
 
       {showClaimButton && (
         <div className="mt-5">
-          {status.claimConfig && (
-            <p className="mb-3 rounded-[18px] border border-sky-100 bg-sky-50/70 px-4 py-3 text-sm leading-6 text-sky-900">
-              Claim now sends an onchain Base verification payment of{" "}
-              {preferredClaimAsset === "usdc"
-                ? `${status.claimConfig.usdcAmount} USDC`
-                : `about $${status.claimConfig.usdTarget.toFixed(2)} in ETH`}{" "}
-              to the airdrop vault before PP is released.
-            </p>
-          )}
           <button
             type="button"
             disabled={
@@ -903,12 +992,13 @@ function FootprintStatusPanel({
       {showClaimButton && followGateVisible && !status.claimed ? (
         <ClaimFollowGate
           followGateState={followGateState}
-          remainingSeconds={followGateRemainingSeconds}
+          remainingSecondsByTask={followTaskRemainingSeconds}
+          verifiedTasksCount={verifiedFollowTasksCount}
           isVerified={isFollowGateVerified}
           isApplyingReferral={isApplyingReferral}
           claimState={claimState}
           onOpenTask={onOpenFollowTask}
-          onVerify={onVerifyFollowGate}
+          onVerifyTask={onVerifyFollowTask}
         />
       ) : null}
 
@@ -1002,18 +1092,21 @@ export default function FootprintDropLanding({
     const requiredUsdc = BigInt(status.claimConfig.usdcAmountUnits);
     return requiredUsdc > 0n && claimUsdcBalance >= requiredUsdc ? "usdc" : "eth";
   }, [claimUsdcBalance, status?.claimConfig]);
-  const areFollowTasksOpened =
-    followGateState.founderOpened && followGateState.dustswapOpened;
-  const followGateRemainingSeconds = useMemo(() => {
-    if (!areFollowTasksOpened || !followGateState.startedAt || followGateState.verifiedAt) {
-      return 0;
-    }
-
-    const remainingMs =
-      followGateState.startedAt + FOLLOW_VERIFY_DELAY_MS - Date.now();
-    return Math.max(0, Math.ceil(remainingMs / 1000));
-  }, [areFollowTasksOpened, followGateState.startedAt, followGateState.verifiedAt, followGateTick]);
-  const isFollowGateVerified = Boolean(followGateState.verifiedAt);
+  const followTaskRemainingSeconds = useMemo(
+    () => ({
+      founder: getFollowTaskRemainingSeconds(followGateState.founder),
+      dustswap: getFollowTaskRemainingSeconds(followGateState.dustswap),
+    }),
+    [followGateState, followGateTick]
+  );
+  const verifiedFollowTasksCount = FOOTPRINT_FOLLOW_TARGETS.reduce(
+    (count, { key }) => count + Number(Boolean(getFollowTaskState(followGateState, key).verifiedAt)),
+    0
+  );
+  const isFollowGateVerified = verifiedFollowTasksCount === FOOTPRINT_FOLLOW_TARGETS.length;
+  const hasPendingFollowCountdown = FOOTPRINT_FOLLOW_TARGETS.some(
+    ({ key }) => followTaskRemainingSeconds[key] > 0
+  );
 
   const clearPendingReferralState = useCallback((banner?: ReferralBanner) => {
     clearPendingReferralCode();
@@ -1047,7 +1140,7 @@ export default function FootprintDropLanding({
   }, [connectedAddress, followGateState]);
 
   useEffect(() => {
-    if (!followGateVisible || isFollowGateVerified || !followGateState.startedAt) {
+    if (!followGateVisible || isFollowGateVerified || !hasPendingFollowCountdown) {
       return;
     }
 
@@ -1056,7 +1149,7 @@ export default function FootprintDropLanding({
     }, 1000);
 
     return () => window.clearInterval(interval);
-  }, [followGateVisible, isFollowGateVerified, followGateState.startedAt]);
+  }, [followGateVisible, hasPendingFollowCountdown, isFollowGateVerified]);
 
   useEffect(() => {
     setFollowGateVisible(false);
@@ -1630,17 +1723,18 @@ export default function FootprintDropLanding({
       setClaimError(null);
       openExternalTask(href);
       setFollowGateState((current) => {
+        const taskState = getFollowTaskState(current, taskKey);
+        if (taskState.openedAt) {
+          return current;
+        }
+
         const next = {
           ...current,
-          founderOpened:
-            taskKey === "founder" ? true : current.founderOpened,
-          dustswapOpened:
-            taskKey === "dustswap" ? true : current.dustswapOpened,
+          [taskKey]: {
+            ...taskState,
+            openedAt: Date.now(),
+          },
         };
-
-        if (next.founderOpened && next.dustswapOpened && !next.startedAt) {
-          next.startedAt = Date.now();
-        }
 
         return next;
       });
@@ -1648,7 +1742,7 @@ export default function FootprintDropLanding({
     []
   );
 
-  const handleVerifyFollowGate = useCallback(async () => {
+  const handleVerifyFollowTask = useCallback(async (taskKey: FootprintFollowTaskKey) => {
     if (!connectedAddress) {
       setClaimError("Connect your wallet to claim PP.");
       return;
@@ -1664,25 +1758,35 @@ export default function FootprintDropLanding({
       return;
     }
 
-    if (!areFollowTasksOpened) {
-      setClaimError("Follow both X accounts before verifying.");
+    const taskState = getFollowTaskState(followGateState, taskKey);
+    if (!taskState.openedAt) {
+      setClaimError("Open the X follow task before verifying it.");
       return;
     }
 
-    if (followGateRemainingSeconds > 0) {
-      setClaimError(`Please wait ${followGateRemainingSeconds}s more before verifying.`);
+    if (taskState.verifiedAt) {
+      setClaimError(null);
+      return;
+    }
+
+    const remainingSeconds = followTaskRemainingSeconds[taskKey];
+    if (remainingSeconds > 0) {
+      setClaimError(`Please wait ${remainingSeconds}s more before verifying this task.`);
       return;
     }
 
     setClaimError(null);
     setFollowGateState((current) => ({
       ...current,
-      verifiedAt: current.verifiedAt || Date.now(),
+      [taskKey]: {
+        ...getFollowTaskState(current, taskKey),
+        verifiedAt: Date.now(),
+      },
     }));
   }, [
-    areFollowTasksOpened,
     connectedAddress,
-    followGateRemainingSeconds,
+    followGateState,
+    followTaskRemainingSeconds,
     hasSiweSession,
     status,
   ]);
@@ -1737,13 +1841,7 @@ export default function FootprintDropLanding({
       <div className="pointer-events-none fixed inset-0 z-0 bg-[radial-gradient(circle_at_top,rgba(191,219,254,0.55),transparent_42%),radial-gradient(circle_at_bottom_left,rgba(125,211,252,0.18),transparent_32%)]" />
       <div className="pointer-events-none fixed inset-x-0 top-0 z-0 h-[440px] bg-[linear-gradient(180deg,rgba(255,255,255,0.68)_0%,rgba(255,255,255,0)_100%)]" />
 
-      <LandingHeader
-        walletButtonLabel={walletButtonLabel}
-        walletButtonDisabled={walletButtonDisabled}
-        onWalletAction={handleWalletAction}
-      />
-
-      <main className="relative z-10 overflow-x-clip px-4 pb-16 pt-[92px] sm:px-6 sm:pb-20 sm:pt-[102px]">
+      <main className="relative z-10 overflow-x-clip px-4 pb-16 pt-6 sm:px-6 sm:pb-20 sm:pt-10 lg:pt-14">
         <section className="mx-auto max-w-6xl py-4 sm:py-12 lg:py-16">
           <div className="grid gap-5 sm:gap-8 lg:grid-cols-[minmax(0,0.82fr)_minmax(0,1fr)] lg:items-start lg:gap-10">
             <div className="min-w-0 max-w-[19rem] sm:max-w-xl">
@@ -1862,15 +1960,15 @@ export default function FootprintDropLanding({
                     hasSiweSession={hasSiweSession}
                     claimState={claimState}
                     isApplyingReferral={isApplyingReferral}
-                    preferredClaimAsset={preferredClaimAsset}
                     claimError={claimError}
                     followGateVisible={followGateVisible}
                     followGateState={followGateState}
-                    followGateRemainingSeconds={followGateRemainingSeconds}
+                    followTaskRemainingSeconds={followTaskRemainingSeconds}
+                    verifiedFollowTasksCount={verifiedFollowTasksCount}
                     isFollowGateVerified={isFollowGateVerified}
                     onClaim={handleClaim}
                     onOpenFollowTask={handleOpenFollowTask}
-                    onVerifyFollowGate={handleVerifyFollowGate}
+                    onVerifyFollowTask={handleVerifyFollowTask}
                     onUseConnectedWallet={syncConnectedWalletLookup}
                   />
                 </div>

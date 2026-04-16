@@ -158,7 +158,7 @@ export function AppShell({ children }: AppShellProps) {
   const isLightShell = true;
   const isLandingPage = pathname === '/';
   const isMaintenancePage = pathname === '/maintenance';
-  const isShelllessPage = isLandingPage || isMaintenancePage;
+  const isShelllessPage = isMaintenancePage;
   const shellMode = useAppShellMode({ enabled: !isShelllessPage });
   const isTopNavMobileMode = shellMode === 'top';
   const { address, isConnected } = useAccount();
@@ -182,6 +182,7 @@ export function AppShell({ children }: AppShellProps) {
 
   useEffect(() => {
     if (
+      isLandingPage ||
       isShelllessPage ||
       pathname.startsWith('/admin') ||
       pathname.startsWith('/ref/')
@@ -331,7 +332,7 @@ export function AppShell({ children }: AppShellProps) {
       <main
         className={`relative z-10 flex-1 transition-opacity duration-100 ease-in-out ${mainShellClassName}`}
       >
-        {!isShelllessPage && <CofounderPassWelcomeModal />}
+        {!isShelllessPage && !isLandingPage && <CofounderPassWelcomeModal />}
         {showReferralModal && address && (
           <ReferralOnboardingModal
             address={address}
