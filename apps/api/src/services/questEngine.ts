@@ -108,6 +108,18 @@ type QuestCampaignWhitelistRecord = {
   updated_at: string;
 };
 
+type ManualXUsernameSaveResult = {
+  success: true;
+  username: string;
+};
+
+type StartDelayQuestResult = {
+  success: true;
+  questId: string;
+  nextVerificationAt?: string | null;
+  idempotent?: boolean;
+};
+
 export type AdminQuestInput = {
   id?: string;
   slug: string;
@@ -567,6 +579,14 @@ async function fetchOpenOceanData<T>(path: string) {
 }
 
 export class QuestEngine {
+  private readonly manualXUsernameInflight = new Map<
+    string,
+    {
+      usernameKey: string;
+      promise: Promise<ManualXUsernameSaveResult>;
+    }
+  >();
+
   async listAdminQuests() {
     const { data, error } = await supabase
       .from("quests")
@@ -659,6 +679,19 @@ export class QuestEngine {
 
   private getManualXUsernameCacheKey(address: string, usernameKey: string) {
     return `quest-manual-x:${normalizeAddress(address)}:${usernameKey}`;
+  }
+
+  private buildStartDelayQuestResult(
+    questId: string,
+    nextVerificationAt?: string | null,
+    idempotent = false
+  ) {
+    return {
+      success: true,
+      questId,
+      nextVerificationAt,
+      ...(idempotent ? { idempotent: true } : {}),
+    } satisfies StartDelayQuestResult;
   }
 
   private getStartDelayQuestCacheKey(
@@ -850,83 +883,129 @@ export class QuestEngine {
       return recent;
     }
 
-    return runtimeCache.singleFlight(`${cacheKey}:inflight`, async () => {
-      const user = await pointsEngine.getOrCreate(normalizedAddress);
-      const { data: existingAccount, error: existingAccountError } = await supabase
-        .from("social_accounts")
-        .select("*")
-        .eq("user_id", user.id)
-        .eq("platform", "x")
-        .maybeSingle();
-
-      if (existingAccountError) {
-        throw new Error(`Failed to load linked X username: ${existingAccountError.message}`);
+    while (true) {
+      const inflight = this.manualXUsernameInflight.get(normalizedAddress);
+      if (!inflight) {
+        break;
       }
 
-      if (existingAccount) {
-        const linkedKeys = getNormalizedLinkedXKeys(existingAccount as SocialAccountRecord);
-        if (linkedKeys.includes(normalizedUsername.key)) {
-          const result = {
-            success: true,
-            username: normalizedUsername.display,
-          } as const;
-
-          runtimeCache.set(cacheKey, result, MANUAL_X_USERNAME_DEDUPE_TTL_MS);
-          return result;
-        }
+      if (inflight.usernameKey === normalizedUsername.key) {
+        return inflight.promise;
       }
 
-      const { data: existingUsername, error: existingUsernameError } = await supabase
-        .from("social_accounts")
-        .select("user_id")
-        .eq("platform", "x")
-        .eq("platform_user_id", normalizedUsername.key)
-        .maybeSingle();
-
-      if (existingUsernameError) {
-        throw new Error(`Failed to check X username: ${existingUsernameError.message}`);
+      try {
+        await inflight.promise;
+      } catch {
+        // Continue and let the new request run after the previous save settles.
       }
 
-      if (existingUsername && existingUsername.user_id !== user.id) {
-        throw new Error("That X username is already linked to another wallet");
+      const cachedAfterWait = runtimeCache.get<ManualXUsernameSaveResult>(cacheKey);
+      if (cachedAfterWait) {
+        return cachedAfterWait;
       }
+    }
 
-      const { error } = await supabase.from("social_accounts").upsert(
-        {
-          user_id: user.id,
-          platform: "x",
-          platform_user_id: normalizedUsername.key,
-          username: normalizedUsername.display,
-          display_name: null,
-          profile_image_url: null,
-          access_token: null,
-          refresh_token: null,
-          scope: null,
-          token_expires_at: null,
-          metadata: {
-            linkedAt: new Date().toISOString(),
-            linkedManually: true,
-          },
-          updated_at: new Date().toISOString(),
-        },
-        {
-          onConflict: "user_id,platform",
-        }
-      );
-
-      if (error) {
-        throw new Error(`Failed to save X username: ${error.message}`);
+    const request = this.saveManualXUsernameOnce(
+      normalizedAddress,
+      normalizedUsername
+    ).finally(() => {
+      const current = this.manualXUsernameInflight.get(normalizedAddress);
+      if (current?.promise === request) {
+        this.manualXUsernameInflight.delete(normalizedAddress);
       }
-
-      const result = {
-        success: true,
-        username: normalizedUsername.display,
-      } as const;
-
-      runtimeCache.set(cacheKey, result, MANUAL_X_USERNAME_DEDUPE_TTL_MS);
-      this.invalidateQuestBoardCache(normalizedAddress);
-      return result;
     });
+
+    this.manualXUsernameInflight.set(normalizedAddress, {
+      usernameKey: normalizedUsername.key,
+      promise: request,
+    });
+
+    return request;
+  }
+
+  private async saveManualXUsernameOnce(
+    normalizedAddress: string,
+    normalizedUsername: ReturnType<typeof normalizeXUsernameInput>
+  ) {
+    const cacheKey = this.getManualXUsernameCacheKey(
+      normalizedAddress,
+      normalizedUsername.key
+    );
+    const user = await pointsEngine.getOrCreate(normalizedAddress);
+    const { data: existingAccount, error: existingAccountError } = await supabase
+      .from("social_accounts")
+      .select("user_id, platform, platform_user_id, username")
+      .eq("user_id", user.id)
+      .eq("platform", "x")
+      .maybeSingle();
+
+    if (existingAccountError) {
+      throw new Error(`Failed to load linked X username: ${existingAccountError.message}`);
+    }
+
+    if (existingAccount) {
+      const linkedKeys = getNormalizedLinkedXKeys(existingAccount as SocialAccountRecord);
+      if (linkedKeys.includes(normalizedUsername.key)) {
+        const result = {
+          success: true,
+          username: normalizedUsername.display,
+        } as const;
+
+        runtimeCache.set(cacheKey, result, MANUAL_X_USERNAME_DEDUPE_TTL_MS);
+        return result;
+      }
+    }
+
+    const { data: existingUsername, error: existingUsernameError } = await supabase
+      .from("social_accounts")
+      .select("user_id")
+      .eq("platform", "x")
+      .eq("platform_user_id", normalizedUsername.key)
+      .maybeSingle();
+
+    if (existingUsernameError) {
+      throw new Error(`Failed to check X username: ${existingUsernameError.message}`);
+    }
+
+    if (existingUsername && existingUsername.user_id !== user.id) {
+      throw new Error("That X username is already linked to another wallet");
+    }
+
+    const { error } = await supabase.from("social_accounts").upsert(
+      {
+        user_id: user.id,
+        platform: "x",
+        platform_user_id: normalizedUsername.key,
+        username: normalizedUsername.display,
+        display_name: null,
+        profile_image_url: null,
+        access_token: null,
+        refresh_token: null,
+        scope: null,
+        token_expires_at: null,
+        metadata: {
+          linkedAt: new Date().toISOString(),
+          linkedManually: true,
+        },
+        updated_at: new Date().toISOString(),
+      },
+      {
+        onConflict: "user_id,platform",
+      }
+    );
+
+    if (error) {
+      throw new Error(`Failed to save X username: ${error.message}`);
+    }
+
+    const result = {
+      success: true,
+      username: normalizedUsername.display,
+    } as const;
+
+    runtimeCache.set(cacheKey, result, MANUAL_X_USERNAME_DEDUPE_TTL_MS);
+    this.invalidateQuestBoardCache(normalizedAddress);
+    return result;
   }
 
   async createXAuthUrl(address: string, returnTo: string) {
@@ -1074,12 +1153,7 @@ export class QuestEngine {
       normalizedAddress,
       questId
     );
-    const earlyRecent = runtimeCache.get<{
-      success: true;
-      questId: string;
-      nextVerificationAt?: string | null;
-      idempotent?: boolean;
-    }>(earlyCacheKey);
+    const earlyRecent = runtimeCache.get<StartDelayQuestResult>(earlyCacheKey);
 
     if (earlyRecent) {
       return {
@@ -1089,12 +1163,7 @@ export class QuestEngine {
     }
 
     return runtimeCache.singleFlight(`${earlyCacheKey}:inflight`, async () => {
-      const cachedDuringFlight = runtimeCache.get<{
-        success: true;
-        questId: string;
-        nextVerificationAt?: string | null;
-        idempotent?: boolean;
-      }>(earlyCacheKey);
+      const cachedDuringFlight = runtimeCache.get<StartDelayQuestResult>(earlyCacheKey);
 
       if (cachedDuringFlight) {
         return {
@@ -1105,13 +1174,6 @@ export class QuestEngine {
 
       const quest = await this.getQuestById(questId);
       const rules = safeRules(quest.rules);
-      const user = await pointsEngine.getOrCreate(normalizedAddress);
-
-      if (quest.platform === "x") {
-        await this.assertLinkedSocialAccount(user.id, "x");
-      }
-
-      const delaySeconds = toNumber(rules.delaySeconds, 20);
       const now = getNow();
       const cycleKey = getCycleKey(quest.progress_window, now);
       const cacheKey = this.getStartDelayQuestCacheKey(
@@ -1119,12 +1181,7 @@ export class QuestEngine {
         quest.id,
         cycleKey
       );
-      const recent = runtimeCache.get<{
-        success: true;
-        questId: string;
-        nextVerificationAt?: string | null;
-        idempotent?: boolean;
-      }>(cacheKey);
+      const recent = runtimeCache.get<StartDelayQuestResult>(cacheKey);
 
       if (recent) {
         runtimeCache.set(
@@ -1138,28 +1195,63 @@ export class QuestEngine {
         };
       }
 
+      const existingUserId = await this.getExistingUserId(normalizedAddress);
+      if (existingUserId) {
+        const existingProgress = await this.getProgress(existingUserId, quest.id, cycleKey);
+        if (
+          existingProgress &&
+          existingProgress.status !== "not_started" &&
+          (existingProgress.opened_at ||
+            existingProgress.next_verification_at ||
+            existingProgress.completed_at)
+        ) {
+          const existingResult = this.buildStartDelayQuestResult(
+            quest.id,
+            existingProgress.next_verification_at,
+            true
+          );
+
+          runtimeCache.set(cacheKey, existingResult, START_DELAY_QUEST_DEDUPE_TTL_MS);
+          runtimeCache.set(
+            earlyCacheKey,
+            existingResult,
+            START_DELAY_QUEST_DEDUPE_TTL_MS
+          );
+          return existingResult;
+        }
+      }
+
+      const userId =
+        existingUserId ?? (await pointsEngine.getOrCreate(normalizedAddress)).id;
+
+      if (quest.platform === "x") {
+        await this.assertLinkedSocialAccount(userId, "x");
+      }
+
+      const delaySeconds = toNumber(rules.delaySeconds, 20);
+      const nowIso = now.toISOString();
       const result = await runtimeCache.singleFlight(`${cacheKey}:inflight`, async () => {
-        const existing = await this.getProgress(user.id, quest.id, cycleKey);
+        const existing = await this.getProgress(userId, quest.id, cycleKey);
         if (
           existing &&
           existing.status !== "not_started" &&
           (existing.opened_at || existing.next_verification_at || existing.completed_at)
         ) {
-          return {
-            success: true,
-            questId,
-            nextVerificationAt: existing.next_verification_at,
-            idempotent: true,
-          } as const;
+          return this.buildStartDelayQuestResult(
+            quest.id,
+            existing.next_verification_at,
+            true
+          );
         }
 
         const progress = await this.upsertProgress({
-          userId: user.id,
+          userId,
           quest,
           cycleKey,
+          existing,
           updates: {
             status: "in_progress",
-            opened_at: now.toISOString(),
+            opened_at: nowIso,
             next_verification_at: new Date(
               now.getTime() + delaySeconds * 1000
             ).toISOString(),
@@ -1167,11 +1259,10 @@ export class QuestEngine {
         });
 
         this.invalidateQuestBoardCache(normalizedAddress);
-        return {
-          success: true,
-          questId,
-          nextVerificationAt: progress.next_verification_at,
-        } as const;
+        return this.buildStartDelayQuestResult(
+          quest.id,
+          progress.next_verification_at
+        );
       });
 
       runtimeCache.set(cacheKey, result, START_DELAY_QUEST_DEDUPE_TTL_MS);
@@ -2154,13 +2245,13 @@ export class QuestEngine {
     userId: number;
     quest: QuestRecord;
     cycleKey: string;
+    existing?: QuestProgressRecord | null;
     updates: Record<string, unknown>;
   }) {
-    const existing = await this.getProgress(
-      args.userId,
-      args.quest.id,
-      args.cycleKey
-    );
+    const existing =
+      args.existing !== undefined
+        ? args.existing
+        : await this.getProgress(args.userId, args.quest.id, args.cycleKey);
 
     const payload = {
       id: existing?.id,

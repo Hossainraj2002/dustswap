@@ -78,7 +78,7 @@ const SPIN_CONTRACT_ADDRESS = (
 ).toLowerCase();
 const ENTRY_POINT_V06_ADDRESS = "0x5ff137d4b0fdcd49dca30c7cf57e578a026d2789";
 const DEFAULT_ETH_PRICE_USD = Number(process.env.DEFAULT_ETH_PRICE_USD || "3500");
-const REFERRAL_APPLY_IDEMPOTENCY_TTL_MS = 10 * 60 * 1000;
+const REFERRAL_APPLY_IDEMPOTENCY_TTL_MS = 30 * 1000;
 const REFERRAL_APPLY_TERMINAL_TTL_MS = 30 * 1000;
 const PRICE_SCALE = 100_000_000;
 const WEI_PER_ETH = 10n ** 18n;
@@ -591,7 +591,6 @@ export class PointsEngine {
   private readonly referralApplyRecent = new Map<
     string,
     {
-      code: string;
       result: ReferralApplyResult;
       expiresAt: number;
     }
@@ -601,8 +600,12 @@ export class PointsEngine {
     return address.trim().toLowerCase();
   }
 
-  private getRecentReferralApply(address: string) {
-    const key = this.getReferralApplyKey(address);
+  private getReferralApplyRecentKey(address: string, code: string) {
+    return `${this.getReferralApplyKey(address)}:${code.trim().toUpperCase()}`;
+  }
+
+  private getRecentReferralApply(address: string, code: string) {
+    const key = this.getReferralApplyRecentKey(address, code);
     const cached = this.referralApplyRecent.get(key);
 
     if (!cached) {
@@ -623,11 +626,12 @@ export class PointsEngine {
     result: ReferralApplyResult,
     ttlMs = REFERRAL_APPLY_IDEMPOTENCY_TTL_MS
   ) {
-    this.referralApplyRecent.set(this.getReferralApplyKey(address), {
-      code,
+    this.referralApplyRecent.set(this.getReferralApplyRecentKey(address, code), {
       result,
       expiresAt: Date.now() + ttlMs,
     });
+
+    return result;
   }
 
   private rememberTerminalReferralApply(
@@ -1634,8 +1638,8 @@ export class PointsEngine {
   }
 
   private async finalizeReferralLink(
-    user: UserRecord,
-    referrer: UserRecord,
+    user: Pick<UserRecord, "id" | "address">,
+    referrer: Pick<UserRecord, "id" | "address">,
     normalizedCode: string
   ) {
     const { error: ledgerError } = await supabase.from("referrals").upsert(
@@ -3205,8 +3209,8 @@ export class PointsEngine {
       throw new Error("address and referralCode required");
     }
 
-    const recent = this.getRecentReferralApply(normalizedAddress);
-    if (recent && recent.code === normalizedCode) {
+    const recent = this.getRecentReferralApply(normalizedAddress, normalizedCode);
+    if (recent) {
       return {
         ...recent.result,
         idempotent: true,
@@ -3244,14 +3248,15 @@ export class PointsEngine {
     userAddress: string,
     normalizedCode: string
   ): Promise<ReferralApplyResult> {
-    const user = await this.getOrCreate(userAddress);
-    const recent = this.getRecentReferralApply(userAddress);
-    if (recent && recent.code === normalizedCode) {
+    const recent = this.getRecentReferralApply(userAddress, normalizedCode);
+    if (recent) {
       return {
         ...recent.result,
         idempotent: true,
       };
     }
+
+    const user = await this.getOrCreate(userAddress);
 
     if (user.referred_by) {
       return {
@@ -3266,19 +3271,17 @@ export class PointsEngine {
 
     const existingReferral = await this.getReferralLedgerByRefereeId(user.id);
     if (existingReferral) {
-      const result = {
+      const result = this.rememberReferralApply(userAddress, normalizedCode, {
         ...this.getAppliedReferralResult(),
         idempotent: true,
-      } satisfies ReferralApplyResult;
-
-      this.rememberReferralApply(userAddress, normalizedCode, result);
+      });
 
       return result;
     }
 
     const { data: referrer, error: referrerError } = await supabase
       .from("users")
-      .select("*")
+      .select("id, address")
       .eq("referral_code", normalizedCode)
       .maybeSingle();
 
@@ -3304,12 +3307,12 @@ export class PointsEngine {
     const { data: linkedUser, error: linkError } = await supabase
       .from("users")
       .update({
-        referred_by: (referrer as UserRecord).id,
+        referred_by: Number((referrer as { id: number }).id),
         updated_at: new Date().toISOString(),
       })
       .eq("id", user.id)
       .is("referred_by", null)
-      .select("*")
+      .select("id, address")
       .maybeSingle();
 
     if (linkError) {
@@ -3319,9 +3322,12 @@ export class PointsEngine {
     if (!linkedUser) {
       const latestUser = await this.getOrCreate(userAddress);
 
-      if (latestUser.referred_by === (referrer as UserRecord).id) {
-        const result = this.getAppliedReferralResult();
-        this.rememberReferralApply(userAddress, normalizedCode, result);
+      if (latestUser.referred_by === Number((referrer as { id: number }).id)) {
+        const result = this.rememberReferralApply(
+          userAddress,
+          normalizedCode,
+          this.getAppliedReferralResult()
+        );
         return {
           ...result,
           idempotent: true,
@@ -3340,9 +3346,15 @@ export class PointsEngine {
       }
 
       const latestReferral = await this.getReferralLedgerByRefereeId(user.id);
-      if (latestReferral && Number(latestReferral.referrer_id) === (referrer as UserRecord).id) {
-        const result = this.getAppliedReferralResult();
-        this.rememberReferralApply(userAddress, normalizedCode, result);
+      if (
+        latestReferral &&
+        Number(latestReferral.referrer_id) === Number((referrer as { id: number }).id)
+      ) {
+        const result = this.rememberReferralApply(
+          userAddress,
+          normalizedCode,
+          this.getAppliedReferralResult()
+        );
         return {
           ...result,
           idempotent: true,
@@ -3371,8 +3383,8 @@ export class PointsEngine {
     }
 
     const result = await this.finalizeReferralLink(
-      linkedUser as UserRecord,
-      referrer as UserRecord,
+      linkedUser as Pick<UserRecord, "id" | "address">,
+      referrer as Pick<UserRecord, "id" | "address">,
       normalizedCode
     );
 

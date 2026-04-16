@@ -7,8 +7,14 @@ import { useEffect, useMemo, useState } from "react";
 import { WalletConnectButton } from "@/components/wallet/WalletConnectButton";
 import { applyReferralCode } from "@/lib/points";
 import {
+  clearReferralAttemptedSession,
+  clearReferralTerminalSession,
   clearPendingReferralCode,
+  hasReferralAttemptedSession,
+  hasReferralTerminalSession,
   isTerminalReferralError,
+  markReferralAttemptedSession,
+  markReferralTerminalSession,
   normalizeReferralCode,
   storePendingReferralCode,
 } from "@/lib/referrals";
@@ -20,9 +26,6 @@ type ReferralPageClientProps = {
 };
 
 type ApplyState = "idle" | "applying" | "success" | "error";
-
-const referralAutoApplyAttemptedSession = new Set<string>();
-const referralAutoApplyTerminalSession = new Set<string>();
 
 export function ReferralPageClient({ params }: ReferralPageClientProps) {
   const router = useRouter();
@@ -57,50 +60,59 @@ export function ReferralPageClient({ params }: ReferralPageClientProps) {
       return;
     }
 
-    const applyKey = `${address.toLowerCase()}:${referralCode}`;
-    if (referralAutoApplyTerminalSession.has(applyKey)) {
+    if (hasReferralTerminalSession(address, referralCode)) {
       return;
     }
 
-    if (attempt === 0 && referralAutoApplyAttemptedSession.has(applyKey)) {
+    if (attempt === 0 && hasReferralAttemptedSession(address, referralCode)) {
       return;
     }
 
     let cancelled = false;
-    referralAutoApplyAttemptedSession.add(applyKey);
+    markReferralAttemptedSession(address, referralCode);
 
     const run = async () => {
       setState("applying");
       setMessage("Applying your referral on-chain profile...");
 
-      const result = await applyReferralCode(address, referralCode);
-      if (cancelled) {
-        return;
-      }
-
-      if (result.success) {
-        clearPendingReferralCode();
-        setState("success");
-        setMessage("Referral linked. Your inviter now earns 20% of your future points.");
-        if (typeof window !== "undefined") {
-          window.localStorage.setItem(
-            `dustswap:cofounder-pass-pending:${address.toLowerCase()}`,
-            "pending"
-          );
+      try {
+        const result = await applyReferralCode(address, referralCode);
+        if (cancelled) {
+          return;
         }
-        window.setTimeout(() => {
-          router.replace("/profile");
-        }, 1200);
-        return;
-      }
 
-      if (isTerminalReferralError(result.error)) {
-        referralAutoApplyTerminalSession.add(applyKey);
-        clearPendingReferralCode();
-      }
+        if (result.success) {
+          markReferralTerminalSession(address, referralCode);
+          clearPendingReferralCode();
+          setState("success");
+          setMessage("Referral linked. Your inviter now earns 20% of your future points.");
+          if (typeof window !== "undefined") {
+            window.localStorage.setItem(
+              `dustswap:cofounder-pass-pending:${address.toLowerCase()}`,
+              "pending"
+            );
+          }
+          window.setTimeout(() => {
+            router.replace("/profile");
+          }, 1200);
+          return;
+        }
 
-      setState("error");
-      setMessage(result.error || "Referral could not be applied. Try again.");
+        if (isTerminalReferralError(result.error)) {
+          markReferralTerminalSession(address, referralCode);
+          clearPendingReferralCode();
+        }
+
+        setState("error");
+        setMessage(result.error || "Referral could not be applied. Try again.");
+      } catch {
+        if (cancelled) {
+          return;
+        }
+
+        setState("error");
+        setMessage("Referral could not be applied. Try again.");
+      }
     };
 
     void run();
@@ -183,9 +195,8 @@ export function ReferralPageClient({ params }: ReferralPageClientProps) {
                     return;
                   }
 
-                  const applyKey = `${address.toLowerCase()}:${referralCode}`;
-                  referralAutoApplyAttemptedSession.delete(applyKey);
-                  referralAutoApplyTerminalSession.delete(applyKey);
+                  clearReferralAttemptedSession(address, referralCode);
+                  clearReferralTerminalSession(address, referralCode);
                   setAttempt((current) => current + 1);
                 }}
                 disabled={!isConnected}
