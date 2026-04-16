@@ -489,21 +489,36 @@ function ClaimFollowGate({
     isVerified ||
     !allTasksOpened ||
     remainingSeconds > 0;
+  const statusMessage = isVerified
+    ? "Follow step verified. Your claim button is unlocked now."
+    : !allTasksOpened
+      ? "Open both follow tasks to start the 20 second verify timer."
+      : remainingSeconds > 0
+        ? `Verify unlocks in ${remainingSeconds}s.`
+        : "You can verify this step now.";
+  const verifyLabel =
+    isApplyingReferral || claimState === "claiming"
+      ? "Claiming PP..."
+      : isVerified
+        ? "Verified"
+        : remainingSeconds > 0
+          ? `Verify in ${remainingSeconds}s`
+          : "Verify follows";
 
   return (
-    <div className="mt-4 rounded-[24px] border border-sky-100 bg-sky-50/70 p-4 sm:p-5">
+    <div className="mt-4 max-h-[6cm] overflow-y-auto rounded-[24px] border border-sky-100 bg-sky-50/70 p-3.5 overscroll-contain sm:max-h-none sm:overflow-visible sm:p-5">
       <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-sky-700">
         Claim step
       </p>
-      <h3 className="mt-2 text-lg font-semibold tracking-[-0.02em] text-slate-950">
+      <h3 className="mt-1.5 text-base font-semibold tracking-[-0.02em] text-slate-950 sm:mt-2 sm:text-lg">
         Follow both X accounts before claiming
       </h3>
-      <p className="mt-2 text-sm leading-6 text-slate-600">
+      <p className="mt-1.5 text-xs leading-5 text-slate-600 sm:mt-2 sm:text-sm sm:leading-6">
         These tasks stay hidden until you tap claim. Follow both accounts on X,
         then wait 20 seconds before verifying this step.
       </p>
 
-      <div className="mt-4 grid gap-3">
+      <div className="mt-3 grid gap-2 sm:mt-4 sm:gap-3">
         {FOOTPRINT_FOLLOW_TARGETS.map((task) => {
           const opened =
             task.key === "founder"
@@ -513,20 +528,23 @@ function ClaimFollowGate({
           return (
             <div
               key={task.key}
-              className="rounded-[20px] border border-white/90 bg-white/90 p-4 shadow-[0_12px_28px_rgba(148,163,184,0.08)]"
+              className="rounded-[18px] border border-white/90 bg-white/90 p-3 shadow-[0_12px_28px_rgba(148,163,184,0.08)] sm:rounded-[20px] sm:p-4"
             >
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <div className="min-w-0">
-                  <p className="text-sm font-semibold text-slate-950">{task.label}</p>
-                  <p className="mt-1 text-sm leading-6 text-slate-500">
-                    {task.description} <span className="font-semibold">{task.handle}</span>
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-[13px] font-semibold text-slate-950 sm:text-sm">
+                    {task.label}
+                  </p>
+                  <p className="mt-0.5 truncate text-xs leading-5 text-slate-500 sm:text-sm sm:leading-6">
+                    <span className="hidden sm:inline">{task.description} </span>
+                    <span className="font-semibold">{task.handle}</span>
                   </p>
                 </div>
 
-                <div className="flex items-center gap-2">
+                <div className="flex shrink-0 items-center gap-1.5 sm:gap-2">
                   <span
                     className={cx(
-                      "rounded-full border px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em]",
+                      "rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] sm:px-3 sm:text-[11px] sm:tracking-[0.18em]",
                       opened
                         ? "border-emerald-200 bg-emerald-50 text-emerald-700"
                         : "border-slate-200 bg-slate-50 text-slate-500"
@@ -537,7 +555,7 @@ function ClaimFollowGate({
                   <button
                     type="button"
                     onClick={() => onOpenTask(task.key, task.href)}
-                    className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-900 transition-colors hover:bg-slate-100"
+                    className="inline-flex items-center justify-center whitespace-nowrap rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-900 transition-colors hover:bg-slate-100 sm:px-4 sm:py-2 sm:text-sm"
                   >
                     {opened ? "Open Again" : "Follow on X"}
                   </button>
@@ -548,29 +566,17 @@ function ClaimFollowGate({
         })}
       </div>
 
-      <div className="mt-4 rounded-[20px] border border-white/90 bg-white/90 p-4 shadow-[0_12px_28px_rgba(148,163,184,0.08)]">
-        <p className="text-sm font-medium text-slate-700">
-          {isVerified
-            ? "Follow step verified. Your claim button is unlocked now."
-            : !allTasksOpened
-              ? "Open both follow tasks to start the 20 second verify timer."
-              : remainingSeconds > 0
-                ? `Verify unlocks in ${remainingSeconds}s.`
-                : "You can verify this step now."}
+      <div className="sticky bottom-0 mt-3 rounded-[18px] border border-white/90 bg-white/95 p-3 shadow-[0_12px_28px_rgba(148,163,184,0.08)] backdrop-blur sm:static sm:mt-4 sm:rounded-[20px] sm:p-4">
+        <p className="text-xs font-medium leading-5 text-slate-700 sm:text-sm sm:leading-6">
+          {statusMessage}
         </p>
         <button
           type="button"
           onClick={() => void onVerify()}
           disabled={verifyDisabled}
-          className="mt-3 inline-flex w-full items-center justify-center rounded-full bg-slate-950 px-5 py-3 text-sm font-semibold text-white transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-40"
+          className="mt-2.5 inline-flex w-full items-center justify-center rounded-full bg-slate-950 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-40 sm:mt-3 sm:px-5 sm:py-3"
         >
-          {isApplyingReferral || claimState === "claiming"
-            ? "Claiming PP..."
-            : isVerified
-              ? "Verified"
-              : remainingSeconds > 0
-                ? `Verify in ${remainingSeconds}s`
-                : "Verify follows"}
+          {verifyLabel}
         </button>
       </div>
     </div>
