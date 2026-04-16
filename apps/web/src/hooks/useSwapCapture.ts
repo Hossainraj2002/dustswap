@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from "react";
 import { useConnection } from "wagmi";
-import { DATA_SUFFIX } from "@/lib/builderCode";
+import { appendBuilderCodeToData, DATA_SUFFIX } from "@/lib/builderCode";
 import {
   buildBasePaymasterCapabilities,
   isErc20ApproveCall,
@@ -261,6 +261,31 @@ function getRequestPayload(args: EthereumRequestArguments) {
   return {};
 }
 
+function withRequestData(args: EthereumRequestArguments, data: `0x${string}`) {
+  if (Array.isArray(args?.params)) {
+    const [firstParam, ...rest] = args.params;
+
+    if (firstParam && typeof firstParam === "object" && !Array.isArray(firstParam)) {
+      return {
+        ...args,
+        params: [{ ...(firstParam as Record<string, unknown>), data }, ...rest],
+      };
+    }
+  }
+
+  if (args?.params && typeof args.params === "object" && !Array.isArray(args.params)) {
+    return {
+      ...args,
+      params: {
+        ...(args.params as Record<string, unknown>),
+        data,
+      },
+    };
+  }
+
+  return args;
+}
+
 function getWalletSendCallsRequest(args: EthereumRequestArguments): WalletSendCallsRequest {
   const payload = getRequestPayload(args);
   const calls = Array.isArray(payload.calls) ? (payload.calls as WalletCall[]) : [];
@@ -294,6 +319,28 @@ function isEligibleSponsoredSwapTransaction(
   const data = typeof request.data === "string" ? request.data : "";
 
   return isOpenOceanRouterAddress(to) || isErc20ApproveCall(data);
+}
+
+function applyBuilderCodeToEligibleSwapTransaction(
+  args: EthereumRequestArguments,
+  request: Record<string, unknown>,
+  resolvedChainId: number
+) {
+  if (!isEligibleSponsoredSwapTransaction(request, resolvedChainId)) {
+    return args;
+  }
+
+  const nextData = appendBuilderCodeToData(
+    typeof request.data === "string" && request.data.startsWith("0x")
+      ? (request.data as `0x${string}`)
+      : undefined
+  );
+
+  if (!nextData || nextData === request.data) {
+    return args;
+  }
+
+  return withRequestData(args, nextData);
 }
 
 function resolveCallsId(result: unknown) {
@@ -776,11 +823,9 @@ export function useSwapCapture() {
       const wrappedRequest = async (args: EthereumRequestArguments) => {
         const method = args?.method;
         let result: unknown;
+        let forwardedArgs = args;
 
-        if (
-          isPaymasterEnabled() &&
-          (method === "eth_sendTransaction" || method === "wallet_sendTransaction")
-        ) {
+        if (method === "eth_sendTransaction" || method === "wallet_sendTransaction") {
           const request = getRequestPayload(args);
           const resolvedAddress = normalizeAddress(String(request.from || address || ""));
           const resolvedChainId = resolveChainId(
@@ -790,7 +835,14 @@ export function useSwapCapture() {
             (window as Window & { ethereum?: RequestCapableProvider }).ethereum?.chainId
           );
 
+          forwardedArgs = applyBuilderCodeToEligibleSwapTransaction(
+            args,
+            request,
+            resolvedChainId
+          );
+
           if (
+            isPaymasterEnabled() &&
             resolvedAddress &&
             isEligibleSponsoredSwapTransaction(request, resolvedChainId)
           ) {
@@ -846,12 +898,12 @@ export function useSwapCapture() {
         }
 
         if (typeof result === "undefined") {
-          result = await originalRequest(args);
+          result = await originalRequest(forwardedArgs);
         }
 
         try {
           if (method === "eth_sendTransaction" || method === "wallet_sendTransaction") {
-            const request = getRequestPayload(args);
+            const request = getRequestPayload(forwardedArgs);
             const to = String(request.to || "").toLowerCase();
             const txHash = typeof result === "string" ? result.toLowerCase() : "";
             const resolvedAddress = normalizeAddress(String(request.from || address || ""));
