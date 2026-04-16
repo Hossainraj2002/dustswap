@@ -1002,9 +1002,25 @@ export class PointsEngine {
     }
   }
 
-  private async buildBalance(user: UserRecord) {
+  private async buildBalancePayload(
+    user: Pick<
+      UserRecord,
+      | "address"
+      | "referral_code"
+      | "total_points"
+      | "current_streak"
+      | "longest_streak"
+      | "last_check_in"
+      | "spin_tickets"
+    >,
+    options?: {
+      rank?: number;
+      priceSnapshot?: DailyAssetPriceRecord;
+    }
+  ) {
     const snapshot = buildStreakSnapshot(user);
-    const priceSnapshot = await this.getDailyEthPriceSnapshot();
+    const priceSnapshot =
+      options?.priceSnapshot ?? (await this.getDailyEthPriceSnapshot());
     const checkInConfig = buildFeeConfig(priceSnapshot, CFG.CHECK_IN_FEE_USD);
     const saveConfig = buildFeeConfig(priceSnapshot, CFG.STREAK_RESTORE_FEE_USD);
     const rewardStreak = snapshot.isBroken
@@ -1012,15 +1028,16 @@ export class PointsEngine {
       : snapshot.checkedInToday
         ? Math.max(snapshot.activeStreak, 1)
         : Math.max(snapshot.activeStreak + 1, 1);
-
-    const { count } = await supabase
-      .from("users")
-      .select("*", { count: "exact", head: true })
-      .gt("total_points", user.total_points);
+    const rank =
+      typeof options?.rank === "number"
+        ? options.rank
+        : (() => {
+            throw new Error("Rank must be resolved before building the balance payload");
+          })();
 
     return {
       totalPoints: user.total_points,
-      rank: (count ?? 0) + 1,
+      rank,
       spinTickets: Number(user.spin_tickets || 0),
       streak: snapshot.activeStreak,
       rawStreak: snapshot.storedStreak,
@@ -1044,6 +1061,17 @@ export class PointsEngine {
       checkInConfig,
       saveConfig,
     };
+  }
+
+  private async buildBalance(user: UserRecord) {
+    const { count } = await supabase
+      .from("users")
+      .select("*", { count: "exact", head: true })
+      .gt("total_points", user.total_points);
+
+    return this.buildBalancePayload(user, {
+      rank: (count ?? 0) + 1,
+    });
   }
 
   private async fetchAllPages<T>(
@@ -1196,7 +1224,7 @@ export class PointsEngine {
   }
 
   private async findExistingUser(address: string) {
-    const normalizedAddress = getAddress(address).toLowerCase();
+    const normalizedAddress = this.normalizeStoredAddress(address);
     const { data, error } = await supabase
       .from("users")
       .select("*")
@@ -1208,6 +1236,119 @@ export class PointsEngine {
     }
 
     return (data as UserRecord | null) ?? null;
+  }
+
+  private async getReadOnlyEthPriceSnapshot(date = new Date()) {
+    const dateKey = getUtcDayKey(date);
+    if (!dateKey) {
+      throw new Error("Could not resolve a UTC date for the ETH price snapshot");
+    }
+
+    const { data, error } = await supabase
+      .from("daily_asset_prices")
+      .select("*")
+      .eq("asset_symbol", "ETH")
+      .eq("price_date", dateKey)
+      .maybeSingle();
+
+    if (error) {
+      throw new Error(`Failed to load ETH price snapshot: ${error.message}`);
+    }
+
+    if (data) {
+      return normalizeDailyPriceRow(data);
+    }
+
+    const latest = await this.getLatestEthPriceSnapshot();
+    if (latest) {
+      return {
+        ...latest,
+        price_date: dateKey,
+        source: "fallback_cached",
+        metadata: {
+          ...(latest.metadata ?? {}),
+          fallbackFromDate: latest.price_date,
+          readOnly: true,
+        },
+      };
+    }
+
+    return {
+      id: 0,
+      asset_symbol: "ETH",
+      price_date: dateKey,
+      price_usd: DEFAULT_ETH_PRICE_USD,
+      source: "fallback_default",
+      metadata: {
+        fallbackReason: "price_feed_unavailable",
+        readOnly: true,
+      },
+    } satisfies DailyAssetPriceRecord;
+  }
+
+  private buildDefaultBalanceUser(address?: string) {
+    return {
+      address: address ? this.normalizeStoredAddress(address) : "",
+      referral_code: "",
+      total_points: 0,
+      current_streak: 0,
+      longest_streak: 0,
+      last_check_in: null,
+      spin_tickets: 0,
+    } satisfies Pick<
+      UserRecord,
+      | "address"
+      | "referral_code"
+      | "total_points"
+      | "current_streak"
+      | "longest_streak"
+      | "last_check_in"
+      | "spin_tickets"
+    >;
+  }
+
+  private async buildDefaultBalance(address?: string) {
+    const priceSnapshot = await this.getReadOnlyEthPriceSnapshot();
+
+    return this.buildBalancePayload(this.buildDefaultBalanceUser(address), {
+      rank: 0,
+      priceSnapshot,
+    });
+  }
+
+  private buildDefaultUserStats() {
+    return {
+      totalPoints: 0,
+      dustSwept: 0,
+      swapVolume: 0,
+      tokensBurned: 0,
+    };
+  }
+
+  private buildDefaultReferralStats() {
+    return {
+      code: "",
+      friendsJoined: 0,
+      pointsEarned: 0,
+    };
+  }
+
+  private async buildDefaultPointsSummary(address?: string) {
+    return {
+      balance: {
+        success: true,
+        ...(await this.buildDefaultBalance(address)),
+      },
+      stats: {
+        success: true,
+        ...this.buildDefaultUserStats(),
+      },
+      referral: {
+        success: true,
+        ...this.buildDefaultReferralStats(),
+        hasReferrer: false,
+      },
+    };
   }
 
   private async getExistingFootprintClaimByUserId(userId: number) {
@@ -1439,7 +1580,11 @@ export class PointsEngine {
       return null;
     }
 
-    const user = await this.getOrCreate(viewerAddress);
+    const user = await this.findExistingUser(viewerAddress);
+    if (!user) {
+      return null;
+    }
+
     const [profiles, userStats, referralStats, rankResult] = await Promise.all([
       this.fetchCachedProfiles([user.id]),
       this.getSweepStatsByUserId(user.id),
@@ -1475,7 +1620,11 @@ export class PointsEngine {
       pfpUrl?: string | null;
     }
   ) {
-    const user = await this.getOrCreate(address);
+    const user = await this.findExistingUser(address);
+    if (!user) {
+      return;
+    }
+
     const { error } = await supabase
       .from("social_accounts")
       .upsert(
@@ -2743,7 +2892,13 @@ export class PointsEngine {
   }
 
   async getSpinHistory(address: string) {
-    const user = await this.getOrCreate(address);
+    const user = await this.findExistingUser(address);
+    if (!user) {
+      return {
+        history: [],
+      };
+    }
+
     const { data, error } = await supabase
       .from("spin_history")
       .select(
@@ -2902,7 +3057,11 @@ export class PointsEngine {
   }
 
   async getBalance(address: string) {
-    const user = await this.getOrCreate(address);
+    const user = await this.findExistingUser(address);
+    if (!user) {
+      return this.buildDefaultBalance(address);
+    }
+
     return this.buildBalance(user);
   }
 
@@ -3038,11 +3197,15 @@ export class PointsEngine {
   }
 
   async getPointsSummary(address: string) {
-    const normalizedAddress = address.toLowerCase();
+    const normalizedAddress = this.normalizeStoredAddress(address);
     const cacheKey = this.getPointsSummaryCacheKey(normalizedAddress);
 
     return runtimeCache.getOrSet(cacheKey, POINTS_SUMMARY_CACHE_TTL_MS, async () => {
-      const user = await this.getOrCreate(normalizedAddress);
+      const user = await this.findExistingUser(normalizedAddress);
+      if (!user) {
+        return this.buildDefaultPointsSummary(normalizedAddress);
+      }
+
       const [balance, stats, referral] = await Promise.all([
         this.buildBalance(user),
         this.getSweepStatsByUserId(user.id),
@@ -3070,7 +3233,11 @@ export class PointsEngine {
   }
 
   async getUserStats(address: string) {
-    const user = await this.getOrCreate(address);
+    const user = await this.findExistingUser(address);
+    if (!user) {
+      return this.buildDefaultUserStats();
+    }
+
     const stats = await this.getSweepStatsByUserId(user.id);
 
     return {
@@ -3080,7 +3247,11 @@ export class PointsEngine {
   }
 
   async getReferralStats(address: string) {
-    const user = await this.getOrCreate(address);
+    const user = await this.findExistingUser(address);
+    if (!user) {
+      return this.buildDefaultReferralStats();
+    }
+
     const referral = await this.getReferralStatsByUserId(user.id);
 
     return {
@@ -3194,7 +3365,7 @@ export class PointsEngine {
 
       if (type === "referral") {
         const pageEntries = await this.getReferralLeaderboardPage(offset, safeLimit);
-        const viewerUser = viewerAddress ? await this.getOrCreate(viewerAddress) : null;
+        const viewerUser = viewerAddress ? await this.findExistingUser(viewerAddress) : null;
         const [profiles, viewerRow, viewerProfiles] = await Promise.all([
           this.fetchCachedProfiles(pageEntries.map((entry) => entry.userId)),
           viewerUser ? this.getReferralLeaderboardViewer(viewerUser.id) : Promise.resolve(null),
@@ -3224,7 +3395,7 @@ export class PointsEngine {
       }
 
       const pageEntries = await this.getVolumeLeaderboardPage(offset, safeLimit);
-      const viewerUser = viewerAddress ? await this.getOrCreate(viewerAddress) : null;
+      const viewerUser = viewerAddress ? await this.findExistingUser(viewerAddress) : null;
       const [profiles, viewerRow, viewerProfiles] = await Promise.all([
         this.fetchCachedProfiles(pageEntries.map((entry) => entry.userId)),
         viewerUser ? this.getVolumeLeaderboardViewer(viewerUser.id) : Promise.resolve(null),
@@ -3259,14 +3430,15 @@ export class PointsEngine {
     code: string
   ): Promise<{ valid: boolean; normalizedCode: string; message: string }> {
     const normalizedCode = code.trim().toUpperCase();
+    const normalizedUserAddress = this.normalizeStoredAddress(userAddress);
 
     if (!normalizedCode) {
       return { valid: false, normalizedCode, message: "Enter a referral code." };
     }
 
-    const user = await this.getOrCreate(userAddress);
+    const user = await this.findExistingUser(normalizedUserAddress);
 
-    if (user.referred_by) {
+    if (user?.referred_by) {
       return { valid: false, normalizedCode, message: "You have already applied a referral code." };
     }
 
@@ -3280,7 +3452,10 @@ export class PointsEngine {
       return { valid: false, normalizedCode, message: "Invalid referral code." };
     }
 
-    if (String((referrer as { address: string }).address).toLowerCase() === userAddress.toLowerCase()) {
+    if (
+      String((referrer as { address: string }).address).toLowerCase() ===
+      normalizedUserAddress
+    ) {
       return { valid: false, normalizedCode, message: "You cannot use your own referral code." };
     }
 
