@@ -43,6 +43,7 @@ const CFG = {
   MAX_STREAK_BOOST_PERCENT: 300,
 
   CHECK_IN_FEE_USD: 0.01,
+  FOOTPRINT_CLAIM_FEE_USD: 0.01,
   STREAK_RESTORE_FEE_USD: 1,
   SPIN_TICKETS_PER_CHECK_IN: 3,
   SPIN_TICKET_COST: 1,
@@ -71,6 +72,14 @@ const STREAK_SAVE_USDC_ADDRESS =
   process.env.STREAK_SAVE_USDC_ADDRESS ||
   process.env.NEXT_PUBLIC_STREAK_SAVE_USDC_ADDRESS ||
   "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+const FOOTPRINT_CLAIM_RECIPIENT =
+  process.env.FOOTPRINT_CLAIM_RECIPIENT ||
+  process.env.NEXT_PUBLIC_FOOTPRINT_CLAIM_RECIPIENT ||
+  STREAK_SAVE_RECIPIENT;
+const FOOTPRINT_CLAIM_USDC_ADDRESS =
+  process.env.FOOTPRINT_CLAIM_USDC_ADDRESS ||
+  process.env.NEXT_PUBLIC_FOOTPRINT_CLAIM_USDC_ADDRESS ||
+  STREAK_SAVE_USDC_ADDRESS;
 const SPIN_CONTRACT_ADDRESS = (
   process.env.SPIN_CONTRACT_ADDRESS ||
   process.env.NEXT_PUBLIC_SPIN_CONTRACT_ADDRESS ||
@@ -225,6 +234,12 @@ type VerifiedPayment = {
   amountUsd: number;
   priceDate: string;
   ethPriceUsd: number;
+};
+
+type PaymentVerificationTarget = {
+  allowBasePay?: boolean;
+  recipient: string;
+  usdcAddress: string;
 };
 
 type UserSweepStatsRow = {
@@ -529,14 +544,19 @@ function calculateEthWeiFromUsd(usdAmount: number, ethPriceUsd: number) {
   return (usdScaled * WEI_PER_ETH + ethPriceScaled - 1n) / ethPriceScaled;
 }
 
-function buildFeeConfig(snapshot: DailyAssetPriceRecord, usdTarget: number): FeeConfig {
+function buildFeeConfig(
+  snapshot: DailyAssetPriceRecord,
+  usdTarget: number,
+  recipient = STREAK_SAVE_RECIPIENT,
+  usdcAddress = STREAK_SAVE_USDC_ADDRESS
+): FeeConfig {
   const usdcUnits = getUsdcUnitsForUsd(usdTarget);
   const ethWei = calculateEthWeiFromUsd(usdTarget, snapshot.price_usd);
 
   return {
     chainId: base.id,
-    recipient: STREAK_SAVE_RECIPIENT,
-    usdcAddress: STREAK_SAVE_USDC_ADDRESS,
+    recipient,
+    usdcAddress,
     usdTarget,
     usdcAmount: usdTarget.toFixed(2),
     usdcAmountUnits: usdcUnits.toString(),
@@ -1924,7 +1944,8 @@ export class PointsEngine {
     normalizedAddress: string,
     paymentId: string,
     usdTarget: number,
-    priceSnapshot: DailyAssetPriceRecord
+    priceSnapshot: DailyAssetPriceRecord,
+    recipientAddress: string
   ): Promise<VerifiedPayment> {
     const status = await getPaymentStatus({
       id: paymentId,
@@ -1940,7 +1961,10 @@ export class PointsEngine {
       throw new Error("Base Pay sender does not match this wallet");
     }
 
-    if (!status.recipient || status.recipient.toLowerCase() !== STREAK_SAVE_RECIPIENT.toLowerCase()) {
+    if (
+      !status.recipient ||
+      status.recipient.toLowerCase() !== recipientAddress.toLowerCase()
+    ) {
       throw new Error("Base Pay recipient does not match the check-in wallet");
     }
 
@@ -1961,7 +1985,8 @@ export class PointsEngine {
   private verifySmartWalletEthPayment(
     normalizedAddress: string,
     transaction: Awaited<ReturnType<typeof baseClient.getTransaction>>,
-    requiredWei: bigint
+    requiredWei: bigint,
+    recipientAddress: string
   ) {
     if (
       !transaction.to ||
@@ -2009,7 +2034,7 @@ export class PointsEngine {
 
       const matchingCall = calls.find(
         (call) =>
-          call.target.toLowerCase() === STREAK_SAVE_RECIPIENT.toLowerCase() &&
+          call.target.toLowerCase() === recipientAddress.toLowerCase() &&
           call.value >= requiredWei
       );
 
@@ -2030,19 +2055,25 @@ export class PointsEngine {
     normalizedAddress: string,
     txHash: string,
     usdTarget: number,
-    asset?: SaveAsset
+    asset?: SaveAsset,
+    target: PaymentVerificationTarget = {
+      allowBasePay: true,
+      recipient: STREAK_SAVE_RECIPIENT,
+      usdcAddress: STREAK_SAVE_USDC_ADDRESS,
+    }
   ): Promise<VerifiedPayment> {
     const priceSnapshot = await this.getDailyEthPriceSnapshot();
     const ethRequiredWei = calculateEthWeiFromUsd(usdTarget, priceSnapshot.price_usd);
     const usdcRequiredUnits = getUsdcUnitsForUsd(usdTarget);
 
-    if (asset !== "eth") {
+    if (target.allowBasePay !== false && asset !== "eth") {
       try {
         return await this.verifyBasePayPayment(
           normalizedAddress,
           txHash,
           usdTarget,
-          priceSnapshot
+          priceSnapshot,
+          target.recipient
         );
       } catch {
         // Fall through to raw on-chain inspection for normal EOA/ERC-20 payments.
@@ -2062,7 +2093,9 @@ export class PointsEngine {
       const result = this.verifyUsdcPayment(
         receipt.logs,
         normalizedAddress,
-        usdcRequiredUnits
+        usdcRequiredUnits,
+        target.usdcAddress,
+        target.recipient
       );
 
       return {
@@ -2077,7 +2110,8 @@ export class PointsEngine {
       const smartWalletPayment = this.verifySmartWalletEthPayment(
         normalizedAddress,
         transaction,
-        ethRequiredWei
+        ethRequiredWei,
+        target.recipient
       );
 
       if (smartWalletPayment) {
@@ -2093,7 +2127,12 @@ export class PointsEngine {
         throw new Error("Payment transaction sender does not match this wallet");
       }
 
-      const result = this.verifyEthPayment(transaction.to, transaction.value, ethRequiredWei);
+      const result = this.verifyEthPayment(
+        transaction.to,
+        transaction.value,
+        ethRequiredWei,
+        target.recipient
+      );
 
       return {
         ...result,
@@ -2107,7 +2146,9 @@ export class PointsEngine {
       const usdcPayment = this.verifyUsdcPayment(
         receipt.logs,
         normalizedAddress,
-        usdcRequiredUnits
+        usdcRequiredUnits,
+        target.usdcAddress,
+        target.recipient
       );
 
       return {
@@ -2117,7 +2158,12 @@ export class PointsEngine {
         ethPriceUsd: priceSnapshot.price_usd,
       };
     } catch {
-      const ethPayment = this.verifyEthPayment(transaction.to, transaction.value, ethRequiredWei);
+      const ethPayment = this.verifyEthPayment(
+        transaction.to,
+        transaction.value,
+        ethRequiredWei,
+        target.recipient
+      );
       return {
         ...ethPayment,
         amountUsd: usdTarget,
@@ -2127,8 +2173,13 @@ export class PointsEngine {
     }
   }
 
-  private verifyEthPayment(to: string | null, value: bigint, requiredWei: bigint) {
-    if (!to || to.toLowerCase() !== STREAK_SAVE_RECIPIENT.toLowerCase()) {
+  private verifyEthPayment(
+    to: string | null,
+    value: bigint,
+    requiredWei: bigint,
+    recipientAddress: string
+  ) {
+    if (!to || to.toLowerCase() !== recipientAddress.toLowerCase()) {
       throw new Error("ETH payment was not sent to the check-in wallet");
     }
 
@@ -2145,10 +2196,12 @@ export class PointsEngine {
   private verifyUsdcPayment(
     logs: readonly any[],
     normalizedAddress: string,
-    requiredAmount: bigint
+    requiredAmount: bigint,
+    usdcAddress: string,
+    recipientAddress: string
   ) {
     for (const log of logs) {
-      if (String(log.address).toLowerCase() !== STREAK_SAVE_USDC_ADDRESS.toLowerCase()) {
+      if (String(log.address).toLowerCase() !== usdcAddress.toLowerCase()) {
         continue;
       }
 
@@ -2169,7 +2222,7 @@ export class PointsEngine {
 
         if (
           from === normalizedAddress &&
-          to === STREAK_SAVE_RECIPIENT.toLowerCase() &&
+          to === recipientAddress.toLowerCase() &&
           value >= requiredAmount
         ) {
           return {
@@ -2865,24 +2918,37 @@ export class PointsEngine {
         if (existingClaim) {
           return {
             ...this.normalizeFootprintClaim(normalizedAddress, existingClaim),
+            claimConfig: null,
             referralCommissionPct: CFG.REFERRAL_COMMISSION_PCT,
           };
         }
       }
 
       const lookup = await footprintAirdropService.lookupReward(normalizedAddress);
+      const priceSnapshot = lookup.eligible
+        ? await this.getDailyEthPriceSnapshot()
+        : null;
+      const claimConfig = priceSnapshot
+        ? buildFeeConfig(
+            priceSnapshot,
+            CFG.FOOTPRINT_CLAIM_FEE_USD,
+            FOOTPRINT_CLAIM_RECIPIENT,
+            FOOTPRINT_CLAIM_USDC_ADDRESS
+          )
+        : null;
 
       return {
         ...lookup,
         claimed: false,
         claimable: lookup.eligible,
         claimedAt: null,
+        claimConfig,
         referralCommissionPct: CFG.REFERRAL_COMMISSION_PCT,
       };
     });
   }
 
-  async claimFootprintAirdrop(address: string) {
+  async claimFootprintAirdrop(address: string, txHash?: string, asset?: SaveAsset) {
     const normalizedAddress = getAddress(address).toLowerCase();
     const user = await this.getOrCreate(normalizedAddress);
     const existingClaim = await this.getExistingFootprintClaimByUserId(user.id);
@@ -2896,6 +2962,7 @@ export class PointsEngine {
       return {
         ...normalizedClaim,
         alreadyClaimed: true,
+        claimConfig: null,
         totalPoints: user.total_points,
         referralCommissionPct: CFG.REFERRAL_COMMISSION_PCT,
       };
@@ -2909,11 +2976,27 @@ export class PointsEngine {
       );
     }
 
+    if (!txHash) {
+      throw new Error("txHash required for onchain Footprint Drop claim verification");
+    }
+
+    const payment = await this.verifyFeeTransaction(
+      normalizedAddress,
+      txHash,
+      CFG.FOOTPRINT_CLAIM_FEE_USD,
+      asset,
+      {
+        allowBasePay: false,
+        recipient: FOOTPRINT_CLAIM_RECIPIENT,
+        usdcAddress: FOOTPRINT_CLAIM_USDC_ADDRESS,
+      }
+    );
+
     const award = await this.addPoints(
       normalizedAddress,
       lookup.rewardPoints,
       "footprint_airdrop_claim",
-      undefined,
+      txHash,
       {
         dropName: "Footprint Drop",
         sourceKind: lookup.source,
@@ -2924,6 +3007,11 @@ export class PointsEngine {
         transactionsCount: lookup.transactionsCount,
         tokenTransfersCount: lookup.tokenTransfersCount,
         totalActivity: lookup.totalActivity,
+        paymentAsset: payment.asset,
+        paymentAmount: payment.amount,
+        paymentAmountUsd: payment.amountUsd,
+        priceSnapshotDate: payment.priceDate,
+        ethPriceUsd: payment.ethPriceUsd,
       },
       { applyStreakBoost: false }
     );
@@ -2943,6 +3031,7 @@ export class PointsEngine {
     return {
       ...normalizedClaim,
       alreadyClaimed: false,
+      claimConfig: null,
       totalPoints: award.user.total_points,
       referralCommissionPct: CFG.REFERRAL_COMMISSION_PCT,
     };

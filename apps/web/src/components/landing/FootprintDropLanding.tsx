@@ -1,15 +1,22 @@
-"use client";
+﻿"use client";
 
 import Image from "next/image";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { getAddress, type Address } from "viem";
+import { encodeFunctionData, erc20Abi, getAddress, type Address } from "viem";
 import { base } from "viem/chains";
 import { createSiweMessage } from "viem/siwe";
-import { useAccount, useSignMessage } from "wagmi";
+import { useAccount, usePublicClient, useReadContract, useSignMessage, useWalletClient } from "wagmi";
+import { useBaseChainSwitch } from "@/hooks/useBaseChainSwitch";
 import { useWalletConnection } from "@/hooks/useWalletConnection";
+import { DATA_SUFFIX } from "@/lib/builderCode";
 import { emitDataInvalidation } from "@/lib/clientEvents";
 import { claimFootprintDrop, lookupFootprintDrop, type FootprintDropStatus } from "@/lib/footprintDrop";
+import {
+  buildBasePaymasterCapabilities,
+  isPaymasterEnabled,
+  isUserRejectedRequest,
+} from "@/lib/paymaster";
 import { applyReferralCode, clearPointsSummaryCache, fetchPointsSummary } from "@/lib/points";
 import {
   clearPendingReferralCode,
@@ -25,6 +32,7 @@ import {
   saveStoredSiweSession,
   verifySiweSession,
 } from "@/lib/siweAuth";
+import { BASE_CHAIN_ID, USDC_ADDRESS } from "@/lib/tokens";
 
 const NAV_ITEMS = [
   { href: "/profile", label: "Profile" },
@@ -69,12 +77,51 @@ type FootprintFollowGateState = {
   verifiedAt: number | null;
 };
 
+type ClaimConfig = NonNullable<FootprintDropStatus["claimConfig"]>;
+type ClaimPaymentAsset = "eth" | "usdc";
+
+type ClaimVerificationState = {
+  address: string;
+  asset: ClaimPaymentAsset;
+  txHash: `0x${string}`;
+};
+
 function cx(...parts: Array<string | false | null | undefined>) {
   return parts.filter(Boolean).join(" ");
 }
 
 function shortAddress(address: string) {
   return `${address.slice(0, 6)}...${address.slice(-4)}`;
+}
+
+function isTxHash(value: unknown): value is `0x${string}` {
+  return typeof value === "string" && /^0x[a-fA-F0-9]{64}$/.test(value);
+}
+
+function toHexChainId(chainId: number) {
+  return `0x${chainId.toString(16)}`;
+}
+
+function resolveSendCallsId(result: unknown) {
+  if (typeof result === "string" && result.trim()) {
+    return result;
+  }
+
+  if (result && typeof result === "object" && "id" in result) {
+    const value = (result as { id?: unknown }).id;
+    if (typeof value === "string" && value.trim()) {
+      return value;
+    }
+  }
+
+  if (result && typeof result === "object" && "batchId" in result) {
+    const value = (result as { batchId?: unknown }).batchId;
+    if (typeof value === "string" && value.trim()) {
+      return value;
+    }
+  }
+
+  return "";
 }
 
 function formatWhole(value: number | null | undefined) {
@@ -689,6 +736,7 @@ function FootprintStatusPanel({
   hasSiweSession,
   claimState,
   isApplyingReferral,
+  preferredClaimAsset,
   claimError,
   followGateVisible,
   followGateState,
@@ -704,6 +752,7 @@ function FootprintStatusPanel({
   hasSiweSession: boolean;
   claimState: "idle" | "claiming" | "claimed";
   isApplyingReferral: boolean;
+  preferredClaimAsset: ClaimPaymentAsset;
   claimError: string | null;
   followGateVisible: boolean;
   followGateState: FootprintFollowGateState;
@@ -822,6 +871,15 @@ function FootprintStatusPanel({
 
       {showClaimButton && (
         <div className="mt-5">
+          {status.claimConfig && (
+            <p className="mb-3 rounded-[18px] border border-sky-100 bg-sky-50/70 px-4 py-3 text-sm leading-6 text-sky-900">
+              Claim now sends an onchain Base verification payment of{" "}
+              {preferredClaimAsset === "usdc"
+                ? `${status.claimConfig.usdcAmount} USDC`
+                : `about $${status.claimConfig.usdTarget.toFixed(2)} in ETH`}{" "}
+              to the airdrop vault before PP is released.
+            </p>
+          )}
           <button
             type="button"
             disabled={
@@ -888,7 +946,11 @@ export default function FootprintDropLanding({
   initialReferralCode?: string | null;
 }) {
   const { address, chainId, isConnected } = useAccount();
+  const { data: walletClient } = useWalletClient();
+  const publicClient = usePublicClient();
   const { signMessageAsync } = useSignMessage();
+  const { isOnBase, switchToBase } = useBaseChainSwitch();
+  const { supportsBaseAccountFeatures } = useWalletConnection();
   const [addressInput, setAddressInput] = useState("");
   const [status, setStatus] = useState<FootprintDropStatus | null>(null);
   const [lookupState, setLookupState] = useState<"idle" | "checking">("idle");
@@ -915,11 +977,31 @@ export default function FootprintDropLanding({
   const lookupInFlightRef = useRef<Map<string, Promise<void>>>(new Map());
   const signInInFlightRef = useRef<{ key: string; promise: Promise<void> } | null>(null);
   const referralApplyInFlightRef = useRef<Map<string, Promise<void>>>(new Map());
+  const claimVerificationRef = useRef<ClaimVerificationState | null>(null);
 
   const connectedAddress = useMemo(
     () => (address ? getAddress(address) : undefined),
     [address]
   );
+  const claimUsdcAddress = (status?.claimConfig?.usdcAddress || USDC_ADDRESS) as `0x${string}`;
+  const { data: claimUsdcBalanceRaw } = useReadContract({
+    address: claimUsdcAddress,
+    abi: erc20Abi,
+    functionName: "balanceOf",
+    args: [connectedAddress!],
+    query: {
+      enabled: !!connectedAddress && !!status?.claimConfig?.usdcAmountUnits,
+    },
+  });
+  const claimUsdcBalance = (claimUsdcBalanceRaw as bigint | undefined) ?? 0n;
+  const preferredClaimAsset = useMemo<ClaimPaymentAsset>(() => {
+    if (!status?.claimConfig) {
+      return "eth";
+    }
+
+    const requiredUsdc = BigInt(status.claimConfig.usdcAmountUnits);
+    return requiredUsdc > 0n && claimUsdcBalance >= requiredUsdc ? "usdc" : "eth";
+  }, [claimUsdcBalance, status?.claimConfig]);
   const areFollowTasksOpened =
     followGateState.founderOpened && followGateState.dustswapOpened;
   const followGateRemainingSeconds = useMemo(() => {
@@ -992,7 +1074,18 @@ export default function FootprintDropLanding({
     clearFollowGateState(connectedAddress);
     setFollowGateState(createEmptyFollowGateState());
     setFollowGateVisible(false);
+    claimVerificationRef.current = null;
   }, [connectedAddress, status?.address, status?.claimed]);
+
+  useEffect(() => {
+    if (
+      claimVerificationRef.current &&
+      (!connectedAddress ||
+        claimVerificationRef.current.address !== connectedAddress.toLowerCase())
+    ) {
+      claimVerificationRef.current = null;
+    }
+  }, [connectedAddress]);
 
   useEffect(() => {
     const storedCode = getValidReferralCode(getPendingReferralCode());
@@ -1235,6 +1328,139 @@ export default function FootprintDropLanding({
     }
   }, [addressInput, runLookup]);
 
+  const promptSwitchToBase = useCallback(async () => {
+    if (isOnBase) {
+      return true;
+    }
+
+    try {
+      return await switchToBase();
+    } catch (error) {
+      setClaimError(getErrorMessage(error));
+      return false;
+    }
+  }, [isOnBase, switchToBase]);
+
+  const sendClaimPayment = useCallback(
+    async (config: ClaimConfig, asset: ClaimPaymentAsset) => {
+      if (!walletClient || !publicClient) {
+        throw new Error("Wallet is not ready");
+      }
+
+      if (!isOnBase) {
+        throw new Error("Switch your wallet to Base before sending this airdrop claim transaction");
+      }
+
+      const targetAddress =
+        asset === "usdc"
+          ? (config.usdcAddress as `0x${string}`)
+          : (config.recipient as `0x${string}`);
+      const txData =
+        asset === "usdc"
+          ? encodeFunctionData({
+              abi: erc20Abi,
+              functionName: "transfer",
+              args: [config.recipient as `0x${string}`, BigInt(config.usdcAmountUnits)],
+            })
+          : undefined;
+      const txValue = asset === "usdc" ? 0n : BigInt(config.ethAmountWei);
+      const requestClient = walletClient as typeof walletClient & {
+        account?: { address?: `0x${string}` };
+        request?: (args: { method: string; params?: unknown[] }) => Promise<unknown>;
+      };
+
+      if (isPaymasterEnabled() && supportsBaseAccountFeatures) {
+        try {
+          const capabilitiesResult =
+            requestClient.account?.address
+              ? ((await requestClient.request?.({
+                  method: "wallet_getCapabilities",
+                  params: [requestClient.account.address],
+                })) as Record<
+                  string,
+                  {
+                    paymasterService?: {
+                      supported?: boolean;
+                    };
+                  }
+                > | null)
+              : null;
+          const chainCapabilities = capabilitiesResult
+            ? Object.entries(capabilitiesResult).find(
+                ([candidate]) =>
+                  candidate.toLowerCase() === toHexChainId(BASE_CHAIN_ID).toLowerCase()
+              )?.[1]
+            : null;
+
+          if (!chainCapabilities?.paymasterService?.supported) {
+            throw new Error("wallet paymasterService capability is unavailable");
+          }
+
+          const sendCallsResult = await walletClient.sendCalls({
+            calls: [
+              {
+                to: targetAddress,
+                data: txData,
+                value: txValue,
+                dataSuffix: DATA_SUFFIX,
+              },
+            ],
+            capabilities: buildBasePaymasterCapabilities(),
+          } as any);
+
+          const callId = resolveSendCallsId(sendCallsResult);
+          if (!callId) {
+            throw new Error("wallet_sendCalls did not return an id");
+          }
+
+          const statusResult = await walletClient.waitForCallsStatus({
+            id: callId,
+            throwOnFailure: true,
+            timeout: 120_000,
+          });
+          const hash = statusResult.receipts?.find((receipt) =>
+            isTxHash(receipt?.transactionHash)
+          )?.transactionHash;
+
+          if (!hash) {
+            throw new Error("Sponsored transaction finished without a transaction hash");
+          }
+
+          const receipt = await publicClient.waitForTransactionReceipt({ hash });
+          if (receipt.status !== "success") {
+            throw new Error("Transaction reverted");
+          }
+
+          return hash;
+        } catch (error) {
+          if (isUserRejectedRequest(error)) {
+            throw error;
+          }
+
+          console.warn(
+            "Paymaster sendCalls failed for Footprint claim, falling back to direct sendTransaction.",
+            error
+          );
+        }
+      }
+
+      const hash = await walletClient.sendTransaction({
+        to: targetAddress,
+        data: txData,
+        dataSuffix: DATA_SUFFIX,
+        value: txValue,
+      } as any);
+
+      const receipt = await publicClient.waitForTransactionReceipt({ hash });
+      if (receipt.status !== "success") {
+        throw new Error("Transaction reverted");
+      }
+
+      return hash;
+    },
+    [isOnBase, publicClient, supportsBaseAccountFeatures, walletClient]
+  );
+
   const applyPendingReferralIfNeeded = useCallback(
     async (normalizedAddress: Address) => {
       const referralCode = getValidReferralCode(pendingReferralCode);
@@ -1327,12 +1553,47 @@ export default function FootprintDropLanding({
       return;
     }
 
+    const claimConfig = status.claimConfig;
+    const reusableVerification =
+      claimVerificationRef.current &&
+      claimVerificationRef.current.address === connectedAddress.toLowerCase()
+        ? claimVerificationRef.current
+        : null;
+
+    if (!claimConfig && !reusableVerification) {
+      setClaimError("Claim payment details are not ready yet. Refresh your reward check and try again.");
+      return;
+    }
+
     setClaimState("claiming");
     setClaimError(null);
 
     try {
       await applyPendingReferralIfNeeded(connectedAddress);
-      const result = await claimFootprintDrop(connectedAddress);
+
+      let paymentVerification = reusableVerification;
+      if (!paymentVerification) {
+        if (!isOnBase) {
+          await promptSwitchToBase();
+          setClaimState("idle");
+          return;
+        }
+
+        paymentVerification = {
+          address: connectedAddress.toLowerCase(),
+          asset: preferredClaimAsset,
+          txHash: await sendClaimPayment(claimConfig!, preferredClaimAsset),
+        };
+        claimVerificationRef.current = paymentVerification;
+      }
+
+      const result = await claimFootprintDrop({
+        address: connectedAddress,
+        asset: paymentVerification.asset,
+        txHash: paymentVerification.txHash,
+      });
+
+      claimVerificationRef.current = null;
       setStatus(result);
       setClaimState("claimed");
       clearFollowGateState(connectedAddress);
@@ -1342,9 +1603,26 @@ export default function FootprintDropLanding({
       emitDataInvalidation(["leaderboard", "points"], "footprint-drop-claimed");
     } catch (error) {
       setClaimState("idle");
-      setClaimError(getErrorMessage(error));
+      const message = getErrorMessage(error);
+      const shouldReusePayment =
+        claimVerificationRef.current?.address === connectedAddress.toLowerCase();
+
+      setClaimError(
+        shouldReusePayment
+          ? `${message} Retry claim to re-check the same payment without sending a new transaction.`
+          : message
+      );
     }
-  }, [applyPendingReferralIfNeeded, connectedAddress, hasSiweSession, status]);
+  }, [
+    applyPendingReferralIfNeeded,
+    connectedAddress,
+    hasSiweSession,
+    isOnBase,
+    preferredClaimAsset,
+    promptSwitchToBase,
+    sendClaimPayment,
+    status,
+  ]);
 
   const handleOpenFollowTask = useCallback(
     (taskKey: FootprintFollowTaskKey, href: string) => {
@@ -1584,6 +1862,7 @@ export default function FootprintDropLanding({
                     hasSiweSession={hasSiweSession}
                     claimState={claimState}
                     isApplyingReferral={isApplyingReferral}
+                    preferredClaimAsset={preferredClaimAsset}
                     claimError={claimError}
                     followGateVisible={followGateVisible}
                     followGateState={followGateState}

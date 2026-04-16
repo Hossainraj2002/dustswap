@@ -15,6 +15,7 @@ import {
 } from 'react';
 import { useAccount } from 'wagmi';
 import {
+  HomeIcon,
   LeaderboardIcon,
   ProfileIcon,
   QuestsIcon,
@@ -42,6 +43,7 @@ interface NavItem {
 }
 
 const NAV_ITEMS = [
+  { icon: HomeIcon, label: 'Airdrop', route: '/' },
   { icon: ProfileIcon, label: 'Profile', route: '/profile' },
   { icon: SpinIcon, label: 'Spin', route: '/spin' },
   { icon: QuestsIcon, label: 'Quests', route: '/quests' },
@@ -64,7 +66,7 @@ function AppShellIcon({
 }) {
   return (
     <span
-      className={`flex h-10 w-10 items-center justify-center rounded-[14px] border transition-all duration-200 ${
+      className={`flex h-9 w-9 items-center justify-center rounded-[14px] border transition-all duration-200 md:h-10 md:w-10 ${
         light
           ? active
             ? 'border-sky-200 bg-white text-[#2563eb] shadow-[0_10px_24px_rgba(59,130,246,0.16)]'
@@ -74,7 +76,7 @@ function AppShellIcon({
             : 'border-white/8 bg-white/[0.04] text-slate-400 group-hover:border-white/14 group-hover:text-white'
       }`}
     >
-      <Icon className="h-[18px] w-[18px]" />
+      <Icon className="h-4 w-4 md:h-[18px] md:w-[18px]" />
     </span>
   );
 }
@@ -109,8 +111,8 @@ function MobileShellNav({
       }
     : { paddingBottom: 'env(safe-area-inset-bottom)' };
   const navRowClassName = isTopNav
-    ? 'grid h-[60px] w-full grid-cols-5 items-center px-2'
-    : 'grid h-[82px] w-full grid-cols-5 items-start px-2 pt-3';
+    ? 'grid h-[60px] w-full grid-cols-6 items-center gap-1 px-2'
+    : 'grid h-[82px] w-full grid-cols-6 items-start gap-1 px-2 pt-3';
   const navLinkClassName = isTopNav
     ? 'group flex min-w-0 flex-col items-center justify-center gap-1 transition-transform active:scale-95'
     : 'group flex min-w-0 flex-col items-center justify-start gap-2 transition-transform active:scale-95';

@@ -2,6 +2,19 @@ import { getPointsApiUrl } from "@/lib/points";
 
 export type FootprintDropSource = "saved_leaderboard" | "blockscout";
 
+export type FootprintClaimConfig = {
+  chainId: number;
+  recipient: string;
+  usdcAddress: string;
+  usdTarget: number;
+  usdcAmount: string;
+  usdcAmountUnits: string;
+  ethAmountWei: string;
+  ethAmountDisplay: string;
+  ethPriceUsd: number;
+  priceDate: string;
+};
+
 export type FootprintDropStatus = {
   success: boolean;
   address: string;
@@ -21,6 +34,7 @@ export type FootprintDropStatus = {
   tokenTransfersCount: number | null;
   totalActivity: number | null;
   claimedAt: string | null;
+  claimConfig?: FootprintClaimConfig | null;
   referralCommissionPct: number;
   error?: string;
 };
@@ -48,13 +62,29 @@ export async function lookupFootprintDrop(address: string) {
   return data;
 }
 
-export async function claimFootprintDrop(address: string) {
+export async function claimFootprintDrop(
+  input:
+    | string
+    | {
+        address: string;
+        asset?: "eth" | "usdc";
+        txHash?: string;
+      }
+) {
   const response = await fetch(getPointsApiUrl("/airdrop/claim"), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ address }),
+    body: JSON.stringify(
+      typeof input === "string"
+        ? { address: input }
+        : {
+            address: input.address,
+            asset: input.asset,
+            txHash: input.txHash,
+          }
+    ),
     cache: "no-store",
   });
 

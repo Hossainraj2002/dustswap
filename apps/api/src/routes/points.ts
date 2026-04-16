@@ -111,14 +111,22 @@ pointsRoutes.post("/airdrop/claim", async (c) => {
     return maintenanceUnavailable(c);
   }
 
-  const body = await c.req.json<{ address?: string }>();
+  const body = await c.req.json<{
+    address?: string;
+    asset?: "eth" | "usdc";
+    txHash?: string;
+  }>();
 
   if (!body.address) {
     return c.json({ success: false, error: "address required" }, 400);
   }
 
   try {
-    const data = await pointsEngine.claimFootprintAirdrop(body.address);
+    const data = await pointsEngine.claimFootprintAirdrop(
+      body.address,
+      body.txHash,
+      body.asset
+    );
     return c.json({ success: true, ...data });
   } catch (e: unknown) {
     return c.json({ success: false, error: (e as Error).message }, 400);
