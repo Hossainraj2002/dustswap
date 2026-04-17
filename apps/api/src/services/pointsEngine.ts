@@ -96,6 +96,8 @@ const REFERRAL_LEDGER_UPDATE_MAX_ATTEMPTS = 5;
 const POINTS_SUMMARY_CACHE_TTL_MS = 15_000;
 const LEADERBOARD_CACHE_TTL_MS = 60_000;
 const FOOTPRINT_STATUS_CACHE_TTL_MS = 12_000;
+const LEADERBOARD_FALLBACK_USER_FILTER =
+  "total_points.gt.0,last_check_in.not.is.null,current_streak.gt.0,spin_tickets.gt.0";
 const ENTRY_POINT_HANDLE_OPS_ABI = parseAbi([
   "function handleOps((address sender,uint256 nonce,bytes initCode,bytes callData,uint256 callGasLimit,uint256 verificationGasLimit,uint256 preVerificationGas,uint256 maxFeePerGas,uint256 maxPriorityFeePerGas,bytes paymasterAndData,bytes signature)[] ops,address beneficiary)",
 ]);
@@ -300,6 +302,15 @@ type ParticlePointLeaderboardEntryRow = {
   rank: number;
   totalPoints: number;
   userId: number;
+};
+
+type ParticlePointFallbackUserRow = {
+  address: string;
+  current_streak: number | string | null;
+  id: number | string;
+  last_check_in: string | null;
+  spin_tickets?: number | string | null;
+  total_points: number | string | null;
 };
 
 type AddPointsOptions = {
@@ -1507,16 +1518,29 @@ export class PointsEngine {
   }
 
   private async getPointsOverview() {
-    const { data, error } = await supabase.rpc("get_points_overview");
+    const { count, error: countError } = await supabase
+      .from("users")
+      .select("id", { count: "exact", head: true })
+      .or(LEADERBOARD_FALLBACK_USER_FILTER);
 
-    if (error) {
+    if (countError) {
+      throw new Error(`Load points overview count: ${countError.message}`);
+    }
+
+    const { data, error } = await supabase.rpc("get_points_overview");
+    if (error && !this.isMissingRpcFunctionError(error.message, "get_points_overview")) {
       throw new Error(`Load points overview: ${error.message}`);
     }
 
     const row = firstRow(data as PointsOverviewRow[] | null);
+    const totalParticlePoints =
+      row && !error
+        ? Number(row.total_particle_points || 0)
+        : await this.getFallbackTotalParticlePoints();
+
     return {
-      totalParticlePoints: Number(row?.total_particle_points || 0),
-      totalUserCount: Number(row?.total_user_count || 0),
+      totalParticlePoints,
+      totalUserCount: Number(count || 0),
     };
   }
 
@@ -1527,6 +1551,10 @@ export class PointsEngine {
     });
 
     if (error) {
+      if (this.isMissingRpcFunctionError(error.message, "get_particle_point_leaderboard_page")) {
+        return this.getFallbackParticlePointLeaderboardPage(offset, limit);
+      }
+
       throw new Error(`Load particle point leaderboard: ${error.message}`);
     }
 
@@ -1546,6 +1574,10 @@ export class PointsEngine {
     });
 
     if (error) {
+      if (this.isMissingRpcFunctionError(error.message, "get_particle_point_leaderboard_viewer")) {
+        return this.getFallbackParticlePointLeaderboardViewer(userId);
+      }
+
       throw new Error(`Load particle point leaderboard viewer: ${error.message}`);
     }
 
@@ -1561,6 +1593,107 @@ export class PointsEngine {
       totalPoints: Number(row.total_points || 0),
       currentStreak: Number(row.current_streak || 0),
       lastCheckIn: row.last_check_in || null,
+    } satisfies ParticlePointLeaderboardEntryRow;
+  }
+
+  private isMissingRpcFunctionError(message?: string | null, functionName?: string) {
+    const normalized = String(message || "").toLowerCase();
+    if (
+      !normalized.includes("could not find the function public.") ||
+      !normalized.includes("schema cache")
+    ) {
+      return false;
+    }
+
+    return functionName ? normalized.includes(functionName.toLowerCase()) : true;
+  }
+
+  private isFallbackLeaderboardEligibleUser(user: {
+    current_streak?: number | string | null;
+    last_check_in?: string | null;
+    spin_tickets?: number | string | null;
+    total_points?: number | string | null;
+  }) {
+    return (
+      Number(user.total_points || 0) > 0 ||
+      Number(user.current_streak || 0) > 0 ||
+      Number(user.spin_tickets || 0) > 0 ||
+      Boolean(user.last_check_in)
+    );
+  }
+
+  private async getFallbackTotalParticlePoints() {
+    const pointRows = await this.fetchAllPages<Pick<UserRecord, "total_points">>(
+      async (from, to) =>
+        supabase
+          .from("users")
+          .select("total_points")
+          .gt("total_points", 0)
+          .range(from, to)
+    );
+
+    return pointRows.reduce(
+      (sum, row) => sum + Math.max(0, Number((row as { total_points?: number | string | null }).total_points || 0)),
+      0
+    );
+  }
+
+  private async getFallbackParticlePointLeaderboardPage(offset: number, limit: number) {
+    const { data, error } = await supabase
+      .from("users")
+      .select("id, address, total_points, current_streak, last_check_in, spin_tickets")
+      .or(LEADERBOARD_FALLBACK_USER_FILTER)
+      .order("total_points", { ascending: false })
+      .order("id", { ascending: true })
+      .range(offset, offset + limit - 1);
+
+    if (error) {
+      throw new Error(`Load particle point leaderboard fallback: ${error.message}`);
+    }
+
+    return ((data ?? []) as ParticlePointFallbackUserRow[]).map((row, index) => ({
+      rank: offset + index + 1,
+      userId: Number(row.id || 0),
+      address: String(row.address),
+      totalPoints: Number(row.total_points || 0),
+      currentStreak: Number(row.current_streak || 0),
+      lastCheckIn: row.last_check_in || null,
+    })) satisfies ParticlePointLeaderboardEntryRow[];
+  }
+
+  private async getFallbackParticlePointLeaderboardViewer(userId: number) {
+    const { data: userData, error: userError } = await supabase
+      .from("users")
+      .select("id, address, total_points, current_streak, last_check_in, spin_tickets")
+      .eq("id", userId)
+      .maybeSingle();
+
+    if (userError) {
+      throw new Error(`Load particle point leaderboard viewer fallback: ${userError.message}`);
+    }
+
+    const user = (userData as ParticlePointFallbackUserRow | null) ?? null;
+    if (!user || !this.isFallbackLeaderboardEligibleUser(user)) {
+      return null;
+    }
+
+    const { count, error: rankError } = await supabase
+      .from("users")
+      .select("id", { count: "exact", head: true })
+      .or(LEADERBOARD_FALLBACK_USER_FILTER)
+      .gt("total_points", Number(user.total_points || 0));
+
+    if (rankError) {
+      throw new Error(`Load particle point leaderboard viewer fallback rank: ${rankError.message}`);
+    }
+
+    return {
+      rank: Number(count || 0) + 1,
+      userId: Number(user.id || 0),
+      address: String(user.address),
+      totalPoints: Number(user.total_points || 0),
+      currentStreak: Number(user.current_streak || 0),
+      lastCheckIn: user.last_check_in || null,
     } satisfies ParticlePointLeaderboardEntryRow;
   }
 
