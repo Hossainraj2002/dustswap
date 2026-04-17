@@ -163,7 +163,6 @@ const PROFILE_FAQ_ITEMS = [
     question: "What is Check-In, and why should I do it?",
     answers: [
       "Check-In is DustSwap's daily attendance system for users.",
-      "To help prevent abuse, Check-In includes a very small fee of $0.01.",
       "By checking in, you earn 100 base PP and a 10% daily boost.",
       "Your points grow faster as your Check-In boost increases.",
       "You can unlock up to a 300% boost on all of your self-earned PP.",
@@ -775,9 +774,11 @@ function ProfilePageContent() {
       }
 
       const baseSuccessMessage =
-        asset === "usdc"
-          ? `Onchain check-in complete with ${balance.checkInConfig.usdcAmount} USDC.`
-          : `Onchain check-in complete with $${balance.checkInConfig.usdTarget.toFixed(2)} in ETH.`;
+        balance.checkInConfig.usdTarget <= 0
+          ? "Onchain check-in complete."
+          : asset === "usdc"
+            ? `Onchain check-in complete with ${balance.checkInConfig.usdcAmount} USDC.`
+            : `Onchain check-in complete with $${balance.checkInConfig.usdTarget.toFixed(2)} in ETH.`;
 
       updateBalanceAndStats(result);
       clearPointsSummaryCache(address);

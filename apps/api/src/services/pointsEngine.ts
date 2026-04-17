@@ -42,8 +42,8 @@ const CFG = {
   STREAK_BOOST_STEP_PERCENT: 10,
   MAX_STREAK_BOOST_PERCENT: 300,
 
-  CHECK_IN_FEE_USD: 0.01,
-  FOOTPRINT_CLAIM_FEE_USD: 0.01,
+  CHECK_IN_FEE_USD: 0,
+  FOOTPRINT_CLAIM_FEE_USD: 0,
   STREAK_RESTORE_FEE_USD: 1,
   SPIN_TICKETS_PER_CHECK_IN: 3,
   SPIN_TICKET_COST: 1,
@@ -567,8 +567,12 @@ function calculateEthWeiFromUsd(usdAmount: number, ethPriceUsd: number) {
   const usdScaled = BigInt(Math.round(usdAmount * PRICE_SCALE));
   const ethPriceScaled = BigInt(Math.round(ethPriceUsd * PRICE_SCALE));
 
-  if (usdScaled <= 0n || ethPriceScaled <= 0n) {
+  if (usdScaled < 0n || ethPriceScaled <= 0n) {
     throw new Error("Invalid ETH price snapshot");
+  }
+
+  if (usdScaled === 0n) {
+    return 0n;
   }
 
   return (usdScaled * WEI_PER_ETH + ethPriceScaled - 1n) / ethPriceScaled;

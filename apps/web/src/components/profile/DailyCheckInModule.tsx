@@ -331,7 +331,7 @@ export function DailyCheckInModule({
                 ? "Pay to continue from here or reset to zero."
                 : balance.checkedInToday
                   ? "Locked for today. Come back tomorrow."
-                  : "Phone-first onchain tap. USDC first, ETH fallback."}
+                  : "Phone-first onchain tap on Base."}
             </p>
           </div>
 
@@ -411,7 +411,7 @@ export function DailyCheckInModule({
             <div className="flex items-start justify-between gap-2.5 sm:gap-3">
               <div>
                 <p className="text-[10px] font-black uppercase tracking-[0.24em] text-slate-500">
-                  Check-In Fee
+                  Check-In
                 </p>
                 <h3 className="mt-1.5 text-lg font-black text-slate-950 sm:mt-2 sm:text-xl">
                   {balance.checkedInToday ? "Already checked today" : "Onchain check-in"}
