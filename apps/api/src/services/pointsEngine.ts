@@ -268,6 +268,15 @@ type ReferralLeaderboardRow = {
   user_id: number | string;
 };
 
+type ParticlePointLeaderboardRow = {
+  address: string;
+  current_streak: number | string | null;
+  last_check_in: string | null;
+  rank: number | string;
+  total_points: number | string | null;
+  user_id: number | string;
+};
+
 type VolumeLeaderboardRow = {
   address: string;
   rank: number | string;
@@ -282,6 +291,15 @@ type PointEventRow = {
   total_awarded: number | string | null;
   metadata: Record<string, unknown> | null;
   created_at: string | null;
+};
+
+type ParticlePointLeaderboardEntryRow = {
+  address: string;
+  currentStreak: number;
+  lastCheckIn: string | null;
+  rank: number;
+  totalPoints: number;
+  userId: number;
 };
 
 type AddPointsOptions = {
@@ -1502,6 +1520,50 @@ export class PointsEngine {
     };
   }
 
+  private async getParticlePointLeaderboardPage(offset: number, limit: number) {
+    const { data, error } = await supabase.rpc("get_particle_point_leaderboard_page", {
+      p_limit: limit,
+      p_offset: offset,
+    });
+
+    if (error) {
+      throw new Error(`Load particle point leaderboard: ${error.message}`);
+    }
+
+    return ((data ?? []) as ParticlePointLeaderboardRow[]).map((row) => ({
+      rank: Number(row.rank || 0),
+      userId: Number(row.user_id || 0),
+      address: String(row.address),
+      totalPoints: Number(row.total_points || 0),
+      currentStreak: Number(row.current_streak || 0),
+      lastCheckIn: row.last_check_in || null,
+    })) satisfies ParticlePointLeaderboardEntryRow[];
+  }
+
+  private async getParticlePointLeaderboardViewer(userId: number) {
+    const { data, error } = await supabase.rpc("get_particle_point_leaderboard_viewer", {
+      p_user_id: userId,
+    });
+
+    if (error) {
+      throw new Error(`Load particle point leaderboard viewer: ${error.message}`);
+    }
+
+    const row = firstRow(data as ParticlePointLeaderboardRow[] | null);
+    if (!row) {
+      return null;
+    }
+
+    return {
+      rank: Number(row.rank || 0),
+      userId: Number(row.user_id || 0),
+      address: String(row.address),
+      totalPoints: Number(row.total_points || 0),
+      currentStreak: Number(row.current_streak || 0),
+      lastCheckIn: row.last_check_in || null,
+    } satisfies ParticlePointLeaderboardEntryRow;
+  }
+
   private async getReferralLeaderboardPage(offset: number, limit: number) {
     const { data, error } = await supabase.rpc("get_referral_leaderboard_page", {
       p_limit: limit,
@@ -1604,22 +1666,19 @@ export class PointsEngine {
       return null;
     }
 
-    const [profiles, userStats, referralStats, rankResult] = await Promise.all([
+    const [profiles, userStats, referralStats, viewerRow] = await Promise.all([
       this.fetchCachedProfiles([user.id]),
       this.getSweepStatsByUserId(user.id),
       this.getReferralStatsByUserId(user.id),
-      supabase
-        .from("users")
-        .select("*", { count: "exact", head: true })
-        .gt("total_points", user.total_points),
+      this.getParticlePointLeaderboardViewer(user.id),
     ]);
 
-    if (rankResult.error) {
-      throw new Error(`Load particle point viewer rank: ${rankResult.error.message}`);
+    if (!viewerRow) {
+      return null;
     }
 
     return {
-      rank: (rankResult.count ?? 0) + 1,
+      rank: viewerRow.rank,
       userId: user.id,
       address: user.address,
       totalPoints: Number(user.total_points || 0),
@@ -3281,36 +3340,22 @@ export class PointsEngine {
 
   async getLeaderboard(page = 1, limit = 50) {
     const offset = (page - 1) * limit;
-    const { data } = await supabase
-      .from("users")
-      .select("address,total_points,current_streak,last_check_in")
-      .order("total_points", { ascending: false })
-      .range(offset, offset + limit - 1);
+    const pageEntries = await this.getParticlePointLeaderboardPage(offset, limit);
 
-    return (data ?? []).map(
-      (
-        user: {
-          address: string;
-          total_points: number;
-          current_streak: number;
-          last_check_in: string | null;
-        },
-        index: number
-      ) => {
-        const snapshot = buildStreakSnapshot({
-          current_streak: user.current_streak,
-          last_check_in: user.last_check_in,
-        } as Pick<UserRecord, "current_streak" | "last_check_in">);
+    return pageEntries.map((entry) => {
+      const snapshot = buildStreakSnapshot({
+        current_streak: entry.currentStreak,
+        last_check_in: entry.lastCheckIn,
+      } as Pick<UserRecord, "current_streak" | "last_check_in">);
 
-        return {
-          rank: offset + index + 1,
-          address: user.address,
-          points: user.total_points,
-          streak: snapshot.activeStreak,
-          boostPercent: snapshot.boostPercent,
-        };
-      }
-    );
+      return {
+        rank: entry.rank,
+        address: entry.address,
+        points: entry.totalPoints,
+        streak: snapshot.activeStreak,
+        boostPercent: snapshot.boostPercent,
+      };
+    });
   }
 
   async getLeaderboardHub(
@@ -3340,22 +3385,9 @@ export class PointsEngine {
       const offset = (currentPage - 1) * safeLimit;
 
       if (type === "particle_points") {
-        const { data, error } = await supabase
-          .from("users")
-          .select("id,address,total_points")
-          .order("total_points", { ascending: false })
-          .order("id", { ascending: true })
-          .range(offset, offset + safeLimit - 1);
-
-        if (error) {
-          throw new Error(`Load particle point leaderboard: ${error.message}`);
-        }
-
-        const topUsers = (data ?? []) as Array<
-          Pick<UserRecord, "id" | "address" | "total_points">
-        >;
+        const pageEntries = await this.getParticlePointLeaderboardPage(offset, safeLimit);
         const profiles = await this.fetchCachedProfiles(
-          topUsers.map((user) => Number(user.id))
+          pageEntries.map((entry) => entry.userId)
         );
         const viewer = await this.buildParticlePointsViewerEntry(viewerAddress);
 
@@ -3369,15 +3401,15 @@ export class PointsEngine {
           totalUserCount,
           totalParticlePoints,
           viewer,
-          entries: topUsers.map((user, index) => ({
-            rank: offset + index + 1,
-            userId: Number(user.id),
-            address: String(user.address),
-            totalPoints: Number(user.total_points || 0),
+          entries: pageEntries.map((entry) => ({
+            rank: entry.rank,
+            userId: entry.userId,
+            address: entry.address,
+            totalPoints: entry.totalPoints,
             referralPoints: 0,
             referredUsers: 0,
             swapVolume: 0,
-            profile: profiles.get(Number(user.id)) ?? null,
+            profile: profiles.get(entry.userId) ?? null,
           })),
         } satisfies LeaderboardHubResponse;
       }

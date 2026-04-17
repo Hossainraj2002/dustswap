@@ -389,6 +389,43 @@ AS $$
     ) AS points_earned;
 $$;
 
+CREATE OR REPLACE FUNCTION is_leaderboard_eligible_user(
+  p_user_id INTEGER,
+  p_total_points BIGINT DEFAULT 0
+)
+RETURNS BOOLEAN
+LANGUAGE sql
+STABLE
+AS $$
+  SELECT
+    COALESCE(p_total_points, 0) > 0
+    OR EXISTS (
+      SELECT 1
+      FROM point_events pe
+      WHERE pe.user_id = p_user_id
+    )
+    OR EXISTS (
+      SELECT 1
+      FROM check_ins ci
+      WHERE ci.user_id = p_user_id
+    )
+    OR EXISTS (
+      SELECT 1
+      FROM sweep_history sh
+      WHERE sh.user_id = p_user_id
+    )
+    OR EXISTS (
+      SELECT 1
+      FROM spin_history spin
+      WHERE spin.user_id = p_user_id
+    )
+    OR EXISTS (
+      SELECT 1
+      FROM streak_recovery_events recovery
+      WHERE recovery.user_id = p_user_id
+    );
+$$;
+
 CREATE OR REPLACE FUNCTION get_points_overview()
 RETURNS TABLE (
   total_user_count BIGINT,
@@ -397,10 +434,117 @@ RETURNS TABLE (
 LANGUAGE sql
 STABLE
 AS $$
+  WITH eligible_users AS (
+    SELECT
+      u.id,
+      u.total_points
+    FROM users u
+    WHERE is_leaderboard_eligible_user(u.id, u.total_points)
+  )
   SELECT
     COUNT(*)::BIGINT AS total_user_count,
     COALESCE(SUM(total_points), 0)::BIGINT AS total_particle_points
-  FROM users;
+  FROM eligible_users;
+$$;
+
+CREATE OR REPLACE FUNCTION get_particle_point_leaderboard_page(
+  p_offset INTEGER,
+  p_limit INTEGER
+)
+RETURNS TABLE (
+  rank BIGINT,
+  user_id INTEGER,
+  address VARCHAR(42),
+  total_points BIGINT,
+  current_streak INTEGER,
+  last_check_in TIMESTAMP
+)
+LANGUAGE sql
+STABLE
+AS $$
+  WITH eligible_users AS (
+    SELECT
+      u.id,
+      u.address,
+      u.total_points,
+      u.current_streak,
+      u.last_check_in
+    FROM users u
+    WHERE is_leaderboard_eligible_user(u.id, u.total_points)
+  ),
+  ranked AS (
+    SELECT
+      ROW_NUMBER() OVER (
+        ORDER BY
+          eligible_users.total_points DESC,
+          eligible_users.id ASC
+      )::BIGINT AS rank,
+      eligible_users.id AS user_id,
+      eligible_users.address,
+      eligible_users.total_points::BIGINT AS total_points,
+      eligible_users.current_streak,
+      eligible_users.last_check_in
+    FROM eligible_users
+  )
+  SELECT
+    ranked.rank,
+    ranked.user_id,
+    ranked.address,
+    ranked.total_points,
+    ranked.current_streak,
+    ranked.last_check_in
+  FROM ranked
+  ORDER BY ranked.rank
+  OFFSET GREATEST(COALESCE(p_offset, 0), 0)
+  LIMIT LEAST(GREATEST(COALESCE(p_limit, 10), 1), 100);
+$$;
+
+CREATE OR REPLACE FUNCTION get_particle_point_leaderboard_viewer(p_user_id INTEGER)
+RETURNS TABLE (
+  rank BIGINT,
+  user_id INTEGER,
+  address VARCHAR(42),
+  total_points BIGINT,
+  current_streak INTEGER,
+  last_check_in TIMESTAMP
+)
+LANGUAGE sql
+STABLE
+AS $$
+  WITH eligible_users AS (
+    SELECT
+      u.id,
+      u.address,
+      u.total_points,
+      u.current_streak,
+      u.last_check_in
+    FROM users u
+    WHERE is_leaderboard_eligible_user(u.id, u.total_points)
+  ),
+  ranked AS (
+    SELECT
+      ROW_NUMBER() OVER (
+        ORDER BY
+          eligible_users.total_points DESC,
+          eligible_users.id ASC
+      )::BIGINT AS rank,
+      eligible_users.id AS user_id,
+      eligible_users.address,
+      eligible_users.total_points::BIGINT AS total_points,
+      eligible_users.current_streak,
+      eligible_users.last_check_in
+    FROM eligible_users
+  )
+  SELECT
+    ranked.rank,
+    ranked.user_id,
+    ranked.address,
+    ranked.total_points,
+    ranked.current_streak,
+    ranked.last_check_in
+  FROM ranked
+  WHERE ranked.user_id = p_user_id
+  LIMIT 1;
 $$;
 
 CREATE OR REPLACE FUNCTION get_referral_leaderboard_page(
@@ -430,23 +574,31 @@ AS $$
     WHERE action IN ('referral_commission', 'referral_new_user')
     GROUP BY user_id
   ),
+  eligible_users AS (
+    SELECT
+      u.id,
+      u.address,
+      u.total_points
+    FROM users u
+    WHERE is_leaderboard_eligible_user(u.id, u.total_points)
+  ),
   ranked AS (
     SELECT
       ROW_NUMBER() OVER (
         ORDER BY
           COALESCE(referral_points.referral_points, 0) DESC,
           COALESCE(referral_counts.referred_users, 0) DESC,
-          u.total_points DESC,
-          u.id ASC
+          eligible_users.total_points DESC,
+          eligible_users.id ASC
       )::BIGINT AS rank,
-      u.id AS user_id,
-      u.address,
-      u.total_points::BIGINT AS total_points,
+      eligible_users.id AS user_id,
+      eligible_users.address,
+      eligible_users.total_points::BIGINT AS total_points,
       COALESCE(referral_points.referral_points, 0)::BIGINT AS referral_points,
       COALESCE(referral_counts.referred_users, 0)::BIGINT AS referred_users
-    FROM users u
-    LEFT JOIN referral_counts ON referral_counts.user_id = u.id
-    LEFT JOIN referral_points ON referral_points.user_id = u.id
+    FROM eligible_users
+    LEFT JOIN referral_counts ON referral_counts.user_id = eligible_users.id
+    LEFT JOIN referral_points ON referral_points.user_id = eligible_users.id
   )
   SELECT
     ranked.rank,
@@ -485,23 +637,31 @@ AS $$
     WHERE action IN ('referral_commission', 'referral_new_user')
     GROUP BY user_id
   ),
+  eligible_users AS (
+    SELECT
+      u.id,
+      u.address,
+      u.total_points
+    FROM users u
+    WHERE is_leaderboard_eligible_user(u.id, u.total_points)
+  ),
   ranked AS (
     SELECT
       ROW_NUMBER() OVER (
         ORDER BY
           COALESCE(referral_points.referral_points, 0) DESC,
           COALESCE(referral_counts.referred_users, 0) DESC,
-          u.total_points DESC,
-          u.id ASC
+          eligible_users.total_points DESC,
+          eligible_users.id ASC
       )::BIGINT AS rank,
-      u.id AS user_id,
-      u.address,
-      u.total_points::BIGINT AS total_points,
+      eligible_users.id AS user_id,
+      eligible_users.address,
+      eligible_users.total_points::BIGINT AS total_points,
       COALESCE(referral_points.referral_points, 0)::BIGINT AS referral_points,
       COALESCE(referral_counts.referred_users, 0)::BIGINT AS referred_users
-    FROM users u
-    LEFT JOIN referral_counts ON referral_counts.user_id = u.id
-    LEFT JOIN referral_points ON referral_points.user_id = u.id
+    FROM eligible_users
+    LEFT JOIN referral_counts ON referral_counts.user_id = eligible_users.id
+    LEFT JOIN referral_points ON referral_points.user_id = eligible_users.id
   )
   SELECT
     ranked.rank,
@@ -538,20 +698,28 @@ AS $$
       AND user_id IS NOT NULL
     GROUP BY user_id
   ),
+  eligible_users AS (
+    SELECT
+      u.id,
+      u.address,
+      u.total_points
+    FROM users u
+    WHERE is_leaderboard_eligible_user(u.id, u.total_points)
+  ),
   ranked AS (
     SELECT
       ROW_NUMBER() OVER (
         ORDER BY
           COALESCE(volume_totals.swap_volume, 0) DESC,
-          u.total_points DESC,
-          u.id ASC
+          eligible_users.total_points DESC,
+          eligible_users.id ASC
       )::BIGINT AS rank,
-      u.id AS user_id,
-      u.address,
-      u.total_points::BIGINT AS total_points,
+      eligible_users.id AS user_id,
+      eligible_users.address,
+      eligible_users.total_points::BIGINT AS total_points,
       COALESCE(volume_totals.swap_volume, 0)::NUMERIC(20,6) AS swap_volume
-    FROM users u
-    LEFT JOIN volume_totals ON volume_totals.user_id = u.id
+    FROM eligible_users
+    LEFT JOIN volume_totals ON volume_totals.user_id = eligible_users.id
   )
   SELECT
     ranked.rank,
@@ -585,20 +753,28 @@ AS $$
       AND user_id IS NOT NULL
     GROUP BY user_id
   ),
+  eligible_users AS (
+    SELECT
+      u.id,
+      u.address,
+      u.total_points
+    FROM users u
+    WHERE is_leaderboard_eligible_user(u.id, u.total_points)
+  ),
   ranked AS (
     SELECT
       ROW_NUMBER() OVER (
         ORDER BY
           COALESCE(volume_totals.swap_volume, 0) DESC,
-          u.total_points DESC,
-          u.id ASC
+          eligible_users.total_points DESC,
+          eligible_users.id ASC
       )::BIGINT AS rank,
-      u.id AS user_id,
-      u.address,
-      u.total_points::BIGINT AS total_points,
+      eligible_users.id AS user_id,
+      eligible_users.address,
+      eligible_users.total_points::BIGINT AS total_points,
       COALESCE(volume_totals.swap_volume, 0)::NUMERIC(20,6) AS swap_volume
-    FROM users u
-    LEFT JOIN volume_totals ON volume_totals.user_id = u.id
+    FROM eligible_users
+    LEFT JOIN volume_totals ON volume_totals.user_id = eligible_users.id
   )
   SELECT
     ranked.rank,
