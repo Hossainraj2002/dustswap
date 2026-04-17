@@ -184,7 +184,6 @@ const PROFILE_FAQ_ITEMS = [
       "The Cofounder Pass is an NFT for early supporters of DustSwap.",
       "The mint will take place on OpenSea.",
       "It will be free for whitelist users and cost 0.003 ETH for the public mint.",
-      "Cofounder Pass holders will share 6.9% of the total $DUST token allocation.",
       "Holding a Cofounder Pass NFT gives you a 30% boost on referral earnings.",
       "More surprise benefits are coming.",
     ],

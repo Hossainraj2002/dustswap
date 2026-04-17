@@ -136,7 +136,6 @@ export function CofounderPassWelcomeModal() {
         <div className="mt-2.5 rounded-[18px] border border-sky-100 bg-white/80 px-3 py-2 text-[11.5px] leading-[1.45] text-slate-600">
           <p>Finish the full coFounder pass quest line to unlock:</p>
           <p className="mt-1">- whitelist for the free mint</p>
-          <p>- 6.9% of our token after TGE</p>
           <p>- 30% referral share instead of 20%</p>
         </div>
 
