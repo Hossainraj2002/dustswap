@@ -16,16 +16,14 @@ import { clearPointsSummaryCache } from "@/lib/points";
 import { PremiumQuestBackground } from "@/components/quests/PremiumQuestBackground";
 import type { QuestItem } from "@/types/quests";
 
-type CategoryFilter = "cofounder_pass" | "social" | "onchain";
+type CategoryFilter = "social" | "onchain";
 type PendingState = Record<string, boolean>;
 type PostInputState = Record<string, string>;
 type QuestInlineErrorState = Record<string, string>;
 
 const GENERAL_CAMPAIGN_KEY = "general";
-const COFOUNDER_PASS_CAMPAIGN_KEY = "cofounder_pass";
 
 const CATEGORY_TABS = [
-  { key: COFOUNDER_PASS_CAMPAIGN_KEY, label: "coFounder pass" },
   { key: "social", label: "Social" },
   { key: "onchain", label: "Onchain" },
 ] as const;
@@ -278,9 +276,7 @@ function SectionBadge({ label, count }: { label: string; count: number }) {
 
 export function QuestBoard() {
   const { address, isConnected } = useAccount();
-  const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>(
-    COFOUNDER_PASS_CAMPAIGN_KEY
-  );
+  const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>("social");
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -366,24 +362,20 @@ export function QuestBoard() {
   const linkedXAccount = board?.linkedAccounts?.x;
   const isXLinked = Boolean(linkedXAccount?.username);
   const savedXUsername = formatXUsernameDisplay(linkedXAccount?.username);
-  const cofounderCampaign = board?.campaigns?.[COFOUNDER_PASS_CAMPAIGN_KEY];
 
   useEffect(() => {
     setXUsernameInput(savedXUsername);
   }, [savedXUsername]);
 
-  const filteredQuests = useMemo(() => {
-    const quests = board?.quests || [];
+  const visibleQuests = useMemo(() => {
+    return (board?.quests || []).filter(
+      (quest) => quest.campaignKey === GENERAL_CAMPAIGN_KEY
+    );
+  }, [board?.quests]);
 
-    return quests.filter((quest) => {
-      if (categoryFilter === COFOUNDER_PASS_CAMPAIGN_KEY) {
-        if (quest.campaignKey !== COFOUNDER_PASS_CAMPAIGN_KEY) {
-          return false;
-        }
-      } else if (
-        quest.campaignKey !== GENERAL_CAMPAIGN_KEY ||
-        quest.category !== categoryFilter
-      ) {
+  const filteredQuests = useMemo(() => {
+    return visibleQuests.filter((quest) => {
+      if (quest.category !== categoryFilter) {
         return false;
       }
 
@@ -393,7 +385,7 @@ export function QuestBoard() {
 
       return true;
     });
-  }, [board?.quests, categoryFilter]);
+  }, [categoryFilter, visibleQuests]);
 
   const onchainSections = useMemo(() => {
     return ONCHAIN_WINDOWS.map((section) => ({
@@ -405,22 +397,7 @@ export function QuestBoard() {
     })).filter((section) => section.quests.length > 0);
   }, [filteredQuests]);
 
-  const cofounderSections = useMemo(() => {
-    return [
-      {
-        key: "onchain",
-        label: "Onchain",
-        quests: filteredQuests.filter((quest) => quest.category === "onchain"),
-      },
-      {
-        key: "social",
-        label: "Social",
-        quests: filteredQuests.filter((quest) => quest.category === "social"),
-      },
-    ].filter((section) => section.quests.length > 0);
-  }, [filteredQuests]);
-
-  const completedCount = (board?.quests || []).filter(
+  const completedCount = visibleQuests.filter(
     (quest) => quest.progress?.completedAt
   ).length;
 
@@ -924,12 +901,6 @@ export function QuestBoard() {
                 label="X Account"
                 value={isXLinked ? savedXUsername : "Not linked"}
               />
-              {cofounderCampaign ? (
-                <InfoChip
-                  label="coFounder pass"
-                  value={`${cofounderCampaign.completedQuests}/${cofounderCampaign.totalQuests}`}
-                />
-              ) : null}
             </div>
           </div>
         </section>
@@ -977,49 +948,6 @@ export function QuestBoard() {
             ) : null}
           </div>
 
-          {categoryFilter === COFOUNDER_PASS_CAMPAIGN_KEY && cofounderCampaign ? (
-            <div
-              className={`rounded-[24px] border px-4 py-4 shadow-[0_18px_42px_rgba(148,163,184,0.1)] backdrop-blur-xl ${
-                cofounderCampaign.isComplete
-                  ? "border-emerald-200/90 bg-emerald-50/90"
-                  : "border-white/80 bg-white/76"
-              }`}
-            >
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <div>
-                  <p className="text-[10px] font-semibold uppercase tracking-[0.28em] text-sky-700/70">
-                    coFounder pass
-                  </p>
-                  <h2 className="mt-2 text-lg font-semibold tracking-[-0.02em] text-slate-950">
-                    {cofounderCampaign.isComplete
-                      ? "You are whitelisted for the free mint of our upcoming coFounder pass."
-                      : "Complete every live coFounder pass quest to lock your whitelist spot."}
-                  </h2>
-                  <p className="mt-2 text-sm leading-6 text-slate-600">
-                    {cofounderCampaign.isComplete
-                      ? "Holding DustSwap NFT will make you eligible for 6.9% of our token after TGE and 30% of your invited user points instead of 20%."
-                      : `${cofounderCampaign.completedQuests} of ${cofounderCampaign.totalQuests} live coFounder pass tasks are complete on this wallet.`}
-                  </p>
-                </div>
-                <div className="grid grid-cols-2 gap-2 sm:min-w-[220px]">
-                  <InfoChip
-                    label="Progress"
-                    value={`${cofounderCampaign.completedQuests}/${cofounderCampaign.totalQuests}`}
-                  />
-                  <InfoChip
-                    label="Whitelist"
-                    value={cofounderCampaign.isWhitelisted ? "Saved" : "Pending"}
-                  />
-                </div>
-              </div>
-              {cofounderCampaign.isComplete ? (
-                <div className="mt-3 rounded-2xl border border-emerald-200/90 bg-white/80 px-4 py-3 text-sm leading-6 text-emerald-800">
-                  You are locked into the coFounder pass whitelist.
-                </div>
-              ) : null}
-            </div>
-          ) : null}
-
           {isLoading ? (
             <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
               {Array.from({ length: 6 }).map((_, index) => (
@@ -1037,28 +965,13 @@ export function QuestBoard() {
             </div>
           ) : filteredQuests.length === 0 ? (
             <div className="rounded-[24px] border border-dashed border-slate-200/90 bg-white/75 p-7 text-center text-sm text-slate-500 shadow-[0_18px_42px_rgba(148,163,184,0.08)] backdrop-blur-xl">
-              {categoryFilter === COFOUNDER_PASS_CAMPAIGN_KEY
-                ? cofounderCampaign?.isComplete
-                  ? "All live coFounder pass quests are complete on this wallet right now."
-                  : "No live coFounder pass quests are waiting for this wallet right now."
-                : categoryFilter === "onchain"
-                  ? "No active onchain quests are waiting for this wallet right now."
-                  : "No active social quests are waiting for this wallet right now."}
+              {categoryFilter === "onchain"
+                ? "No active onchain quests are waiting for this wallet right now."
+                : "No active social quests are waiting for this wallet right now."}
             </div>
           ) : categoryFilter === "onchain" ? (
             <div className="space-y-4">
               {onchainSections.map((section) => (
-                <section key={section.key} className="space-y-2.5">
-                  <SectionBadge label={section.label} count={section.quests.length} />
-                  <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-                    {section.quests.map((quest) => renderQuestCard(quest))}
-                  </div>
-                </section>
-              ))}
-            </div>
-          ) : categoryFilter === COFOUNDER_PASS_CAMPAIGN_KEY ? (
-            <div className="space-y-4">
-              {cofounderSections.map((section) => (
                 <section key={section.key} className="space-y-2.5">
                   <SectionBadge label={section.label} count={section.quests.length} />
                   <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">

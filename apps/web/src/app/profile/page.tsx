@@ -177,24 +177,6 @@ const PROFILE_FAQ_ITEMS = [
       "Your PP helps measure your contribution to DustSwap and may help determine your allocation.",
     ],
   },
-  {
-    question: "What is the Cofounder Pass?",
-    answers: [
-      "The Cofounder Pass is an NFT for early supporters of DustSwap.",
-      "The mint will take place on OpenSea.",
-      "It will be free for whitelist users and cost 0.003 ETH for the public mint.",
-      "Holding a Cofounder Pass NFT gives you a 30% boost on referral earnings.",
-      "More surprise benefits are coming.",
-    ],
-  },
-  {
-    question: "How can I get whitelist access for the Cofounder Pass?",
-    answers: [
-      "To get whitelist access, you need to complete all tasks under the Cofounder Pass section on the Quests page.",
-      "You need to complete a total of $100 swap volume on Base through /swap.",
-      "You also need to finish the required social tasks on the Cofounder Pass page.",
-    ],
-  },
 ] as const;
 
 function ProfilePageContent() {

@@ -22,7 +22,6 @@ import {
   SpinIcon,
   SwapIcon,
 } from '@/components/NavIcons';
-import { CofounderPassWelcomeModal } from '@/components/quests/CofounderPassWelcomeModal';
 import { ReferralOnboardingModal } from '@/components/referrals/ReferralOnboardingModal';
 import { useAppShellMode } from '@/hooks/useAppShellMode';
 import { clearPointsSummaryCache, fetchPointsSummary } from '@/lib/points';
@@ -332,7 +331,6 @@ export function AppShell({ children }: AppShellProps) {
       <main
         className={`relative z-10 flex-1 transition-opacity duration-100 ease-in-out ${mainShellClassName}`}
       >
-        {!isShelllessPage && !isLandingPage && <CofounderPassWelcomeModal />}
         {showReferralModal && address && (
           <ReferralOnboardingModal
             address={address}
