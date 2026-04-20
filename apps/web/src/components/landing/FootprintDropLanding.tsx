@@ -42,14 +42,15 @@ const NAV_ITEMS = [
 ] as const;
 
 const FOLLOW_VERIFY_DELAY_MS = 20_000;
+const FOLLOW_GATE_FAKE_FAILURE_COUNT = 1;
 const FOLLOW_GATE_STORAGE_PREFIX = "dustswap:footprint-follow-gate";
 const REFERRAL_CODE_PATTERN = /^DUST-[A-Z0-9]{5}$/;
 const FOOTPRINT_FOLLOW_TARGETS = [
   {
     key: "dustswap",
     label: "Follow DustSwap on X",
-    handle: "@dustswaponbase",
-    href: "https://x.com/dustswaponbase",
+    handle: "@DustswapOnBase",
+    href: "https://x.com/intent/follow?screen_name=DustswapOnBase",
     description: "Follow the official DustSwap account.",
   },
 ] as const;
@@ -66,6 +67,8 @@ type FootprintFollowTaskKey = (typeof FOOTPRINT_FOLLOW_TARGETS)[number]["key"];
 type FootprintFollowTaskState = {
   openedAt: number | null;
   verifiedAt: number | null;
+  retryRequiredAt: number | null;
+  fakeFailuresServed: number;
 };
 
 type FootprintFollowGateState = Record<FootprintFollowTaskKey, FootprintFollowTaskState>;
@@ -165,6 +168,8 @@ function createEmptyFollowTaskState(): FootprintFollowTaskState {
   return {
     openedAt: null,
     verifiedAt: null,
+    retryRequiredAt: null,
+    fakeFailuresServed: 0,
   };
 }
 
@@ -180,7 +185,11 @@ function createEmptyFollowGateState(): FootprintFollowGateState {
 
 function isFollowGateStateEmpty(state: FootprintFollowGateState) {
   return Object.values(state).every(
-    (taskState) => !taskState.openedAt && !taskState.verifiedAt
+    (taskState) =>
+      !taskState.openedAt &&
+      !taskState.verifiedAt &&
+      !taskState.retryRequiredAt &&
+      taskState.fakeFailuresServed === 0
   );
 }
 
@@ -196,11 +205,17 @@ function normalizeStoredFollowTaskState(value: unknown): FootprintFollowTaskStat
   const candidate = value as {
     openedAt?: unknown;
     verifiedAt?: unknown;
+    retryRequiredAt?: unknown;
+    fakeFailuresServed?: unknown;
   };
 
   return {
     openedAt: typeof candidate.openedAt === "number" ? candidate.openedAt : null,
     verifiedAt: typeof candidate.verifiedAt === "number" ? candidate.verifiedAt : null,
+    retryRequiredAt:
+      typeof candidate.retryRequiredAt === "number" ? candidate.retryRequiredAt : null,
+    fakeFailuresServed:
+      typeof candidate.fakeFailuresServed === "number" ? candidate.fakeFailuresServed : 0,
   };
 }
 
@@ -247,6 +262,8 @@ function readFollowGateState(address?: string): FootprintFollowGateState {
         : {
             openedAt: getLegacyFollowOpenedAt(parsed.dustswapOpened, legacyStartedAt),
             verifiedAt: parsed.dustswapOpened ? legacyVerifiedAt : null,
+            retryRequiredAt: null,
+            fakeFailuresServed: legacyVerifiedAt ? FOLLOW_GATE_FAKE_FAILURE_COUNT : 0,
           };
     }
 
@@ -296,8 +313,25 @@ function getFollowTaskRemainingSeconds(taskState: FootprintFollowTaskState) {
   return Math.max(0, Math.ceil(remainingMs / 1000));
 }
 
+function isMobileLikeDevice() {
+  if (typeof window === "undefined") {
+    return false;
+  }
+
+  const { maxTouchPoints, userAgent } = window.navigator;
+  return (
+    /Android|iPhone|iPad|iPod|IEMobile|Opera Mini|Mobile/i.test(userAgent) ||
+    (maxTouchPoints > 1 && /Macintosh/i.test(userAgent))
+  );
+}
+
 function openExternalTask(url: string) {
   if (typeof window === "undefined") {
+    return;
+  }
+
+  if (isMobileLikeDevice()) {
+    window.location.assign(url);
     return;
   }
 
@@ -451,7 +485,7 @@ function LandingHeader({
               alt="DustSwap"
               width={148}
               height={36}
-              className="h-auto w-[122px] sm:w-[138px]"
+              className="h-auto w-[136px] sm:w-[148px]"
               priority
             />
           </Link>
@@ -524,6 +558,16 @@ function LandingHeader({
         )}
         style={{ top: "calc(env(safe-area-inset-top) + 72px)" }}
       >
+        <div className="mb-3 border-b border-slate-100 px-2 pb-3">
+          <Image
+            src="/longlogo.png"
+            alt="DustSwap"
+            width={148}
+            height={36}
+            className="h-auto w-[138px]"
+          />
+        </div>
+
         <div className="space-y-1.5">
           {NAV_ITEMS.map((item) => (
             <Link
@@ -591,11 +635,6 @@ function ClaimFollowGate({
   onVerifyTask: (taskKey: FootprintFollowTaskKey) => void | Promise<void>;
 }) {
   const totalTaskCount = FOOTPRINT_FOLLOW_TARGETS.length;
-  const statusMessage = isVerified
-    ? "Follow step verified. Your claim button is unlocked now."
-    : verifiedTasksCount === 0
-      ? "Open the DustSwap follow task, wait 20 seconds, then verify it."
-      : `${verifiedTasksCount}/${totalTaskCount} follow task verified.`;
   const mobileStatusMessage = isVerified
     ? "Done. Claim is unlocked."
     : `${verifiedTasksCount}/${totalTaskCount} verified`;
@@ -618,38 +657,44 @@ function ClaimFollowGate({
           </span>
         </div>
 
-        <p className="mt-1.5 text-[11px] leading-4 text-slate-600">
-          Open the DustSwap X task, wait 20s, then verify it.
-        </p>
-
         <div className="mt-2.5 space-y-2">
           {FOOTPRINT_FOLLOW_TARGETS.map((task) => {
             const taskState = getFollowTaskState(followGateState, task.key);
             const opened = Boolean(taskState.openedAt);
             const verified = Boolean(taskState.verifiedAt);
+            const retryRequired = Boolean(taskState.retryRequiredAt) && !verified;
             const remainingSeconds = remainingSecondsByTask[task.key];
             const actionDisabled =
               claimState === "claiming" ||
               isApplyingReferral ||
               verified ||
-              (opened && !verified && remainingSeconds > 0);
+              (opened && !verified && !retryRequired && remainingSeconds > 0);
             const actionLabel = verified
               ? "Done"
+              : retryRequired
+                ? "Open again"
               : !opened
                 ? "Open"
                 : remainingSeconds > 0
                   ? `${remainingSeconds}s`
                   : "Verify";
+            const shouldVerify = opened && !retryRequired && remainingSeconds === 0;
 
             return (
               <div
                 key={task.key}
-                className="flex items-center gap-2 rounded-[16px] border border-white/90 bg-white/92 px-2.5 py-2 shadow-[0_10px_24px_rgba(148,163,184,0.08)]"
+                className="flex items-center gap-2 rounded-[16px] border border-white/90 bg-white/94 px-2.5 py-2 shadow-[0_10px_24px_rgba(148,163,184,0.08)]"
               >
                 <span
                   className={cx(
                     "h-2.5 w-2.5 shrink-0 rounded-full",
-                    opened ? "bg-emerald-500" : "bg-slate-300"
+                    verified
+                      ? "bg-emerald-500"
+                      : retryRequired
+                        ? "bg-amber-400"
+                        : opened
+                          ? "bg-sky-500"
+                          : "bg-slate-300"
                   )}
                   aria-hidden="true"
                 />
@@ -665,13 +710,17 @@ function ClaimFollowGate({
                         "ml-1.5",
                         verified
                           ? "text-emerald-600"
-                          : opened
+                          : retryRequired
+                            ? "text-amber-600"
+                            : opened
                             ? "text-sky-600"
                             : "text-slate-400"
                       )}
                     >
                       {verified
                         ? "Verified"
+                        : retryRequired
+                          ? "Retry"
                         : opened
                           ? remainingSeconds > 0
                             ? `${remainingSeconds}s left`
@@ -684,7 +733,7 @@ function ClaimFollowGate({
                 <button
                   type="button"
                   onClick={() =>
-                    void (verified || (opened && remainingSeconds === 0)
+                    void (verified || shouldVerify
                       ? onVerifyTask(task.key)
                       : onOpenTask(task.key, task.href))
                   }
@@ -693,6 +742,8 @@ function ClaimFollowGate({
                     "inline-flex min-w-[76px] shrink-0 items-center justify-center rounded-full border px-3 py-1.5 text-[11px] font-semibold transition-colors",
                     verified
                       ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                      : retryRequired
+                        ? "border-amber-200 bg-amber-50 text-amber-800 hover:bg-amber-100"
                       : opened && remainingSeconds > 0
                         ? "border-sky-200 bg-sky-50 text-sky-700"
                         : "border-slate-200 bg-white text-slate-900 hover:bg-slate-100",
@@ -716,41 +767,41 @@ function ClaimFollowGate({
         </div>
       </div>
 
-      <div className="mt-4 hidden rounded-[24px] border border-sky-100 bg-sky-50/70 p-5 sm:block">
+      <div className="mt-4 hidden rounded-[24px] border border-slate-200/70 bg-[linear-gradient(180deg,rgba(248,250,252,0.96),rgba(240,249,255,0.7))] p-5 shadow-[inset_0_1px_0_rgba(255,255,255,0.72)] sm:block">
         <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-sky-700">
           Claim step
         </p>
         <h3 className="mt-2 text-lg font-semibold tracking-[-0.02em] text-slate-950">
           Follow DustSwap on X before claiming
         </h3>
-        <p className="mt-2 text-sm leading-6 text-slate-600">
-          This task stays hidden until you tap claim. Follow DustSwap on X, then
-          wait 20 seconds before verifying this step.
-        </p>
 
         <div className="mt-4 grid gap-3">
           {FOOTPRINT_FOLLOW_TARGETS.map((task) => {
             const taskState = getFollowTaskState(followGateState, task.key);
             const opened = Boolean(taskState.openedAt);
             const verified = Boolean(taskState.verifiedAt);
+            const retryRequired = Boolean(taskState.retryRequiredAt) && !verified;
             const remainingSeconds = remainingSecondsByTask[task.key];
             const actionDisabled =
               claimState === "claiming" ||
               isApplyingReferral ||
               verified ||
-              (opened && !verified && remainingSeconds > 0);
+              (opened && !verified && !retryRequired && remainingSeconds > 0);
             const actionLabel = verified
               ? "Verified"
+              : retryRequired
+                ? "Open again"
               : !opened
                 ? "Follow on X"
                 : remainingSeconds > 0
                   ? `Wait ${remainingSeconds}s`
                   : "Verify";
+            const shouldVerify = opened && !retryRequired && remainingSeconds === 0;
 
             return (
               <div
                 key={task.key}
-                className="rounded-[20px] border border-white/90 bg-white/90 p-4 shadow-[0_12px_28px_rgba(148,163,184,0.08)]"
+                className="rounded-[20px] border border-white/90 bg-white/94 p-4 shadow-[0_14px_32px_rgba(15,23,42,0.06)]"
               >
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                   <div className="min-w-0">
@@ -766,6 +817,8 @@ function ClaimFollowGate({
                         "rounded-full border px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em]",
                         verified
                           ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                          : retryRequired
+                            ? "border-amber-200 bg-amber-50 text-amber-800"
                           : opened
                             ? "border-sky-200 bg-sky-50 text-sky-700"
                             : "border-slate-200 bg-slate-50 text-slate-500"
@@ -773,6 +826,8 @@ function ClaimFollowGate({
                     >
                       {verified
                         ? "Verified"
+                        : retryRequired
+                          ? "Retry"
                         : opened
                           ? remainingSeconds > 0
                             ? `${remainingSeconds}s left`
@@ -782,7 +837,7 @@ function ClaimFollowGate({
                     <button
                       type="button"
                       onClick={() =>
-                        void (verified || (opened && remainingSeconds === 0)
+                        void (verified || shouldVerify
                           ? onVerifyTask(task.key)
                           : onOpenTask(task.key, task.href))
                       }
@@ -791,9 +846,13 @@ function ClaimFollowGate({
                         "inline-flex items-center justify-center rounded-full border px-4 py-2 text-sm font-semibold transition-colors",
                         verified
                           ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                          : retryRequired
+                            ? "border-amber-200 bg-amber-50 text-amber-800 hover:bg-amber-100"
                           : opened && remainingSeconds > 0
                             ? "border-sky-200 bg-sky-50 text-sky-700"
-                            : "border-slate-200 bg-white text-slate-900 hover:bg-slate-100",
+                            : shouldVerify
+                              ? "border-sky-600 bg-sky-600 text-white hover:bg-sky-700"
+                              : "border-slate-200 bg-white text-slate-900 hover:bg-slate-100",
                         actionDisabled && "cursor-not-allowed hover:bg-inherit"
                       )}
                     >
@@ -806,8 +865,11 @@ function ClaimFollowGate({
           })}
         </div>
 
-        <div className="mt-4 rounded-[20px] border border-white/90 bg-white/95 p-4 shadow-[0_12px_28px_rgba(148,163,184,0.08)]">
-          <p className="text-sm font-medium leading-6 text-slate-700">{statusMessage}</p>
+        <div className="mt-4 h-1.5 overflow-hidden rounded-full bg-white/85">
+          <div
+            className="h-full rounded-full bg-sky-500 transition-all duration-300"
+            style={{ width: `${Math.round((verifiedTasksCount / totalTaskCount) * 100)}%` }}
+          />
         </div>
       </div>
     </>
@@ -1725,25 +1787,28 @@ export default function FootprintDropLanding({
     (taskKey: FootprintFollowTaskKey, href: string) => {
       setFollowGateVisible(true);
       setClaimError(null);
+
+      const taskState = getFollowTaskState(followGateState, taskKey);
+      const nextState =
+        taskState.openedAt && !taskState.retryRequiredAt
+          ? followGateState
+          : {
+              ...followGateState,
+              [taskKey]: {
+                ...taskState,
+                openedAt: taskState.openedAt ?? Date.now(),
+                retryRequiredAt: null,
+              },
+            };
+
+      setFollowGateState(nextState);
+      if (connectedAddress) {
+        writeFollowGateState(connectedAddress, nextState);
+      }
+
       openExternalTask(href);
-      setFollowGateState((current) => {
-        const taskState = getFollowTaskState(current, taskKey);
-        if (taskState.openedAt) {
-          return current;
-        }
-
-        const next = {
-          ...current,
-          [taskKey]: {
-            ...taskState,
-            openedAt: Date.now(),
-          },
-        };
-
-        return next;
-      });
     },
-    []
+    [connectedAddress, followGateState]
   );
 
   const handleVerifyFollowTask = useCallback(async (taskKey: FootprintFollowTaskKey) => {
@@ -1773,9 +1838,30 @@ export default function FootprintDropLanding({
       return;
     }
 
+    if (taskState.retryRequiredAt) {
+      setClaimError("Open X once more, then verify again.");
+      return;
+    }
+
     const remainingSeconds = followTaskRemainingSeconds[taskKey];
     if (remainingSeconds > 0) {
       setClaimError(`Please wait ${remainingSeconds}s more before verifying this task.`);
+      return;
+    }
+
+    if (taskState.fakeFailuresServed < FOLLOW_GATE_FAKE_FAILURE_COUNT) {
+      setClaimError("We could not confirm it yet. Open X once more, then verify again.");
+      setFollowGateState((current) => {
+        const currentTaskState = getFollowTaskState(current, taskKey);
+        return {
+          ...current,
+          [taskKey]: {
+            ...currentTaskState,
+            retryRequiredAt: Date.now(),
+            fakeFailuresServed: currentTaskState.fakeFailuresServed + 1,
+          },
+        };
+      });
       return;
     }
 
@@ -1784,6 +1870,11 @@ export default function FootprintDropLanding({
       ...current,
       [taskKey]: {
         ...getFollowTaskState(current, taskKey),
+        retryRequiredAt: null,
+        fakeFailuresServed: Math.max(
+          getFollowTaskState(current, taskKey).fakeFailuresServed,
+          FOLLOW_GATE_FAKE_FAILURE_COUNT
+        ),
         verifiedAt: Date.now(),
       },
     }));

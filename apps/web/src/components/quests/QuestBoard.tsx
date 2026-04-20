@@ -20,6 +20,7 @@ type CategoryFilter = "social" | "onchain";
 type PendingState = Record<string, boolean>;
 type PostInputState = Record<string, string>;
 type QuestInlineErrorState = Record<string, string>;
+type PostVerificationFailureState = Record<string, boolean>;
 
 const GENERAL_CAMPAIGN_KEY = "general";
 
@@ -285,6 +286,8 @@ export function QuestBoard() {
   const [pending, setPending] = useState<PendingState>({});
   const [postInputs, setPostInputs] = useState<PostInputState>({});
   const [questInlineErrors, setQuestInlineErrors] = useState<QuestInlineErrorState>({});
+  const [postVerificationFailures, setPostVerificationFailures] =
+    useState<PostVerificationFailureState>({});
   const [xUsernameInput, setXUsernameInput] = useState("");
   const [isSavingXUsername, setIsSavingXUsername] = useState(false);
 
@@ -419,6 +422,15 @@ export function QuestBoard() {
       delete next[questId];
       return next;
     });
+    setPostVerificationFailures((current) => {
+      if (!current[questId]) {
+        return current;
+      }
+
+      const next = { ...current };
+      delete next[questId];
+      return next;
+    });
   }
 
   function setQuestInlineError(questId: string, nextError: string) {
@@ -522,6 +534,7 @@ export function QuestBoard() {
 
       setXUsernameInput(response.username);
       setQuestInlineErrors({});
+      setPostVerificationFailures({});
       refreshWithMessage(`X username saved as ${response.username}.`, "x-username-saved");
     } catch (saveError) {
       setError(getDisplayError(saveError));
@@ -645,6 +658,10 @@ export function QuestBoard() {
       );
       emitDataInvalidation(["leaderboard", "points"], "x-post-verified");
     } catch (verifyError) {
+      setPostVerificationFailures((current) => ({
+        ...current,
+        [quest.id]: true,
+      }));
       setQuestInlineError(quest.id, getDisplayError(verifyError));
     } finally {
       setPending((current) => ({ ...current, [quest.id]: false }));
@@ -665,6 +682,8 @@ export function QuestBoard() {
     const isXQuest = quest.platform === "x";
     const xLocked = isXQuest && !isXLinked;
     const postRequirementHint = getPostRequirementHint(quest);
+    const showPostRequirementHint =
+      Boolean(postRequirementHint) && Boolean(postVerificationFailures[quest.id]);
     const primaryLabel = xLocked
       ? "Add X Username First"
       : quest.ctaLabel || (quest.category === "onchain" ? "Open Swap" : "Open Task");
@@ -745,7 +764,7 @@ export function QuestBoard() {
                   {quest.rules.composeText}
                 </p>
               ) : null}
-              {postRequirementHint ? (
+              {showPostRequirementHint ? (
                 <p className="rounded-2xl border border-rose-200 bg-rose-50 px-3 py-2 text-[12px] font-medium leading-5 text-rose-700">
                   {postRequirementHint}
                 </p>
