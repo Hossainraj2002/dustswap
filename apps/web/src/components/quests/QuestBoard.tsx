@@ -433,6 +433,18 @@ export function QuestBoard() {
     });
   }
 
+  function clearPostVerificationFailure(questId: string) {
+    setPostVerificationFailures((current) => {
+      if (!current[questId]) {
+        return current;
+      }
+
+      const next = { ...current };
+      delete next[questId];
+      return next;
+    });
+  }
+
   function setQuestInlineError(questId: string, nextError: string) {
     setQuestInlineErrors((current) => ({
       ...current,
@@ -622,11 +634,13 @@ export function QuestBoard() {
     clearQuestInlineError(quest.id);
 
     if (!address) {
+      clearPostVerificationFailure(quest.id);
       setQuestInlineError(quest.id, "Connect your wallet first");
       return;
     }
 
     if (!isXLinked) {
+      clearPostVerificationFailure(quest.id);
       setQuestInlineError(
         quest.id,
         "Add your X username first before verifying X quests."
@@ -637,6 +651,7 @@ export function QuestBoard() {
 
     const postUrl = postInputs[quest.id]?.trim();
     if (!postUrl) {
+      clearPostVerificationFailure(quest.id);
       setQuestInlineError(quest.id, "Paste your X post link first");
       return;
     }
@@ -651,6 +666,7 @@ export function QuestBoard() {
 
       setPostInputs((current) => ({ ...current, [quest.id]: "" }));
       clearQuestInlineError(quest.id);
+      clearPostVerificationFailure(quest.id);
       clearPointsSummaryCache(address);
       refreshWithMessage(
         `Post verified. You earned ${formatPoints(response.awardedPoints || 0)}.`,
@@ -683,7 +699,10 @@ export function QuestBoard() {
     const xLocked = isXQuest && !isXLinked;
     const postRequirementHint = getPostRequirementHint(quest);
     const showPostRequirementHint =
-      Boolean(postRequirementHint) && Boolean(postVerificationFailures[quest.id]);
+      !xLocked &&
+      Boolean(postInputs[quest.id]?.trim()) &&
+      Boolean(postRequirementHint) &&
+      Boolean(postVerificationFailures[quest.id]);
     const primaryLabel = xLocked
       ? "Add X Username First"
       : quest.ctaLabel || (quest.category === "onchain" ? "Open Swap" : "Open Task");
@@ -781,6 +800,7 @@ export function QuestBoard() {
                     return;
                   }
 
+                  clearPostVerificationFailure(quest.id);
                   clearQuestInlineError(quest.id);
                   if (questUrl) {
                     openExternal(questUrl);
@@ -796,6 +816,7 @@ export function QuestBoard() {
                 onChange={(event) =>
                   {
                     clearQuestInlineError(quest.id);
+                    clearPostVerificationFailure(quest.id);
                     setPostInputs((current) => ({
                       ...current,
                       [quest.id]: event.target.value,
