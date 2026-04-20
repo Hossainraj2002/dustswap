@@ -2,6 +2,12 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "main": ".open-next/worker.js",
   "name": "dustswap-site",
+  "routes": [
+    {
+      "pattern": "dustswap.wtf",
+      "custom_domain": true
+    }
+  ],
   "compatibility_date": "2024-12-30",
   "compatibility_flags": [
     "nodejs_compat",
@@ -16,5 +22,20 @@
       "binding": "WORKER_SELF_REFERENCE",
       "service": "dustswap-site"
     }
-  ]
+  ],
+  "observability": {
+    "enabled": false,
+    "head_sampling_rate": 1,
+    "logs": {
+      "enabled": true,
+      "head_sampling_rate": 1,
+      "persist": true,
+      "invocation_logs": true
+    },
+    "traces": {
+      "enabled": false,
+      "persist": true,
+      "head_sampling_rate": 1
+    }
+  }
 }
