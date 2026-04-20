@@ -5,10 +5,10 @@
   "scripts": {
     "dev": "next dev --port 3002",
     "build": "node --max-old-space-size=4096 ./node_modules/next/dist/bin/next build",
-    "start": "next start --port 3002",
+    "start": "wrangler dev --local --port 3002",
     "type-check": "tsc --noEmit",
-    "preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
-    "deploy": "opennextjs-cloudflare build && opennextjs-cloudflare deploy -- --keep-vars"
+    "preview": "pnpm build && wrangler dev --local --port 3002",
+    "deploy": "pnpm build && wrangler deploy --keep-vars"
   },
   "dependencies": {
     "next": "15.1.11",
@@ -16,7 +16,6 @@
     "react-dom": "^19.0.0"
   },
   "devDependencies": {
-    "@opennextjs/cloudflare": "1.8.2",
     "@types/node": "^22.10.5",
     "@types/react": "^19.0.3",
     "@types/react-dom": "^19.0.2",
