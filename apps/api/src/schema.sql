@@ -578,16 +578,18 @@ AS $$
     SELECT
       u.id,
       u.address,
-      u.total_points
+      u.total_points,
+      referral_counts.referred_users
     FROM users u
-    WHERE is_leaderboard_eligible_user(u.id, u.total_points)
+    JOIN referral_counts ON referral_counts.user_id = u.id
+    WHERE referral_counts.referred_users > 0
   ),
   ranked AS (
     SELECT
       ROW_NUMBER() OVER (
         ORDER BY
           COALESCE(referral_points.referral_points, 0) DESC,
-          COALESCE(referral_counts.referred_users, 0) DESC,
+          eligible_users.referred_users DESC,
           eligible_users.total_points DESC,
           eligible_users.id ASC
       )::BIGINT AS rank,
@@ -595,9 +597,8 @@ AS $$
       eligible_users.address,
       eligible_users.total_points::BIGINT AS total_points,
       COALESCE(referral_points.referral_points, 0)::BIGINT AS referral_points,
-      COALESCE(referral_counts.referred_users, 0)::BIGINT AS referred_users
+      eligible_users.referred_users::BIGINT AS referred_users
     FROM eligible_users
-    LEFT JOIN referral_counts ON referral_counts.user_id = eligible_users.id
     LEFT JOIN referral_points ON referral_points.user_id = eligible_users.id
   )
   SELECT
@@ -611,6 +612,25 @@ AS $$
   ORDER BY ranked.rank
   OFFSET GREATEST(COALESCE(p_offset, 0), 0)
   LIMIT LEAST(GREATEST(COALESCE(p_limit, 10), 1), 50);
+$$;
+
+CREATE OR REPLACE FUNCTION get_referral_leaderboard_count()
+RETURNS TABLE (
+  total_entries BIGINT
+)
+LANGUAGE sql
+STABLE
+AS $$
+  WITH referral_counts AS (
+    SELECT referrer_id AS user_id, COUNT(*)::BIGINT AS referred_users
+    FROM referrals
+    WHERE referrer_id IS NOT NULL
+    GROUP BY referrer_id
+  )
+  SELECT COUNT(*)::BIGINT AS total_entries
+  FROM users u
+  JOIN referral_counts ON referral_counts.user_id = u.id
+  WHERE referral_counts.referred_users > 0;
 $$;
 
 CREATE OR REPLACE FUNCTION get_referral_leaderboard_viewer(p_user_id INTEGER)
@@ -641,16 +661,18 @@ AS $$
     SELECT
       u.id,
       u.address,
-      u.total_points
+      u.total_points,
+      referral_counts.referred_users
     FROM users u
-    WHERE is_leaderboard_eligible_user(u.id, u.total_points)
+    JOIN referral_counts ON referral_counts.user_id = u.id
+    WHERE referral_counts.referred_users > 0
   ),
   ranked AS (
     SELECT
       ROW_NUMBER() OVER (
         ORDER BY
           COALESCE(referral_points.referral_points, 0) DESC,
-          COALESCE(referral_counts.referred_users, 0) DESC,
+          eligible_users.referred_users DESC,
           eligible_users.total_points DESC,
           eligible_users.id ASC
       )::BIGINT AS rank,
@@ -658,9 +680,8 @@ AS $$
       eligible_users.address,
       eligible_users.total_points::BIGINT AS total_points,
       COALESCE(referral_points.referral_points, 0)::BIGINT AS referral_points,
-      COALESCE(referral_counts.referred_users, 0)::BIGINT AS referred_users
+      eligible_users.referred_users::BIGINT AS referred_users
     FROM eligible_users
-    LEFT JOIN referral_counts ON referral_counts.user_id = eligible_users.id
     LEFT JOIN referral_points ON referral_points.user_id = eligible_users.id
   )
   SELECT

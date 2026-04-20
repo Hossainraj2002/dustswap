@@ -277,6 +277,19 @@ type ReferralLeaderboardRow = {
   user_id: number | string;
 };
 
+type ReferralLeaderboardCountRow = {
+  total_entries: number | string | null;
+};
+
+type ReferralPointEventRow = {
+  total_awarded: number | string | null;
+  user_id: number | string | null;
+};
+
+type ReferralReferrerRow = {
+  referrer_id: number | string | null;
+};
+
 type ParticlePointLeaderboardRow = {
   address: string;
   current_streak: number | string | null;
@@ -1625,6 +1638,10 @@ export class PointsEngine {
     return functionName ? normalized.includes(functionName.toLowerCase()) : true;
   }
 
+  private isStatementTimeoutError(message?: string | null) {
+    return String(message || "").toLowerCase().includes("statement timeout");
+  }
+
   private isFallbackLeaderboardEligibleUser(user: {
     current_streak?: number | string | null;
     last_check_in?: string | null;
@@ -1714,6 +1731,108 @@ export class PointsEngine {
     } satisfies ParticlePointLeaderboardEntryRow;
   }
 
+  private async getFallbackReferralLeaderboardEntries() {
+    const referralRows = await this.fetchAllPages<ReferralReferrerRow>(
+      async (from, to) =>
+        supabase
+          .from("referrals")
+          .select("referrer_id")
+          .not("referrer_id", "is", null)
+          .range(from, to)
+    );
+
+    const referredUsersByUserId = new Map<number, number>();
+    for (const row of referralRows) {
+      const userId = Number(row.referrer_id || 0);
+      if (userId > 0) {
+        referredUsersByUserId.set(
+          userId,
+          (referredUsersByUserId.get(userId) || 0) + 1
+        );
+      }
+    }
+
+    const userIds = [...referredUsersByUserId.keys()];
+    if (!userIds.length) {
+      return [] satisfies Array<Omit<LeaderboardEntry, "profile">>;
+    }
+
+    const [users, referralPointRows] = await Promise.all([
+      this.fetchUsersByIds(userIds),
+      this.fetchAllPages<ReferralPointEventRow>(
+        async (from, to) =>
+          supabase
+            .from("point_events")
+            .select("user_id, total_awarded")
+            .in("action", ["referral_commission", "referral_new_user"])
+            .range(from, to)
+      ),
+    ]);
+
+    const referralUserIdSet = new Set(userIds);
+    const referralPointsByUserId = new Map<number, number>();
+    for (const row of referralPointRows) {
+      const userId = Number(row.user_id || 0);
+      if (!referralUserIdSet.has(userId)) {
+        continue;
+      }
+
+      referralPointsByUserId.set(
+        userId,
+        (referralPointsByUserId.get(userId) || 0) +
+          Math.max(0, Number(row.total_awarded || 0))
+      );
+    }
+
+    return userIds
+      .map((userId) => {
+        const user = users.get(userId);
+        if (!user) {
+          return null;
+        }
+
+        return {
+          rank: 0,
+          userId,
+          address: user.address,
+          totalPoints: Number(user.total_points || 0),
+          referralPoints: referralPointsByUserId.get(userId) || 0,
+          referredUsers: referredUsersByUserId.get(userId) || 0,
+          swapVolume: 0,
+        };
+      })
+      .filter((entry): entry is Omit<LeaderboardEntry, "profile"> => {
+        return Boolean(entry && entry.referredUsers > 0);
+      })
+      .sort((a, b) => {
+        return (
+          b.referralPoints - a.referralPoints ||
+          b.referredUsers - a.referredUsers ||
+          b.totalPoints - a.totalPoints ||
+          a.userId - b.userId
+        );
+      })
+      .map((entry, index) => ({
+        ...entry,
+        rank: index + 1,
+      }));
+  }
+
+  private async getFallbackReferralLeaderboardPage(offset: number, limit: number) {
+    const entries = await this.getFallbackReferralLeaderboardEntries();
+    return entries.slice(offset, offset + limit);
+  }
+
+  private async getFallbackReferralLeaderboardCount() {
+    const entries = await this.getFallbackReferralLeaderboardEntries();
+    return entries.length;
+  }
+
+  private async getFallbackReferralLeaderboardViewer(userId: number) {
+    const entries = await this.getFallbackReferralLeaderboardEntries();
+    return entries.find((entry) => entry.userId === userId) ?? null;
+  }
+
   private async getReferralLeaderboardPage(offset: number, limit: number) {
     const { data, error } = await supabase.rpc("get_referral_leaderboard_page", {
       p_limit: limit,
@@ -1721,18 +1840,45 @@ export class PointsEngine {
     });
 
     if (error) {
+      if (
+        this.isMissingRpcFunctionError(error.message, "get_referral_leaderboard_page") ||
+        this.isStatementTimeoutError(error.message)
+      ) {
+        return this.getFallbackReferralLeaderboardPage(offset, limit);
+      }
+
       throw new Error(`Load referral leaderboard: ${error.message}`);
     }
 
-    return ((data ?? []) as ReferralLeaderboardRow[]).map((row) => ({
-      rank: Number(row.rank || 0),
-      userId: Number(row.user_id || 0),
-      address: String(row.address),
-      totalPoints: Number(row.total_points || 0),
-      referralPoints: Number(row.referral_points || 0),
-      referredUsers: Number(row.referred_users || 0),
-      swapVolume: 0,
-    }));
+    return ((data ?? []) as ReferralLeaderboardRow[])
+      .map((row) => ({
+        rank: Number(row.rank || 0),
+        userId: Number(row.user_id || 0),
+        address: String(row.address),
+        totalPoints: Number(row.total_points || 0),
+        referralPoints: Number(row.referral_points || 0),
+        referredUsers: Number(row.referred_users || 0),
+        swapVolume: 0,
+      }))
+      .filter((entry) => entry.referredUsers > 0);
+  }
+
+  private async getReferralLeaderboardCount() {
+    const { data, error } = await supabase.rpc("get_referral_leaderboard_count");
+
+    if (error) {
+      if (
+        this.isMissingRpcFunctionError(error.message, "get_referral_leaderboard_count") ||
+        this.isStatementTimeoutError(error.message)
+      ) {
+        return this.getFallbackReferralLeaderboardCount();
+      }
+
+      throw new Error(`Load referral leaderboard count: ${error.message}`);
+    }
+
+    const row = firstRow(data as ReferralLeaderboardCountRow[] | null);
+    return Number(row?.total_entries || 0);
   }
 
   private async getReferralLeaderboardViewer(userId: number) {
@@ -1741,11 +1887,23 @@ export class PointsEngine {
     });
 
     if (error) {
+      if (
+        this.isMissingRpcFunctionError(error.message, "get_referral_leaderboard_viewer") ||
+        this.isStatementTimeoutError(error.message)
+      ) {
+        return this.getFallbackReferralLeaderboardViewer(userId);
+      }
+
       throw new Error(`Load referral leaderboard viewer: ${error.message}`);
     }
 
     const row = firstRow(data as ReferralLeaderboardRow[] | null);
     if (!row) {
+      return null;
+    }
+
+    const referredUsers = Number(row.referred_users || 0);
+    if (referredUsers < 1) {
       return null;
     }
 
@@ -1755,7 +1913,7 @@ export class PointsEngine {
       address: String(row.address),
       totalPoints: Number(row.total_points || 0),
       referralPoints: Number(row.referral_points || 0),
-      referredUsers: Number(row.referred_users || 0),
+      referredUsers,
       swapVolume: 0,
     } satisfies Omit<LeaderboardEntry, "profile">;
   }
@@ -3533,12 +3691,18 @@ export class PointsEngine {
 
     return runtimeCache.getOrSet(cacheKey, LEADERBOARD_CACHE_TTL_MS, async () => {
       const { totalParticlePoints, totalUserCount } = await this.getPointsOverview();
-      const totalEntries = totalUserCount;
-      const totalPages = Math.max(1, Math.ceil(totalEntries / safeLimit));
-      const currentPage = Math.min(currentPageInput, totalPages);
-      const offset = (currentPage - 1) * safeLimit;
+      const getPagination = (entryCount: number) => {
+        const totalEntries = Math.max(0, entryCount);
+        const totalPages = Math.max(1, Math.ceil(totalEntries / safeLimit));
+        const currentPage = Math.min(currentPageInput, totalPages);
+        const offset = (currentPage - 1) * safeLimit;
+
+        return { currentPage, offset, totalEntries, totalPages };
+      };
 
       if (type === "particle_points") {
+        const { currentPage, offset, totalEntries, totalPages } =
+          getPagination(totalUserCount);
         const pageEntries = await this.getParticlePointLeaderboardPage(offset, safeLimit);
         const profiles = await this.fetchCachedProfiles(
           pageEntries.map((entry) => entry.userId)
@@ -3569,6 +3733,9 @@ export class PointsEngine {
       }
 
       if (type === "referral") {
+        const referralTotalEntries = await this.getReferralLeaderboardCount();
+        const { currentPage, offset, totalEntries, totalPages } =
+          getPagination(referralTotalEntries);
         const pageEntries = await this.getReferralLeaderboardPage(offset, safeLimit);
         const viewerUser = viewerAddress ? await this.findExistingUser(viewerAddress) : null;
         const [profiles, viewerRow, viewerProfiles] = await Promise.all([
@@ -3599,6 +3766,8 @@ export class PointsEngine {
         } satisfies LeaderboardHubResponse;
       }
 
+      const { currentPage, offset, totalEntries, totalPages } =
+        getPagination(totalUserCount);
       const pageEntries = await this.getVolumeLeaderboardPage(offset, safeLimit);
       const viewerUser = viewerAddress ? await this.findExistingUser(viewerAddress) : null;
       const [profiles, viewerRow, viewerProfiles] = await Promise.all([
