@@ -19,6 +19,10 @@ import {
 } from "./footprintAirdrop";
 import { runtimeCache } from "../utils/runtimeCache";
 
+function isEnabledFlag(value: string | undefined) {
+  return ["1", "true", "yes", "on"].includes(String(value || "").trim().toLowerCase());
+}
+
 const CFG = {
   CHECK_IN: 100,
   SWAP: 50,
@@ -48,6 +52,8 @@ const CFG = {
   SPIN_TICKETS_PER_CHECK_IN: 3,
   SPIN_TICKET_COST: 1,
 } as const;
+
+const STREAK_RECOVERY_ENABLED = isEnabledFlag(process.env.STREAK_RECOVERY_ENABLED);
 
 const REFERRAL_FOUNDER_PASS_CONTRACT =
   process.env.REFERRAL_FOUNDER_PASS_CONTRACT || "";
@@ -209,6 +215,7 @@ type StreakSnapshot = {
   status: StreakStatus;
   checkedInToday: boolean;
   isBroken: boolean;
+  missedStreak: boolean;
   storedStreak: number;
   activeStreak: number;
   recoverableStreak: number;
@@ -491,12 +498,16 @@ function buildStreakSnapshot(
   const todayKey = getUtcDayKey(now);
   const yesterdayKey = getYesterdayUtcKey(now);
   const lastCheckInKey = getUtcDayKey(user.last_check_in);
-  const storedStreak = Number(user.current_streak || 0);
+  const persistedStreak = Number(user.current_streak || 0);
   const checkedInToday = Boolean(lastCheckInKey && lastCheckInKey === todayKey);
   const checkedInYesterday = Boolean(lastCheckInKey && lastCheckInKey === yesterdayKey);
-  const isBroken = storedStreak > 0 && !checkedInToday && !checkedInYesterday;
-  const activeStreak = isBroken ? 0 : storedStreak;
-  const recoverableStreak = isBroken ? storedStreak : 0;
+  const missedStreak =
+    persistedStreak > 0 && !checkedInToday && !checkedInYesterday;
+  const isBroken = STREAK_RECOVERY_ENABLED && missedStreak;
+  const storedStreak =
+    missedStreak && !STREAK_RECOVERY_ENABLED ? 0 : persistedStreak;
+  const activeStreak = missedStreak ? 0 : storedStreak;
+  const recoverableStreak = isBroken ? persistedStreak : 0;
   const todayEndsAt = getUtcDayEnd(now).toISOString();
   const nextCheckInAt = checkedInToday ? todayEndsAt : now.toISOString();
 
@@ -510,6 +521,7 @@ function buildStreakSnapshot(
           : "ready",
     checkedInToday,
     isBroken,
+    missedStreak,
     storedStreak,
     activeStreak,
     recoverableStreak,
@@ -1101,6 +1113,7 @@ export class PointsEngine {
       boostAppliesTo:
         "Self-earned points get the boost. Referral points stay unchanged.",
       streakLength: CFG.STREAK_LENGTH,
+      streakRecoveryEnabled: STREAK_RECOVERY_ENABLED,
       checkInConfig,
       saveConfig,
     };
@@ -2882,7 +2895,7 @@ export class PointsEngine {
     const user = await this.getOrCreate(address);
     const snapshot = buildStreakSnapshot(user);
 
-    if (!snapshot.isBroken) {
+    if (!snapshot.isBroken && !snapshot.missedStreak) {
       return {
         reset: false,
         ...(await this.buildBalance(user)),
@@ -2911,6 +2924,10 @@ export class PointsEngine {
   }
 
   async recoverBrokenStreak(address: string, txHash: string, asset?: SaveAsset) {
+    if (!STREAK_RECOVERY_ENABLED) {
+      throw new Error("Streak recovery is currently disabled");
+    }
+
     const normalizedAddress = address.toLowerCase();
     const user = await this.getOrCreate(normalizedAddress);
     const snapshot = buildStreakSnapshot(user);

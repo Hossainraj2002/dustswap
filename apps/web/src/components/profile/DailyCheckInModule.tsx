@@ -230,17 +230,21 @@ export function DailyCheckInModule({
     );
   }
 
-  const displayDay = getDisplayDay(balance);
-  const displayBoost =
-    balance.streakStatus === "broken"
-      ? balance.recoverableBoostPercent
-      : balance.boostPercent;
-  const nextTargetBoost =
-    balance.streakStatus === "broken"
-      ? balance.recoverableBoostPercent
-      : balance.nextBoostPercent;
+  const isBrokenStreak = balance.streakStatus === "broken";
+  const canRecoverStreak = isBrokenStreak && balance.streakRecoveryEnabled;
+  const displayDay = canRecoverStreak
+    ? getDisplayDay(balance)
+    : isBrokenStreak
+      ? 1
+      : getDisplayDay(balance);
+  const displayBoost = canRecoverStreak
+    ? balance.recoverableBoostPercent
+    : balance.boostPercent;
+  const nextTargetBoost = canRecoverStreak
+    ? balance.recoverableBoostPercent
+    : balance.nextBoostPercent;
   const timerTarget =
-    balance.streakStatus === "broken"
+    isBrokenStreak
       ? balance.dayEndsAt
       : balance.checkedInToday
         ? balance.nextCheckInAt
@@ -255,7 +259,7 @@ export function DailyCheckInModule({
   return (
     <section
       className={`relative overflow-hidden rounded-[24px] border p-3.5 shadow-[0_20px_70px_rgba(15,23,42,0.1)] sm:rounded-[28px] sm:p-6 ${
-        balance.streakStatus === "broken"
+        isBrokenStreak
           ? "border-orange-300/60 bg-[radial-gradient(circle_at_top_left,rgba(251,146,60,0.2),transparent_32%),linear-gradient(180deg,#fff5ef,#ffe5d3)]"
           : "border-white/70 bg-[radial-gradient(circle_at_top_left,rgba(56,189,248,0.18),transparent_34%),radial-gradient(circle_at_top_right,rgba(251,191,36,0.14),transparent_30%),linear-gradient(180deg,#fffdf7,#f3fbff)]"
       }`}
@@ -322,13 +326,15 @@ export function DailyCheckInModule({
               Daily Check-In
             </p>
             <h2 className="mt-1.5 text-[1.85rem] font-black leading-none tracking-tight text-slate-950 sm:mt-2 sm:text-[2rem]">
-              {balance.streakStatus === "broken"
+              {isBrokenStreak
                 ? "Missed the streak"
                 : `Day ${displayDay}`}
             </h2>
             <p className="mt-1 text-[13px] leading-5 text-slate-600 sm:mt-1.5 sm:text-sm sm:leading-6">
-              {balance.streakStatus === "broken"
-                ? "Pay to continue from here or reset to zero."
+              {isBrokenStreak
+                ? canRecoverStreak
+                  ? "Pay to continue from here or reset to zero."
+                  : "Your streak resets to zero. Start again with today's check-in."
                 : balance.checkedInToday
                   ? "Locked for today. Come back tomorrow."
                   : "Phone-first onchain tap on Base."}
@@ -348,7 +354,7 @@ export function DailyCheckInModule({
             label="Current Boost"
             value={`+${displayBoost}%`}
             subtext="Referral points excluded"
-            tone={balance.streakStatus === "broken" ? "orange" : "sky"}
+            tone={isBrokenStreak ? "orange" : "sky"}
           />
           <MiniInfo
             label="Daily Reward"
@@ -362,7 +368,7 @@ export function DailyCheckInModule({
           <CompactProgress balance={balance} />
         </div>
 
-        {balance.streakStatus === "broken" ? (
+        {isBrokenStreak && canRecoverStreak ? (
           <div className="mt-2.5 rounded-[20px] border border-orange-200/80 bg-white/78 p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.85)] sm:mt-3 sm:rounded-[22px] sm:p-4">
             <div className="flex items-start justify-between gap-2.5 sm:gap-3">
               <div>
@@ -402,6 +408,29 @@ export function DailyCheckInModule({
               onClick={onReset}
               disabled={isResetting || isSaving}
               className="mt-2.5 w-full rounded-[16px] border border-slate-300/70 bg-white/50 px-4 py-3 text-sm font-semibold text-slate-500 transition hover:bg-white/70 hover:text-slate-700 disabled:cursor-not-allowed disabled:opacity-50 sm:mt-3 sm:rounded-[18px]"
+            >
+              {isResetting ? "Resetting..." : "Reset Streak to 0"}
+            </button>
+          </div>
+        ) : isBrokenStreak ? (
+          <div className="mt-2.5 rounded-[20px] border border-orange-200/80 bg-white/78 p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.85)] sm:mt-3 sm:rounded-[22px] sm:p-4">
+            <div>
+              <p className="text-[10px] font-black uppercase tracking-[0.24em] text-orange-500">
+                Reset Flow
+              </p>
+              <h3 className="mt-1.5 text-lg font-black text-slate-950 sm:mt-2 sm:text-xl">
+                Start again from Day 0
+              </h3>
+              <p className="mt-1 text-xs leading-5 text-slate-600">
+                Streak recovery is currently turned off.
+              </p>
+            </div>
+
+            <button
+              type="button"
+              onClick={onReset}
+              disabled={isResetting || isSaving}
+              className="mt-3 w-full rounded-[18px] border border-slate-300/70 bg-white/65 px-4 py-3 text-sm font-semibold text-slate-600 transition hover:bg-white/80 hover:text-slate-800 disabled:cursor-not-allowed disabled:opacity-50 sm:mt-4"
             >
               {isResetting ? "Resetting..." : "Reset Streak to 0"}
             </button>

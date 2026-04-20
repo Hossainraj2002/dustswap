@@ -73,10 +73,14 @@ Set these on Railway for the API service:
 - `NEXT_PUBLIC_APP_URL`
 - `QUEST_ADMIN_TOKEN`
 - `X_BEARER_TOKEN`
+- `STREAK_RECOVERY_ENABLED=false` unless you want to enable paid streak recovery
 
 Production example:
 
 - `NEXT_PUBLIC_APP_URL=https://your-web-app.vercel.app`
+
+To re-enable the $1 check-in streak recovery flow later, set
+`STREAK_RECOVERY_ENABLED=true` on the API service and redeploy/restart it.
 
 ## Vercel web envs
 
@@ -84,11 +88,15 @@ Set these on Vercel for the web app:
 
 - `NEXT_PUBLIC_API_URL`
 - `NEXT_PUBLIC_APP_URL`
+- `NEXT_PUBLIC_REFERRAL_LEADERBOARD_ENABLED=false` unless you want the Referral leaderboard tab visible
 
 Production example:
 
 - `NEXT_PUBLIC_API_URL=https://your-api.railway.app`
 - `NEXT_PUBLIC_APP_URL=https://your-web-app.vercel.app`
+
+To make the Referral leaderboard public again later, set
+`NEXT_PUBLIC_REFERRAL_LEADERBOARD_ENABLED=true` on the web app and redeploy it.
 
 ## Current admin login
 

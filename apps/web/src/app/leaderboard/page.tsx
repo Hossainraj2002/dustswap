@@ -26,6 +26,13 @@ type NeynarProfile = {
 const BOARD_PAGE_SIZE = 10;
 const LEADERBOARD_FALLBACK_REFRESH_MS = 300000;
 
+function isEnabledFlag(value: string | undefined) {
+  return ["1", "true", "yes", "on"].includes(String(value || "").trim().toLowerCase());
+}
+
+const REFERRAL_LEADERBOARD_ENABLED =
+  isEnabledFlag(process.env.NEXT_PUBLIC_REFERRAL_LEADERBOARD_ENABLED);
+
 const BOARD_OPTIONS: Array<{
   id: LeaderboardBoardType;
   label: string;
@@ -34,6 +41,9 @@ const BOARD_OPTIONS: Array<{
   { id: "referral", label: "Referral" },
   { id: "volume", label: "Volume" },
 ];
+const VISIBLE_BOARD_OPTIONS = BOARD_OPTIONS.filter(
+  (option) => REFERRAL_LEADERBOARD_ENABLED || option.id !== "referral"
+);
 
 function shortAddress(address: string) {
   return `${address.slice(0, 6)}...${address.slice(-4)}`;
@@ -376,6 +386,13 @@ export default function LeaderboardPage() {
   const visiblePages = getVisiblePages(currentPage, totalPages);
   const shouldShowBoardSkeleton = hasLeaderboardAccess && isLoadingBoard && !visibleLeaderboard;
 
+  useEffect(() => {
+    if (!VISIBLE_BOARD_OPTIONS.some((option) => option.id === selectedBoard)) {
+      setSelectedBoard("particle_points");
+      setCurrentPage(1);
+    }
+  }, [selectedBoard]);
+
   const loadLeaderboard = useCallback(
     async (options?: { manual?: boolean; silent?: boolean }) => {
       if (!normalizedAddress || !hasLeaderboardAccess) {
@@ -690,7 +707,7 @@ export default function LeaderboardPage() {
           </div>
 
           <div className="flex flex-wrap items-center justify-center gap-2">
-            {BOARD_OPTIONS.map((option) => {
+            {VISIBLE_BOARD_OPTIONS.map((option) => {
               const active = option.id === selectedBoard;
 
               return (
@@ -749,7 +766,7 @@ export default function LeaderboardPage() {
                 Complete your first onchain check-in to unlock leaderboard access.
               </h2>
               <p className="mt-2 text-sm leading-6 text-slate-600">
-                After your first check-in, you&apos;ll be able to view Particle Point, Referral, and Volume rankings.
+                After your first check-in, you&apos;ll be able to view Particle Point and Volume rankings.
               </p>
               <div className="mt-4 flex justify-center">
                 <Link
@@ -768,7 +785,7 @@ export default function LeaderboardPage() {
                     Leaderboard
                   </p>
                   <p className="mt-1 text-sm font-semibold tracking-[-0.03em] text-slate-950">
-                    {BOARD_OPTIONS.find((option) => option.id === selectedBoard)?.label}
+                    {VISIBLE_BOARD_OPTIONS.find((option) => option.id === selectedBoard)?.label}
                   </p>
                 </div>
                 <div className="rounded-full border border-sky-100 bg-sky-50/90 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-sky-700">

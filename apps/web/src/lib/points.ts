@@ -30,6 +30,7 @@ export type PointsBalance = {
   boostStepPercent: number;
   boostAppliesTo: string;
   streakLength: number;
+  streakRecoveryEnabled: boolean;
   checkInConfig: {
     chainId: number;
     recipient: string;

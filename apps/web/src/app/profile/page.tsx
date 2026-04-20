@@ -870,6 +870,14 @@ function ProfilePageContent() {
       return;
     }
 
+    if (!balance.streakRecoveryEnabled) {
+      setToast({
+        kind: "error",
+        message: "Streak recovery is currently disabled.",
+      });
+      return;
+    }
+
     if (isSwitchingToBase) {
       return;
     }
