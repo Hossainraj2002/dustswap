@@ -20,6 +20,7 @@ export const PRIVY_WALLET_LIST: WalletListEntry[] = [
   "metamask",
   "coinbase_wallet",
   "rainbow",
+  "detected_ethereum_wallets",
   "wallet_connect",
 ];
 

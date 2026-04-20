@@ -30,8 +30,8 @@ function isEnabledFlag(value: string | undefined) {
   return ["1", "true", "yes", "on"].includes(String(value || "").trim().toLowerCase());
 }
 
-const REFERRAL_LEADERBOARD_ENABLED =
-  isEnabledFlag(process.env.NEXT_PUBLIC_REFERRAL_LEADERBOARD_ENABLED);
+const VOLUME_LEADERBOARD_ENABLED =
+  isEnabledFlag(process.env.NEXT_PUBLIC_VOLUME_LEADERBOARD_ENABLED);
 
 const BOARD_OPTIONS: Array<{
   id: LeaderboardBoardType;
@@ -42,7 +42,7 @@ const BOARD_OPTIONS: Array<{
   { id: "volume", label: "Volume" },
 ];
 const VISIBLE_BOARD_OPTIONS = BOARD_OPTIONS.filter(
-  (option) => REFERRAL_LEADERBOARD_ENABLED || option.id !== "referral"
+  (option) => VOLUME_LEADERBOARD_ENABLED || option.id !== "volume"
 );
 
 function shortAddress(address: string) {
@@ -766,7 +766,7 @@ export default function LeaderboardPage() {
                 Complete your first onchain check-in to unlock leaderboard access.
               </h2>
               <p className="mt-2 text-sm leading-6 text-slate-600">
-                After your first check-in, you&apos;ll be able to view Particle Point and Volume rankings.
+                After your first check-in, you&apos;ll be able to view Particle Point and Referral rankings.
               </p>
               <div className="mt-4 flex justify-center">
                 <Link

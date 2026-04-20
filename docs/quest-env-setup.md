@@ -88,15 +88,15 @@ Set these on Vercel for the web app:
 
 - `NEXT_PUBLIC_API_URL`
 - `NEXT_PUBLIC_APP_URL`
-- `NEXT_PUBLIC_REFERRAL_LEADERBOARD_ENABLED=false` unless you want the Referral leaderboard tab visible
+- `NEXT_PUBLIC_VOLUME_LEADERBOARD_ENABLED=false` unless you want the Volume leaderboard tab visible
 
 Production example:
 
 - `NEXT_PUBLIC_API_URL=https://your-api.railway.app`
 - `NEXT_PUBLIC_APP_URL=https://your-web-app.vercel.app`
 
-To make the Referral leaderboard public again later, set
-`NEXT_PUBLIC_REFERRAL_LEADERBOARD_ENABLED=true` on the web app and redeploy it.
+To make the Volume leaderboard public again later, set
+`NEXT_PUBLIC_VOLUME_LEADERBOARD_ENABLED=true` on the web app and redeploy it.
 
 ## Current admin login
 
