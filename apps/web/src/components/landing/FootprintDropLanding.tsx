@@ -1954,10 +1954,10 @@ export default function FootprintDropLanding({
             <div className="rounded-[28px] border border-white/90 bg-white/90 p-4 shadow-[0_24px_60px_rgba(37,99,235,0.12)] backdrop-blur sm:rounded-[30px] sm:p-6">
               <SectionKicker>Airdrop</SectionKicker>
               <h2 className="mt-3 font-syne text-[1.55rem] font-bold tracking-[-0.04em] text-slate-950 sm:mt-4 sm:text-[2.2rem]">
-                Are you active user of Baseapp?
+                Are you a power user of Base?
               </h2>
               <p className="mt-2.5 text-[15px] leading-6 text-slate-600 sm:mt-3 sm:text-base sm:leading-7">
-                Are you a power onchain user on Base? Then check your PP airdrop.
+                Or are you an active user of Baseapp? Then you might be eligible.
               </p>
 
               {pendingReferralCode ? (
