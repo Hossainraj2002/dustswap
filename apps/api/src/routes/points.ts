@@ -8,6 +8,27 @@ import { runtimeCache } from "../utils/runtimeCache";
 const pointsRoutes = new Hono();
 const MAINTENANCE_ERROR_MESSAGE =
   "DustSwap is under maintenance. Please try again soon.";
+const FOOTPRINT_AIRDROP_IP_WINDOW_MS = parsePositiveIntegerEnv(
+  "FOOTPRINT_AIRDROP_IP_WINDOW_MS",
+  10 * 60 * 1000
+);
+const FOOTPRINT_AIRDROP_IP_LIMIT = parsePositiveIntegerEnv(
+  "FOOTPRINT_AIRDROP_IP_LIMIT",
+  120
+);
+const FOOTPRINT_AIRDROP_ADDRESS_WINDOW_MS = parsePositiveIntegerEnv(
+  "FOOTPRINT_AIRDROP_ADDRESS_WINDOW_MS",
+  60 * 1000
+);
+const FOOTPRINT_AIRDROP_ADDRESS_LIMIT = parsePositiveIntegerEnv(
+  "FOOTPRINT_AIRDROP_ADDRESS_LIMIT",
+  12
+);
+
+function parsePositiveIntegerEnv(name: string, fallback: number) {
+  const parsed = Number.parseInt(process.env[name] || "", 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
 
 function isMaintenanceModeEnabled() {
   return process.env.MAINTENANCE_MODE === "1";
@@ -15,6 +36,51 @@ function isMaintenanceModeEnabled() {
 
 function maintenanceUnavailable(c: Context) {
   return c.json({ success: false, error: MAINTENANCE_ERROR_MESSAGE }, 503);
+}
+
+function getRequestIp(c: Context) {
+  const forwarded = c.req.header("x-forwarded-for");
+  if (forwarded) {
+    const firstForwarded = forwarded.split(",")[0]?.trim();
+    if (firstForwarded) {
+      return firstForwarded;
+    }
+  }
+
+  return (
+    c.req.header("cf-connecting-ip") ||
+    c.req.header("x-real-ip") ||
+    "unknown"
+  );
+}
+
+function rateLimited(c: Context, retryAfterMs: number) {
+  c.header("Retry-After", Math.max(1, Math.ceil(retryAfterMs / 1000)).toString());
+  return c.json(
+    {
+      success: false,
+      error: "Please wait a moment before checking another Footprint Drop wallet.",
+    },
+    429
+  );
+}
+
+function consumeFootprintAirdropLimits(c: Context, address: string) {
+  const ipLimit = runtimeCache.consumeRateLimit(
+    `footprint-airdrop:ip:${getRequestIp(c)}`,
+    FOOTPRINT_AIRDROP_IP_LIMIT,
+    FOOTPRINT_AIRDROP_IP_WINDOW_MS
+  );
+
+  if (!ipLimit.allowed) {
+    return ipLimit;
+  }
+
+  return runtimeCache.consumeRateLimit(
+    `footprint-airdrop:address:${address.trim().toLowerCase()}`,
+    FOOTPRINT_AIRDROP_ADDRESS_LIMIT,
+    FOOTPRINT_AIRDROP_ADDRESS_WINDOW_MS
+  );
 }
 
 // GET /api/points/leaderboards
@@ -86,6 +152,11 @@ pointsRoutes.post("/airdrop/lookup", async (c) => {
     return c.json({ success: false, error: "address required" }, 400);
   }
 
+  const rateLimit = consumeFootprintAirdropLimits(c, body.address);
+  if (!rateLimit.allowed) {
+    return rateLimited(c, rateLimit.retryAfterMs);
+  }
+
   try {
     const data = await pointsEngine.getFootprintAirdropStatus(body.address);
     return c.json({ success: true, ...data });
@@ -119,6 +190,21 @@ pointsRoutes.post("/airdrop/claim", async (c) => {
 
   if (!body.address) {
     return c.json({ success: false, error: "address required" }, 400);
+  }
+
+  if (!body.txHash) {
+    return c.json(
+      {
+        success: false,
+        error: "txHash required for onchain Footprint Drop claim verification",
+      },
+      400
+    );
+  }
+
+  const rateLimit = consumeFootprintAirdropLimits(c, body.address);
+  if (!rateLimit.allowed) {
+    return rateLimited(c, rateLimit.retryAfterMs);
   }
 
   try {

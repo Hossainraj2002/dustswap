@@ -101,7 +101,7 @@ const USER_CREATE_MAX_ATTEMPTS = 5;
 const REFERRAL_LEDGER_UPDATE_MAX_ATTEMPTS = 5;
 const POINTS_SUMMARY_CACHE_TTL_MS = 15_000;
 const LEADERBOARD_CACHE_TTL_MS = 60_000;
-const FOOTPRINT_STATUS_CACHE_TTL_MS = 12_000;
+const FOOTPRINT_STATUS_CACHE_TTL_MS = 2 * 60 * 1000;
 const LEADERBOARD_FALLBACK_USER_FILTER =
   "total_points.gt.0,last_check_in.not.is.null,current_streak.gt.0,spin_tickets.gt.0";
 const ENTRY_POINT_HANDLE_OPS_ABI = parseAbi([
