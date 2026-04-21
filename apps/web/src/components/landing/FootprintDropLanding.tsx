@@ -1850,7 +1850,7 @@ export default function FootprintDropLanding({
     }
 
     if (taskState.fakeFailuresServed < FOLLOW_GATE_FAKE_FAILURE_COUNT) {
-      setClaimError("We could not confirm it yet. Open X once more, then verify again.");
+      setClaimError("Verification failed, try again after you follow.");
       setFollowGateState((current) => {
         const currentTaskState = getFollowTaskState(current, taskKey);
         return {
