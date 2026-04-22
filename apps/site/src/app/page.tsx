@@ -3,6 +3,8 @@ import Image from "next/image";
 const APP_URL = "https://app.dustswap.wtf";
 const X_URL = "https://x.com/DustswapOnBase";
 const DISCORD_URL = "https://app.dustswap.wtf/discord";
+const INVESTOR_DECK_URL =
+  "https://docs.google.com/forms/d/e/1FAIpQLSdH1DhID6_N2N8T9WDiiwjZLT2IskC2Ax0Djoz_5CqvRrW7LQ/viewform?usp=publish-editor";
 
 const footerProductLinks = [
   { label: "Footprint Drop", href: APP_URL },
@@ -810,6 +812,14 @@ function Footer() {
                 </a>
                 <a href={DISCORD_URL} className="hover:text-sky-700">
                   Discord
+                </a>
+                <a
+                  href={INVESTOR_DECK_URL}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="hover:text-sky-700"
+                >
+                  Request Investor Deck
                 </a>
               </div>
             </div>
