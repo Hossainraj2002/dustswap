@@ -20,6 +20,11 @@ export type QuestProgressWindow = "once" | "daily" | "weekly";
 export type QuestRules = {
   delaySeconds?: number;
   fakeFailureCount?: number;
+  chainId?: number;
+  chainIds?: number[];
+  tokenAddress?: string;
+  tokenAddresses?: string[];
+  tokenMatch?: "input" | "output" | "input_or_output";
   requiredMention?: string;
   requiredMentionsAny?: string[];
   requiredAnyOf?: string[];

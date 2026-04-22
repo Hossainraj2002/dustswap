@@ -1,6 +1,10 @@
 import { randomBytes, createHash, createHmac } from "crypto";
-import { createPublicClient, http, isAddress } from "viem";
+import { isAddress } from "viem";
 import { base } from "viem/chains";
+import {
+  getPublicClientForSwapChain,
+  getSwapChainConfig,
+} from "../config/swapChains";
 import { pointsEngine } from "./pointsEngine";
 import { supabase } from "./supabase";
 import { runtimeCache } from "../utils/runtimeCache";
@@ -27,6 +31,11 @@ type QuestProgressWindow = "once" | "daily" | "weekly";
 type QuestRules = {
   delaySeconds?: number;
   fakeFailureCount?: number;
+  chainId?: number;
+  chainIds?: number[];
+  tokenAddress?: string;
+  tokenAddresses?: string[];
+  tokenMatch?: "input" | "output" | "input_or_output";
   requiredMention?: string;
   requiredMentionsAny?: string[];
   requiredAnyOf?: string[];
@@ -178,10 +187,6 @@ type OpenOceanTransactionDetail = {
 };
 
 const X_SCOPES = ["tweet.read", "users.read", "offline.access"];
-const BASE_RPC_URL =
-  process.env.BASE_RPC_URL ||
-  process.env.NEXT_PUBLIC_BASE_RPC_URL ||
-  "https://mainnet.base.org";
 const OPENOCEAN_API_BASE =
   process.env.OPENOCEAN_API_BASE || "https://open-api.openocean.finance/v3";
 const OPENOCEAN_REFERRER_ADDRESS =
@@ -195,11 +200,6 @@ const SWAP_SYNC_DEDUPE_TTL_MS = 25_000;
 const MANUAL_X_USERNAME_DEDUPE_TTL_MS = 15_000;
 const START_DELAY_QUEST_DEDUPE_TTL_MS = 15_000;
 
-const baseClient = createPublicClient({
-  chain: base,
-  transport: http(BASE_RPC_URL),
-});
-
 function toNumber(value: unknown, fallback = 0): number {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
@@ -211,6 +211,112 @@ function safeRules(value: unknown): QuestRules {
   }
 
   return value as QuestRules;
+}
+
+function normalizeNumberList(value: unknown) {
+  const values = Array.isArray(value) ? value : value == null ? [] : [value];
+  return [
+    ...new Set(
+      values
+        .map((item) => Number(item))
+        .filter((item) => Number.isInteger(item) && item > 0)
+    ),
+  ];
+}
+
+function getQuestChainIds(rules: QuestRules) {
+  return normalizeNumberList(rules.chainIds?.length ? rules.chainIds : rules.chainId);
+}
+
+function normalizeTokenMatch(value: unknown) {
+  return value === "input" || value === "output" || value === "input_or_output"
+    ? value
+    : "input_or_output";
+}
+
+function getQuestTokenFilter(rules: QuestRules) {
+  const rulesRecord = rules as QuestRules & { token?: unknown };
+  const tokenRule =
+    rulesRecord.token &&
+    typeof rulesRecord.token === "object" &&
+    !Array.isArray(rulesRecord.token)
+      ? (rulesRecord.token as Record<string, unknown>)
+      : null;
+  const rawAddresses =
+    rules.tokenAddresses?.length
+      ? rules.tokenAddresses
+      : rules.tokenAddress
+        ? [rules.tokenAddress]
+        : typeof tokenRule?.address === "string"
+          ? [tokenRule.address]
+          : Array.isArray(tokenRule?.addresses)
+            ? tokenRule.addresses
+            : [];
+  const addresses: string[] = [
+    ...new Set(
+      rawAddresses
+        .map((value) => String(value || "").trim().toLowerCase())
+        .filter((value) => isAddress(value))
+    ),
+  ];
+
+  if (addresses.length === 0) {
+    return null;
+  }
+
+  return {
+    addresses,
+    match: normalizeTokenMatch(rules.tokenMatch || tokenRule?.match),
+  };
+}
+
+function getMetadataAddress(metadata: Record<string, unknown>, key: string) {
+  const value = metadata[key];
+  return typeof value === "string" && isAddress(value) ? value.toLowerCase() : null;
+}
+
+function swapActivityMatchesToken(
+  row: { metadata?: Record<string, unknown> | null },
+  tokenFilter: ReturnType<typeof getQuestTokenFilter>
+) {
+  if (!tokenFilter) {
+    return true;
+  }
+
+  const metadata = row.metadata || {};
+  const inputTokenAddress =
+    getMetadataAddress(metadata, "inputTokenAddress") ||
+    getMetadataAddress(metadata, "inputToken");
+  const outputTokenAddress =
+    getMetadataAddress(metadata, "outputTokenAddress") ||
+    getMetadataAddress(metadata, "outputToken");
+  const matchesInput = inputTokenAddress
+    ? tokenFilter.addresses.includes(inputTokenAddress)
+    : false;
+  const matchesOutput = outputTokenAddress
+    ? tokenFilter.addresses.includes(outputTokenAddress)
+    : false;
+
+  if (tokenFilter.match === "input") {
+    return matchesInput;
+  }
+
+  if (tokenFilter.match === "output") {
+    return matchesOutput;
+  }
+
+  return matchesInput || matchesOutput;
+}
+
+function isMissingChainAwareConflict(
+  error: { code?: string; message?: string; details?: string } | null | undefined
+) {
+  const message = `${error?.message || ""} ${error?.details || ""}`.toLowerCase();
+  return (
+    error?.code === "42P10" ||
+    message.includes("no unique or exclusion constraint") ||
+    message.includes("on conflict specification")
+  );
 }
 
 function normalizeCampaignKey(value?: string | null) {
@@ -1672,7 +1778,13 @@ export class QuestEngine {
       throw new Error("Transaction hash is required");
     }
 
-    const receipt = await baseClient.getTransactionReceipt({
+    const chainConfig = getSwapChainConfig(input.chainId);
+    const client = getPublicClientForSwapChain(input.chainId);
+    if (!chainConfig || !client) {
+      throw new Error(`Unsupported swap chain: ${input.chainId}`);
+    }
+
+    const receipt = await client.getTransactionReceipt({
       hash: input.txHash as `0x${string}`,
     });
 
@@ -1744,7 +1856,8 @@ export class QuestEngine {
       .select("tx_hash, amount_usd")
       .eq("user_id", userId)
       .eq("event_type", "swap")
-      .eq("source", "dustswap_swap");
+      .eq("source", "dustswap_swap")
+      .eq("chain_id", base.id);
 
     if (error) {
       throw new Error(`Failed to load existing swap activity: ${error.message}`);
@@ -1768,25 +1881,48 @@ export class QuestEngine {
     occurredAt?: string | null;
     metadata?: Record<string, unknown>;
   }) {
-    const { error } = await supabase.from("activity_events").upsert(
-      {
-        user_id: args.userId,
-        event_type: "swap",
-        source: "dustswap_swap",
-        chain_id: args.chainId,
-        tx_hash: args.txHash,
-        amount_usd: args.amountUsd,
-        occurred_at: args.occurredAt || new Date().toISOString(),
-        metadata: {
-          inputToken: args.inputToken || null,
-          outputToken: args.outputToken || null,
-          ...(args.metadata || {}),
-        },
+    const inputTokenAddress =
+      typeof args.inputToken === "string" && isAddress(args.inputToken)
+        ? args.inputToken.toLowerCase()
+        : null;
+    const outputTokenAddress =
+      typeof args.outputToken === "string" && isAddress(args.outputToken)
+        ? args.outputToken.toLowerCase()
+        : null;
+    const payload = {
+      user_id: args.userId,
+      event_type: "swap",
+      source: "dustswap_swap",
+      chain_id: args.chainId,
+      tx_hash: args.txHash,
+      amount_usd: args.amountUsd,
+      occurred_at: args.occurredAt || new Date().toISOString(),
+      metadata: {
+        inputToken: args.inputToken || null,
+        outputToken: args.outputToken || null,
+        inputTokenAddress,
+        outputTokenAddress,
+        ...(args.metadata || {}),
       },
-      {
-        onConflict: "tx_hash,event_type,source",
-      }
+    };
+
+    const { error } = await supabase.from("activity_events").upsert(
+      payload,
+      { onConflict: "chain_id,tx_hash,event_type,source" }
     );
+
+    if (error && isMissingChainAwareConflict(error)) {
+      const { error: fallbackError } = await supabase.from("activity_events").upsert(
+        payload,
+        { onConflict: "tx_hash,event_type,source" }
+      );
+
+      if (fallbackError) {
+        throw new Error(`Failed to record swap activity: ${fallbackError.message}`);
+      }
+
+      return;
+    }
 
     if (error) {
       throw new Error(`Failed to record swap activity: ${error.message}`);
@@ -2053,13 +2189,20 @@ export class QuestEngine {
     const now = getNow();
     const cycleKey = getCycleKey(quest.progress_window, now);
     const bounds = getWindowBounds(quest.progress_window, now);
+    const rules = safeRules(quest.rules);
+    const chainIds = getQuestChainIds(rules);
+    const tokenFilter = getQuestTokenFilter(rules);
 
     let query = supabase
       .from("activity_events")
-      .select("amount_usd")
+      .select("amount_usd, chain_id, metadata")
       .eq("user_id", userId)
       .eq("event_type", "swap")
-      .eq("source", String(safeRules(quest.rules).source || "dustswap_swap"));
+      .eq("source", String(rules.source || "dustswap_swap"));
+
+    if (chainIds.length > 0) {
+      query = query.in("chain_id", chainIds);
+    }
 
     if (bounds) {
       query = query
@@ -2072,11 +2215,17 @@ export class QuestEngine {
       throw new Error(`Failed to load swap activity: ${error.message}`);
     }
 
-    const volumeValue = (data ?? []).reduce(
+    const filteredRows = ((data ?? []) as Array<{
+      amount_usd: number | string | null;
+      chain_id: number | null;
+      metadata: Record<string, unknown> | null;
+    }>).filter((row) => swapActivityMatchesToken(row, tokenFilter));
+
+    const volumeValue = filteredRows.reduce(
       (sum, row) => sum + toNumber((row as { amount_usd: number }).amount_usd),
       0
     );
-    const countValue = (data ?? []).length;
+    const countValue = filteredRows.length;
     const progressValue =
       quest.action_type === "swap_count" ? countValue : volumeValue;
 
@@ -2115,6 +2264,8 @@ export class QuestEngine {
           countValue,
           volumeValue,
           progressValue,
+          chainIds,
+          tokenFilter,
         }
       );
 

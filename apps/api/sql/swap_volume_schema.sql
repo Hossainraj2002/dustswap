@@ -5,7 +5,7 @@ CREATE TABLE IF NOT EXISTS swap_transactions (
   id                        BIGSERIAL PRIMARY KEY,
   user_id                   INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   address                   VARCHAR(42) NOT NULL,
-  tx_hash                   VARCHAR(66) NOT NULL UNIQUE,
+  tx_hash                   VARCHAR(66) NOT NULL,
   chain_id                  INTEGER NOT NULL,
   router_address            VARCHAR(42),
   sender_address            VARCHAR(42),
@@ -32,7 +32,8 @@ CREATE TABLE IF NOT EXISTS swap_transactions (
   occurred_at               TIMESTAMPTZ NOT NULL,
   metadata                  JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at                TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at                TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  updated_at                TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(chain_id, tx_hash)
 );
 
 CREATE TABLE IF NOT EXISTS user_volume_daily (
@@ -65,6 +66,8 @@ CREATE INDEX IF NOT EXISTS idx_swap_transactions_user_occurred
   ON swap_transactions(user_id, occurred_at DESC);
 CREATE INDEX IF NOT EXISTS idx_swap_transactions_address_occurred
   ON swap_transactions(address, occurred_at DESC);
+CREATE INDEX IF NOT EXISTS idx_swap_transactions_chain_tx_hash
+  ON swap_transactions(chain_id, tx_hash);
 CREATE INDEX IF NOT EXISTS idx_swap_transactions_day_key
   ON swap_transactions(day_key, occurred_at DESC);
 CREATE INDEX IF NOT EXISTS idx_user_volume_daily_week_key

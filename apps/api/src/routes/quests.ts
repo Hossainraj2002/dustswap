@@ -220,7 +220,7 @@ questsRoutes.post("/activities/swap", async (c) => {
     const body = (await c.req.json()) as {
       address?: string;
       txHash?: string;
-      chainId?: number;
+      chainId?: number | string;
       amountUsd?: number;
       inputToken?: string | null;
       outputToken?: string | null;
@@ -234,10 +234,16 @@ questsRoutes.post("/activities/swap", async (c) => {
       );
     }
 
+    const parsedChainId =
+      typeof body.chainId === "string" ? Number(body.chainId) : body.chainId;
+    if (!Number.isFinite(parsedChainId)) {
+      return c.json({ success: false, error: "A valid chainId is required" }, 400);
+    }
+
     const data = await questEngine.recordSwapActivity({
       address: body.address,
       txHash: body.txHash,
-      chainId: body.chainId,
+      chainId: parsedChainId,
       amountUsd: Number(body.amountUsd || 0),
       inputToken: body.inputToken,
       outputToken: body.outputToken,

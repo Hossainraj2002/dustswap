@@ -1,9 +1,7 @@
 import {
-  createPublicClient,
   decodeFunctionData,
   decodeEventLog,
   erc20Abi,
-  http,
   isAddress,
   parseAbi,
   type Hex,
@@ -11,29 +9,46 @@ import {
 } from "viem";
 import { base } from "viem/chains";
 import { recoverAuthorizationAddress } from "viem/utils";
+import {
+  getPublicClientForSwapChain,
+  getSwapChainConfig,
+  isSupportedSwapChainId,
+} from "../config/swapChains";
 import { pointsEngine } from "./pointsEngine";
 import { supabase } from "./supabase";
 
-const BASE_RPC_URL =
-  process.env.BASE_RPC_URL ||
-  process.env.NEXT_PUBLIC_BASE_RPC_URL ||
-  "https://mainnet.base.org";
 const COINGECKO_API_KEY = process.env.COINGECKO_API_KEY || "";
+const OPENOCEAN_API_BASE =
+  process.env.OPENOCEAN_API_BASE || "https://open-api.openocean.finance/v3";
 
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 const ETH_PLACEHOLDER = "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
 const USDC_BASE = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913";
-const WETH_BASE = "0x4200000000000000000000000000000000000006";
 const OPENOCEAN_EXCHANGE_V2 = "0x6352a56caadc4f1e25cd6c75970fa768a3304e64";
 const OPENOCEAN_AGGREGATION_ROUTER = "0x6dd434082eab5cd134628d4b9a6e4d0813ef8b07";
+const OPENOCEAN_ZKSYNC_ROUTER = "0x36a1acbbcafca2468b85011ddd16e7cb4d673230";
+const OPENOCEAN_POLYGON_ZKEVM_ROUTER = "0x6dd434082eab5cd134b33719ec1ff05fe985b97b";
 const ENTRY_POINT_V06_ADDRESS = "0x5ff137d4b0fdcd49dca30c7cf57e578a026d2789";
 const DEFAULT_EIP7702_DELEGATION_MANAGER_ADDRESSES = [
   "0xdb9b1e94b5b69df7e401ddbede43491141047db3",
 ];
-const OPENOCEAN_ROUTER_ADDRESSES = new Set([
+const DEFAULT_OPENOCEAN_ROUTER_ADDRESSES = [
   OPENOCEAN_EXCHANGE_V2,
   OPENOCEAN_AGGREGATION_ROUTER,
-]);
+  OPENOCEAN_ZKSYNC_ROUTER,
+  OPENOCEAN_POLYGON_ZKEVM_ROUTER,
+];
+const OPENOCEAN_ROUTER_ADDRESSES = new Set(
+  (
+    process.env.OPENOCEAN_ROUTER_ADDRESSES ||
+    process.env.NEXT_PUBLIC_OPENOCEAN_ROUTER_ADDRESSES ||
+    DEFAULT_OPENOCEAN_ROUTER_ADDRESSES.join(",")
+  )
+    .split(",")
+    .map((address) => address.trim())
+    .filter((address) => isAddress(address))
+    .map((address) => normalizeAddress(address))
+);
 const EIP7702_DELEGATION_MANAGER_ADDRESSES = new Set(
   (
     process.env.EIP7702_DELEGATION_MANAGER_ADDRESSES ||
@@ -61,11 +76,6 @@ const RECEIPT_RETRY_DELAY_MS = 1500;
 const RECEIPT_MAX_ATTEMPTS = 20;
 const DEFAULT_ETH_PRICE_USD = Number(process.env.DEFAULT_ETH_PRICE_USD || "3500");
 const TOKEN_PRICE_CACHE_TABLE = "token_price_cache_daily";
-
-const baseClient = createPublicClient({
-  chain: base,
-  transport: http(BASE_RPC_URL),
-});
 
 type SwapRecordRow = {
   tx_hash: string;
@@ -113,6 +123,9 @@ type TokenMetadata = {
   decimals: number;
 };
 
+type SwapChainConfig = NonNullable<ReturnType<typeof getSwapChainConfig>>;
+type SwapPublicClient = NonNullable<ReturnType<typeof getPublicClientForSwapChain>>;
+
 type RecordedSwap = {
   txHash: string;
   amountUsd: number;
@@ -141,8 +154,10 @@ type DecodedSwapEvent = {
   emitterAddress: string;
 };
 
-type TransactionRecord = Awaited<ReturnType<typeof baseClient.getTransaction>>;
-type TransactionReceiptRecord = Awaited<ReturnType<typeof baseClient.getTransactionReceipt>>;
+type TransactionRecord = Awaited<ReturnType<SwapPublicClient["getTransaction"]>>;
+type TransactionReceiptRecord = Awaited<
+  ReturnType<SwapPublicClient["getTransactionReceipt"]>
+>;
 
 type SmartWalletExecutionCall = {
   target: string;
@@ -166,6 +181,18 @@ type SwapRoutingContext = {
   userOperationHash: string | null;
 };
 
+type OpenOceanTransactionDetail = {
+  tx_hash?: string;
+  usd_valuation?: number | string;
+  referrer?: string | null;
+  in_token_symbol?: string | null;
+  out_token_symbol?: string | null;
+  in_amount_value?: string | null;
+  out_amount_value?: string | null;
+  create_at?: string | null;
+  update_at?: string | null;
+};
+
 const priceCache = new Map<string, PriceCacheEntry>();
 
 class SwapRecorderError extends Error {}
@@ -183,6 +210,14 @@ function normalizeTxHash(txHash: string) {
 
 function isTxHash(value: string) {
   return /^0x[a-fA-F0-9]{64}$/.test(value);
+}
+
+function resolveInputChainId(chainId?: number | null) {
+  const resolvedChainId = Number.isFinite(chainId) ? Number(chainId) : base.id;
+  if (!isSupportedSwapChainId(resolvedChainId)) {
+    throw new ValidationError(`Unsupported swap chain: ${resolvedChainId}`);
+  }
+  return resolvedChainId;
 }
 
 function sleep(ms: number) {
@@ -243,37 +278,51 @@ function getAssetPriceKey(address: string) {
   return normalized === ZERO_ADDRESS ? ETH_PLACEHOLDER : normalized;
 }
 
-function getAssetPriceDbKey(address: string) {
+function isNativeAssetAddress(address: string) {
+  const normalized = normalizeAddress(address);
+  return normalized === ETH_PLACEHOLDER || normalized === ZERO_ADDRESS;
+}
+
+function isWrappedNativeAsset(address: string, chainConfig: SwapChainConfig) {
+  const normalized = normalizeAddress(address);
+  return Boolean(
+    chainConfig.wrappedNativeTokens?.some((token) => normalizeAddress(token) === normalized)
+  );
+}
+
+function getAssetPriceDbKey(address: string, chainConfig: SwapChainConfig) {
   const normalized = normalizeAddress(address);
 
   if (
-    normalized === ETH_PLACEHOLDER ||
-    normalized === ZERO_ADDRESS ||
-    normalized === WETH_BASE
+    isNativeAssetAddress(normalized) ||
+    isWrappedNativeAsset(normalized, chainConfig)
   ) {
-    return "ETH";
+    return chainConfig.nativeCoinGeckoId.toUpperCase();
   }
 
-  if (normalized === USDC_BASE) {
+  if (chainConfig.id === base.id && normalized === USDC_BASE) {
     return "USDC";
   }
 
   return null;
 }
 
-function getCoinGeckoId(address: string) {
+function getCoinGeckoId(address: string, chainConfig: SwapChainConfig) {
   const normalized = normalizeAddress(address);
-  if (normalized === ETH_PLACEHOLDER || normalized === ZERO_ADDRESS || normalized === WETH_BASE) {
-    return "ethereum";
+  if (
+    isNativeAssetAddress(normalized) ||
+    isWrappedNativeAsset(normalized, chainConfig)
+  ) {
+    return chainConfig.nativeCoinGeckoId;
   }
-  if (normalized === USDC_BASE) {
+  if (chainConfig.id === base.id && normalized === USDC_BASE) {
     return "usd-coin";
   }
   return null;
 }
 
-function getPriceCacheKey(address: string, dayKey: string) {
-  return `${getAssetPriceKey(address)}:${dayKey}`;
+function getPriceCacheKey(chainId: number, address: string, dayKey: string) {
+  return `${chainId}:${getAssetPriceKey(address)}:${dayKey}`;
 }
 
 function isMissingTokenPriceCacheTable(error: SupabaseErrorLike | null | undefined) {
@@ -285,6 +334,15 @@ function isMissingTokenPriceCacheTable(error: SupabaseErrorLike | null | undefin
   );
 }
 
+function isMissingChainAwareConflict(error: SupabaseErrorLike | null | undefined) {
+  const message = `${error?.message || ""} ${error?.details || ""}`.toLowerCase();
+  return (
+    error?.code === "42P10" ||
+    message.includes("no unique or exclusion constraint") ||
+    message.includes("on conflict specification")
+  );
+}
+
 function getRequestHeaders() {
   const headers: Record<string, string> = { accept: "application/json" };
   if (COINGECKO_API_KEY) {
@@ -292,6 +350,50 @@ function getRequestHeaders() {
     headers["x-cg-pro-api-key"] = COINGECKO_API_KEY;
   }
   return headers;
+}
+
+async function fetchOpenOceanTransactionDetail(
+  chainConfig: SwapChainConfig,
+  txHash: string
+) {
+  if (!chainConfig.openOceanSlug) {
+    return null;
+  }
+
+  try {
+    const response = await fetch(
+      `${OPENOCEAN_API_BASE}/${encodeURIComponent(
+        chainConfig.openOceanSlug
+      )}/getTransaction?hash=${encodeURIComponent(txHash)}`,
+      {
+        headers: { accept: "application/json" },
+      }
+    );
+
+    if (!response.ok) {
+      return null;
+    }
+
+    const payload = (await response.json()) as {
+      code?: number;
+      data?: OpenOceanTransactionDetail;
+      error?: string;
+      msg?: string;
+    };
+
+    if (payload.code && payload.code !== 200) {
+      return null;
+    }
+
+    return payload.data ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function getOpenOceanAmountUsd(detail: OpenOceanTransactionDetail | null) {
+  const value = Number(detail?.usd_valuation ?? 0);
+  return Number.isFinite(value) && value > 0 ? value : null;
 }
 
 function calculateUsdAmountScaled(
@@ -308,11 +410,32 @@ function calculateUsdAmountScaled(
   return (numerator + (denominator / 2n)) / denominator;
 }
 
-async function getExistingSwap(txHash: string) {
+async function getExistingSwap(txHash: string, chainId?: number | null) {
+  if (Number.isFinite(chainId)) {
+    const { data: chainData, error: chainError } = await supabase
+      .from("swap_transactions")
+      .select("tx_hash, amount_usd, day_key, week_key")
+      .eq("tx_hash", txHash)
+      .eq("chain_id", Number(chainId))
+      .limit(1)
+      .maybeSingle();
+
+    if (chainError) {
+      throw new Error(`Load existing chain swap transaction: ${chainError.message}`);
+    }
+
+    if (chainData) {
+      return chainData as SwapRecordRow;
+    }
+
+    return null;
+  }
+
   const { data, error } = await supabase
     .from("swap_transactions")
     .select("tx_hash, amount_usd, day_key, week_key")
     .eq("tx_hash", txHash)
+    .limit(1)
     .maybeSingle();
 
   if (error) {
@@ -336,10 +459,10 @@ async function getUserByAddress(address: string) {
   return (data as UserRow | null) ?? null;
 }
 
-async function getTransactionContextByHash(txHash: Hex) {
+async function getTransactionContextByHash(client: SwapPublicClient, txHash: Hex) {
   const [transaction, receipt] = await Promise.all([
-    baseClient.getTransaction({ hash: txHash }),
-    baseClient.getTransactionReceipt({ hash: txHash }),
+    client.getTransaction({ hash: txHash }),
+    client.getTransactionReceipt({ hash: txHash }),
   ]);
 
   return {
@@ -348,9 +471,12 @@ async function getTransactionContextByHash(txHash: Hex) {
   };
 }
 
-async function resolveUserOperationTransactionHash(userOperationHash: Hex) {
+async function resolveUserOperationTransactionHash(
+  client: SwapPublicClient,
+  userOperationHash: Hex
+) {
   try {
-    const response = (await baseClient.request({
+    const response = (await client.request({
       method: "eth_getUserOperationReceipt" as never,
       params: [userOperationHash] as never,
     })) as
@@ -369,12 +495,15 @@ async function resolveUserOperationTransactionHash(userOperationHash: Hex) {
   }
 }
 
-async function waitForResolvedTransaction(submittedHash: Hex): Promise<ResolvedSubmittedTransaction> {
+async function waitForResolvedTransaction(
+  client: SwapPublicClient,
+  submittedHash: Hex
+): Promise<ResolvedSubmittedTransaction> {
   let lastError: Error | null = null;
 
   for (let attempt = 0; attempt < RECEIPT_MAX_ATTEMPTS; attempt += 1) {
     try {
-      const direct = await getTransactionContextByHash(submittedHash);
+      const direct = await getTransactionContextByHash(client, submittedHash);
       return {
         submittedHash,
         submittedKind: "transaction",
@@ -387,10 +516,16 @@ async function waitForResolvedTransaction(submittedHash: Hex): Promise<ResolvedS
       lastError = error as Error;
     }
 
-    const resolvedUserOperationHash = await resolveUserOperationTransactionHash(submittedHash);
+    const resolvedUserOperationHash = await resolveUserOperationTransactionHash(
+      client,
+      submittedHash
+    );
     if (resolvedUserOperationHash) {
       try {
-        const resolved = await getTransactionContextByHash(resolvedUserOperationHash as Hex);
+        const resolved = await getTransactionContextByHash(
+          client,
+          resolvedUserOperationHash as Hex
+        );
         return {
           submittedHash,
           submittedKind: "user_operation",
@@ -627,21 +762,29 @@ async function resolveSwapRoutingContext(args: {
   }
 }
 
-async function getTokenMetadata(address: string): Promise<TokenMetadata> {
+async function getTokenMetadata(
+  client: SwapPublicClient,
+  chainConfig: SwapChainConfig,
+  address: string
+): Promise<TokenMetadata> {
   const normalizedAddress = normalizeAddress(address);
 
   if (normalizedAddress === ZERO_ADDRESS || normalizedAddress === ETH_PLACEHOLDER) {
-    return { address: normalizedAddress, symbol: "ETH", decimals: 18 };
+    return {
+      address: normalizedAddress,
+      symbol: chainConfig.chain.nativeCurrency.symbol || "ETH",
+      decimals: chainConfig.chain.nativeCurrency.decimals || 18,
+    };
   }
 
   try {
     const [decimals, symbol] = await Promise.all([
-      baseClient.readContract({
+      client.readContract({
         address: normalizedAddress as Hex,
         abi: erc20Abi,
         functionName: "decimals",
       }),
-      baseClient.readContract({
+      client.readContract({
         address: normalizedAddress as Hex,
         abi: erc20Abi,
         functionName: "symbol",
@@ -662,11 +805,15 @@ async function getTokenMetadata(address: string): Promise<TokenMetadata> {
   }
 }
 
-async function getCachedDailyPrice(address: string, dayKey: string) {
+async function getCachedDailyPrice(
+  chainConfig: SwapChainConfig,
+  address: string,
+  dayKey: string
+) {
   const assetKey = getAssetPriceKey(address);
-  const cacheKey = getPriceCacheKey(assetKey, dayKey);
+  const cacheKey = getPriceCacheKey(chainConfig.id, assetKey, dayKey);
   const cached = priceCache.get(cacheKey);
-  const dbKey = getAssetPriceDbKey(address);
+  const dbKey = getAssetPriceDbKey(address, chainConfig);
 
   if (cached && cached.expiresAt > Date.now()) {
     return cached;
@@ -675,7 +822,7 @@ async function getCachedDailyPrice(address: string, dayKey: string) {
   const { data: tokenPriceData, error: tokenPriceError } = await supabase
     .from(TOKEN_PRICE_CACHE_TABLE)
     .select("price_usd, source, metadata")
-    .eq("chain_id", base.id)
+    .eq("chain_id", chainConfig.id)
     .eq("token_address", assetKey)
     .eq("price_date", dayKey)
     .maybeSingle();
@@ -734,14 +881,14 @@ async function getCachedDailyPrice(address: string, dayKey: string) {
   return entry;
 }
 
-async function getLatestCachedPrice(address: string) {
+async function getLatestCachedPrice(chainConfig: SwapChainConfig, address: string) {
   const assetKey = getAssetPriceKey(address);
-  const dbKey = getAssetPriceDbKey(address);
+  const dbKey = getAssetPriceDbKey(address, chainConfig);
 
   const { data: tokenPriceData, error: tokenPriceError } = await supabase
     .from(TOKEN_PRICE_CACHE_TABLE)
     .select("price_usd, source, metadata")
-    .eq("chain_id", base.id)
+    .eq("chain_id", chainConfig.id)
     .eq("token_address", assetKey)
     .order("price_date", { ascending: false })
     .limit(1)
@@ -794,9 +941,9 @@ async function getLatestCachedPrice(address: string) {
   };
 }
 
-async function fetchCoinGeckoPrice(address: string) {
+async function fetchCoinGeckoPrice(chainConfig: SwapChainConfig, address: string) {
   const normalizedAddress = normalizeAddress(address);
-  const coinId = getCoinGeckoId(normalizedAddress);
+  const coinId = getCoinGeckoId(normalizedAddress, chainConfig);
 
   if (coinId) {
     const response = await fetch(
@@ -820,17 +967,22 @@ async function fetchCoinGeckoPrice(address: string) {
       priceScaled: parseScaledDecimal(usdValue, PRICE_SCALE),
       source: "coingecko",
       metadata: {
-        chain: "base",
+        chain: chainConfig.key,
+        chainId: chainConfig.id,
         coinId,
         tokenAddress: normalizedAddress,
       } satisfies Record<string, unknown>,
     };
   }
 
+  if (!chainConfig.coinGeckoPlatformId) {
+    throw new Error("CoinGecko token price platform is unavailable for this chain");
+  }
+
   const response = await fetch(
-    `https://api.coingecko.com/api/v3/simple/token_price/base?contract_addresses=${encodeURIComponent(
-      normalizedAddress
-    )}&vs_currencies=usd`,
+    `https://api.coingecko.com/api/v3/simple/token_price/${encodeURIComponent(
+      chainConfig.coinGeckoPlatformId
+    )}?contract_addresses=${encodeURIComponent(normalizedAddress)}&vs_currencies=usd`,
     { headers: getRequestHeaders() }
   );
 
@@ -848,17 +1000,23 @@ async function fetchCoinGeckoPrice(address: string) {
     priceScaled: parseScaledDecimal(usdValue, PRICE_SCALE),
     source: "coingecko",
     metadata: {
-      chain: "base",
+      chain: chainConfig.key,
+      chainId: chainConfig.id,
+      platformId: chainConfig.coinGeckoPlatformId,
       tokenAddress: normalizedAddress,
     } satisfies Record<string, unknown>,
   };
 }
 
-async function getTokenPriceUsd(address: string, dayKey: string) {
+async function getTokenPriceUsd(
+  chainConfig: SwapChainConfig,
+  address: string,
+  dayKey: string
+) {
   const assetKey = getAssetPriceKey(address);
-  const dbKey = getAssetPriceDbKey(address);
-  const cacheKey = getPriceCacheKey(assetKey, dayKey);
-  const cached = await getCachedDailyPrice(assetKey, dayKey);
+  const dbKey = getAssetPriceDbKey(address, chainConfig);
+  const cacheKey = getPriceCacheKey(chainConfig.id, assetKey, dayKey);
+  const cached = await getCachedDailyPrice(chainConfig, assetKey, dayKey);
 
   if (cached) {
     return cached;
@@ -870,7 +1028,7 @@ async function getTokenPriceUsd(address: string, dayKey: string) {
     metadata: Record<string, unknown>;
   }) => {
     const tokenPricePayload = {
-      chain_id: base.id,
+      chain_id: chainConfig.id,
       token_address: assetKey,
       price_date: dayKey,
       price_usd: formatScaledDecimal(entryInput.priceScaled, PRICE_SCALE),
@@ -920,22 +1078,23 @@ async function getTokenPriceUsd(address: string, dayKey: string) {
     return entry;
   };
 
-  if (assetKey === USDC_BASE) {
+  if (chainConfig.id === base.id && assetKey === USDC_BASE) {
     return persistPriceEntry({
       priceScaled: parseScaledDecimal("1", PRICE_SCALE),
       source: "hardcoded_usdc",
       metadata: {
-        chain: "base",
+        chain: chainConfig.key,
+        chainId: chainConfig.id,
         tokenAddress: assetKey,
       },
     });
   }
 
   try {
-    const fresh = await fetchCoinGeckoPrice(assetKey);
+    const fresh = await fetchCoinGeckoPrice(chainConfig, assetKey);
     return persistPriceEntry(fresh);
   } catch {
-    const fallback = await getLatestCachedPrice(assetKey);
+    const fallback = await getLatestCachedPrice(chainConfig, assetKey);
     if (fallback) {
       return persistPriceEntry({
         priceScaled: fallback.priceScaled,
@@ -949,15 +1108,15 @@ async function getTokenPriceUsd(address: string, dayKey: string) {
     }
 
     if (
-      assetKey === ETH_PLACEHOLDER ||
-      assetKey === ZERO_ADDRESS ||
-      assetKey === WETH_BASE
+      (isNativeAssetAddress(assetKey) || isWrappedNativeAsset(assetKey, chainConfig)) &&
+      chainConfig.nativeCoinGeckoId === "ethereum"
     ) {
       return persistPriceEntry({
         priceScaled: parseScaledDecimal(DEFAULT_ETH_PRICE_USD, PRICE_SCALE),
-        source: "fallback_default_eth",
+        source: "fallback_default_native",
         metadata: {
-          chain: "base",
+          chain: chainConfig.key,
+          chainId: chainConfig.id,
           tokenAddress: assetKey,
           fallback: true,
         },
@@ -1087,26 +1246,69 @@ async function mirrorSwapToActivityEvents(args: {
   dstToken: TokenMetadata;
   metadata: Record<string, unknown>;
 }) {
-  const { error } = await supabase.from("activity_events").upsert(
-    {
-      user_id: args.userId,
-      event_type: "swap",
-      source: "dustswap_swap",
-      chain_id: args.chainId,
-      tx_hash: args.txHash,
-      amount_usd: args.amountUsd,
-      occurred_at: args.occurredAt,
-      metadata: {
-        inputToken: args.srcToken.symbol,
-        outputToken: args.dstToken.symbol,
-        ...args.metadata,
-      },
+  const payload = {
+    user_id: args.userId,
+    event_type: "swap",
+    source: "dustswap_swap",
+    chain_id: args.chainId,
+    tx_hash: args.txHash,
+    amount_usd: args.amountUsd,
+    occurred_at: args.occurredAt,
+    metadata: {
+      inputToken: args.srcToken.symbol,
+      outputToken: args.dstToken.symbol,
+      inputTokenSymbol: args.srcToken.symbol,
+      outputTokenSymbol: args.dstToken.symbol,
+      inputTokenAddress: args.srcToken.address,
+      outputTokenAddress: args.dstToken.address,
+      ...args.metadata,
     },
-    { onConflict: "tx_hash,event_type,source" }
+  };
+
+  const { error } = await supabase.from("activity_events").upsert(
+    payload,
+    { onConflict: "chain_id,tx_hash,event_type,source" }
   );
+
+  if (error && isMissingChainAwareConflict(error as SupabaseErrorLike)) {
+    const { error: fallbackError } = await supabase.from("activity_events").upsert(
+      payload,
+      { onConflict: "tx_hash,event_type,source" }
+    );
+
+    if (fallbackError) {
+      throw new Error(`Mirror swap to activity_events: ${fallbackError.message}`);
+    }
+
+    return;
+  }
 
   if (error) {
     throw new Error(`Mirror swap to activity_events: ${error.message}`);
+  }
+}
+
+async function upsertSwapTransaction(payload: Record<string, unknown>) {
+  const { error } = await supabase.from("swap_transactions").upsert(
+    payload,
+    { onConflict: "chain_id,tx_hash" }
+  );
+
+  if (error && isMissingChainAwareConflict(error as SupabaseErrorLike)) {
+    const { error: fallbackError } = await supabase.from("swap_transactions").upsert(
+      payload,
+      { onConflict: "tx_hash" }
+    );
+
+    if (fallbackError) {
+      throw new Error(`Upsert swap transaction: ${fallbackError.message}`);
+    }
+
+    return;
+  }
+
+  if (error) {
+    throw new Error(`Upsert swap transaction: ${error.message}`);
   }
 }
 
@@ -1124,6 +1326,7 @@ async function mirrorSwapToSweepHistory(args: {
     .from("sweep_history")
     .select("id")
     .eq("tx_hash", args.txHash)
+    .eq("chain_id", args.chainId)
     .eq("type", "swap")
     .limit(1)
     .maybeSingle();
@@ -1181,7 +1384,13 @@ export async function recordSwap(input: {
 }): Promise<RecordedSwap> {
   const normalizedAddress = normalizeAddress(input.address);
   const normalizedTxHash = normalizeTxHash(input.txHash);
-  const resolvedChainId = Number.isFinite(input.chainId) ? Number(input.chainId) : base.id;
+  const resolvedChainId = resolveInputChainId(input.chainId);
+  const chainConfig = getSwapChainConfig(resolvedChainId);
+  const client = getPublicClientForSwapChain(resolvedChainId);
+
+  if (!chainConfig || !client) {
+    throw new ValidationError(`Unsupported swap chain: ${resolvedChainId}`);
+  }
 
   if (!isAddress(normalizedAddress)) {
     throw new ValidationError("A valid wallet address is required");
@@ -1191,7 +1400,7 @@ export async function recordSwap(input: {
     throw new ValidationError("A valid transaction hash is required");
   }
 
-  const existing = await getExistingSwap(normalizedTxHash);
+  const existing = await getExistingSwap(normalizedTxHash, resolvedChainId);
   if (existing) {
     return {
       txHash: existing.tx_hash,
@@ -1203,10 +1412,10 @@ export async function recordSwap(input: {
   }
 
   const user = await pointsEngine.getOrCreate(normalizedAddress);
-  const resolvedTransaction = await waitForResolvedTransaction(normalizedTxHash as Hex);
+  const resolvedTransaction = await waitForResolvedTransaction(client, normalizedTxHash as Hex);
   const existingResolvedSwap =
     resolvedTransaction.resolvedTxHash !== normalizedTxHash
-      ? await getExistingSwap(resolvedTransaction.resolvedTxHash)
+      ? await getExistingSwap(resolvedTransaction.resolvedTxHash, resolvedChainId)
       : null;
 
   if (existingResolvedSwap) {
@@ -1225,7 +1434,7 @@ export async function recordSwap(input: {
   }
 
   const transaction = resolvedTransaction.transaction;
-  const block = await baseClient.getBlock({ blockNumber: receipt.blockNumber });
+  const block = await client.getBlock({ blockNumber: receipt.blockNumber });
 
   const decodedSwap = decodeSwapEvent(receipt);
   const routingContext = await resolveSwapRoutingContext({
@@ -1236,25 +1445,49 @@ export async function recordSwap(input: {
   });
   const routerAddress = routingContext.routerAddress;
 
-  const [srcToken, dstToken] = await Promise.all([
-    getTokenMetadata(decodedSwap.srcToken),
-    getTokenMetadata(decodedSwap.dstToken),
+  const [srcToken, dstToken, openOceanDetail] = await Promise.all([
+    getTokenMetadata(client, chainConfig, decodedSwap.srcToken),
+    getTokenMetadata(client, chainConfig, decodedSwap.dstToken),
+    fetchOpenOceanTransactionDetail(chainConfig, resolvedTransaction.resolvedTxHash),
   ]);
 
   const occurredAt = new Date(Number(block.timestamp) * 1000);
   const dayKey = getDayKey(occurredAt);
   const weekKey = getIsoWeekKey(occurredAt);
-  const outPrice = await getTokenPriceUsd(decodedSwap.dstToken, dayKey);
-  const amountUsdScaled = calculateUsdAmountScaled(
-    decodedSwap.returnAmount,
-    dstToken.decimals,
-    outPrice.priceScaled
-  );
+  const openOceanAmountUsd = getOpenOceanAmountUsd(openOceanDetail);
+  const priceResult = openOceanAmountUsd
+    ? {
+        amountUsdScaled: parseScaledDecimal(openOceanAmountUsd, USD_SCALE),
+        source: "openocean_usd_valuation",
+        metadata: {
+          chain: chainConfig.key,
+          chainId: chainConfig.id,
+          openOceanSlug: chainConfig.openOceanSlug || null,
+          txHash: openOceanDetail?.tx_hash || resolvedTransaction.resolvedTxHash,
+          referrer: openOceanDetail?.referrer || null,
+        } satisfies Record<string, unknown>,
+      }
+    : await (async () => {
+        const outPrice = await getTokenPriceUsd(chainConfig, decodedSwap.dstToken, dayKey);
+        return {
+          amountUsdScaled: calculateUsdAmountScaled(
+            decodedSwap.returnAmount,
+            dstToken.decimals,
+            outPrice.priceScaled
+          ),
+          source: outPrice.source,
+          metadata: outPrice.metadata,
+        };
+      })();
+  const amountUsdScaled = priceResult.amountUsdScaled;
   const amountUsd = formatScaledDecimal(amountUsdScaled, USD_SCALE);
   const occurredAtIso = occurredAt.toISOString();
   const metadata = {
-    priceSource: outPrice.source,
-    priceMetadata: outPrice.metadata,
+    chainId: resolvedChainId,
+    chainKey: chainConfig.key,
+    chainLabel: chainConfig.label,
+    priceSource: priceResult.source,
+    priceMetadata: priceResult.metadata,
     submittedHash: normalizedTxHash,
     submittedKind: resolvedTransaction.submittedKind,
     resolvedTxHash: resolvedTransaction.resolvedTxHash,
@@ -1264,6 +1497,10 @@ export async function recordSwap(input: {
     sender: routingContext.senderAddress,
     routerAddress,
     referrer: decodedSwap.referrer || null,
+    inputTokenAddress: srcToken.address,
+    outputTokenAddress: dstToken.address,
+    inputTokenSymbol: srcToken.symbol,
+    outputTokenSymbol: dstToken.symbol,
     spentAmount: decodedSwap.spentAmount.toString(),
     returnAmount: decodedSwap.returnAmount.toString(),
     blockNumber: Number(receipt.blockNumber),
@@ -1271,44 +1508,37 @@ export async function recordSwap(input: {
     logIndex: decodedSwap.logIndex,
   } satisfies Record<string, unknown>;
 
-  const { error } = await supabase.from("swap_transactions").upsert(
-    {
-      user_id: user.id,
-      address: normalizedAddress,
-      tx_hash: resolvedTransaction.resolvedTxHash,
-      chain_id: resolvedChainId,
-      router_address: routerAddress,
-      sender_address: routingContext.senderAddress,
-      src_token_address: srcToken.address,
-      src_token_symbol: srcToken.symbol,
-      src_token_decimals: srcToken.decimals,
-      dst_token_address: dstToken.address,
-      dst_token_symbol: dstToken.symbol,
-      dst_token_decimals: dstToken.decimals,
-      dst_receiver: decodedSwap.dstReceiver,
-      referrer: decodedSwap.referrer,
-      amount_raw: decodedSwap.amount.toString(),
-      spent_amount_raw: decodedSwap.spentAmount.toString(),
-      return_amount_raw: decodedSwap.returnAmount.toString(),
-      min_return_amount_raw: decodedSwap.minReturnAmount.toString(),
-      guaranteed_amount_raw: decodedSwap.guaranteedAmount.toString(),
-      amount_usd: amountUsd,
-      day_key: dayKey,
-      week_key: weekKey,
-      block_number: Number(receipt.blockNumber),
-      block_hash: receipt.blockHash,
-      transaction_index: Number(receipt.transactionIndex),
-      log_index: decodedSwap.logIndex,
-      occurred_at: occurredAtIso,
-      metadata,
-      updated_at: new Date().toISOString(),
-    },
-    { onConflict: "tx_hash" }
-  );
-
-  if (error) {
-    throw new Error(`Upsert swap transaction: ${error.message}`);
-  }
+  await upsertSwapTransaction({
+    user_id: user.id,
+    address: normalizedAddress,
+    tx_hash: resolvedTransaction.resolvedTxHash,
+    chain_id: resolvedChainId,
+    router_address: routerAddress,
+    sender_address: routingContext.senderAddress,
+    src_token_address: srcToken.address,
+    src_token_symbol: srcToken.symbol,
+    src_token_decimals: srcToken.decimals,
+    dst_token_address: dstToken.address,
+    dst_token_symbol: dstToken.symbol,
+    dst_token_decimals: dstToken.decimals,
+    dst_receiver: decodedSwap.dstReceiver,
+    referrer: decodedSwap.referrer,
+    amount_raw: decodedSwap.amount.toString(),
+    spent_amount_raw: decodedSwap.spentAmount.toString(),
+    return_amount_raw: decodedSwap.returnAmount.toString(),
+    min_return_amount_raw: decodedSwap.minReturnAmount.toString(),
+    guaranteed_amount_raw: decodedSwap.guaranteedAmount.toString(),
+    amount_usd: amountUsd,
+    day_key: dayKey,
+    week_key: weekKey,
+    block_number: Number(receipt.blockNumber),
+    block_hash: receipt.blockHash,
+    transaction_index: Number(receipt.transactionIndex),
+    log_index: decodedSwap.logIndex,
+    occurred_at: occurredAtIso,
+    metadata,
+    updated_at: new Date().toISOString(),
+  });
 
   await upsertDailyVolume(user.id, normalizedAddress, dayKey, weekKey, amountUsd);
   await upsertAlltimeVolume(user.id, normalizedAddress, occurredAtIso, amountUsd);

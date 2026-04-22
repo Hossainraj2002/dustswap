@@ -3,6 +3,7 @@
 import dynamic from "next/dynamic";
 import { useMemo } from "react";
 import { useWalletConnection } from "@/hooks/useWalletConnection";
+import { OPENOCEAN_WIDGET_CHAIN_IDS } from "@/config/swapChains";
 
 const OPENOCEAN_REFERRER_ADDRESS =
   process.env.NEXT_PUBLIC_OPENOCEAN_REFERRER_ADDRESS ||
@@ -68,13 +69,7 @@ export default function SwapPageClient() {
         usePartialWalletManagement: true,
       },
       chains: {
-        allow: [
-          1, 56, 1151111081099710, 42161, 10, 324, 137, 43114, 250, 146, 80094, 8453,
-          59144, 534352, 81457, 34443, 5000, 130, 999, 14, 1923, 169, 1101, 40, 100,
-          30, 2222, 1329, 1088, 204, 42220, 1625, 33139, 25, 1313161554, 1285,
-          1666600000, 10143, 999, 9745, 98866, 239, 143, 20000000000001, 14,
-          20000000000006,
-        ],
+        allow: OPENOCEAN_WIDGET_CHAIN_IDS,
       },
       defaultChain: 8453,
       defaultFromToken: "0x0000000000000000000000000000000000000000",

@@ -142,6 +142,8 @@ CREATE INDEX IF NOT EXISTS idx_history_user_type_created
   ON sweep_history(user_id, type, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_history_tx_hash
   ON sweep_history(tx_hash);
+CREATE INDEX IF NOT EXISTS idx_history_chain_tx_hash_type
+  ON sweep_history(chain_id, tx_hash, type);
 CREATE INDEX IF NOT EXISTS idx_referrals_referrer
   ON referrals(referrer_id);
 CREATE INDEX IF NOT EXISTS idx_recovery_user  ON streak_recovery_events(user_id, created_at DESC);
@@ -301,7 +303,7 @@ CREATE TABLE IF NOT EXISTS activity_events (
   metadata    JSONB NOT NULL DEFAULT '{}'::jsonb,
   occurred_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  UNIQUE(tx_hash, event_type, source)
+  UNIQUE(chain_id, tx_hash, event_type, source)
 );
 
 CREATE TABLE IF NOT EXISTS quest_campaign_whitelist (

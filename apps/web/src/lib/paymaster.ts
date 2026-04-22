@@ -4,10 +4,21 @@ export const PAYMASTER_URL = process.env.NEXT_PUBLIC_PAYMASTER_URL || "";
 export const STREAK_SAVE_RECIPIENT =
   process.env.NEXT_PUBLIC_STREAK_SAVE_RECIPIENT ||
   "0xe641fB39Fd807B536f37F9268938D67587302E5d";
-export const OPENOCEAN_ROUTER_ADDRESSES = new Set([
+const DEFAULT_OPENOCEAN_ROUTER_ADDRESSES = [
   "0x6352a56caadc4f1e25cd6c75970fa768a3304e64",
   "0x6dd434082eab5cd134628d4b9a6e4d0813ef8b07",
-]);
+  "0x36a1acbbcafca2468b85011ddd16e7cb4d673230",
+  "0x6dd434082eab5cd134b33719ec1ff05fe985b97b",
+];
+export const OPENOCEAN_ROUTER_ADDRESSES = new Set(
+  (
+    process.env.NEXT_PUBLIC_OPENOCEAN_ROUTER_ADDRESSES ||
+    DEFAULT_OPENOCEAN_ROUTER_ADDRESSES.join(",")
+  )
+    .split(",")
+    .map((address) => address.trim().toLowerCase())
+    .filter(Boolean)
+);
 export const ERC20_APPROVE_SELECTOR = "0x095ea7b3";
 
 export function buildBasePaymasterCapabilities() {

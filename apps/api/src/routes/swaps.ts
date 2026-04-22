@@ -43,7 +43,7 @@ swapsRoutes.post("/record", async (c) => {
     const body = await c.req.json<{
       address?: string;
       txHash?: string;
-      chainId?: number;
+      chainId?: number | string;
     }>();
 
     if (!body.address || !isAddress(body.address)) {
@@ -54,10 +54,16 @@ swapsRoutes.post("/record", async (c) => {
       return c.json({ success: false, error: "A valid txHash is required" }, 400);
     }
 
+    const parsedChainId =
+      typeof body.chainId === "string" ? Number(body.chainId) : body.chainId;
+    if (body.chainId != null && !Number.isFinite(parsedChainId)) {
+      return c.json({ success: false, error: "A valid chainId is required" }, 400);
+    }
+
     const result = await recordSwap({
       address: normalizeAddress(body.address),
       txHash: body.txHash.toLowerCase(),
-      chainId: body.chainId,
+      chainId: parsedChainId,
     });
 
     const normalizedAddress = normalizeAddress(body.address);

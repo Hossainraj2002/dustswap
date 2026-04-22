@@ -3382,6 +3382,7 @@ export class PointsEngine {
     const user = await this.getOrCreate(address);
     const historyKey = input.txHash || input.orderId;
     const shouldAwardPoints = input.awardPoints ?? true;
+    const resolvedChainId = input.chainId || base.id;
 
     if (!historyKey) {
       throw new Error("Swap transaction id required");
@@ -3391,6 +3392,8 @@ export class PointsEngine {
       .from("sweep_history")
       .select("points_earned")
       .eq("tx_hash", historyKey)
+      .eq("chain_id", resolvedChainId)
+      .eq("type", "swap")
       .maybeSingle();
 
     if (historyLookupError) {
@@ -3420,7 +3423,7 @@ export class PointsEngine {
     const { error } = await supabase.from("sweep_history").insert({
       user_id: user.id,
       tx_hash: historyKey,
-      chain_id: input.chainId || base.id,
+      chain_id: resolvedChainId,
       input_tokens: [
         {
           token: input.inputToken || "0x0000000000000000000000000000000000000000",

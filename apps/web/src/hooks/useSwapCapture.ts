@@ -15,6 +15,7 @@ import { BASE_CHAIN_ID } from "@/lib/tokens";
 import { emitDataInvalidation } from "@/lib/clientEvents";
 import { buildPublicApiUrl } from "@/lib/apiBase";
 import { clearPointsSummaryCache } from "@/lib/points";
+import { isSupportedSwapChainId } from "@/config/swapChains";
 
 const STORAGE_KEY = "dustswap.swap.capture.queue";
 const CALLS_STORAGE_KEY = "dustswap.swap.capture.calls.queue";
@@ -201,10 +202,13 @@ function pruneCaptureQueue(queue: CaptureQueueItem[]) {
       continue;
     }
 
-    deduped.set(item.txHash.toLowerCase(), {
+    const resolvedChainId = resolveChainId(item.chainId);
+    const normalizedTxHash = item.txHash.toLowerCase();
+
+    deduped.set(`${resolvedChainId}:${normalizedTxHash}`, {
       address: normalizeAddress(item.address),
-      txHash: item.txHash.toLowerCase(),
-      chainId: resolveChainId(item.chainId),
+      txHash: normalizedTxHash,
+      chainId: resolvedChainId,
       queuedAt: Number(item.queuedAt || Date.now()),
       attempts: Number(item.attempts || 0),
       nextRetryAt: Number(item.nextRetryAt || 0),
@@ -227,11 +231,14 @@ function pruneCallQueue(queue: SmartWalletCallQueueItem[]) {
       continue;
     }
 
-    deduped.set(`${item.providerKey}:${callId}`, {
+    const resolvedChainId = resolveChainId(item.chainId);
+    const providerKey = item.providerKey || CONNECTOR_PROVIDER_KEY;
+
+    deduped.set(`${providerKey}:${resolvedChainId}:${callId}`, {
       address: normalizeAddress(item.address),
       callId,
-      providerKey: item.providerKey || CONNECTOR_PROVIDER_KEY,
-      chainId: resolveChainId(item.chainId),
+      providerKey,
+      chainId: resolvedChainId,
       queuedAt: Number(item.queuedAt || Date.now()),
       attempts: Number(item.attempts || 0),
       nextRetryAt: Number(item.nextRetryAt || 0),
@@ -532,7 +539,11 @@ export function useSwapCapture() {
         nextRetryAt: 0,
       };
       const filtered = queueRef.current.filter(
-        (candidate) => candidate.txHash !== normalizedItem.txHash
+        (candidate) =>
+          !(
+            candidate.txHash === normalizedItem.txHash &&
+            candidate.chainId === normalizedItem.chainId
+          )
       );
       updateQueue([normalizedItem, ...filtered]);
       void flushQueue(true);
@@ -553,7 +564,8 @@ export function useSwapCapture() {
         (candidate) =>
           !(
             candidate.callId === normalizedItem.callId &&
-            candidate.providerKey === normalizedItem.providerKey
+            candidate.providerKey === normalizedItem.providerKey &&
+            candidate.chainId === normalizedItem.chainId
           )
       );
       updateCallQueue([normalizedItem, ...filtered]);
@@ -917,7 +929,7 @@ export function useSwapCapture() {
             if (
               isTxHash(txHash) &&
               resolvedAddress &&
-              resolvedChainId === BASE_CHAIN_ID &&
+              isSupportedSwapChainId(resolvedChainId) &&
               isOpenOceanRouterAddress(to)
             ) {
               enqueueCapture({
@@ -943,7 +955,7 @@ export function useSwapCapture() {
             if (
               callId &&
               resolvedAddress &&
-              resolvedChainId === BASE_CHAIN_ID &&
+              isSupportedSwapChainId(resolvedChainId) &&
               hasOpenOceanCall(request.calls || [])
             ) {
               enqueueSmartWalletCall({

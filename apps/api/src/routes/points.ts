@@ -440,14 +440,22 @@ pointsRoutes.post("/record-swap", async (c) => {
     amountIn?: string | null;
     amountOut?: string | null;
     volumeUsd?: number | null;
+    chainId?: number | string | null;
   }>();
   if (!body.address || (!body.txHash && !body.orderId)) {
     return c.json({ error: "address and txHash or orderId required" }, 400);
   }
   try {
+    const parsedChainId =
+      typeof body.chainId === "string" ? Number(body.chainId) : body.chainId;
+    if (body.chainId != null && !Number.isFinite(parsedChainId)) {
+      return c.json({ success: false, error: "A valid chainId is required" }, 400);
+    }
+
     const pts = await pointsEngine.recordSwap(body.address, {
       txHash: body.txHash,
       orderId: body.orderId,
+      chainId: parsedChainId,
       inputToken: body.inputToken,
       outputToken: body.outputToken,
       amountIn: body.amountIn,

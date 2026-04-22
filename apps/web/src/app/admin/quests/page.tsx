@@ -8,6 +8,7 @@ import {
   saveAdminQuest,
 } from "@/lib/quests";
 import type { AdminQuestInput } from "@/types/quests";
+import { SUPPORTED_SWAP_CHAINS } from "@/config/swapChains";
 
 function getDisplayError(error: unknown) {
   const message = (error as Error)?.message || "Request failed";
@@ -34,6 +35,56 @@ function toDateTimeLocalValue(value?: string | null) {
 
 function toIsoOrNull(value: string) {
   return value ? new Date(value).toISOString() : null;
+}
+
+function isSwapQuest(form: AdminQuestInput) {
+  return form.actionType === "swap_volume" || form.actionType === "swap_count";
+}
+
+function parseRulesText(value: string) {
+  try {
+    const parsed = value.trim() ? JSON.parse(value) : {};
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, any>)
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+function getRuleTokenAddress(rules: Record<string, any>) {
+  if (typeof rules.tokenAddress === "string") {
+    return rules.tokenAddress;
+  }
+
+  if (Array.isArray(rules.tokenAddresses) && typeof rules.tokenAddresses[0] === "string") {
+    return rules.tokenAddresses[0];
+  }
+
+  if (rules.token && typeof rules.token === "object" && typeof rules.token.address === "string") {
+    return rules.token.address;
+  }
+
+  return "";
+}
+
+function getRuleTokenMatch(rules: Record<string, any>) {
+  const value =
+    rules.tokenMatch ||
+    (rules.token && typeof rules.token === "object" ? rules.token.match : null);
+  return value === "input" || value === "output" || value === "input_or_output"
+    ? value
+    : "input_or_output";
+}
+
+function getRuleChainValue(rules: Record<string, any>) {
+  const chainIds = Array.isArray(rules.chainIds)
+    ? rules.chainIds.map((value) => Number(value)).filter((value) => Number.isFinite(value))
+    : typeof rules.chainId !== "undefined"
+      ? [Number(rules.chainId)].filter((value) => Number.isFinite(value))
+      : [];
+
+  return chainIds.length === 1 ? String(chainIds[0]) : "all";
 }
 
 const EMPTY_FORM: AdminQuestInput = {
@@ -82,7 +133,7 @@ function getRulesExample(form: AdminQuestInput) {
 }`;
   }
 
-  if (form.actionType === "swap_volume" || form.actionType === "swap_count") {
+  if (isSwapQuest(form)) {
     return `{
   "source": "dustswap_swap"
 }`;
@@ -144,6 +195,29 @@ export default function AdminQuestsPage() {
   const [isSaving, setIsSaving] = useState(false);
   const [isUnlocked, setIsUnlocked] = useState(false);
   const rulesExample = getRulesExample(form);
+  const parsedRules = parseRulesText(rulesText);
+  const chainRuleValue = getRuleChainValue(parsedRules);
+  const tokenRuleAddress = getRuleTokenAddress(parsedRules);
+  const tokenRuleMatch = getRuleTokenMatch(parsedRules);
+
+  function updateRulesText(patch: Record<string, any>) {
+    const nextRules = {
+      ...parseRulesText(rulesText),
+      ...patch,
+    };
+
+    for (const [key, value] of Object.entries(nextRules)) {
+      if (
+        value == null ||
+        value === "" ||
+        (Array.isArray(value) && value.length === 0)
+      ) {
+        delete nextRules[key];
+      }
+    }
+
+    setRulesText(JSON.stringify(nextRules, null, 2));
+  }
 
   async function loadCampaignWhitelist(tokenOverride?: string) {
     const tokenToUse = tokenOverride || adminToken;
@@ -584,10 +658,77 @@ export default function AdminQuestsPage() {
               </p>
             </div>
 
+            {isSwapQuest(form) ? (
+              <div className="mt-4 grid gap-4 rounded-2xl border border-sky-100 bg-sky-50/40 p-4 sm:grid-cols-3">
+                <label>
+                  <HelpLabel
+                    label="Swap chain"
+                    help="All chains is the default. Pick one chain only when this quest should count swaps from that chain."
+                  />
+                  <select
+                    value={chainRuleValue}
+                    onChange={(event) => {
+                      const value = event.target.value;
+                      updateRulesText(
+                        value === "all"
+                          ? { chainId: undefined, chainIds: undefined }
+                          : { chainId: undefined, chainIds: [Number(value)] }
+                      );
+                    }}
+                    className="w-full rounded-2xl border border-gray-200 bg-white px-4 py-3 text-sm text-gray-900 outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500 shadow-sm"
+                  >
+                    <option value="all">All chains</option>
+                    {SUPPORTED_SWAP_CHAINS.map((chain) => (
+                      <option key={chain.id} value={chain.id}>
+                        {chain.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label>
+                  <HelpLabel
+                    label="Token contract"
+                    help="Leave blank for all tokens. Paste a token contract to count only swaps where that token matches the selected side."
+                  />
+                  <input
+                    value={tokenRuleAddress}
+                    onChange={(event) =>
+                      updateRulesText({
+                        tokenAddress: event.target.value.trim() || undefined,
+                      })
+                    }
+                    placeholder="All tokens"
+                    className="w-full rounded-2xl border border-gray-200 bg-white px-4 py-3 text-sm text-gray-900 outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500 shadow-sm placeholder:text-gray-500"
+                  />
+                </label>
+
+                <label>
+                  <HelpLabel
+                    label="Token match"
+                    help="Input or output means the token can be on either side of the swap. Use input-only or output-only for stricter tasks."
+                  />
+                  <select
+                    value={tokenRuleMatch}
+                    onChange={(event) =>
+                      updateRulesText({
+                        tokenMatch: event.target.value,
+                      })
+                    }
+                    className="w-full rounded-2xl border border-gray-200 bg-white px-4 py-3 text-sm text-gray-900 outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500 shadow-sm"
+                  >
+                    <option value="input_or_output">Input or output</option>
+                    <option value="input">Input only</option>
+                    <option value="output">Output only</option>
+                  </select>
+                </label>
+              </div>
+            ) : null}
+
             <label className="mt-4 block">
               <HelpLabel
                 label="Rules JSON"
-                help="Advanced per-quest config. For post verification you can require any one acceptable X tag or mention with requiredAnyOf, and suggest text with composeText. The example below changes automatically based on the current quest type."
+                help="Advanced per-quest config. Onchain swap quests default to all chains and all tokens unless chainIds or tokenAddress are set. The example below changes automatically based on the current quest type."
                 example={rulesExample}
               />
               <textarea
@@ -607,6 +748,8 @@ export default function AdminQuestsPage() {
                 <code className="ml-1">x_post_link</code> also checks that the tweet author username matches the X username saved by the wallet.
                 <code className="ml-1">externalUrl</code> is the page users open.
                 <code className="ml-1">source</code> is used for onchain swap tracking.
+                <code className="ml-1">chainIds</code>, <code>tokenAddress</code>, and{" "}
+                <code>tokenMatch</code> narrow swap quests when needed.
               </p>
             </div>
 
