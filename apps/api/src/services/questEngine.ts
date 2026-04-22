@@ -193,6 +193,14 @@ const OPENOCEAN_REFERRER_ADDRESS =
   process.env.OPENOCEAN_REFERRER_ADDRESS ||
   process.env.NEXT_PUBLIC_OPENOCEAN_REFERRER_ADDRESS ||
   "0x0fd79f3ceaE7ddA5cFC15b35188E67EFAc542573";
+const OPENOCEAN_SWAP_SYNC_PAGE_SIZE = Math.min(
+  5,
+  Math.max(1, Number(process.env.OPENOCEAN_SWAP_SYNC_PAGE_SIZE || "5"))
+);
+const OPENOCEAN_SWAP_SYNC_TIMEOUT_MS = Math.min(
+  10_000,
+  Math.max(1_000, Number(process.env.OPENOCEAN_SWAP_SYNC_TIMEOUT_MS || "6000"))
+);
 const GENERAL_CAMPAIGN_KEY = "general";
 const COFOUNDER_PASS_CAMPAIGN_KEY = "cofounder_pass";
 const QUEST_BOARD_CACHE_TTL_MS = 10_000;
@@ -660,11 +668,15 @@ function getSwapAmountUsdFallback(
 }
 
 async function fetchOpenOceanData<T>(path: string) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), OPENOCEAN_SWAP_SYNC_TIMEOUT_MS);
+
   const response = await fetch(`${OPENOCEAN_API_BASE}${path}`, {
+    signal: controller.signal,
     headers: {
       Accept: "application/json",
     },
-  });
+  }).finally(() => clearTimeout(timeoutId));
 
   if (!response.ok) {
     throw new Error(`OpenOcean request failed with ${response.status}`);
@@ -1668,32 +1680,48 @@ export class QuestEngine {
 
       const params = new URLSearchParams({
         account: normalizedAddress,
-        pageSize: "15",
+        pageSize: String(OPENOCEAN_SWAP_SYNC_PAGE_SIZE),
       });
 
-      const history = await fetchOpenOceanData<OpenOceanWalletTransaction[]>(
-        `/base/getTxs?${params.toString()}`
-      );
+      let history: OpenOceanWalletTransaction[] = [];
+      try {
+        history =
+          (await fetchOpenOceanData<OpenOceanWalletTransaction[]>(
+            `/base/getTxs?${params.toString()}`
+          )) || [];
+      } catch {
+        history = [];
+      }
 
       const importedHashes: string[] = [];
       const expectedReferrer = OPENOCEAN_REFERRER_ADDRESS.toLowerCase();
+      const detailResults = await Promise.allSettled(
+        (history ?? []).slice(0, OPENOCEAN_SWAP_SYNC_PAGE_SIZE).map(async (item) => {
+          const txHash = item.txHash;
+          if (!txHash) {
+            return null;
+          }
 
-      for (const item of history ?? []) {
-        const txHash = item.txHash;
-        if (!txHash) {
-          continue;
-        }
+          const knownAmount = knownHashes.get(txHash) ?? -1;
+          if (knownAmount > 0) {
+            return null;
+          }
 
-        const knownAmount = knownHashes.get(txHash) ?? -1;
-        if (knownAmount > 0) {
-          continue;
-        }
-
-        try {
           const detail = await fetchOpenOceanData<OpenOceanTransactionDetail>(
             `/base/getTransaction?hash=${encodeURIComponent(txHash)}`
           );
 
+          return { item, txHash, detail };
+        })
+      );
+
+      for (const result of detailResults) {
+        if (result.status !== "fulfilled" || !result.value) {
+          continue;
+        }
+
+        try {
+          const { item, txHash, detail } = result.value;
           const resolvedHash = detail.tx_hash || txHash;
           const sender = String(detail.sender || detail.receiver || "").toLowerCase();
           if (sender && sender !== normalizedAddress) {

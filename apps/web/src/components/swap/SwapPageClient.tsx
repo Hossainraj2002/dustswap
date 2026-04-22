@@ -11,7 +11,14 @@ const OPENOCEAN_REFERRER_ADDRESS =
 
 const OpenOceanWidget = dynamic<{ integrator: string; config: any }>(
   () => import("@openocean.finance/widget").then((mod) => mod.OpenOceanWidget as any),
-  { ssr: false }
+  {
+    ssr: false,
+    loading: () => (
+      <div className="mx-auto flex min-h-[460px] w-full max-w-[420px] items-center justify-center rounded-2xl border border-gray-100 bg-white text-sm text-gray-500 shadow-sm">
+        Loading swap...
+      </div>
+    ),
+  }
 );
 
 export default function SwapPageClient() {
