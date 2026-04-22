@@ -6,7 +6,7 @@ export type SupportedSwapChain = {
 
 // Capture-supported EVM chains only. The OpenOcean widget intentionally uses
 // its own default chain list and is not restricted by this config.
-export const SUPPORTED_SWAP_CHAINS = [
+export const SUPPORTED_SWAP_CAPTURE_CHAINS = [
   { id: 8453, key: "base", label: "Base" },
   { id: 1, key: "ethereum", label: "Ethereum" },
   { id: 42161, key: "arbitrum", label: "Arbitrum" },
@@ -19,7 +19,9 @@ export const SUPPORTED_SWAP_CHAINS = [
   { id: 534352, key: "scroll", label: "Scroll" },
 ] as const satisfies readonly SupportedSwapChain[];
 
-export const SUPPORTED_SWAP_CAPTURE_CHAIN_IDS = SUPPORTED_SWAP_CHAINS.map(
+export const SUPPORTED_SWAP_CHAINS = SUPPORTED_SWAP_CAPTURE_CHAINS;
+
+export const SUPPORTED_SWAP_CAPTURE_CHAIN_IDS = SUPPORTED_SWAP_CAPTURE_CHAINS.map(
   (chain) => chain.id
 );
 

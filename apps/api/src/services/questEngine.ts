@@ -1976,7 +1976,12 @@ export class QuestEngine {
       awardedPoints: number;
     }> = [];
 
-    for (const quest of (questsData ?? []) as QuestRecord[]) {
+    const now = getNow();
+    const quests = ((questsData ?? []) as QuestRecord[]).filter((quest) =>
+      isQuestLive(quest, now)
+    );
+
+    for (const quest of quests) {
       const progress = await this.syncSwapProgressForQuest(userId, address, quest);
 
       if (progress?.completedAt && progress.awardedPoints > 0) {

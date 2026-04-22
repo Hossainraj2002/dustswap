@@ -8,7 +8,9 @@ import {
   saveAdminQuest,
 } from "@/lib/quests";
 import type { AdminQuestInput } from "@/types/quests";
-import { SUPPORTED_SWAP_CHAINS } from "@/config/swapChains";
+import { SUPPORTED_SWAP_CAPTURE_CHAINS } from "@/config/swapChains";
+
+type SwapQuestChainOption = "all" | `${number}`;
 
 function getDisplayError(error: unknown) {
   const message = (error as Error)?.message || "Request failed";
@@ -39,6 +41,14 @@ function toIsoOrNull(value: string) {
 
 function isSwapQuest(form: AdminQuestInput) {
   return form.actionType === "swap_volume" || form.actionType === "swap_count";
+}
+
+function isOnchainSwapForm(form: AdminQuestInput) {
+  return (
+    isSwapQuest(form) ||
+    form.category === "onchain" ||
+    form.verificationType === "swap_volume"
+  );
 }
 
 function parseRulesText(value: string) {
@@ -85,6 +95,39 @@ function getRuleChainValue(rules: Record<string, any>) {
       : [];
 
   return chainIds.length === 1 ? String(chainIds[0]) : "all";
+}
+
+function getCaptureChainLabel(chainId: number) {
+  return (
+    SUPPORTED_SWAP_CAPTURE_CHAINS.find((chain) => chain.id === chainId)?.label ||
+    `Chain ${chainId}`
+  );
+}
+
+function applySwapQuestDefaults(form: AdminQuestInput): AdminQuestInput {
+  return {
+    ...form,
+    category: "onchain",
+    platform: "dustswap",
+    verificationType: "swap_volume",
+    ctaLabel: form.ctaLabel || "Open Swap",
+    ctaUrl: form.ctaUrl || "/swap",
+  };
+}
+
+function formatSwapQuestRuleSummary(rules: Record<string, any>) {
+  const chainValue = getRuleChainValue(rules) as SwapQuestChainOption;
+  const tokenAddress = getRuleTokenAddress(rules);
+  const tokenMatch = getRuleTokenMatch(rules);
+  const chainLabel =
+    chainValue === "all"
+      ? "All captured chains"
+      : getCaptureChainLabel(Number(chainValue));
+  const tokenLabel = tokenAddress
+    ? `${tokenAddress} (${tokenMatch.replace(/_/g, " ")})`
+    : "All tokens";
+
+  return { chainLabel, tokenLabel };
 }
 
 const EMPTY_FORM: AdminQuestInput = {
@@ -135,7 +178,10 @@ function getRulesExample(form: AdminQuestInput) {
 
   if (isSwapQuest(form)) {
     return `{
-  "source": "dustswap_swap"
+  "source": "dustswap_swap",
+  "chainIds": [1],
+  "tokenAddress": "0xc18360217d8f7ab5e7c516566761ea12ce7f9d72",
+  "tokenMatch": "input_or_output"
 }`;
   }
 
@@ -299,11 +345,12 @@ export default function AdminQuestsPage() {
 
     try {
       const parsedRules = rulesText.trim() ? JSON.parse(rulesText) : {};
+      const normalizedForm = isSwapQuest(form) ? applySwapQuestDefaults(form) : form;
       const response = await saveAdminQuest(adminToken, {
-        ...form,
-        rewardPoints: Number(form.rewardPoints || 0),
-        targetValue: Number(form.targetValue || 1),
-        sortOrder: Number(form.sortOrder || 0),
+        ...normalizedForm,
+        rewardPoints: Number(normalizedForm.rewardPoints || 0),
+        targetValue: Number(normalizedForm.targetValue || 1),
+        sortOrder: Number(normalizedForm.sortOrder || 0),
         rules: parsedRules,
       });
 
@@ -382,6 +429,7 @@ export default function AdminQuestsPage() {
         <h1 className="mt-3 text-3xl font-semibold text-gray-900">Manage quest definitions</h1>
         <p className="mt-3 max-w-2xl text-sm leading-6 text-gray-600">
           Edit points, rules, quest type, timing, and publish state without touching code.
+          Swap quests can target all captured chains, one captured chain, all tokens, or one token contract.
         </p>
       </section>
 
@@ -539,12 +587,42 @@ export default function AdminQuestsPage() {
                   <HelpLabel label={field.label} help={field.help} />
                   <select
                     value={String((form as any)[field.key] || field.options[0])}
-                    onChange={(event) =>
-                      setForm((current) => ({
-                        ...current,
-                        [field.key]: event.target.value,
-                      }))
-                    }
+                    onChange={(event) => {
+                      const nextValue = event.target.value;
+                      setForm((current) => {
+                        const next = {
+                          ...current,
+                          [field.key]: nextValue,
+                        };
+
+                        if (
+                          field.key === "actionType" &&
+                          (nextValue === "swap_volume" || nextValue === "swap_count")
+                        ) {
+                          return applySwapQuestDefaults(next as AdminQuestInput);
+                        }
+
+                        if (field.key === "category" && nextValue === "onchain") {
+                          return applySwapQuestDefaults({
+                            ...(next as AdminQuestInput),
+                            actionType: isSwapQuest(next as AdminQuestInput)
+                              ? (next.actionType as AdminQuestInput["actionType"])
+                              : "swap_volume",
+                          });
+                        }
+
+                        if (field.key === "verificationType" && nextValue === "swap_volume") {
+                          return applySwapQuestDefaults({
+                            ...(next as AdminQuestInput),
+                            actionType: isSwapQuest(next as AdminQuestInput)
+                              ? (next.actionType as AdminQuestInput["actionType"])
+                              : "swap_volume",
+                          });
+                        }
+
+                        return next as AdminQuestInput;
+                      });
+                    }}
                     className="w-full rounded-2xl border border-gray-200 bg-white px-4 py-3 text-sm text-gray-900 outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500 shadow-sm"
                   >
                     {field.options.map((option) => (
@@ -658,12 +736,12 @@ export default function AdminQuestsPage() {
               </p>
             </div>
 
-            {isSwapQuest(form) ? (
+            {isOnchainSwapForm(form) ? (
               <div className="mt-4 grid gap-4 rounded-2xl border border-sky-100 bg-sky-50/40 p-4 sm:grid-cols-3">
                 <label>
                   <HelpLabel
-                    label="Swap chain"
-                    help="All chains is the default. Pick one chain only when this quest should count swaps from that chain."
+                    label="Captured chain"
+                    help="All captured chains is the default. Pick one of the top 10 capture chains only when this quest should count swaps from that chain."
                   />
                   <select
                     value={chainRuleValue}
@@ -677,8 +755,8 @@ export default function AdminQuestsPage() {
                     }}
                     className="w-full rounded-2xl border border-gray-200 bg-white px-4 py-3 text-sm text-gray-900 outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500 shadow-sm"
                   >
-                    <option value="all">All chains</option>
-                    {SUPPORTED_SWAP_CHAINS.map((chain) => (
+                    <option value="all">All captured chains</option>
+                    {SUPPORTED_SWAP_CAPTURE_CHAINS.map((chain) => (
                       <option key={chain.id} value={chain.id}>
                         {chain.label}
                       </option>
@@ -771,7 +849,14 @@ export default function AdminQuestsPage() {
                   No quests found yet.
                 </div>
               ) : (
-                quests.map((quest) => (
+                quests.map((quest) => {
+                  const isQuestSwap =
+                    quest.action_type === "swap_volume" || quest.action_type === "swap_count";
+                  const swapRuleSummary = isQuestSwap
+                    ? formatSwapQuestRuleSummary(quest.rules || {})
+                    : null;
+
+                  return (
                   <article
                     key={quest.id}
                     className="rounded-2xl border border-gray-200 bg-white p-4"
@@ -791,6 +876,12 @@ export default function AdminQuestsPage() {
                         <p className="mt-1 text-xs text-gray-500">
                           Target {quest.target_value} / Sort {quest.sort_order}
                         </p>
+                        {swapRuleSummary ? (
+                          <div className="mt-2 rounded-xl border border-sky-100 bg-sky-50 px-3 py-2 text-xs leading-5 text-sky-800">
+                            <p>Chain: {swapRuleSummary.chainLabel}</p>
+                            <p>Token: {swapRuleSummary.tokenLabel}</p>
+                          </div>
+                        ) : null}
                         {quest.starts_at ? (
                           <p className="mt-1 text-xs text-gray-500">
                             Opens {new Date(quest.starts_at).toLocaleString()}
@@ -830,7 +921,8 @@ export default function AdminQuestsPage() {
                       </button>
                     </div>
                   </article>
-                ))
+                  );
+                })
               )}
             </div>
 
