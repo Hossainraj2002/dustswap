@@ -15,7 +15,7 @@ import { BASE_CHAIN_ID } from "@/lib/tokens";
 import { emitDataInvalidation } from "@/lib/clientEvents";
 import { buildPublicApiUrl } from "@/lib/apiBase";
 import { clearPointsSummaryCache } from "@/lib/points";
-import { isSupportedSwapChainId } from "@/config/swapChains";
+import { isSupportedSwapCaptureChainId } from "@/config/swapChains";
 
 const STORAGE_KEY = "dustswap.swap.capture.queue";
 const CALLS_STORAGE_KEY = "dustswap.swap.capture.calls.queue";
@@ -929,7 +929,7 @@ export function useSwapCapture() {
             if (
               isTxHash(txHash) &&
               resolvedAddress &&
-              isSupportedSwapChainId(resolvedChainId) &&
+              isSupportedSwapCaptureChainId(resolvedChainId) &&
               isOpenOceanRouterAddress(to)
             ) {
               enqueueCapture({
@@ -955,7 +955,7 @@ export function useSwapCapture() {
             if (
               callId &&
               resolvedAddress &&
-              isSupportedSwapChainId(resolvedChainId) &&
+              isSupportedSwapCaptureChainId(resolvedChainId) &&
               hasOpenOceanCall(request.calls || [])
             ) {
               enqueueSmartWalletCall({

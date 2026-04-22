@@ -2,22 +2,63 @@
 
 import dynamic from "next/dynamic";
 import { useMemo } from "react";
+import { WidgetSkeleton } from "@openocean.finance/widget/dist/esm/components/Skeleton/WidgetSkeleton.js";
 import { useWalletConnection } from "@/hooks/useWalletConnection";
-import { OPENOCEAN_WIDGET_CHAIN_IDS } from "@/config/swapChains";
 
 const OPENOCEAN_REFERRER_ADDRESS =
   process.env.NEXT_PUBLIC_OPENOCEAN_REFERRER_ADDRESS ||
   "0x0fd79f3ceaE7ddA5cFC15b35188E67EFAc542573";
 
+const WIDGET_BASE_CONFIG = {
+  variant: "compact",
+  subvariant: "default",
+  appearance: "light",
+  slippage: 0.005,
+  theme: {
+    palette: {
+      primary: { main: "#006Eff" },
+      secondary: { main: "#FFC800" },
+      background: { default: "#ffffff", paper: "#f8f8fa" },
+      text: { primary: "#00070F", secondary: "#6A7481" },
+      grey: {
+        200: "#e6e6e6",
+        300: "#D5DAE1",
+        700: "#555B62",
+        800: "#373F48",
+      },
+    },
+    shape: {
+      borderRadius: 12,
+      borderRadiusSecondary: 12,
+      borderRadiusTertiary: 24,
+    },
+    typography: { fontFamily: "Inter, sans-serif" },
+    container: {
+      boxShadow: "0px 8px 32px rgba(0, 0, 0, 0.08)",
+      borderRadius: "16px",
+    },
+    components: {
+      MuiCard: { defaultProps: { variant: "filled" } },
+      MuiTabs: {
+        styleOverrides: {
+          root: {
+            backgroundColor: "#f8f8fa",
+            ".MuiTabs-indicator": { backgroundColor: "#ffffff" },
+          },
+        },
+      },
+    },
+  },
+  defaultChain: 8453,
+  defaultFromToken: "0x0000000000000000000000000000000000000000",
+  defaultToToken: "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+} as const;
+
 const OpenOceanWidget = dynamic<{ integrator: string; config: any }>(
   () => import("@openocean.finance/widget").then((mod) => mod.OpenOceanWidget as any),
   {
     ssr: false,
-    loading: () => (
-      <div className="mx-auto flex min-h-[460px] w-full max-w-[420px] items-center justify-center rounded-2xl border border-gray-100 bg-white text-sm text-gray-500 shadow-sm">
-        Loading swap...
-      </div>
-    ),
+    loading: () => <WidgetSkeleton config={WIDGET_BASE_CONFIG as any} />,
   }
 );
 
@@ -26,48 +67,10 @@ export default function SwapPageClient() {
 
   const config = useMemo(
     () => ({
-      variant: "compact",
-      subvariant: "default",
-      appearance: "light",
+      ...WIDGET_BASE_CONFIG,
       referrer: {
         address: OPENOCEAN_REFERRER_ADDRESS,
         fee: "0.25",
-      },
-      slippage: 0.005,
-      theme: {
-        palette: {
-          primary: { main: "#006Eff" },
-          secondary: { main: "#FFC800" },
-          background: { default: "#ffffff", paper: "#f8f8fa" },
-          text: { primary: "#00070F", secondary: "#6A7481" },
-          grey: {
-            200: "#e6e6e6",
-            300: "#D5DAE1",
-            700: "#555B62",
-            800: "#373F48",
-          },
-        },
-        shape: {
-          borderRadius: 12,
-          borderRadiusSecondary: 12,
-          borderRadiusTertiary: 24,
-        },
-        typography: { fontFamily: "Inter, sans-serif" },
-        container: {
-          boxShadow: "0px 8px 32px rgba(0, 0, 0, 0.08)",
-          borderRadius: "16px",
-        },
-        components: {
-          MuiCard: { defaultProps: { variant: "filled" } },
-          MuiTabs: {
-            styleOverrides: {
-              root: {
-                backgroundColor: "#f8f8fa",
-                ".MuiTabs-indicator": { backgroundColor: "#ffffff" },
-              },
-            },
-          },
-        },
       },
       walletConfig: {
         onConnect: () => {
@@ -75,12 +78,6 @@ export default function SwapPageClient() {
         },
         usePartialWalletManagement: true,
       },
-      chains: {
-        allow: OPENOCEAN_WIDGET_CHAIN_IDS,
-      },
-      defaultChain: 8453,
-      defaultFromToken: "0x0000000000000000000000000000000000000000",
-      defaultToToken: "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
     }),
     [openWalletModal]
   );
