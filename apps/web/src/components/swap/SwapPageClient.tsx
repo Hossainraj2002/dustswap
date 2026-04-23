@@ -8,41 +8,11 @@ const OPENOCEAN_REFERRER_ADDRESS =
   process.env.NEXT_PUBLIC_OPENOCEAN_REFERRER_ADDRESS ||
   "0x0fd79f3ceaE7ddA5cFC15b35188E67EFAc542573";
 
-const WIDGET_ALLOWED_CHAIN_IDS = [
-  1,
-  56,
-  42161,
-  10,
-  324,
-  137,
-  43114,
-  146,
-  80094,
-  8453,
-  59144,
-  5000,
-  130,
-  204,
-  42220,
-  33139,
-  25,
-  9745,
-  98866,
-  143,
-  14,
-] as const;
-
 const WIDGET_BASE_CONFIG = {
   variant: "compact",
   subvariant: "default",
   appearance: "light",
   slippage: 0.005,
-  chains: {
-    allow: WIDGET_ALLOWED_CHAIN_IDS,
-    from: { allow: WIDGET_ALLOWED_CHAIN_IDS },
-    to: { allow: WIDGET_ALLOWED_CHAIN_IDS },
-    types: { allow: ["EVM"] },
-  },
   theme: {
     palette: {
       primary: { main: "#006Eff" },

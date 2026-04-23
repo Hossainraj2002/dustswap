@@ -167,32 +167,29 @@ type OpenOceanWalletTransaction = {
   outAmount?: string;
   inToken?: string;
   outToken?: string;
-};
-
-type OpenOceanTransactionDetail = {
-  tx_hash?: string;
-  sender?: string;
-  receiver?: string;
-  referrer?: string;
   usd_valuation?: number | string;
-  create_at?: string;
-  update_at?: string;
-  in_token_symbol?: string;
-  out_token_symbol?: string;
-  in_amount_value?: string;
-  out_amount_value?: string;
 };
 
 const X_SCOPES = ["tweet.read", "users.read", "offline.access"];
 const OPENOCEAN_API_BASE =
   process.env.OPENOCEAN_API_BASE || "https://open-api.openocean.finance/v3";
-const OPENOCEAN_REFERRER_ADDRESS =
-  process.env.OPENOCEAN_REFERRER_ADDRESS ||
-  process.env.NEXT_PUBLIC_OPENOCEAN_REFERRER_ADDRESS ||
-  "0x0fd79f3ceaE7ddA5cFC15b35188E67EFAc542573";
 const OPENOCEAN_SWAP_SYNC_PAGE_SIZE = Math.min(
-  5,
-  Math.max(1, Number(process.env.OPENOCEAN_SWAP_SYNC_PAGE_SIZE || "5"))
+  50,
+  Math.max(1, Number(process.env.OPENOCEAN_SWAP_SYNC_PAGE_SIZE || "50"))
+);
+const OPENOCEAN_SWAP_SYNC_MAX_RECORDS = Math.min(
+  50,
+  Math.max(
+    1,
+    Number(
+      process.env.OPENOCEAN_SWAP_SYNC_MAX_RECORDS ||
+        String(OPENOCEAN_SWAP_SYNC_PAGE_SIZE)
+    )
+  )
+);
+const OPENOCEAN_SWAP_SYNC_CONCURRENCY = Math.min(
+  1,
+  Math.max(1, Number(process.env.OPENOCEAN_SWAP_SYNC_CONCURRENCY || "1"))
 );
 const OPENOCEAN_SWAP_SYNC_TIMEOUT_MS = Math.min(
   10_000,
@@ -283,6 +280,11 @@ function getMetadataAddress(metadata: Record<string, unknown>, key: string) {
 
 function getSwapTransactionKey(chainId: number, txHash: string) {
   return `${chainId}:${String(txHash || "").trim().toLowerCase()}`;
+}
+
+function getReferenceDateFromDayKey(dayKey: string) {
+  const parsed = new Date(`${dayKey}T12:00:00.000Z`);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
 function getRowAddress(value: unknown) {
@@ -687,6 +689,43 @@ async function fetchOpenOceanData<T>(path: string) {
   }
 
   return payload.data as T;
+}
+
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  concurrency: number,
+  mapper: (item: T) => Promise<R>
+) {
+  const results: Array<PromiseSettledResult<R>> = new Array(items.length);
+  let nextIndex = 0;
+
+  async function worker() {
+    while (nextIndex < items.length) {
+      const currentIndex = nextIndex;
+      nextIndex += 1;
+
+      try {
+        results[currentIndex] = {
+          status: "fulfilled",
+          value: await mapper(items[currentIndex]),
+        };
+      } catch (error) {
+        results[currentIndex] = {
+          status: "rejected",
+          reason: error,
+        };
+      }
+    }
+  }
+
+  await Promise.all(
+    Array.from(
+      { length: Math.min(Math.max(1, concurrency), Math.max(1, items.length)) },
+      () => worker()
+    )
+  );
+
+  return results;
 }
 
 export class QuestEngine {
@@ -1686,72 +1725,65 @@ export class QuestEngine {
         history = [];
       }
 
+      const candidateSwaps = Array.from(
+        (history ?? [])
+          .slice(0, OPENOCEAN_SWAP_SYNC_MAX_RECORDS)
+          .reduce((itemsByHash, item) => {
+            const txHash = item.txHash?.toLowerCase();
+            if (txHash && !itemsByHash.has(txHash)) {
+              itemsByHash.set(txHash, {
+                txHash,
+                amountUsd: item.usd_valuation,
+              });
+            }
+
+            return itemsByHash;
+          }, new Map<string, { txHash: string; amountUsd?: number | string }>())
+          .values()
+      ).filter((item) => !knownSwaps.has(getSwapTransactionKey(base.id, item.txHash)));
+
       const importedHashes: string[] = [];
-      const expectedReferrer = OPENOCEAN_REFERRER_ADDRESS.toLowerCase();
-      const detailResults = await Promise.allSettled(
-        (history ?? []).slice(0, OPENOCEAN_SWAP_SYNC_PAGE_SIZE).map(async (item) => {
-          const txHash = item.txHash?.toLowerCase();
-          if (!txHash) {
-            return null;
-          }
-
-          if (knownSwaps.has(getSwapTransactionKey(base.id, txHash))) {
-            return null;
-          }
-
-          const detail = await fetchOpenOceanData<OpenOceanTransactionDetail>(
-            `/base/getTransaction?hash=${encodeURIComponent(txHash)}`
-          );
-
-          return { txHash, detail };
-        })
+      const currentReferenceDate = getNow();
+      const syncReferenceDates = new Map<string, Date>([
+        [currentReferenceDate.toISOString(), currentReferenceDate],
+      ]);
+      const recordResults = await mapWithConcurrency(
+        candidateSwaps,
+        OPENOCEAN_SWAP_SYNC_CONCURRENCY,
+        async (item) =>
+          recordSwap({
+            address: normalizedAddress,
+            txHash: item.txHash,
+            chainId: base.id,
+            trustedOpenOceanAmountUsd: item.amountUsd,
+          })
       );
 
-      for (const result of detailResults) {
-        if (result.status !== "fulfilled" || !result.value) {
+      for (const result of recordResults) {
+        if (result.status !== "fulfilled") {
+          // Ignore individual lookup failures so one bad tx does not block all sync.
           continue;
         }
 
-        try {
-          const { txHash, detail } = result.value;
-          const resolvedHash = String(detail.tx_hash || txHash).toLowerCase();
-          const swapKey = getSwapTransactionKey(base.id, resolvedHash);
-          if (knownSwaps.has(swapKey)) {
-            continue;
+        const recorded = result.value;
+        knownSwaps.set(
+          getSwapTransactionKey(base.id, recorded.txHash),
+          recorded.amountUsd
+        );
+
+        if (recorded.isNew) {
+          importedHashes.push(recorded.txHash);
+          const referenceDate = getReferenceDateFromDayKey(recorded.dayKey);
+          if (referenceDate) {
+            syncReferenceDates.set(referenceDate.toISOString(), referenceDate);
           }
-
-          const sender = String(detail.sender || detail.receiver || "").toLowerCase();
-          if (sender && sender !== normalizedAddress) {
-            continue;
-          }
-
-          const referrer = String(detail.referrer || "").toLowerCase();
-          if (!referrer || referrer !== expectedReferrer) {
-            continue;
-          }
-
-          const recorded = await recordSwap({
-            address: normalizedAddress,
-            txHash: resolvedHash,
-            chainId: base.id,
-          });
-
-          knownSwaps.set(
-            getSwapTransactionKey(base.id, recorded.txHash),
-            recorded.amountUsd
-          );
-
-          if (recorded.isNew) {
-            importedHashes.push(recorded.txHash);
-          }
-        } catch {
-          // Ignore individual lookup failures so one bad tx does not block all sync.
         }
       }
 
       const completedQuests = await this.syncPublishedSwapQuests(
         user.id,
-        normalizedAddress
+        normalizedAddress,
+        Array.from(syncReferenceDates.values())
       );
 
       if (importedHashes.length > 0 || completedQuests.length > 0) {
@@ -1854,7 +1886,11 @@ export class QuestEngine {
     );
   }
 
-  private async syncPublishedSwapQuests(userId: number, address: string) {
+  private async syncPublishedSwapQuests(
+    userId: number,
+    address: string,
+    referenceDates: Date[] = [getNow()]
+  ) {
     const { data: questsData, error: questsError } = await supabase
       .from("quests")
       .select("*")
@@ -1879,14 +1915,29 @@ export class QuestEngine {
     );
 
     for (const quest of quests) {
-      const progress = await this.syncSwapProgressForQuest(userId, address, quest);
+      const seenCycleKeys = new Set<string>();
 
-      if (progress?.completedAt && progress.awardedPoints > 0) {
-        completedQuests.push({
-          questId: quest.id,
-          slug: quest.slug,
-          awardedPoints: progress.awardedPoints,
-        });
+      for (const referenceDate of referenceDates) {
+        const cycleKey = getCycleKey(quest.progress_window, referenceDate);
+        if (seenCycleKeys.has(cycleKey)) {
+          continue;
+        }
+        seenCycleKeys.add(cycleKey);
+
+        const progress = await this.syncSwapProgressForQuest(
+          userId,
+          address,
+          quest,
+          referenceDate
+        );
+
+        if (progress?.completedAt && progress.awardedPoints > 0) {
+          completedQuests.push({
+            questId: quest.id,
+            slug: quest.slug,
+            awardedPoints: progress.awardedPoints,
+          });
+        }
       }
     }
 
@@ -2114,9 +2165,10 @@ export class QuestEngine {
   private async syncSwapProgressForQuest(
     userId: number,
     address: string,
-    quest: QuestRecord
+    quest: QuestRecord,
+    referenceDate: Date = getNow()
   ) {
-    const now = getNow();
+    const now = referenceDate;
     const cycleKey = getCycleKey(quest.progress_window, now);
     const bounds = getWindowBounds(quest.progress_window, now);
     const rules = safeRules(quest.rules);

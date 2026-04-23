@@ -20,6 +20,15 @@ import { supabase } from "./supabase";
 const COINGECKO_API_KEY = process.env.COINGECKO_API_KEY || "";
 const OPENOCEAN_API_BASE =
   process.env.OPENOCEAN_API_BASE || "https://open-api.openocean.finance/v3";
+const OPENOCEAN_DETAIL_TIMEOUT_MS = Math.min(
+  6_000,
+  Math.max(1_000, Number(process.env.OPENOCEAN_DETAIL_TIMEOUT_MS || "3000"))
+);
+const OPENOCEAN_REFERRER_ADDRESS = normalizeAddress(
+  process.env.OPENOCEAN_REFERRER_ADDRESS ||
+    process.env.NEXT_PUBLIC_OPENOCEAN_REFERRER_ADDRESS ||
+    "0x0fd79f3ceaE7ddA5cFC15b35188E67EFAc542573"
+);
 
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 const ETH_PLACEHOLDER = "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
@@ -204,6 +213,10 @@ function normalizeAddress(address: string) {
   return address.toLowerCase();
 }
 
+function isExpectedOpenOceanReferrer(address: string) {
+  return normalizeAddress(address) === OPENOCEAN_REFERRER_ADDRESS;
+}
+
 function normalizeTxHash(txHash: string) {
   return txHash.toLowerCase();
 }
@@ -360,6 +373,9 @@ async function fetchOpenOceanTransactionDetail(
     return null;
   }
 
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), OPENOCEAN_DETAIL_TIMEOUT_MS);
+
   try {
     const response = await fetch(
       `${OPENOCEAN_API_BASE}/${encodeURIComponent(
@@ -367,6 +383,7 @@ async function fetchOpenOceanTransactionDetail(
       )}/getTransaction?hash=${encodeURIComponent(txHash)}`,
       {
         headers: { accept: "application/json" },
+        signal: controller.signal,
       }
     );
 
@@ -388,12 +405,54 @@ async function fetchOpenOceanTransactionDetail(
     return payload.data ?? null;
   } catch {
     return null;
+  } finally {
+    clearTimeout(timeoutId);
   }
 }
 
 function getOpenOceanAmountUsd(detail: OpenOceanTransactionDetail | null) {
-  const value = Number(detail?.usd_valuation ?? 0);
-  return Number.isFinite(value) && value > 0 ? value : null;
+  return getPositiveUsdValue(detail?.usd_valuation);
+}
+
+function getPositiveUsdValue(value: string | number | null | undefined) {
+  const parsed = Number(value ?? 0);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+function getTrustedAmountMetadata(
+  chainConfig: SwapChainConfig,
+  txHash: string,
+  amountUsd: number
+) {
+  return {
+    amountUsdScaled: parseScaledDecimal(amountUsd, USD_SCALE),
+    source: "openocean_wallet_history_usd_valuation",
+    metadata: {
+      chain: chainConfig.key,
+      chainId: chainConfig.id,
+      openOceanSlug: chainConfig.openOceanSlug || null,
+      txHash,
+    } satisfies Record<string, unknown>,
+  };
+}
+
+function getOpenOceanDetailAmountMetadata(
+  chainConfig: SwapChainConfig,
+  detail: OpenOceanTransactionDetail,
+  txHash: string,
+  amountUsd: number
+) {
+  return {
+    amountUsdScaled: parseScaledDecimal(amountUsd, USD_SCALE),
+    source: "openocean_usd_valuation",
+    metadata: {
+      chain: chainConfig.key,
+      chainId: chainConfig.id,
+      openOceanSlug: chainConfig.openOceanSlug || null,
+      txHash: detail.tx_hash || txHash,
+      referrer: detail.referrer || null,
+    } satisfies Record<string, unknown>,
+  };
 }
 
 function calculateUsdAmountScaled(
@@ -1381,6 +1440,7 @@ export async function recordSwap(input: {
   address: string;
   txHash: string;
   chainId?: number;
+  trustedOpenOceanAmountUsd?: number | string | null;
 }): Promise<RecordedSwap> {
   const normalizedAddress = normalizeAddress(input.address);
   const normalizedTxHash = normalizeTxHash(input.txHash);
@@ -1437,6 +1497,10 @@ export async function recordSwap(input: {
   const block = await client.getBlock({ blockNumber: receipt.blockNumber });
 
   const decodedSwap = decodeSwapEvent(receipt);
+  if (!isExpectedOpenOceanReferrer(decodedSwap.referrer)) {
+    throw new UnprocessableSwapError("Swap transaction was not routed through DustSwap");
+  }
+
   const routingContext = await resolveSwapRoutingContext({
     expectedAddress: normalizedAddress,
     transaction,
@@ -1444,41 +1508,45 @@ export async function recordSwap(input: {
     resolvedTransaction,
   });
   const routerAddress = routingContext.routerAddress;
+  const trustedOpenOceanAmountUsd = getPositiveUsdValue(input.trustedOpenOceanAmountUsd);
 
   const [srcToken, dstToken, openOceanDetail] = await Promise.all([
     getTokenMetadata(client, chainConfig, decodedSwap.srcToken),
     getTokenMetadata(client, chainConfig, decodedSwap.dstToken),
-    fetchOpenOceanTransactionDetail(chainConfig, resolvedTransaction.resolvedTxHash),
+    trustedOpenOceanAmountUsd
+      ? Promise.resolve(null)
+      : fetchOpenOceanTransactionDetail(chainConfig, resolvedTransaction.resolvedTxHash),
   ]);
 
   const occurredAt = new Date(Number(block.timestamp) * 1000);
   const dayKey = getDayKey(occurredAt);
   const weekKey = getIsoWeekKey(occurredAt);
   const openOceanAmountUsd = getOpenOceanAmountUsd(openOceanDetail);
-  const priceResult = openOceanAmountUsd
-    ? {
-        amountUsdScaled: parseScaledDecimal(openOceanAmountUsd, USD_SCALE),
-        source: "openocean_usd_valuation",
-        metadata: {
-          chain: chainConfig.key,
-          chainId: chainConfig.id,
-          openOceanSlug: chainConfig.openOceanSlug || null,
-          txHash: openOceanDetail?.tx_hash || resolvedTransaction.resolvedTxHash,
-          referrer: openOceanDetail?.referrer || null,
-        } satisfies Record<string, unknown>,
-      }
-    : await (async () => {
-        const outPrice = await getTokenPriceUsd(chainConfig, decodedSwap.dstToken, dayKey);
-        return {
-          amountUsdScaled: calculateUsdAmountScaled(
-            decodedSwap.returnAmount,
-            dstToken.decimals,
-            outPrice.priceScaled
-          ),
-          source: outPrice.source,
-          metadata: outPrice.metadata,
-        };
-      })();
+  const priceResult = trustedOpenOceanAmountUsd
+    ? getTrustedAmountMetadata(
+        chainConfig,
+        resolvedTransaction.resolvedTxHash,
+        trustedOpenOceanAmountUsd
+      )
+    : openOceanAmountUsd
+      ? getOpenOceanDetailAmountMetadata(
+          chainConfig,
+          openOceanDetail as OpenOceanTransactionDetail,
+          resolvedTransaction.resolvedTxHash,
+          openOceanAmountUsd
+        )
+      : await (async () => {
+          const outPrice = await getTokenPriceUsd(chainConfig, decodedSwap.dstToken, dayKey);
+          return {
+            amountUsdScaled: calculateUsdAmountScaled(
+              decodedSwap.returnAmount,
+              dstToken.decimals,
+              outPrice.priceScaled
+            ),
+            source: outPrice.source,
+            metadata: outPrice.metadata,
+          };
+        })();
   const amountUsdScaled = priceResult.amountUsdScaled;
   const amountUsd = formatScaledDecimal(amountUsdScaled, USD_SCALE);
   const occurredAtIso = occurredAt.toISOString();
