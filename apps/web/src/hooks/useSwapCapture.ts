@@ -160,6 +160,33 @@ function getErrorMessage(error: unknown) {
   return "Failed to record swap";
 }
 
+function extractTxHashFromWalletResult(result: unknown) {
+  if (isTxHash(result)) {
+    return result.toLowerCase();
+  }
+
+  if (!result || typeof result !== "object") {
+    return null;
+  }
+
+  const record = result as Record<string, unknown>;
+  const candidates = [
+    record.hash,
+    record.txHash,
+    record.transactionHash,
+    record.result,
+    record.data,
+  ];
+
+  for (const candidate of candidates) {
+    if (isTxHash(candidate)) {
+      return candidate.toLowerCase();
+    }
+  }
+
+  return null;
+}
+
 function isPermanentRecordFailure(status?: number) {
   return typeof status === "number" && status >= 400 && status < 500 && status !== 429;
 }
@@ -913,11 +940,18 @@ export function useSwapCapture() {
           result = await originalRequest(forwardedArgs);
         }
 
+        if (method === "eth_sendTransaction" || method === "wallet_sendTransaction") {
+          const txHash = extractTxHashFromWalletResult(result);
+          if (txHash) {
+            result = txHash;
+          }
+        }
+
         try {
           if (method === "eth_sendTransaction" || method === "wallet_sendTransaction") {
             const request = getRequestPayload(forwardedArgs);
             const to = String(request.to || "").toLowerCase();
-            const txHash = typeof result === "string" ? result.toLowerCase() : "";
+            const txHash = extractTxHashFromWalletResult(result) || "";
             const resolvedAddress = normalizeAddress(String(request.from || address || ""));
             const resolvedChainId = resolveChainId(
               request.chainId,

@@ -2,18 +2,47 @@
 
 import dynamic from "next/dynamic";
 import { useMemo } from "react";
-import { WidgetSkeleton } from "@openocean.finance/widget/dist/esm/components/Skeleton/WidgetSkeleton.js";
 import { useWalletConnection } from "@/hooks/useWalletConnection";
 
 const OPENOCEAN_REFERRER_ADDRESS =
   process.env.NEXT_PUBLIC_OPENOCEAN_REFERRER_ADDRESS ||
   "0x0fd79f3ceaE7ddA5cFC15b35188E67EFAc542573";
 
+const WIDGET_ALLOWED_CHAIN_IDS = [
+  1,
+  56,
+  42161,
+  10,
+  324,
+  137,
+  43114,
+  146,
+  80094,
+  8453,
+  59144,
+  5000,
+  130,
+  204,
+  42220,
+  33139,
+  25,
+  9745,
+  98866,
+  143,
+  14,
+] as const;
+
 const WIDGET_BASE_CONFIG = {
   variant: "compact",
   subvariant: "default",
   appearance: "light",
   slippage: 0.005,
+  chains: {
+    allow: WIDGET_ALLOWED_CHAIN_IDS,
+    from: { allow: WIDGET_ALLOWED_CHAIN_IDS },
+    to: { allow: WIDGET_ALLOWED_CHAIN_IDS },
+    types: { allow: ["EVM"] },
+  },
   theme: {
     palette: {
       primary: { main: "#006Eff" },
@@ -54,11 +83,26 @@ const WIDGET_BASE_CONFIG = {
   defaultToToken: "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
 } as const;
 
+function OpenOceanWidgetLoading() {
+  return (
+    <div className="w-full rounded-[16px] bg-white p-6 shadow-[0px_8px_32px_rgba(0,0,0,0.08)]">
+      <div className="mb-8 h-8 w-24 rounded-xl bg-slate-100" />
+      <div className="space-y-5">
+        <div className="h-28 rounded-2xl bg-slate-100" />
+        <div className="mx-auto h-11 w-11 rounded-full bg-slate-100" />
+        <div className="h-28 rounded-2xl bg-slate-100" />
+        <div className="h-16 rounded-2xl bg-sky-100" />
+      </div>
+      <div className="mx-auto mt-8 h-4 w-40 rounded-full bg-slate-100" />
+    </div>
+  );
+}
+
 const OpenOceanWidget = dynamic<{ integrator: string; config: any }>(
   () => import("@openocean.finance/widget").then((mod) => mod.OpenOceanWidget as any),
   {
     ssr: false,
-    loading: () => <WidgetSkeleton config={WIDGET_BASE_CONFIG as any} />,
+    loading: () => <OpenOceanWidgetLoading />,
   }
 );
 
