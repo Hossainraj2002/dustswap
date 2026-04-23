@@ -175,6 +175,10 @@ export async function verifyXPost(
   }>(response);
 }
 
+/**
+ * @deprecated Legacy quest-side swap capture route. New clients should use
+ * /api/swaps/record; the backend derives amount/token data from the transaction.
+ */
 export async function recordSwapQuestActivity(input: {
   address: string;
   txHash: string;

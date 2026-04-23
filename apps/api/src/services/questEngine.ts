@@ -1,11 +1,8 @@
 import { randomBytes, createHash, createHmac } from "crypto";
 import { isAddress } from "viem";
 import { base } from "viem/chains";
-import {
-  getPublicClientForSwapChain,
-  getSwapChainConfig,
-} from "../config/swapChains";
 import { pointsEngine } from "./pointsEngine";
+import { recordSwap } from "./swapRecorder";
 import { supabase } from "./supabase";
 import { runtimeCache } from "../utils/runtimeCache";
 
@@ -157,7 +154,7 @@ export type SwapActivityInput = {
   address: string;
   txHash: string;
   chainId: number;
-  amountUsd: number;
+  amountUsd?: number;
   inputToken?: string | null;
   outputToken?: string | null;
   metadata?: Record<string, unknown>;
@@ -280,24 +277,56 @@ function getQuestTokenFilter(rules: QuestRules) {
 
 function getMetadataAddress(metadata: Record<string, unknown>, key: string) {
   const value = metadata[key];
-  return typeof value === "string" && isAddress(value) ? value.toLowerCase() : null;
+  const normalized = typeof value === "string" ? value.trim().toLowerCase() : "";
+  return normalized && isAddress(normalized) ? normalized : null;
 }
 
-function swapActivityMatchesToken(
-  row: { metadata?: Record<string, unknown> | null },
+function getSwapTransactionKey(chainId: number, txHash: string) {
+  return `${chainId}:${String(txHash || "").trim().toLowerCase()}`;
+}
+
+function getRowAddress(value: unknown) {
+  const normalized = typeof value === "string" ? value.trim().toLowerCase() : "";
+  return normalized && isAddress(normalized) ? normalized : null;
+}
+
+function getSwapTransactionTokenAddress(
+  row: {
+    src_token_address?: string | null;
+    dst_token_address?: string | null;
+    metadata?: Record<string, unknown> | null;
+  },
+  side: "input" | "output"
+) {
+  const explicitAddress = getRowAddress(
+    side === "input" ? row.src_token_address : row.dst_token_address
+  );
+  if (explicitAddress) {
+    return explicitAddress;
+  }
+
+  const metadata = row.metadata || {};
+  return side === "input"
+    ? getMetadataAddress(metadata, "inputTokenAddress") ||
+        getMetadataAddress(metadata, "inputToken")
+    : getMetadataAddress(metadata, "outputTokenAddress") ||
+        getMetadataAddress(metadata, "outputToken");
+}
+
+function swapTransactionMatchesToken(
+  row: {
+    src_token_address?: string | null;
+    dst_token_address?: string | null;
+    metadata?: Record<string, unknown> | null;
+  },
   tokenFilter: ReturnType<typeof getQuestTokenFilter>
 ) {
   if (!tokenFilter) {
     return true;
   }
 
-  const metadata = row.metadata || {};
-  const inputTokenAddress =
-    getMetadataAddress(metadata, "inputTokenAddress") ||
-    getMetadataAddress(metadata, "inputToken");
-  const outputTokenAddress =
-    getMetadataAddress(metadata, "outputTokenAddress") ||
-    getMetadataAddress(metadata, "outputToken");
+  const inputTokenAddress = getSwapTransactionTokenAddress(row, "input");
+  const outputTokenAddress = getSwapTransactionTokenAddress(row, "output");
   const matchesInput = inputTokenAddress
     ? tokenFilter.addresses.includes(inputTokenAddress)
     : false;
@@ -314,17 +343,6 @@ function swapActivityMatchesToken(
   }
 
   return matchesInput || matchesOutput;
-}
-
-function isMissingChainAwareConflict(
-  error: { code?: string; message?: string; details?: string } | null | undefined
-) {
-  const message = `${error?.message || ""} ${error?.details || ""}`.toLowerCase();
-  return (
-    error?.code === "42P10" ||
-    message.includes("no unique or exclusion constraint") ||
-    message.includes("on conflict specification")
-  );
 }
 
 function normalizeCampaignKey(value?: string | null) {
@@ -640,31 +658,6 @@ function listUrlCandidates(tweet: any): string[] {
     .flatMap((item) => [item?.url, item?.expanded_url, item?.display_url])
     .filter(Boolean)
     .map((value) => String(value).toLowerCase());
-}
-
-function getSwapAmountUsdFallback(
-  amountUsd: number,
-  metadata?: Record<string, unknown>
-) {
-  if (amountUsd > 0) {
-    return amountUsd;
-  }
-
-  const candidates = [
-    metadata?.fromAmountUSD,
-    metadata?.toAmountUSD,
-    metadata?.fromAmountUsd,
-    metadata?.toAmountUsd,
-  ];
-
-  for (const candidate of candidates) {
-    const parsed = toNumber(candidate, -1);
-    if (parsed > 0) {
-      return parsed;
-    }
-  }
-
-  return 0;
 }
 
 async function fetchOpenOceanData<T>(path: string) {
@@ -1676,7 +1669,7 @@ export class QuestEngine {
 
     const runSync = async () => {
       const user = await pointsEngine.getOrCreate(normalizedAddress);
-      const knownHashes = await this.getKnownSwapAmounts(user.id);
+      const knownSwaps = await this.getKnownSwapAmounts(user.id, base.id);
 
       const params = new URLSearchParams({
         account: normalizedAddress,
@@ -1697,13 +1690,12 @@ export class QuestEngine {
       const expectedReferrer = OPENOCEAN_REFERRER_ADDRESS.toLowerCase();
       const detailResults = await Promise.allSettled(
         (history ?? []).slice(0, OPENOCEAN_SWAP_SYNC_PAGE_SIZE).map(async (item) => {
-          const txHash = item.txHash;
+          const txHash = item.txHash?.toLowerCase();
           if (!txHash) {
             return null;
           }
 
-          const knownAmount = knownHashes.get(txHash) ?? -1;
-          if (knownAmount > 0) {
+          if (knownSwaps.has(getSwapTransactionKey(base.id, txHash))) {
             return null;
           }
 
@@ -1711,7 +1703,7 @@ export class QuestEngine {
             `/base/getTransaction?hash=${encodeURIComponent(txHash)}`
           );
 
-          return { item, txHash, detail };
+          return { txHash, detail };
         })
       );
 
@@ -1721,8 +1713,13 @@ export class QuestEngine {
         }
 
         try {
-          const { item, txHash, detail } = result.value;
-          const resolvedHash = detail.tx_hash || txHash;
+          const { txHash, detail } = result.value;
+          const resolvedHash = String(detail.tx_hash || txHash).toLowerCase();
+          const swapKey = getSwapTransactionKey(base.id, resolvedHash);
+          if (knownSwaps.has(swapKey)) {
+            continue;
+          }
+
           const sender = String(detail.sender || detail.receiver || "").toLowerCase();
           if (sender && sender !== normalizedAddress) {
             continue;
@@ -1733,38 +1730,20 @@ export class QuestEngine {
             continue;
           }
 
-          const amountUsd = toNumber(detail.usd_valuation, 0);
-          await this.upsertSwapActivityEvent({
-            userId: user.id,
-            chainId: base.id,
-            txHash: resolvedHash,
-            amountUsd,
-            inputToken: detail.in_token_symbol || item.inToken || null,
-            outputToken: detail.out_token_symbol || item.outToken || null,
-            occurredAt:
-              detail.update_at ||
-              detail.create_at ||
-              item.tradeTime ||
-              new Date().toISOString(),
-            metadata: {
-              source: "openocean_history_sync",
-              referrer: detail.referrer || null,
-              inAmountValue: detail.in_amount_value || item.inAmount || null,
-              outAmountValue: detail.out_amount_value || item.outAmount || null,
-              tradeTime: detail.update_at || detail.create_at || item.tradeTime || null,
-            },
-          });
-          await pointsEngine.recordSwap(normalizedAddress, {
+          const recorded = await recordSwap({
+            address: normalizedAddress,
             txHash: resolvedHash,
             chainId: base.id,
-            inputToken: detail.in_token_symbol || item.inToken || null,
-            outputToken: detail.out_token_symbol || item.outToken || null,
-            volumeUsd: amountUsd,
-            awardPoints: false,
           });
 
-          importedHashes.push(resolvedHash);
-          knownHashes.set(resolvedHash, amountUsd);
+          knownSwaps.set(
+            getSwapTransactionKey(base.id, recorded.txHash),
+            recorded.amountUsd
+          );
+
+          if (recorded.isNew) {
+            importedHashes.push(recorded.txHash);
+          }
         } catch {
           // Ignore individual lookup failures so one bad tx does not block all sync.
         }
@@ -1806,55 +1785,25 @@ export class QuestEngine {
       throw new Error("Transaction hash is required");
     }
 
-    const chainConfig = getSwapChainConfig(input.chainId);
-    const client = getPublicClientForSwapChain(input.chainId);
-    if (!chainConfig || !client) {
-      throw new Error(`Unsupported swap chain: ${input.chainId}`);
+    if (!Number.isFinite(input.chainId)) {
+      throw new Error("A valid chainId is required");
     }
 
-    const receipt = await client.getTransactionReceipt({
-      hash: input.txHash as `0x${string}`,
-    });
-
-    if (receipt.status !== "success") {
-      throw new Error("Swap transaction is not confirmed");
-    }
-
-    const normalizedAmountUsd = getSwapAmountUsdFallback(
-      input.amountUsd,
-      input.metadata
-    );
     const normalizedAddress = normalizeAddress(input.address);
-    const user = await pointsEngine.getOrCreate(input.address);
-    await this.upsertSwapActivityEvent({
-      userId: user.id,
-      chainId: input.chainId,
-      txHash: input.txHash,
-      amountUsd: normalizedAmountUsd,
-      inputToken: input.inputToken,
-      outputToken: input.outputToken,
-      occurredAt: new Date().toISOString(),
-      metadata: input.metadata,
-    });
-    await pointsEngine.recordSwap(normalizedAddress, {
+    await recordSwap({
+      address: normalizedAddress,
       txHash: input.txHash,
       chainId: input.chainId,
-      inputToken: input.inputToken,
-      outputToken: input.outputToken,
-      volumeUsd: normalizedAmountUsd,
-      awardPoints: false,
     });
-
-    const completedQuests = await this.syncPublishedSwapQuests(
-      user.id,
-      normalizedAddress
-    );
 
     pointsEngine.invalidateUserReadCaches(normalizedAddress);
+    this.invalidateSwapSyncCache(normalizedAddress);
+    const questSync = await this.syncRecordedSwapProgress(normalizedAddress);
+
     this.invalidateQuestBoardCache(normalizedAddress);
     return {
       success: true,
-      completedQuests,
+      completedQuests: questSync.completedQuests,
     };
   }
 
@@ -1878,83 +1827,31 @@ export class QuestEngine {
     };
   }
 
-  private async getKnownSwapAmounts(userId: number) {
-    const { data, error } = await supabase
-      .from("activity_events")
-      .select("tx_hash, amount_usd")
-      .eq("user_id", userId)
-      .eq("event_type", "swap")
-      .eq("source", "dustswap_swap")
-      .eq("chain_id", base.id);
+  private async getKnownSwapAmounts(userId: number, chainId?: number) {
+    let query = supabase
+      .from("swap_transactions")
+      .select("chain_id, tx_hash, amount_usd")
+      .eq("user_id", userId);
+
+    if (Number.isFinite(chainId)) {
+      query = query.eq("chain_id", Number(chainId));
+    }
+
+    const { data, error } = await query;
 
     if (error) {
-      throw new Error(`Failed to load existing swap activity: ${error.message}`);
+      throw new Error(`Failed to load existing swap transactions: ${error.message}`);
     }
 
     return new Map(
       (data ?? []).map((row) => [
-        String((row as { tx_hash: string }).tx_hash),
+        getSwapTransactionKey(
+          Number((row as { chain_id: number }).chain_id),
+          String((row as { tx_hash: string }).tx_hash)
+        ),
         toNumber((row as { amount_usd: number }).amount_usd),
       ])
     );
-  }
-
-  private async upsertSwapActivityEvent(args: {
-    userId: number;
-    chainId: number;
-    txHash: string;
-    amountUsd: number;
-    inputToken?: string | null;
-    outputToken?: string | null;
-    occurredAt?: string | null;
-    metadata?: Record<string, unknown>;
-  }) {
-    const inputTokenAddress =
-      typeof args.inputToken === "string" && isAddress(args.inputToken)
-        ? args.inputToken.toLowerCase()
-        : null;
-    const outputTokenAddress =
-      typeof args.outputToken === "string" && isAddress(args.outputToken)
-        ? args.outputToken.toLowerCase()
-        : null;
-    const payload = {
-      user_id: args.userId,
-      event_type: "swap",
-      source: "dustswap_swap",
-      chain_id: args.chainId,
-      tx_hash: args.txHash,
-      amount_usd: args.amountUsd,
-      occurred_at: args.occurredAt || new Date().toISOString(),
-      metadata: {
-        inputToken: args.inputToken || null,
-        outputToken: args.outputToken || null,
-        inputTokenAddress,
-        outputTokenAddress,
-        ...(args.metadata || {}),
-      },
-    };
-
-    const { error } = await supabase.from("activity_events").upsert(
-      payload,
-      { onConflict: "chain_id,tx_hash,event_type,source" }
-    );
-
-    if (error && isMissingChainAwareConflict(error)) {
-      const { error: fallbackError } = await supabase.from("activity_events").upsert(
-        payload,
-        { onConflict: "tx_hash,event_type,source" }
-      );
-
-      if (fallbackError) {
-        throw new Error(`Failed to record swap activity: ${fallbackError.message}`);
-      }
-
-      return;
-    }
-
-    if (error) {
-      throw new Error(`Failed to record swap activity: ${error.message}`);
-    }
   }
 
   private async syncPublishedSwapQuests(userId: number, address: string) {
@@ -2225,13 +2122,14 @@ export class QuestEngine {
     const rules = safeRules(quest.rules);
     const chainIds = getQuestChainIds(rules);
     const tokenFilter = getQuestTokenFilter(rules);
+    const source = String(rules.source || "dustswap_swap");
 
     let query = supabase
-      .from("activity_events")
-      .select("amount_usd, chain_id, metadata")
-      .eq("user_id", userId)
-      .eq("event_type", "swap")
-      .eq("source", String(rules.source || "dustswap_swap"));
+      .from("swap_transactions")
+      .select(
+        "amount_usd, chain_id, src_token_address, dst_token_address, metadata"
+      )
+      .eq("user_id", userId);
 
     if (chainIds.length > 0) {
       query = query.in("chain_id", chainIds);
@@ -2245,14 +2143,16 @@ export class QuestEngine {
 
     const { data, error } = await query;
     if (error) {
-      throw new Error(`Failed to load swap activity: ${error.message}`);
+      throw new Error(`Failed to load swap transactions: ${error.message}`);
     }
 
     const filteredRows = ((data ?? []) as Array<{
       amount_usd: number | string | null;
       chain_id: number | null;
+      src_token_address: string | null;
+      dst_token_address: string | null;
       metadata: Record<string, unknown> | null;
-    }>).filter((row) => swapActivityMatchesToken(row, tokenFilter));
+    }>).filter((row) => swapTransactionMatchesToken(row, tokenFilter));
 
     const volumeValue = filteredRows.reduce(
       (sum, row) => sum + toNumber((row as { amount_usd: number }).amount_usd),
@@ -2297,6 +2197,7 @@ export class QuestEngine {
           countValue,
           volumeValue,
           progressValue,
+          source,
           chainIds,
           tokenFilter,
         }
