@@ -2773,6 +2773,38 @@ export class PointsEngine {
     throw new Error("USDC payment was not found in this transaction");
   }
 
+  private async ensureTransactionHashUnusedForCheckIn(txHash: string) {
+    const { data, error } = await supabase
+      .from("check_ins")
+      .select("id")
+      .eq("payment_tx_hash", txHash)
+      .limit(1);
+
+    if (error) {
+      throw new Error(`Check-in transaction reuse lookup failed: ${error.message}`);
+    }
+
+    if ((data ?? []).length > 0) {
+      throw new Error("That check-in transaction has already been used");
+    }
+  }
+
+  private async ensureTransactionMinedToday(txHash: string, now = new Date()) {
+    const receipt = await baseClient.getTransactionReceipt({
+      hash: txHash as `0x${string}`,
+    });
+    const block = await baseClient.getBlock({ blockNumber: receipt.blockNumber });
+    const minedAtMs = Number(block.timestamp) * 1000;
+
+    if (!Number.isFinite(minedAtMs)) {
+      throw new Error("Could not resolve the check-in transaction timestamp");
+    }
+
+    if (minedAtMs < getUtcStartOfDay(now).getTime()) {
+      throw new Error("Check-in transaction must be mined today");
+    }
+  }
+
   private getConfiguredSpinContractAddress() {
     if (!SPIN_CONTRACT_ADDRESS) {
       throw new Error("Spin contract is not configured");
@@ -2952,19 +2984,29 @@ export class PointsEngine {
       throw new Error("Already checked in today");
     }
 
+    await this.ensureTransactionHashUnusedForCheckIn(txHash);
+
     const payment = await this.verifyFeeTransaction(
       normalizedAddress,
       txHash,
       CFG.CHECK_IN_FEE_USD,
-      asset
+      asset,
+      {
+        allowBasePay: false,
+        recipient: STREAK_SAVE_RECIPIENT,
+        usdcAddress: STREAK_SAVE_USDC_ADDRESS,
+      }
     );
+
+    const now = new Date();
+    await this.ensureTransactionMinedToday(txHash, now);
 
     const nextStreak = snapshot.status === "active" ? user.current_streak + 1 : 1;
     const unlockedBoostPercent = getBoostPercent(nextStreak);
     const multiplier = 1 + unlockedBoostPercent / 100;
     const pointsAwarded = Math.max(0, Math.floor(CFG.CHECK_IN * multiplier));
-    const checkInDate = getUtcDayKey(new Date());
-    const nowIso = new Date().toISOString();
+    const checkInDate = getUtcDayKey(now);
+    const nowIso = now.toISOString();
 
     await supabase.from("check_ins").insert({
       user_id: user.id,
