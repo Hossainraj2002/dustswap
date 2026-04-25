@@ -22,6 +22,7 @@ const allowedOrigins = Array.from(
       "http://localhost:5173",
       "https://dustswap.xyz",
       "https://www.dustswap.xyz",
+      "https://app.dustswap.wtf",
       "https://dustswap.vercel.app",
       "https://dustswap-web.vercel.app",
       process.env.NEXT_PUBLIC_APP_URL,

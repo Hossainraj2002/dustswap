@@ -52,6 +52,13 @@ export function ProfileSettingsModal({
   const profile = profileSettings?.profile;
   const uploadAvailable =
     profileSettings?.capabilities.pfpUploadAvailable ?? false;
+  const missingR2EnvVars = profileSettings?.capabilities.missingR2EnvVars ?? [];
+  const uploadUnavailableMessage = profileSettings
+    ? missingR2EnvVars.length > 0
+      ? `PFP upload is temporarily unavailable. Missing API env: ${missingR2EnvVars.join(", ")}.`
+      : profileSettings.capabilities.pfpUploadUnavailableReason ||
+        "PFP upload is temporarily unavailable."
+    : "Profile settings did not load from the API. Check NEXT_PUBLIC_API_URL and API CORS.";
   const [username, setUsername] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [discordUsername, setDiscordUsername] = useState("");
@@ -297,8 +304,8 @@ export function ProfileSettingsModal({
                   PNG, JPG, JPEG, or WEBP under 1 MB.
                 </p>
                 {!uploadAvailable ? (
-                  <p className="mt-1 text-[11px] font-semibold text-amber-700">
-                    PFP upload is temporarily unavailable.
+                  <p className="mt-1 text-[11px] font-semibold leading-4 text-amber-700">
+                    {uploadUnavailableMessage}
                   </p>
                 ) : selectedFile ? (
                   <p className="mt-1 truncate text-[11px] font-semibold text-sky-700">

@@ -31,6 +31,8 @@ export type ProfileSettingsResponse = {
   profile: ProfileSettingsProfile;
   capabilities: {
     pfpUploadAvailable: boolean;
+    missingR2EnvVars?: string[];
+    pfpUploadUnavailableReason?: string | null;
   };
   savedXUsername?: string | null;
   error?: string;

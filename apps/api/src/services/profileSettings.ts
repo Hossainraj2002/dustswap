@@ -113,6 +113,18 @@ type R2Config = {
   region: string;
 };
 
+type R2ConfigStatus =
+  | {
+      available: true;
+      config: R2Config;
+      missingEnvVars: [];
+    }
+  | {
+      available: false;
+      config: null;
+      missingEnvVars: string[];
+    };
+
 export class ProfileSettingsError extends Error {
   constructor(
     message: string,
@@ -282,25 +294,44 @@ function parseProfileSettingsMessage(message: string) {
   };
 }
 
-function getR2Config(): R2Config | null {
+function getR2ConfigStatus(): R2ConfigStatus {
   const accountId = process.env.R2_ACCOUNT_ID?.trim();
   const accessKeyId = process.env.R2_ACCESS_KEY_ID?.trim();
   const secretAccessKey = process.env.R2_SECRET_ACCESS_KEY?.trim();
   const bucketName = process.env.R2_BUCKET_NAME?.trim();
   const publicBaseUrl = process.env.R2_PUBLIC_BASE_URL?.trim().replace(/\/+$/, "");
+  const missingEnvVars = [
+    !accountId ? "R2_ACCOUNT_ID" : null,
+    !accessKeyId ? "R2_ACCESS_KEY_ID" : null,
+    !secretAccessKey ? "R2_SECRET_ACCESS_KEY" : null,
+    !bucketName ? "R2_BUCKET_NAME" : null,
+    !publicBaseUrl ? "R2_PUBLIC_BASE_URL" : null,
+  ].filter((value): value is string => Boolean(value));
 
-  if (!accountId || !accessKeyId || !secretAccessKey || !bucketName || !publicBaseUrl) {
-    return null;
+  if (missingEnvVars.length > 0) {
+    return {
+      available: false,
+      config: null,
+      missingEnvVars,
+    };
   }
 
   return {
-    accountId,
-    accessKeyId,
-    secretAccessKey,
-    bucketName,
-    publicBaseUrl,
-    region: process.env.R2_REGION?.trim() || "auto",
+    available: true,
+    config: {
+      accountId: accountId!,
+      accessKeyId: accessKeyId!,
+      secretAccessKey: secretAccessKey!,
+      bucketName: bucketName!,
+      publicBaseUrl: publicBaseUrl!,
+      region: process.env.R2_REGION?.trim() || "auto",
+    },
+    missingEnvVars: [],
   };
+}
+
+function getR2Config(): R2Config | null {
+  return getR2ConfigStatus().config;
 }
 
 function getR2Client(config: R2Config) {
@@ -422,7 +453,7 @@ function buildProfileResponse(args: {
 
 export class ProfileSettingsService {
   isPfpUploadAvailable() {
-    return Boolean(getR2Config());
+    return getR2ConfigStatus().available;
   }
 
   async getProfileSettings(address: string) {
@@ -483,6 +514,8 @@ export class ProfileSettingsService {
       xAccount = socialRows.find((row) => row.platform === "x") ?? null;
     }
 
+    const r2Status = getR2ConfigStatus();
+
     return {
       success: true,
       profile: buildProfileResponse({
@@ -492,7 +525,11 @@ export class ProfileSettingsService {
         xAccount,
       }),
       capabilities: {
-        pfpUploadAvailable: this.isPfpUploadAvailable(),
+        pfpUploadAvailable: r2Status.available,
+        missingR2EnvVars: r2Status.missingEnvVars,
+        pfpUploadUnavailableReason: r2Status.available
+          ? null
+          : "R2 configuration is missing on the API server.",
       },
     } as const;
   }
@@ -581,7 +618,11 @@ export class ProfileSettingsService {
     const config = getR2Config();
 
     if (!config) {
-      throw new ProfileSettingsError("PFP upload is temporarily unavailable.", 503);
+      const missingEnvVars = getR2ConfigStatus().missingEnvVars.join(", ");
+      throw new ProfileSettingsError(
+        `PFP upload is temporarily unavailable. Missing API env: ${missingEnvVars}`,
+        503
+      );
     }
 
     const size = assertPfpSize(input.size);
@@ -612,7 +653,11 @@ export class ProfileSettingsService {
   private async assertUploadedPfp(address: string, pfpUrl: string, storageKey: string) {
     const config = getR2Config();
     if (!config) {
-      throw new ProfileSettingsError("PFP upload is temporarily unavailable.", 503);
+      const missingEnvVars = getR2ConfigStatus().missingEnvVars.join(", ");
+      throw new ProfileSettingsError(
+        `PFP upload is temporarily unavailable. Missing API env: ${missingEnvVars}`,
+        503
+      );
     }
 
     if (!storageKey.startsWith(getPfpStoragePrefix(address))) {
