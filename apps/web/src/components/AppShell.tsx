@@ -232,7 +232,7 @@ export function AppShell({ children }: AppShellProps) {
   const rootStyle = {
     '--ds-mobile-fixed-bottom-offset': isTopNavMobileMode
       ? 'env(safe-area-inset-bottom)'
-      : 'calc(64px + env(safe-area-inset-bottom))',
+      : 'calc(90px + env(safe-area-inset-bottom))',
   } as CSSProperties;
   const mainShellClassName = isShelllessPage
     ? ''

@@ -1153,17 +1153,18 @@ function ProfilePageContent() {
             aria-label="Open profile settings"
           >
             <svg
-              className="h-4 w-4"
+              className="h-[18px] w-[18px]"
               fill="none"
               stroke="currentColor"
               viewBox="0 0 24 24"
               aria-hidden="true"
             >
+              <circle cx="12" cy="12" r="3.25" strokeWidth={2} />
               <path
                 strokeLinecap="round"
                 strokeLinejoin="round"
                 strokeWidth={2}
-                d="M10.5 6h3m-6.6 1.8 2.1-2.1m8.1 2.1L15 5.7M6 12H3m18 0h-3M6.9 16.2 9 18.3m8.1-2.1L15 18.3M10.5 18h3M12 9a3 3 0 1 1 0 6 3 3 0 0 1 0-6Z"
+                d="M12 3.25v2.1m0 13.3v2.1M5.8 5.8l1.49 1.49m9.42 9.42 1.49 1.49M3.25 12h2.1m13.3 0h2.1M5.8 18.2l1.49-1.49m9.42-9.42L18.2 5.8"
               />
             </svg>
           </button>
