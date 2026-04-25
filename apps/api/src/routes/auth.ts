@@ -7,6 +7,7 @@ import {
 } from "viem";
 import { base } from "viem/chains";
 import { generateSiweNonce, parseSiweMessage } from "viem/siwe";
+import { isAllowedAppDomain } from "../config/appOrigins";
 import { runtimeCache } from "../utils/runtimeCache";
 
 const authRoutes = new Hono();
@@ -30,32 +31,6 @@ type VerifyResponse = {
   address: `0x${string}`;
   expiresAt: string;
 };
-
-function getHostFromUrl(value?: string | null) {
-  if (!value) {
-    return null;
-  }
-
-  try {
-    return new URL(value).host;
-  } catch {
-    return null;
-  }
-}
-
-const allowedDomains = Array.from(
-  new Set(
-    [
-      "localhost:3000",
-      "dustswap.xyz",
-      "www.dustswap.xyz",
-      "dustswap.vercel.app",
-      "dustswap-web.vercel.app",
-      "app.dustswap.wtf",
-      getHostFromUrl(process.env.NEXT_PUBLIC_APP_URL),
-    ].filter((value): value is string => Boolean(value))
-  )
-);
 
 const publicClient = createPublicClient({
   chain: base,
@@ -229,7 +204,7 @@ authRoutes.post("/siwe/verify", async (c) => {
           throw new Error("Expired SIWE nonce");
         }
 
-        if (!domain || !allowedDomains.includes(domain)) {
+        if (!domain || !isAllowedAppDomain(domain)) {
           throw new Error("Unexpected SIWE domain");
         }
 

@@ -12,6 +12,7 @@ import { base } from "viem/chains";
 import { pointsEngine } from "./pointsEngine";
 import { questEngine } from "./questEngine";
 import { supabase } from "./supabase";
+import { isAllowedAppDomain } from "../config/appOrigins";
 import { runtimeCache } from "../utils/runtimeCache";
 
 const PROFILE_SIGNATURE_TTL_MS = 5 * 60 * 1000;
@@ -143,32 +144,6 @@ const publicClient = createPublicClient({
   chain: base,
   transport: http(BASE_RPC_URL),
 });
-
-function getHostFromUrl(value?: string | null) {
-  if (!value) {
-    return null;
-  }
-
-  try {
-    return new URL(value).host;
-  } catch {
-    return null;
-  }
-}
-
-const allowedDomains = Array.from(
-  new Set(
-    [
-      "localhost:3000",
-      "dustswap.xyz",
-      "www.dustswap.xyz",
-      "dustswap.vercel.app",
-      "dustswap-web.vercel.app",
-      "app.dustswap.wtf",
-      getHostFromUrl(process.env.NEXT_PUBLIC_APP_URL),
-    ].filter((value): value is string => Boolean(value))
-  )
-);
 
 function normalizeAddress(address: string) {
   if (!isAddress(address)) {
@@ -555,7 +530,7 @@ export class ProfileSettingsService {
       throw new ProfileSettingsError("Invalid profile settings action.", 401);
     }
 
-    if (!parsed.domain || !allowedDomains.includes(parsed.domain)) {
+    if (!parsed.domain || !isAllowedAppDomain(parsed.domain)) {
       throw new ProfileSettingsError("Unexpected profile settings domain.", 401);
     }
 

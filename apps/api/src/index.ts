@@ -12,30 +12,18 @@ import { profileSettingsRoutes } from "./routes/profileSettings";
 import { questsRoutes } from "./routes/quests";
 import { swapsRoutes } from "./routes/swaps";
 import tokens from "./routes/tokens";
+import { getAllowedAppOrigins, isAllowedAppOrigin } from "./config/appOrigins";
 import { getSupabaseDiagnostics } from "./services/supabase";
 
 const app = new Hono();
-const allowedOrigins = Array.from(
-  new Set(
-    [
-      "http://localhost:3000",
-      "http://localhost:5173",
-      "https://dustswap.xyz",
-      "https://www.dustswap.xyz",
-      "https://app.dustswap.wtf",
-      "https://dustswap.vercel.app",
-      "https://dustswap-web.vercel.app",
-      process.env.NEXT_PUBLIC_APP_URL,
-    ].filter((value): value is string => Boolean(value))
-  )
-);
+const allowedOrigins = getAllowedAppOrigins();
 
 app.use("*", logger());
 app.use("*", prettyJSON());
 app.use(
   "*",
   cors({
-    origin: allowedOrigins,
+    origin: (origin) => isAllowedAppOrigin(origin),
     allowMethods: ["GET", "POST", "DELETE", "OPTIONS"],
     allowHeaders: ["Content-Type", "Authorization", "x-admin-token"],
     maxAge: 86400,
@@ -112,6 +100,7 @@ serve({ fetch: app.fetch, port }, () => {
   console.log(
     `[DustSwap API] SUPABASE: urlRef=${supabase.urlRef}, keyEnv=${supabase.loadedEnv}, keyType=${supabase.keyType}`
   );
+  console.log(`[DustSwap API] APP_ORIGINS: ${allowedOrigins.join(", ")}`);
 });
 
 export default app;
