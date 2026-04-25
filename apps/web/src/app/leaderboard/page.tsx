@@ -1,10 +1,8 @@
 "use client";
 
-import Image from "next/image";
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { useAccount } from "wagmi";
-import { InteractiveLeaderboardBackground } from "@/components/leaderboard/InteractiveLeaderboardBackground";
 import { WalletConnectButton } from "@/components/wallet/WalletConnectButton";
 import { subscribeToDataInvalidation } from "@/lib/clientEvents";
 import {
@@ -37,8 +35,8 @@ const BOARD_OPTIONS: Array<{
   id: LeaderboardBoardType;
   label: string;
 }> = [
-  { id: "particle_points", label: "Particle Point" },
-  { id: "referral", label: "Referral" },
+  { id: "particle_points", label: "Particle Points" },
+  { id: "referral", label: "Referrals" },
   { id: "volume", label: "Volume" },
 ];
 const VISIBLE_BOARD_OPTIONS = BOARD_OPTIONS.filter(
@@ -116,6 +114,12 @@ function getRowUsername(profile: CachedLeaderboardProfile | null, address: strin
 }
 
 function getInitials(label: string) {
+  const compactLabel = label.trim();
+
+  if (compactLabel.toLowerCase().startsWith("0x")) {
+    return "0x";
+  }
+
   const letters = label
     .replace(/@/g, "")
     .split(/\s+/)
@@ -124,24 +128,24 @@ function getInitials(label: string) {
     .map((part) => part[0]?.toUpperCase() ?? "")
     .join("");
 
-  return letters || "DS";
+  return letters && letters !== "0" ? letters : "0x";
 }
 
 function getBoardColumns(type: LeaderboardBoardType): CSSProperties {
   if (type === "referral") {
     return {
-      gridTemplateColumns: "42px minmax(0,1fr) 60px 64px",
+      gridTemplateColumns: "48px minmax(0,1fr) 58px 74px",
     };
   }
 
   if (type === "volume") {
     return {
-      gridTemplateColumns: "42px minmax(0,1fr) 84px",
+      gridTemplateColumns: "48px minmax(0,1fr) 92px",
     };
   }
 
   return {
-    gridTemplateColumns: "42px minmax(0,1fr) 72px",
+    gridTemplateColumns: "48px minmax(0,1fr) 96px",
   };
 }
 
@@ -154,7 +158,35 @@ function getBoardHeaders(type: LeaderboardBoardType) {
     return ["Rank", "User", "Volume"];
   }
 
-  return ["Rank", "User", "Total PP"];
+  return ["Rank", "User", "PP"];
+}
+
+function getViewerScoreDisplay(type: LeaderboardBoardType, entry: LeaderboardHubEntry | null) {
+  if (!entry) {
+    return type === "volume" ? formatUsd(0) : type === "referral" ? "0 referrals" : "0 PP";
+  }
+
+  if (type === "referral") {
+    return `${formatWhole(entry.referredUsers)} referral${entry.referredUsers === 1 ? "" : "s"}`;
+  }
+
+  if (type === "volume") {
+    return formatUsd(entry.swapVolume);
+  }
+
+  return `${formatWhole(entry.totalPoints)} PP`;
+}
+
+function getViewerScoreDetail(type: LeaderboardBoardType, entry: LeaderboardHubEntry | null) {
+  if (!entry) {
+    return type === "referral" ? "0 PP" : null;
+  }
+
+  if (type === "referral") {
+    return `${formatWhole(entry.referralPoints)} PP`;
+  }
+
+  return null;
 }
 
 function getVisiblePages(currentPage: number, totalPages: number) {
@@ -199,7 +231,7 @@ function Avatar({
       <img
         src={src}
         alt={label}
-        className={`${sizeClass} rounded-full object-cover ring-1 ring-white/90`}
+        className={`${sizeClass} rounded-full border border-white object-cover shadow-sm`}
         referrerPolicy="no-referrer"
       />
     );
@@ -207,7 +239,7 @@ function Avatar({
 
   return (
     <div
-      className={`flex ${sizeClass} items-center justify-center rounded-full bg-[radial-gradient(circle_at_30%_30%,#ffffff_0%,#dbeafe_46%,#cbd5e1_100%)] font-semibold text-slate-700 ring-1 ring-white/90 ${textClass}`}
+      className={`flex ${sizeClass} items-center justify-center rounded-full border border-sky-100 bg-[linear-gradient(135deg,#eff6ff,#ffffff)] font-semibold text-sky-700 shadow-sm ${textClass}`}
     >
       {getInitials(label)}
     </div>
@@ -224,11 +256,11 @@ function CompactStatCard({
   isLoading?: boolean;
 }) {
   return (
-    <div className="flex h-[84px] flex-col justify-between rounded-[22px] border border-white/90 bg-white/84 px-3 py-3 shadow-[0_14px_40px_rgba(148,163,184,0.10)] backdrop-blur-xl">
-      <p className="text-[9px] font-semibold uppercase tracking-[0.22em] text-slate-400">
+    <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-[0_8px_24px_rgba(15,23,42,0.04)]">
+      <p className="text-xs font-medium text-slate-500">
         {label}
       </p>
-      <p className="text-lg font-semibold tracking-[-0.05em] text-slate-950 sm:text-[1.35rem]">
+      <p className="mt-2 text-xl font-semibold text-slate-950">
         {isLoading ? <span className="animate-pulse text-slate-300">...</span> : value}
       </p>
     </div>
@@ -239,16 +271,16 @@ function SkeletonTable({ type }: { type: LeaderboardBoardType }) {
   const columns = getBoardColumns(type);
 
   return (
-    <div className="space-y-1.5">
+    <div className="space-y-2">
       {Array.from({ length: 6 }).map((_, index) => (
         <div
           key={index}
-          className="grid h-10 items-center rounded-[14px] border border-white/90 bg-white/80 px-3"
+          className="grid min-h-[64px] items-center rounded-lg border border-slate-200 bg-white px-3"
           style={columns}
         >
-          <div className="h-3 w-7 animate-pulse rounded-full bg-slate-200" />
-          <div className="h-3 w-20 animate-pulse rounded-full bg-slate-200" />
-          <div className="ml-auto h-3 w-12 animate-pulse rounded-full bg-slate-200" />
+          <div className="h-3 w-8 animate-pulse rounded-full bg-slate-200" />
+          <div className="h-8 w-28 animate-pulse rounded-full bg-slate-200" />
+          <div className="ml-auto h-3 w-14 animate-pulse rounded-full bg-slate-200" />
           {type === "referral" ? (
             <div className="ml-auto h-3 w-10 animate-pulse rounded-full bg-slate-200" />
           ) : null}
@@ -268,11 +300,11 @@ function TableCellValue({
   if (type === "referral") {
     return (
       <>
-        <div className="truncate text-right text-[11px] font-semibold text-slate-700">
+        <div className="truncate text-right text-sm font-semibold text-slate-800">
           {formatWhole(entry.referredUsers)}
         </div>
-        <div className="truncate text-right text-[11px] font-semibold text-slate-950">
-          {formatWhole(entry.referralPoints)}
+        <div className="truncate text-right text-sm font-semibold text-slate-950">
+          {formatWhole(entry.referralPoints)} PP
         </div>
       </>
     );
@@ -280,15 +312,15 @@ function TableCellValue({
 
   if (type === "volume") {
     return (
-      <div className="truncate text-right text-[11px] font-semibold text-slate-950">
+      <div className="truncate text-right text-sm font-semibold text-slate-950">
         {formatUsd(entry.swapVolume)}
       </div>
     );
   }
 
   return (
-    <div className="truncate text-right text-[11px] font-semibold text-slate-950">
-      {formatWhole(entry.totalPoints)}
+    <div className="truncate text-right text-sm font-semibold text-slate-950">
+      {formatWhole(entry.totalPoints)} PP
     </div>
   );
 }
@@ -314,10 +346,10 @@ function LeaderboardRow({
 }) {
   return (
     <div
-      className={`grid h-10 items-center rounded-[14px] border px-3 ${
+      className={`grid min-h-[64px] items-center rounded-lg border px-3 transition-colors ${
         isViewer
-          ? "border-sky-200 bg-[linear-gradient(135deg,rgba(255,255,255,0.96),rgba(239,246,255,0.94))]"
-          : "border-white/90 bg-white/82"
+          ? "border-sky-200 bg-sky-50/70"
+          : "border-slate-200 bg-white hover:border-slate-300"
       }`}
       style={{
         ...columns,
@@ -325,19 +357,19 @@ function LeaderboardRow({
         animationDelay: `${animationDelayMs}ms`,
       }}
     >
-      <div className="truncate text-[11px] font-semibold text-slate-700">#{entry.rank}</div>
-      <div className="flex min-w-0 items-center gap-2">
+      <div className="truncate text-sm font-semibold text-slate-700">#{entry.rank}</div>
+      <div className="flex min-w-0 items-center gap-3">
         <Avatar
           src={avatarSrc || ""}
           label={label}
-          sizeClass="h-[22px] w-[22px]"
-          textClass="text-[8px]"
+          sizeClass="h-9 w-9"
+          textClass="text-[11px]"
         />
-        <div className="min-w-0 flex-1 truncate text-[11px] font-semibold text-slate-950">
+        <div className="min-w-0 flex-1 truncate text-sm font-semibold text-slate-950">
           {label}
         </div>
         {badge ? (
-          <span className="rounded-full border border-sky-200 bg-sky-50 px-1.5 py-0.5 text-[8px] font-semibold uppercase tracking-[0.14em] text-sky-700">
+          <span className="rounded-full border border-sky-200 bg-white px-2 py-0.5 text-[10px] font-semibold text-sky-700">
             {badge}
           </span>
         ) : null}
@@ -612,101 +644,100 @@ export default function LeaderboardPage() {
     };
   }, [loadLeaderboard]);
 
+  const selectedBoardLabel =
+    VISIBLE_BOARD_OPTIONS.find((option) => option.id === selectedBoard)?.label ?? "Particle Points";
+  const viewerRankLabel = viewer?.rank ? `#${formatWhole(viewer.rank)}` : "--";
+  const viewerScoreDisplay = getViewerScoreDisplay(selectedBoard, viewer);
+  const viewerScoreDetail = getViewerScoreDetail(selectedBoard, viewer);
+
   return (
     <main
-      className="bg-[#f3f7fb] px-3 py-3 sm:px-4 sm:py-4 md:px-8 md:py-8"
+      className="min-h-[100dvh] bg-[#f6f8fb] px-3 pb-[calc(8rem+env(safe-area-inset-bottom))] pt-4 sm:px-5 sm:pb-16 sm:pt-6 md:px-8 md:pt-8"
       style={{ minHeight: "100dvh" }}
     >
       <section
-        className="relative mx-auto flex max-w-6xl flex-col overflow-hidden rounded-[30px] border border-white/85 bg-white/58 shadow-[0_28px_90px_rgba(148,163,184,0.18)] backdrop-blur-xl"
-        style={{ minHeight: "calc(100dvh - 1.5rem)" }}
+        className="mx-auto flex w-full max-w-5xl flex-col"
       >
-        <InteractiveLeaderboardBackground />
-
         <div
-          className="relative z-10 flex flex-col gap-3 px-3 py-3 sm:gap-4 sm:px-4 sm:py-4 md:px-8 md:py-8"
-          style={{ minHeight: "calc(100dvh - 1.5rem)" }}
+          className="flex flex-col gap-4"
         >
-          <div className="grid grid-cols-[132px_minmax(0,1fr)] gap-2 sm:grid-cols-[164px_minmax(0,1fr)]">
-            <div className="flex h-[84px] items-center rounded-[22px] border border-white/90 bg-white/84 px-3 shadow-[0_14px_40px_rgba(148,163,184,0.10)] backdrop-blur-xl">
-              <Image
-                src="/longlogo.png"
-                alt="DustSwap"
-                width={170}
-                height={40}
-                priority
-                className="h-auto w-full max-w-[128px] sm:max-w-[150px]"
-              />
-            </div>
+          <header className="flex flex-col gap-1">
+            <h1 className="text-2xl font-semibold text-slate-950 sm:text-3xl">
+              Leaderboard
+            </h1>
+            <p className="max-w-xl text-sm leading-6 text-slate-600">
+              Track top DustSwap participants by PP and referrals.
+            </p>
+          </header>
 
-            <div className="flex h-[84px] items-center justify-between gap-2 rounded-[22px] border border-white/90 bg-white/84 px-3 shadow-[0_14px_40px_rgba(148,163,184,0.10)] backdrop-blur-xl">
-              {normalizedAddress ? (
-                <div className="flex min-w-0 items-center gap-2.5">
-                  <Avatar src={viewerAvatar} label={viewerName} />
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-semibold tracking-[-0.04em] text-slate-950">
-                      {viewerName}
-                    </p>
-                    <p className="truncate text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">
-                      {isLoadingProfile ? "Loading" : viewerSubtitle}
-                    </p>
-                  </div>
-                </div>
-              ) : (
-                <div className="min-w-0">
-                  <p className="text-[9px] font-semibold uppercase tracking-[0.22em] text-slate-400">
-                    Wallet
-                  </p>
-                  <p className="mt-1 truncate text-[11px] font-semibold text-slate-900">
-                    Connect to load your profile
-                  </p>
-                  <div className="mt-1.5 origin-left scale-[0.78] sm:scale-[0.84]">
-                    <WalletConnectButton
-                      className="inline-flex min-h-[40px] items-center justify-center rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-[0_10px_24px_rgba(148,163,184,0.12)] transition-all duration-200 hover:-translate-y-0.5 hover:border-sky-200 hover:bg-sky-50 hover:text-slate-900"
-                      description="Connect your wallet to load your leaderboard profile."
-                    />
-                  </div>
-                </div>
-              )}
-
-              <div className="shrink-0 text-right">
-                <p className="text-[9px] font-semibold uppercase tracking-[0.22em] text-slate-400">
-                  Total Earned
-                </p>
-                <p className="mt-1 text-base font-semibold tracking-[-0.05em] text-slate-950 sm:text-lg">
-                  {formatWhole(viewer?.totalPoints || 0)} PP
-                </p>
+          <div className="grid gap-3 lg:grid-cols-[minmax(0,1.35fr)_minmax(250px,0.65fr)]">
+            <section className="rounded-lg border border-slate-200 bg-white p-4 shadow-[0_12px_30px_rgba(15,23,42,0.05)]">
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-sm font-medium text-slate-500">Your rank</p>
+                {normalizedAddress ? (
+                  <span className="rounded-full border border-sky-200 bg-sky-50 px-2.5 py-1 text-xs font-semibold text-sky-700">
+                    You
+                  </span>
+                ) : null}
               </div>
-            </div>
-          </div>
 
-          <div className="grid grid-cols-2 gap-2">
-            <CompactStatCard
-              label="Total Particle Points"
-              value={`${formatWhole(visibleLeaderboard?.totalParticlePoints || 0)} PP`}
-              isLoading={shouldShowBoardSkeleton}
-            />
-            <CompactStatCard
-              label="Total Users"
-              value={formatWhole(visibleLeaderboard?.totalUserCount || 0)}
-              isLoading={shouldShowBoardSkeleton}
-            />
-          </div>
+              <div className="mt-4 flex min-w-0 items-center gap-3">
+                <Avatar
+                  src={viewerAvatar}
+                  label={viewerName}
+                  sizeClass="h-12 w-12"
+                  textClass="text-sm"
+                />
+                <div className="min-w-0">
+                  <p className="truncate text-base font-semibold text-slate-950">
+                    {viewerName}
+                  </p>
+                  <p className="mt-0.5 truncate text-sm text-slate-500">
+                    {normalizedAddress
+                      ? isLoadingProfile
+                        ? "Loading profile"
+                        : viewerSubtitle
+                      : "Connect wallet to load your profile"}
+                  </p>
+                </div>
+              </div>
 
-          <div className="relative overflow-hidden rounded-[20px] border border-white/90 bg-[linear-gradient(135deg,rgba(255,255,255,0.86),rgba(239,246,255,0.9),rgba(248,250,252,0.96))] px-3 py-3 shadow-[0_14px_36px_rgba(148,163,184,0.10)] backdrop-blur-xl">
-            <div
-              className="absolute inset-y-0 left-[-45%] w-[55%] bg-[linear-gradient(90deg,rgba(255,255,255,0),rgba(96,165,250,0.7),rgba(255,255,255,0))] blur-[16px]"
-              style={{ animation: "leaderboard-beam 7s linear infinite" }}
-            />
-            <div className="relative z-10 h-3 overflow-hidden rounded-full bg-white/80 ring-1 ring-sky-100">
-              <div
-                className="h-full w-[38%] rounded-full bg-[linear-gradient(90deg,#7dd3fc_0%,#38bdf8_34%,#60a5fa_100%)] shadow-[0_0_28px_rgba(96,165,250,0.45)]"
-                style={{ animation: "leaderboard-beam 9s linear infinite" }}
+              <div className="mt-4 grid grid-cols-2 gap-3">
+                <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-3">
+                  <p className="text-xs font-medium text-slate-500">Rank</p>
+                  <p className="mt-1 text-3xl font-semibold text-slate-950">
+                    {viewerRankLabel}
+                  </p>
+                </div>
+                <div className="rounded-lg border border-sky-100 bg-sky-50/70 px-3 py-3">
+                  <p className="text-xs font-medium text-slate-500">Score</p>
+                  <p className="mt-1 truncate text-xl font-semibold text-slate-950">
+                    {viewerScoreDisplay}
+                  </p>
+                  {viewerScoreDetail ? (
+                    <p className="mt-1 text-xs font-medium text-sky-700">
+                      {viewerScoreDetail}
+                    </p>
+                  ) : null}
+                </div>
+              </div>
+            </section>
+
+            <div className="grid grid-cols-2 gap-3 lg:grid-cols-1">
+              <CompactStatCard
+                label="Total PP"
+                value={`${formatWhole(visibleLeaderboard?.totalParticlePoints || 0)} PP`}
+                isLoading={shouldShowBoardSkeleton}
+              />
+              <CompactStatCard
+                label="Total users"
+                value={formatWhole(visibleLeaderboard?.totalUserCount || 0)}
+                isLoading={shouldShowBoardSkeleton}
               />
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center justify-center gap-2">
+          <div className="flex gap-2 overflow-x-auto pb-1">
             {VISIBLE_BOARD_OPTIONS.map((option) => {
               const active = option.id === selectedBoard;
 
@@ -718,10 +749,10 @@ export default function LeaderboardPage() {
                     setSelectedBoard(option.id);
                     setCurrentPage(1);
                   }}
-                  className={`flex h-8 items-center justify-center rounded-full border px-3 text-[11px] font-semibold transition-all duration-200 ${
+                  className={`flex h-10 shrink-0 items-center justify-center rounded-full border px-4 text-sm font-semibold transition-colors ${
                     active
-                      ? "border-slate-900 bg-slate-950 text-white shadow-[0_12px_28px_rgba(15,23,42,0.16)]"
-                      : "border-slate-200/90 bg-white/88 text-slate-600 shadow-[0_8px_22px_rgba(148,163,184,0.08)] hover:border-slate-300 hover:text-slate-900"
+                      ? "border-[#0052ff] bg-[#0052ff] text-white"
+                      : "border-slate-200 bg-white text-slate-700 hover:border-sky-200 hover:text-slate-950"
                   }`}
                 >
                   {option.label}
@@ -731,8 +762,8 @@ export default function LeaderboardPage() {
           </div>
 
           {isCheckingAccess ? (
-            <div className="rounded-[22px] border border-white/90 bg-white/72 p-6 text-center shadow-[0_16px_48px_rgba(148,163,184,0.12)] backdrop-blur-xl sm:p-7">
-              <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-slate-400">
+            <div className="rounded-lg border border-slate-200 bg-white p-6 text-center shadow-[0_12px_30px_rgba(15,23,42,0.05)] sm:p-7">
+              <p className="text-sm font-medium text-slate-500">
                 Checking access
               </p>
               <p className="mt-2 text-sm font-semibold text-slate-900">
@@ -740,11 +771,11 @@ export default function LeaderboardPage() {
               </p>
             </div>
           ) : !normalizedAddress ? (
-            <div className="rounded-[22px] border border-white/90 bg-white/72 p-6 text-center shadow-[0_16px_48px_rgba(148,163,184,0.12)] backdrop-blur-xl sm:p-7">
-              <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-slate-400">
+            <div className="rounded-lg border border-slate-200 bg-white p-6 text-center shadow-[0_12px_30px_rgba(15,23,42,0.05)] sm:p-7">
+              <p className="text-sm font-medium text-slate-500">
                 Connect wallet
               </p>
-              <h2 className="mt-2 text-xl font-semibold tracking-[-0.04em] text-slate-950">
+              <h2 className="mt-2 text-xl font-semibold text-slate-950">
                 Connect your wallet, then complete one check-in to unlock the leaderboard.
               </h2>
               <p className="mt-2 text-sm leading-6 text-slate-600">
@@ -752,55 +783,55 @@ export default function LeaderboardPage() {
               </p>
               <div className="mt-4 flex justify-center">
                 <WalletConnectButton
-                  className="inline-flex min-h-[44px] items-center justify-center rounded-full border border-slate-200 bg-white px-5 py-2.5 text-sm font-semibold text-slate-700 shadow-[0_10px_24px_rgba(148,163,184,0.12)] transition-all duration-200 hover:-translate-y-0.5 hover:border-sky-200 hover:bg-sky-50 hover:text-slate-900"
+                  className="inline-flex min-h-[44px] items-center justify-center rounded-full border border-slate-200 bg-white px-5 py-2.5 text-sm font-semibold text-slate-700 shadow-[0_8px_20px_rgba(15,23,42,0.06)] transition-colors hover:border-sky-200 hover:bg-sky-50 hover:text-slate-900"
                   description="Connect your wallet, then complete one check-in to unlock the leaderboard."
                 />
               </div>
             </div>
           ) : !hasLeaderboardAccess ? (
-            <div className="rounded-[22px] border border-white/90 bg-white/72 p-6 text-center shadow-[0_16px_48px_rgba(148,163,184,0.12)] backdrop-blur-xl sm:p-7">
-              <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-slate-400">
+            <div className="rounded-lg border border-slate-200 bg-white p-6 text-center shadow-[0_12px_30px_rgba(15,23,42,0.05)] sm:p-7">
+              <p className="text-sm font-medium text-slate-500">
                 Leaderboard locked
               </p>
-              <h2 className="mt-2 text-xl font-semibold tracking-[-0.04em] text-slate-950">
+              <h2 className="mt-2 text-xl font-semibold text-slate-950">
                 Complete your first onchain check-in to unlock leaderboard access.
               </h2>
               <p className="mt-2 text-sm leading-6 text-slate-600">
-                After your first check-in, you&apos;ll be able to view Particle Point and Referral rankings.
+                After your first check-in, you&apos;ll be able to view Particle Points and Referrals rankings.
               </p>
               <div className="mt-4 flex justify-center">
                 <Link
                   href="/profile"
-                  className="inline-flex min-h-[44px] items-center justify-center rounded-full border border-sky-200 bg-sky-50 px-5 py-2.5 text-sm font-semibold text-sky-800 shadow-[0_10px_24px_rgba(14,165,233,0.12)] transition-all duration-200 hover:-translate-y-0.5 hover:bg-sky-100"
+                  className="inline-flex min-h-[44px] items-center justify-center rounded-full border border-sky-200 bg-sky-50 px-5 py-2.5 text-sm font-semibold text-sky-800 transition-colors hover:bg-sky-100"
                 >
                   Go to Profile Check-In
                 </Link>
               </div>
             </div>
           ) : (
-            <div className="rounded-[22px] border border-white/90 bg-white/72 p-2.5 shadow-[0_16px_48px_rgba(148,163,184,0.12)] backdrop-blur-xl sm:p-3">
-              <div className="flex items-center justify-between gap-2 px-1 pb-2">
+            <section className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-[0_12px_30px_rgba(15,23,42,0.05)]">
+              <div className="flex items-center justify-between gap-3 px-3 py-3 sm:px-4">
                 <div>
-                  <p className="text-[9px] font-semibold uppercase tracking-[0.22em] text-slate-400">
-                    Leaderboard
+                  <p className="text-base font-semibold text-slate-950">
+                    {selectedBoardLabel}
                   </p>
-                  <p className="mt-1 text-sm font-semibold tracking-[-0.03em] text-slate-950">
-                    {VISIBLE_BOARD_OPTIONS.find((option) => option.id === selectedBoard)?.label}
+                  <p className="text-sm text-slate-500">
+                    Live rank and score
                   </p>
                 </div>
-                <div className="rounded-full border border-sky-100 bg-sky-50/90 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-sky-700">
+                <div className="rounded-full border border-sky-100 bg-sky-50 px-2.5 py-1 text-xs font-semibold text-sky-700">
                   Page {visibleLeaderboard?.page ?? currentPage}/{totalPages}
                 </div>
               </div>
 
               <div
-                className="grid h-9 items-center rounded-[14px] border border-slate-200/80 bg-white/86 px-3"
+                className="grid min-h-10 items-center border-y border-slate-200 bg-slate-50 px-3 sm:px-4"
                 style={boardColumns}
               >
                 {boardHeaders.map((header, index) => (
                   <div
                     key={header}
-                    className={`truncate text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400 ${
+                    className={`truncate text-xs font-medium text-slate-500 ${
                       index === 0 ? "" : index === 1 ? "" : "text-right"
                     }`}
                   >
@@ -809,14 +840,14 @@ export default function LeaderboardPage() {
                 ))}
               </div>
 
-              <div className="mt-1.5">
+              <div className="p-3 sm:p-4">
                 {refreshNotice ? (
-                  <div className="mb-1.5 flex flex-col gap-2 rounded-[14px] border border-amber-100 bg-amber-50/90 px-3 py-3 text-sm text-amber-800 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="mb-3 flex flex-col gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-3 text-sm text-amber-800 sm:flex-row sm:items-center sm:justify-between">
                     <span>{refreshNotice}</span>
                     <button
                       type="button"
                       onClick={() => void loadLeaderboard({ manual: true })}
-                      className="inline-flex items-center justify-center rounded-full border border-amber-200 bg-white px-3 py-1.5 text-[11px] font-semibold text-amber-800 transition-colors hover:bg-amber-100"
+                      className="inline-flex items-center justify-center rounded-full border border-amber-200 bg-white px-3 py-1.5 text-xs font-semibold text-amber-800 transition-colors hover:bg-amber-100"
                     >
                       Retry
                     </button>
@@ -826,12 +857,12 @@ export default function LeaderboardPage() {
                 {shouldShowBoardSkeleton ? <SkeletonTable type={selectedBoard} /> : null}
 
                 {!shouldShowBoardSkeleton && error ? (
-                  <div className="rounded-[14px] border border-rose-100 bg-rose-50/90 px-3 py-3 text-sm text-rose-700">
+                  <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-3 text-sm text-rose-700">
                     <p>{error}</p>
                     <button
                       type="button"
                       onClick={() => void loadLeaderboard({ manual: true })}
-                      className="mt-3 inline-flex items-center justify-center rounded-full border border-rose-200 bg-white px-3 py-1.5 text-[11px] font-semibold text-rose-700 transition-colors hover:bg-rose-100"
+                      className="mt-3 inline-flex items-center justify-center rounded-full border border-rose-200 bg-white px-3 py-1.5 text-xs font-semibold text-rose-700 transition-colors hover:bg-rose-100"
                     >
                       Retry leaderboard
                     </button>
@@ -839,13 +870,13 @@ export default function LeaderboardPage() {
                 ) : null}
 
                 {!shouldShowBoardSkeleton && !error && !hasVisibleEntries ? (
-                  <div className="rounded-[14px] border border-slate-200/80 bg-white/84 px-3 py-4 text-center text-sm text-slate-500">
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-5 text-center text-sm text-slate-500">
                     No leaderboard data yet.
                   </div>
                 ) : null}
 
                 {!shouldShowBoardSkeleton && !error && hasVisibleEntries ? (
-                  <div className="space-y-1.5">
+                  <div className="space-y-2">
                     {pinnedViewerEntry ? (
                       <LeaderboardRow
                         type={selectedBoard}
@@ -872,6 +903,7 @@ export default function LeaderboardPage() {
                           label={getRowUsername(entry.profile, entry.address)}
                           avatarSrc={entry.profile?.pfpUrl || ""}
                           isViewer={isViewer}
+                          badge={isViewer ? "You" : undefined}
                           animationDelayMs={index * 40}
                         />
                       );
@@ -881,12 +913,12 @@ export default function LeaderboardPage() {
               </div>
 
               {!shouldShowBoardSkeleton && !error && totalPages > 1 ? (
-                <div className="mt-3 flex flex-wrap items-center justify-center gap-1.5">
+                <div className="mt-4 flex flex-wrap items-center justify-center gap-1.5 px-3 pb-4 sm:px-4">
                   <button
                     type="button"
                     onClick={() => setCurrentPage((page) => Math.max(1, page - 1))}
                     disabled={currentPage <= 1}
-                    className="flex h-8 items-center justify-center rounded-full border border-slate-200/90 bg-white/88 px-3 text-[11px] font-semibold text-slate-700 shadow-[0_8px_22px_rgba(148,163,184,0.08)] disabled:cursor-not-allowed disabled:opacity-45"
+                    className="flex h-9 items-center justify-center rounded-full border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 transition-colors hover:border-sky-200 hover:text-slate-950 disabled:cursor-not-allowed disabled:opacity-45"
                   >
                     Prev
                   </button>
@@ -895,7 +927,7 @@ export default function LeaderboardPage() {
                     page === "ellipsis" ? (
                       <span
                         key={`ellipsis-${index}`}
-                        className="flex h-8 w-8 items-center justify-center text-[11px] font-semibold text-slate-400"
+                        className="flex h-9 w-8 items-center justify-center text-xs font-semibold text-slate-400"
                       >
                         ...
                       </span>
@@ -904,10 +936,10 @@ export default function LeaderboardPage() {
                         key={page}
                         type="button"
                         onClick={() => setCurrentPage(page)}
-                        className={`flex h-8 w-8 items-center justify-center rounded-full border text-[11px] font-semibold ${
+                        className={`flex h-9 w-9 items-center justify-center rounded-full border text-xs font-semibold transition-colors ${
                           page === currentPage
-                            ? "border-slate-900 bg-slate-950 text-white shadow-[0_12px_28px_rgba(15,23,42,0.16)]"
-                            : "border-slate-200/90 bg-white/88 text-slate-700 shadow-[0_8px_22px_rgba(148,163,184,0.08)]"
+                            ? "border-[#0052ff] bg-[#0052ff] text-white"
+                            : "border-slate-200 bg-white text-slate-700 hover:border-sky-200 hover:text-slate-950"
                         }`}
                       >
                         {page}
@@ -919,13 +951,13 @@ export default function LeaderboardPage() {
                     type="button"
                     onClick={() => setCurrentPage((page) => Math.min(totalPages, page + 1))}
                     disabled={currentPage >= totalPages}
-                    className="flex h-8 items-center justify-center rounded-full border border-slate-200/90 bg-white/88 px-3 text-[11px] font-semibold text-slate-700 shadow-[0_8px_22px_rgba(148,163,184,0.08)] disabled:cursor-not-allowed disabled:opacity-45"
+                    className="flex h-9 items-center justify-center rounded-full border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 transition-colors hover:border-sky-200 hover:text-slate-950 disabled:cursor-not-allowed disabled:opacity-45"
                   >
                     Next
                   </button>
                 </div>
               ) : null}
-            </div>
+            </section>
           )}
         </div>
       </section>
