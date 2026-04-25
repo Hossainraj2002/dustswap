@@ -767,13 +767,13 @@ export default function LeaderboardPage() {
               </div>
             </div>
           ) : (
-            <section className="overflow-hidden rounded-[16px] border border-amber-200/70 bg-white shadow-[0_18px_48px_rgba(15,23,42,0.08)]">
-              <div className="flex items-center justify-between gap-3 bg-[linear-gradient(135deg,#111827_0%,#0f766e_58%,#c4862c_100%)] px-3 py-2 sm:px-4">
+            <section className="overflow-hidden rounded-[16px] border border-sky-200/80 bg-white shadow-[0_18px_48px_rgba(0,82,255,0.08)]">
+              <div className="flex items-center justify-between gap-3 bg-[radial-gradient(circle_at_top_left,rgba(255,255,255,0.22),transparent_34%),linear-gradient(135deg,#0052ff_0%,#0ea5e9_58%,#38bdf8_100%)] px-3 py-2 sm:px-4">
                 <div>
                   <p className="text-sm font-bold text-white">
                     {selectedBoardLabel}
                   </p>
-                  <p className="text-[11px] font-medium text-emerald-50/90">
+                  <p className="text-[11px] font-medium text-sky-50/90">
                     Live rank and score
                   </p>
                 </div>
@@ -783,7 +783,7 @@ export default function LeaderboardPage() {
               </div>
 
               <div
-                className="grid h-[30px] items-center border-y border-amber-100 bg-[linear-gradient(90deg,#fffaf0,#f0fdfa)] px-2 sm:px-3"
+                className="grid h-[30px] items-center border-y border-sky-100 bg-[linear-gradient(90deg,#eff6ff,#f0f9ff)] px-2 sm:px-3"
                 style={boardColumns}
               >
                 {boardHeaders.map((header, index) => (
@@ -876,7 +876,7 @@ export default function LeaderboardPage() {
                     type="button"
                     onClick={() => setCurrentPage((page) => Math.max(1, page - 1))}
                     disabled={currentPage <= 1}
-                    className="flex h-8 items-center justify-center rounded-full border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 transition-colors hover:border-sky-200 hover:text-slate-950 disabled:cursor-not-allowed disabled:opacity-45"
+                    className="flex h-[30px] max-h-[30px] items-center justify-center rounded-full border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 transition-colors hover:border-sky-200 hover:text-slate-950 disabled:cursor-not-allowed disabled:opacity-45"
                   >
                     Prev
                   </button>
@@ -885,7 +885,7 @@ export default function LeaderboardPage() {
                     page === "ellipsis" ? (
                       <span
                         key={`ellipsis-${index}`}
-                        className="flex h-8 w-8 items-center justify-center text-xs font-semibold text-slate-400"
+                        className="flex h-[30px] w-[30px] max-h-[30px] items-center justify-center text-xs font-semibold text-slate-400"
                       >
                         ...
                       </span>
@@ -894,7 +894,7 @@ export default function LeaderboardPage() {
                         key={page}
                         type="button"
                         onClick={() => setCurrentPage(page)}
-                        className={`flex h-8 w-8 items-center justify-center rounded-full border text-xs font-semibold transition-colors ${
+                        className={`flex h-[30px] max-h-[30px] w-[30px] items-center justify-center rounded-full border text-xs font-semibold transition-colors ${
                           page === currentPage
                             ? "border-[#0052ff] bg-[#0052ff] text-white"
                             : "border-slate-200 bg-white text-slate-700 hover:border-sky-200 hover:text-slate-950"
@@ -909,7 +909,7 @@ export default function LeaderboardPage() {
                     type="button"
                     onClick={() => setCurrentPage((page) => Math.min(totalPages, page + 1))}
                     disabled={currentPage >= totalPages}
-                    className="flex h-8 items-center justify-center rounded-full border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 transition-colors hover:border-sky-200 hover:text-slate-950 disabled:cursor-not-allowed disabled:opacity-45"
+                    className="flex h-[30px] max-h-[30px] items-center justify-center rounded-full border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 transition-colors hover:border-sky-200 hover:text-slate-950 disabled:cursor-not-allowed disabled:opacity-45"
                   >
                     Next
                   </button>

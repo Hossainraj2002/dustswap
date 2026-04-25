@@ -14,6 +14,7 @@ import {
 import { emitDataInvalidation, subscribeToDataInvalidation } from "@/lib/clientEvents";
 import { clearPointsSummaryCache } from "@/lib/points";
 import { PremiumQuestBackground } from "@/components/quests/PremiumQuestBackground";
+import { WalletConnectButton } from "@/components/wallet/WalletConnectButton";
 import type { QuestItem } from "@/types/quests";
 
 type CategoryFilter = "social" | "onchain";
@@ -544,6 +545,20 @@ export function QuestBoard() {
         throw new Error(response.error || "Failed to save X username");
       }
 
+      setBoard((current) =>
+        current
+          ? {
+              ...current,
+              linkedAccounts: {
+                ...current.linkedAccounts,
+                x: {
+                  ...(current.linkedAccounts?.x || {}),
+                  username: response.username,
+                },
+              },
+            }
+          : current
+      );
       setXUsernameInput(response.username);
       setQuestInlineErrors({});
       setPostVerificationFailures({});
@@ -893,14 +908,11 @@ export function QuestBoard() {
       <PremiumQuestBackground />
 
       <div className="relative z-10 mx-auto flex w-full max-w-5xl flex-col gap-3 px-3 py-3 sm:px-5 sm:py-5">
-        <section className="rounded-[30px] border border-white/80 bg-white/68 shadow-[0_24px_80px_rgba(59,130,246,0.08)] backdrop-blur-xl">
+        <section className="overflow-hidden rounded-[30px] border border-sky-100/90 bg-[radial-gradient(circle_at_top_left,rgba(0,82,255,0.16),transparent_34%),radial-gradient(circle_at_bottom_right,rgba(14,165,233,0.18),transparent_36%),linear-gradient(135deg,#ffffff_0%,#f0f7ff_55%,#e0f2fe_100%)] shadow-[0_24px_80px_rgba(0,82,255,0.1)] backdrop-blur-xl">
           <div className="flex flex-col gap-4 p-4 sm:p-5">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div className="max-w-2xl">
-                <p className="text-[10px] font-semibold uppercase tracking-[0.34em] text-sky-700/70">
-                  Quest Board
-                </p>
-                <h1 className="mt-2 text-[28px] font-semibold tracking-[-0.04em] text-slate-950 sm:text-[34px]">
+                <h1 className="text-[28px] font-semibold tracking-[-0.04em] text-slate-950 sm:text-[34px]">
                   Social and onchain quests.
                 </h1>
                 <p className="mt-2 max-w-xl text-sm leading-6 text-slate-600">
@@ -909,33 +921,52 @@ export function QuestBoard() {
               </div>
 
               <div className="w-full max-w-sm">
-                <label
-                  htmlFor="quest-x-username"
-                  className="mb-2 block text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500"
-                >
-                  X Username
-                </label>
-                <div className="flex gap-2">
-                  <input
-                    id="quest-x-username"
-                    value={xUsernameInput}
-                    onChange={(event) => setXUsernameInput(event.target.value)}
-                    placeholder="@DustswapOnBase"
-                    disabled={!isConnected || isSavingXUsername}
-                    className="min-w-0 flex-1 rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-900 outline-none placeholder:text-slate-400 focus:border-sky-300 disabled:cursor-not-allowed disabled:opacity-50"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => void handleSaveXUsername()}
-                    disabled={!isConnected || isSavingXUsername || !xUsernameInput.trim()}
-                    className="inline-flex shrink-0 items-center justify-center rounded-2xl bg-sky-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-40"
-                  >
-                    {isSavingXUsername ? "Saving..." : "Save"}
-                  </button>
-                </div>
+                {!isConnected ? (
+                  <div className="rounded-[24px] border border-white/80 bg-white/82 p-3 shadow-[0_18px_44px_rgba(0,82,255,0.08)]">
+                    <WalletConnectButton
+                      fullWidth
+                      connectLabel="Connect Wallet"
+                      description="Connect your wallet to start quests and link your X username."
+                      className="min-h-[46px] rounded-2xl border-sky-200 bg-[#0052ff] px-4 py-2.5 text-sm font-semibold text-white shadow-[0_14px_30px_rgba(0,82,255,0.2)] hover:border-sky-300 hover:bg-sky-600 hover:text-white"
+                    />
+                  </div>
+                ) : !isXLinked ? (
+                  <div className="rounded-[24px] border border-white/80 bg-white/82 p-3 shadow-[0_18px_44px_rgba(0,82,255,0.08)]">
+                    <label
+                      htmlFor="quest-x-username"
+                      className="mb-2 block text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500"
+                    >
+                      X Username
+                    </label>
+                    <div className="flex gap-2">
+                      <input
+                        id="quest-x-username"
+                        value={xUsernameInput}
+                        onChange={(event) => setXUsernameInput(event.target.value)}
+                        placeholder="@DustswapOnBase"
+                        disabled={isSavingXUsername}
+                        className="min-w-0 flex-1 rounded-2xl border border-sky-100 bg-white px-4 py-2.5 text-sm text-slate-900 outline-none placeholder:text-slate-400 focus:border-sky-300 disabled:cursor-not-allowed disabled:opacity-50"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => void handleSaveXUsername()}
+                        disabled={isSavingXUsername || !xUsernameInput.trim()}
+                        className="inline-flex shrink-0 items-center justify-center rounded-2xl bg-sky-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        {isSavingXUsername ? "Saving..." : "Save"}
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-2 gap-2">
+                    <InfoChip label="Completed" value={completedCount.toLocaleString()} />
+                    <InfoChip label="X Account" value={savedXUsername} />
+                  </div>
+                )}
               </div>
             </div>
 
+            {!isXLinked ? (
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
               <InfoChip label="Completed" value={completedCount.toLocaleString()} />
               <InfoChip
@@ -943,6 +974,7 @@ export function QuestBoard() {
                 value={isXLinked ? savedXUsername : "Not linked"}
               />
             </div>
+            ) : null}
           </div>
         </section>
 
