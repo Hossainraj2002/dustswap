@@ -337,7 +337,7 @@ export function DailyCheckInModule({
                   : "Your streak resets to zero. Start again with today's check-in."
                 : balance.checkedInToday
                   ? "Locked for today. Come back tomorrow."
-                  : "Phone-first onchain tap on Base."}
+                  : "Check in daily to unlock your boost."}
             </p>
           </div>
 
@@ -468,7 +468,7 @@ export function DailyCheckInModule({
                     ? "Checking In..."
                     : balance.checkedInToday
                       ? "Checked In Today"
-                      : "Check In Onchain"}
+                      : "Check in"}
               </span>
             </button>
 

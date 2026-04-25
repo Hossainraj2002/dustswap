@@ -104,6 +104,22 @@ function getRewardToastMessage(reward: SpinReward) {
   return `You won ${reward.pointsAwarded} PP.`;
 }
 
+function getInlineRewardTitle(reward: SpinReward) {
+  if (reward.type === "usdc") {
+    return `You won ${reward.amount} USDC`;
+  }
+
+  return `You won ${reward.pointsAwarded} PP`;
+}
+
+function getInlineRewardDescription(reward: SpinReward) {
+  if (reward.type === "usdc") {
+    return "Reward confirmed onchain.";
+  }
+
+  return "Added to your DustSwap balance.";
+}
+
 function SpinHistoryDrawer({
   open,
   onClose,
@@ -574,6 +590,7 @@ export default function SpinPage() {
 
   const actionButtonClass =
     "flex w-full items-center justify-center rounded-[20px] border border-transparent px-5 py-3.5 text-base font-black tracking-tight transition duration-200";
+  const showInlineReward = latestReward && flowStage === "idle";
 
   const renderActionButton = () =>
     hasTicket ? (
@@ -718,7 +735,21 @@ export default function SpinPage() {
                 isSpinning={flowStage === "spinning"}
               />
 
-              <div className="mx-auto mt-14 max-w-sm">
+              {showInlineReward ? (
+                <div className="mx-auto mt-6 max-w-sm rounded-[22px] border border-sky-100 bg-white px-4 py-4 text-center shadow-[0_16px_34px_rgba(37,99,235,0.10)]">
+                  <p className="text-[10px] font-black uppercase tracking-[0.24em] text-sky-600">
+                    Reward confirmed
+                  </p>
+                  <p className="mt-2 text-xl font-black tracking-tight text-slate-950">
+                    {getInlineRewardTitle(latestReward)}
+                  </p>
+                  <p className="mt-1 text-sm font-semibold leading-5 text-slate-500">
+                    {getInlineRewardDescription(latestReward)}
+                  </p>
+                </div>
+              ) : null}
+
+              <div className="mx-auto mt-6 max-w-sm">
                 {renderActionButton()}
               </div>
 
