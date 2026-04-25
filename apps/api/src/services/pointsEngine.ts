@@ -149,6 +149,16 @@ type SocialAccountRecord = {
   updated_at?: string | null;
 };
 
+type UserProfileRecord = {
+  user_id: number;
+  username: string | null;
+  display_name: string | null;
+  discord_username: string | null;
+  pfp_url: string | null;
+  pfp_storage_key: string | null;
+  updated_at?: string | null;
+};
+
 type CachedFarcasterProfile = {
   fid: string | null;
   username: string | null;
@@ -156,6 +166,19 @@ type CachedFarcasterProfile = {
   pfpUrl: string | null;
   updatedAt: string | null;
 };
+
+function isMissingUserProfilesTable(error: { code?: string; message?: string } | null) {
+  if (!error) {
+    return false;
+  }
+
+  const message = String(error.message || "").toLowerCase();
+  return (
+    error.code === "42P01" ||
+    error.code === "PGRST205" ||
+    (message.includes("user_profiles") && message.includes("schema cache"))
+  );
+}
 
 type LeaderboardKind = "particle_points" | "referral" | "volume";
 
@@ -1176,21 +1199,30 @@ export class PointsEngine {
   }
 
   private normalizeCachedProfile(
-    record: Pick<
+    fallback: Pick<
       SocialAccountRecord,
       "platform_user_id" | "username" | "display_name" | "profile_image_url" | "updated_at"
+    > | null,
+    custom?: Pick<
+      UserProfileRecord,
+      "username" | "display_name" | "pfp_url" | "updated_at"
     > | null
   ): CachedFarcasterProfile | null {
-    if (!record) {
+    if (!fallback && !custom) {
       return null;
     }
 
     return {
-      fid: record.platform_user_id || null,
-      username: record.username || null,
-      displayName: record.display_name || null,
-      pfpUrl: record.profile_image_url || null,
-      updatedAt: record.updated_at || null,
+      fid: fallback?.platform_user_id || null,
+      username: custom?.username || fallback?.username || null,
+      displayName:
+        custom?.display_name ||
+        custom?.username ||
+        fallback?.display_name ||
+        fallback?.username ||
+        null,
+      pfpUrl: custom?.pfp_url || fallback?.profile_image_url || null,
+      updatedAt: custom?.updated_at || fallback?.updated_at || null,
     };
   }
 
@@ -1202,27 +1234,71 @@ export class PointsEngine {
       return profiles;
     }
 
-    const { data, error } = await supabase
-      .from("social_accounts")
-      .select(
-        "user_id, platform_user_id, username, display_name, profile_image_url, updated_at"
-      )
-      .eq("platform", "farcaster")
-      .in("user_id", uniqueUserIds);
+    const [socialResult, customResult] = await Promise.all([
+      supabase
+        .from("social_accounts")
+        .select(
+          "user_id, platform_user_id, username, display_name, profile_image_url, updated_at"
+        )
+        .eq("platform", "farcaster")
+        .in("user_id", uniqueUserIds),
+      supabase
+        .from("user_profiles")
+        .select("user_id, username, display_name, pfp_url, updated_at")
+        .in("user_id", uniqueUserIds),
+    ]);
 
-    if (error) {
-      throw new Error(`Fetch social profiles: ${error.message}`);
+    if (socialResult.error) {
+      throw new Error(`Fetch social profiles: ${socialResult.error.message}`);
     }
 
-    for (const row of (data ?? []) as Array<
+    const hasCustomProfiles = !customResult.error;
+    if (customResult.error && !isMissingUserProfilesTable(customResult.error)) {
+      throw new Error(`Fetch custom profiles: ${customResult.error.message}`);
+    }
+
+    if (customResult.error && isMissingUserProfilesTable(customResult.error)) {
+      console.warn(
+        `[PointsEngine] user_profiles table is not available yet: ${customResult.error.message}`
+      );
+    }
+
+    const fallbackProfiles = new Map<
+      number,
+      Pick<
+        SocialAccountRecord,
+        "user_id" | "platform_user_id" | "username" | "display_name" | "profile_image_url" | "updated_at"
+      >
+    >();
+    const customProfiles = new Map<
+      number,
+      Pick<UserProfileRecord, "user_id" | "username" | "display_name" | "pfp_url" | "updated_at">
+    >();
+
+    for (const row of (socialResult.data ?? []) as Array<
       Pick<
         SocialAccountRecord,
         "user_id" | "platform_user_id" | "username" | "display_name" | "profile_image_url" | "updated_at"
       >
     >) {
-      const normalized = this.normalizeCachedProfile(row);
+      fallbackProfiles.set(Number(row.user_id), row);
+    }
+
+    if (hasCustomProfiles) {
+      for (const row of (customResult.data ?? []) as Array<
+        Pick<UserProfileRecord, "user_id" | "username" | "display_name" | "pfp_url" | "updated_at">
+      >) {
+        customProfiles.set(Number(row.user_id), row);
+      }
+    }
+
+    for (const userId of uniqueUserIds) {
+      const normalized = this.normalizeCachedProfile(
+        fallbackProfiles.get(userId) ?? null,
+        customProfiles.get(userId) ?? null
+      );
       if (normalized) {
-        profiles.set(Number(row.user_id), normalized);
+        profiles.set(userId, normalized);
       }
     }
 

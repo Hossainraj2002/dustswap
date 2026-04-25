@@ -8,6 +8,7 @@ import { logger } from "hono/logger";
 import { prettyJSON } from "hono/pretty-json";
 import { authRoutes } from "./routes/auth";
 import { pointsRoutes } from "./routes/points";
+import { profileSettingsRoutes } from "./routes/profileSettings";
 import { questsRoutes } from "./routes/quests";
 import { swapsRoutes } from "./routes/swaps";
 import tokens from "./routes/tokens";
@@ -43,6 +44,7 @@ app.use(
 app.route("/api/tokens", tokens);
 app.route("/api/auth", authRoutes);
 app.route("/api/points", pointsRoutes);
+app.route("/api/profile-settings", profileSettingsRoutes);
 app.route("/api/quests", questsRoutes);
 app.route("/api/swaps", swapsRoutes);
 
@@ -60,6 +62,9 @@ app.get("/", (c) => {
       "POST /api/tokens/batch-quote": "Get batch swap quotes",
       "GET /api/tokens/health": "Service health check",
       "GET /api/points/:address": "Get points balance",
+      "GET /api/profile-settings?address=": "Get merged profile settings",
+      "POST /api/profile-settings": "Save signed profile settings",
+      "POST /api/profile-settings/pfp-upload-url": "Create signed R2 PFP upload URL",
       "POST /api/points/airdrop/lookup": "Preview Footprint Drop eligibility",
       "POST /api/points/airdrop/claim": "Claim Footprint Drop PP",
       "POST /api/points/check-in": "Daily check-in",

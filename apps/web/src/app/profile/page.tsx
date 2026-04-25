@@ -6,6 +6,7 @@ import { pay } from "@base-org/account/payment";
 import { useAccount, usePublicClient, useReadContract, useWalletClient } from "wagmi";
 import { encodeFunctionData, erc20Abi } from "viem";
 import { DailyCheckInModule } from "@/components/profile/DailyCheckInModule";
+import { ProfileSettingsModal } from "@/components/profile/ProfileSettingsModal";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { WalletConnectButton } from "@/components/wallet/WalletConnectButton";
 import { useBaseChainSwitch } from "@/hooks/useBaseChainSwitch";
@@ -39,6 +40,11 @@ import {
   isPaymasterEnabled,
   isUserRejectedRequest,
 } from "@/lib/paymaster";
+import {
+  fetchProfileSettings,
+  resolveProfileDisplay,
+  type ProfileSettingsResponse,
+} from "@/lib/profileSettings";
 
 type NeynarProfile = {
   fid: number;
@@ -110,18 +116,6 @@ function formatNumber(value: number) {
   return value.toLocaleString();
 }
 
-function getDisplayName(profile: NeynarProfile | null, address: string | undefined) {
-  if (profile?.display_name) {
-    return profile.display_name;
-  }
-
-  if (profile?.username) {
-    return profile.username;
-  }
-
-  return address ? shortAddress(address) : "Anonymous";
-}
-
 function MiniMetric({
   label,
   value,
@@ -189,12 +183,15 @@ function ProfilePageContent() {
   const [isMounted, setIsMounted] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [profile, setProfile] = useState<NeynarProfile | null>(null);
+  const [profileSettings, setProfileSettings] =
+    useState<ProfileSettingsResponse | null>(null);
   const [balance, setBalance] = useState<PointsBalance | null>(null);
   const [stats, setStats] = useState<UserStats | null>(null);
   const [referral, setReferral] = useState<ReferralStats | null>(null);
   const [toast, setToast] = useState<ToastState>(null);
   const [celebration, setCelebration] = useState<CelebrationState>(null);
   const [isCopied, setIsCopied] = useState(false);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [pendingReferralCode, setPendingReferralCode] = useState<string | null>(null);
 
   // Inline referral code entry state — profile fallback, completely separate from link-based flow
@@ -260,6 +257,15 @@ function ProfilePageContent() {
     () => (pendingReferralCode ? buildReferralLandingPath(pendingReferralCode) : "/"),
     [pendingReferralCode]
   );
+  const profileDisplay = useMemo(
+    () =>
+      resolveProfileDisplay({
+        settings: profileSettings,
+        neynarProfile: profile,
+        address,
+      }),
+    [address, profile, profileSettings]
+  );
 
   const applySummary = useCallback((summary: PointsSummaryResponse) => {
     setBalance(summary.balance);
@@ -274,6 +280,7 @@ function ProfilePageContent() {
         setStats(null);
         setReferral(null);
         setProfile(null);
+        setProfileSettings(null);
         setIsLoading(false);
         return;
       }
@@ -355,6 +362,20 @@ function ProfilePageContent() {
     }
   }, [address]);
 
+  const fetchProfileSettingsData = useCallback(async () => {
+    if (!address) {
+      setProfileSettings(null);
+      return;
+    }
+
+    try {
+      const nextSettings = await fetchProfileSettings(address);
+      setProfileSettings(nextSettings);
+    } catch {
+      setProfileSettings(null);
+    }
+  }, [address]);
+
   useEffect(() => {
     setIsMounted(true);
     setPendingReferralCode(getPendingReferralCode());
@@ -364,6 +385,7 @@ function ProfilePageContent() {
     if (isConnected) {
       void fetchProfileData();
       void fetchNeynarProfile();
+      void fetchProfileSettingsData();
       return;
     }
 
@@ -371,8 +393,10 @@ function ProfilePageContent() {
     setStats(null);
     setReferral(null);
     setProfile(null);
+    setProfileSettings(null);
+    setIsSettingsOpen(false);
     setIsLoading(false);
-  }, [fetchNeynarProfile, fetchProfileData, isConnected]);
+  }, [fetchNeynarProfile, fetchProfileData, fetchProfileSettingsData, isConnected]);
 
   useEffect(() => {
     silentRefreshPromiseRef.current = null;
@@ -409,6 +433,7 @@ function ProfilePageContent() {
 
     const handleInvalidation = () => {
       void refreshProfileDataSilently();
+      void fetchProfileSettingsData();
     };
     const unsubscribeProfile = subscribeToDataInvalidation("profile", handleInvalidation);
     const unsubscribePoints = subscribeToDataInvalidation("points", handleInvalidation);
@@ -417,7 +442,7 @@ function ProfilePageContent() {
       unsubscribeProfile();
       unsubscribePoints();
     };
-  }, [address, refreshProfileDataSilently]);
+  }, [address, fetchProfileSettingsData, refreshProfileDataSilently]);
 
   useEffect(() => {
     if (!pendingReferralCode || referral?.hasReferrer !== true) {
@@ -934,6 +959,22 @@ function ProfilePageContent() {
     usesBasePayForSave,
   ]);
 
+  const handleProfileSettingsSaved = useCallback(
+    (settings: ProfileSettingsResponse) => {
+      setProfileSettings(settings);
+      setIsSettingsOpen(false);
+      setToast({
+        kind: "success",
+        message: "Profile updated.",
+      });
+      emitDataInvalidation(
+        ["profile", "leaderboard", "quests"],
+        "profile-settings-updated"
+      );
+    },
+    []
+  );
+
   if (!isMounted) {
     return null;
   }
@@ -1104,17 +1145,40 @@ function ProfilePageContent() {
           </section>
         ) : null}
 
-        <section className="rounded-[28px] border border-white/70 bg-white/82 px-4 py-3 shadow-[0_20px_70px_rgba(15,23,42,0.08)] backdrop-blur sm:px-5 sm:py-4">
-          <div className="flex items-center gap-3">
-            {profile?.pfp_url ? (
+        <section className="relative rounded-[28px] border border-white/70 bg-white/82 px-4 py-3 shadow-[0_20px_70px_rgba(15,23,42,0.08)] backdrop-blur sm:px-5 sm:py-4">
+          <button
+            type="button"
+            onClick={() => setIsSettingsOpen(true)}
+            className="absolute right-3 top-3 flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 bg-white/90 text-slate-500 shadow-sm transition hover:border-sky-200 hover:bg-sky-50 hover:text-sky-700"
+            aria-label="Open profile settings"
+          >
+            <svg
+              className="h-4 w-4"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+              aria-hidden="true"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M10.5 6h3m-6.6 1.8 2.1-2.1m8.1 2.1L15 5.7M6 12H3m18 0h-3M6.9 16.2 9 18.3m8.1-2.1L15 18.3M10.5 18h3M12 9a3 3 0 1 1 0 6 3 3 0 0 1 0-6Z"
+              />
+            </svg>
+          </button>
+
+          <div className="flex items-center gap-3 pr-10">
+            {profileDisplay.avatarUrl ? (
               <img
-                src={profile.pfp_url}
+                src={profileDisplay.avatarUrl}
                 alt="Profile"
                 className="h-11 w-11 rounded-[14px] border border-white/70 object-cover shadow-[0_10px_28px_rgba(56,189,248,0.18)]"
+                referrerPolicy="no-referrer"
               />
             ) : (
               <div className="flex h-11 w-11 items-center justify-center rounded-[14px] border border-sky-200 bg-[linear-gradient(135deg,#38bdf8,#0ea5e9)] text-base font-black text-white shadow-[0_10px_28px_rgba(14,165,233,0.22)]">
-                {address?.slice(2, 4)}
+                {profileDisplay.initials}
               </div>
             )}
 
@@ -1123,10 +1187,10 @@ function ProfilePageContent() {
                 Profile Hub
               </p>
               <h1 className="truncate text-xl font-black tracking-tight text-slate-950">
-                {getDisplayName(profile, address)}
+                {profileDisplay.displayName}
               </h1>
               <p className="truncate text-xs text-slate-600">
-                {profile?.username ? `@${profile.username}` : shortAddress(address || "")}
+                {profileDisplay.subtitle}
               </p>
             </div>
           </div>
@@ -1414,6 +1478,14 @@ function ProfilePageContent() {
           </div>
         </section>
       </div>
+
+      <ProfileSettingsModal
+        open={isSettingsOpen}
+        address={address}
+        profileSettings={profileSettings}
+        onClose={() => setIsSettingsOpen(false)}
+        onSaved={handleProfileSettingsSaved}
+      />
     </div>
   );
 }

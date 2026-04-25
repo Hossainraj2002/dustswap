@@ -548,6 +548,7 @@ export function QuestBoard() {
       setQuestInlineErrors({});
       setPostVerificationFailures({});
       refreshWithMessage(`X username saved as ${response.username}.`, "x-username-saved");
+      emitDataInvalidation("profile", "x-username-saved");
     } catch (saveError) {
       setError(getDisplayError(saveError));
     } finally {

@@ -63,14 +63,6 @@ function getViewerName(
   cachedProfile: CachedLeaderboardProfile | null,
   address?: string
 ) {
-  if (liveProfile?.display_name) {
-    return liveProfile.display_name;
-  }
-
-  if (liveProfile?.username) {
-    return liveProfile.username;
-  }
-
   if (cachedProfile?.displayName) {
     return cachedProfile.displayName;
   }
@@ -79,30 +71,22 @@ function getViewerName(
     return cachedProfile.username;
   }
 
-  return address ? shortAddress(address) : "Wallet not connected";
-}
+  if (liveProfile?.display_name) {
+    return liveProfile.display_name;
+  }
 
-function getViewerSubtitle(
-  liveProfile: NeynarProfile | null,
-  cachedProfile: CachedLeaderboardProfile | null,
-  address?: string
-) {
   if (liveProfile?.username) {
-    return `@${liveProfile.username}`;
+    return liveProfile.username;
   }
 
-  if (cachedProfile?.username) {
-    return `@${cachedProfile.username}`;
-  }
-
-  return address ? shortAddress(address) : "No wallet linked";
+  return address ? shortAddress(address) : "Wallet not connected";
 }
 
 function getViewerAvatar(
   liveProfile: NeynarProfile | null,
   cachedProfile: CachedLeaderboardProfile | null
 ) {
-  return liveProfile?.pfp_url || cachedProfile?.pfpUrl || "";
+  return cachedProfile?.pfpUrl || liveProfile?.pfp_url || "";
 }
 
 function getRowUsername(profile: CachedLeaderboardProfile | null, address: string) {
@@ -134,18 +118,18 @@ function getInitials(label: string) {
 function getBoardColumns(type: LeaderboardBoardType): CSSProperties {
   if (type === "referral") {
     return {
-      gridTemplateColumns: "48px minmax(0,1fr) 58px 74px",
+      gridTemplateColumns: "44px minmax(0,1fr) 44px 70px",
     };
   }
 
   if (type === "volume") {
     return {
-      gridTemplateColumns: "48px minmax(0,1fr) 92px",
+      gridTemplateColumns: "44px minmax(0,1fr) 84px",
     };
   }
 
   return {
-    gridTemplateColumns: "48px minmax(0,1fr) 96px",
+    gridTemplateColumns: "44px minmax(0,1fr) 86px",
   };
 }
 
@@ -246,21 +230,30 @@ function Avatar({
   );
 }
 
-function CompactStatCard({
+function OverviewMetric({
   label,
   value,
   isLoading,
+  tone = "white",
 }: {
   label: string;
   value: string;
   isLoading?: boolean;
+  tone?: "white" | "blue" | "gold" | "mint";
 }) {
+  const tones = {
+    white: "border-white/80 bg-white/90 text-slate-950",
+    blue: "border-sky-100 bg-sky-50/90 text-sky-950",
+    gold: "border-amber-100 bg-amber-50/90 text-amber-950",
+    mint: "border-emerald-100 bg-emerald-50/90 text-emerald-950",
+  };
+
   return (
-    <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-[0_8px_24px_rgba(15,23,42,0.04)]">
-      <p className="text-xs font-medium text-slate-500">
+    <div className={`min-w-0 rounded-lg border px-2 py-1 shadow-[0_8px_22px_rgba(15,23,42,0.045)] ${tones[tone]}`}>
+      <p className="truncate text-[8px] font-semibold uppercase leading-none text-slate-500">
         {label}
       </p>
-      <p className="mt-2 text-xl font-semibold text-slate-950">
+      <p className="mt-1 truncate text-[12px] font-bold leading-none">
         {isLoading ? <span className="animate-pulse text-slate-300">...</span> : value}
       </p>
     </div>
@@ -271,15 +264,15 @@ function SkeletonTable({ type }: { type: LeaderboardBoardType }) {
   const columns = getBoardColumns(type);
 
   return (
-    <div className="space-y-2">
+    <div className="space-y-1.5">
       {Array.from({ length: 6 }).map((_, index) => (
         <div
           key={index}
-          className="grid min-h-[64px] items-center rounded-lg border border-slate-200 bg-white px-3"
+          className="grid h-[34px] items-center rounded-lg border border-slate-200 bg-white px-2"
           style={columns}
         >
           <div className="h-3 w-8 animate-pulse rounded-full bg-slate-200" />
-          <div className="h-8 w-28 animate-pulse rounded-full bg-slate-200" />
+          <div className="h-6 w-24 animate-pulse rounded-full bg-slate-200" />
           <div className="ml-auto h-3 w-14 animate-pulse rounded-full bg-slate-200" />
           {type === "referral" ? (
             <div className="ml-auto h-3 w-10 animate-pulse rounded-full bg-slate-200" />
@@ -300,10 +293,10 @@ function TableCellValue({
   if (type === "referral") {
     return (
       <>
-        <div className="truncate text-right text-sm font-semibold text-slate-800">
+        <div className="truncate text-right text-xs font-semibold leading-none text-slate-800">
           {formatWhole(entry.referredUsers)}
         </div>
-        <div className="truncate text-right text-sm font-semibold text-slate-950">
+        <div className="truncate text-right text-xs font-semibold leading-none text-slate-950">
           {formatWhole(entry.referralPoints)} PP
         </div>
       </>
@@ -312,14 +305,14 @@ function TableCellValue({
 
   if (type === "volume") {
     return (
-      <div className="truncate text-right text-sm font-semibold text-slate-950">
+      <div className="truncate text-right text-xs font-semibold text-slate-950">
         {formatUsd(entry.swapVolume)}
       </div>
     );
   }
 
   return (
-    <div className="truncate text-right text-sm font-semibold text-slate-950">
+    <div className="truncate text-right text-xs font-semibold text-slate-950">
       {formatWhole(entry.totalPoints)} PP
     </div>
   );
@@ -346,9 +339,9 @@ function LeaderboardRow({
 }) {
   return (
     <div
-      className={`grid min-h-[64px] items-center rounded-lg border px-3 transition-colors ${
+      className={`grid h-[34px] items-center rounded-lg border px-2 transition-colors ${
         isViewer
-          ? "border-sky-200 bg-sky-50/70"
+          ? "border-sky-200 bg-sky-50/80"
           : "border-slate-200 bg-white hover:border-slate-300"
       }`}
       style={{
@@ -357,19 +350,19 @@ function LeaderboardRow({
         animationDelay: `${animationDelayMs}ms`,
       }}
     >
-      <div className="truncate text-sm font-semibold text-slate-700">#{entry.rank}</div>
-      <div className="flex min-w-0 items-center gap-3">
+      <div className="truncate text-xs font-semibold text-slate-700">#{entry.rank}</div>
+      <div className="flex min-w-0 items-center gap-2">
         <Avatar
           src={avatarSrc || ""}
           label={label}
-          sizeClass="h-9 w-9"
-          textClass="text-[11px]"
+          sizeClass="h-6 w-6"
+          textClass="text-[9px]"
         />
-        <div className="min-w-0 flex-1 truncate text-sm font-semibold text-slate-950">
+        <div className="min-w-0 flex-1 truncate text-xs font-semibold text-slate-950">
           {label}
         </div>
         {badge ? (
-          <span className="rounded-full border border-sky-200 bg-white px-2 py-0.5 text-[10px] font-semibold text-sky-700">
+          <span className="rounded-full border border-sky-200 bg-white px-1.5 py-0 text-[9px] font-semibold text-sky-700">
             {badge}
           </span>
         ) : null}
@@ -388,7 +381,6 @@ export default function LeaderboardPage() {
   const [isCheckingAccess, setIsCheckingAccess] = useState(true);
   const [hasLeaderboardAccess, setHasLeaderboardAccess] = useState(false);
   const [isLoadingBoard, setIsLoadingBoard] = useState(true);
-  const [isLoadingProfile, setIsLoadingProfile] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [refreshNotice, setRefreshNotice] = useState<string | null>(null);
   const isMountedRef = useRef(true);
@@ -404,7 +396,6 @@ export default function LeaderboardPage() {
   const viewer = visibleLeaderboard?.viewer ?? null;
   const viewerProfile = viewer?.profile ?? null;
   const viewerName = getViewerName(profile, viewerProfile, address);
-  const viewerSubtitle = getViewerSubtitle(profile, viewerProfile, address);
   const viewerAvatar = getViewerAvatar(profile, viewerProfile);
   const boardColumns = getBoardColumns(selectedBoard);
   const boardHeaders = getBoardHeaders(selectedBoard);
@@ -583,12 +574,10 @@ export default function LeaderboardPage() {
   useEffect(() => {
     if (!normalizedAddress || !hasLeaderboardAccess) {
       setProfile(null);
-      setIsLoadingProfile(false);
       return;
     }
 
     let cancelled = false;
-    setIsLoadingProfile(true);
 
     fetch(`/api/neynar/user?address=${normalizedAddress}`, {
       cache: "no-store",
@@ -602,11 +591,6 @@ export default function LeaderboardPage() {
       .catch(() => {
         if (!cancelled) {
           setProfile(null);
-        }
-      })
-      .finally(() => {
-        if (!cancelled) {
-          setIsLoadingProfile(false);
         }
       });
 
@@ -649,6 +633,10 @@ export default function LeaderboardPage() {
   const viewerRankLabel = viewer?.rank ? `#${formatWhole(viewer.rank)}` : "--";
   const viewerScoreDisplay = getViewerScoreDisplay(selectedBoard, viewer);
   const viewerScoreDetail = getViewerScoreDetail(selectedBoard, viewer);
+  const viewerScoreLabel = viewerScoreDetail
+    ? `${viewerScoreDisplay} / ${viewerScoreDetail}`
+    : viewerScoreDisplay;
+  const viewerAddressLabel = normalizedAddress ? shortAddress(normalizedAddress) : "Connect wallet";
 
   return (
     <main
@@ -658,84 +646,54 @@ export default function LeaderboardPage() {
       <section
         className="mx-auto flex w-full max-w-5xl flex-col"
       >
-        <div
-          className="flex flex-col gap-4"
-        >
-          <header className="flex flex-col gap-1">
-            <h1 className="text-2xl font-semibold text-slate-950 sm:text-3xl">
-              Leaderboard
-            </h1>
-            <p className="max-w-xl text-sm leading-6 text-slate-600">
-              Track top DustSwap participants by PP and referrals.
-            </p>
-          </header>
+        <div className="flex flex-col gap-3">
+          <section className="overflow-hidden rounded-[18px] border border-white/80 bg-[radial-gradient(circle_at_top_left,rgba(14,165,233,0.16),transparent_34%),radial-gradient(circle_at_bottom_right,rgba(245,158,11,0.18),transparent_32%),linear-gradient(135deg,#ffffff_0%,#f7fbff_48%,#fff7ed_100%)] p-2.5 shadow-[0_18px_55px_rgba(15,23,42,0.08)]">
+            <div className="flex items-center justify-between gap-3">
+              <img
+                src="/longlogo.png"
+                alt="DustSwap"
+                className="h-7 w-auto min-w-0 max-w-[170px] object-contain sm:h-8 sm:max-w-[220px]"
+              />
 
-          <div className="grid gap-3 lg:grid-cols-[minmax(0,1.35fr)_minmax(250px,0.65fr)]">
-            <section className="rounded-lg border border-slate-200 bg-white p-4 shadow-[0_12px_30px_rgba(15,23,42,0.05)]">
-              <div className="flex items-center justify-between gap-3">
-                <p className="text-sm font-medium text-slate-500">Your rank</p>
-                {normalizedAddress ? (
-                  <span className="rounded-full border border-sky-200 bg-sky-50 px-2.5 py-1 text-xs font-semibold text-sky-700">
-                    You
-                  </span>
-                ) : null}
-              </div>
-
-              <div className="mt-4 flex min-w-0 items-center gap-3">
+              <div className="flex min-w-0 shrink-0 items-center gap-2 rounded-full border border-white/80 bg-white/90 px-2 py-1 shadow-[0_10px_28px_rgba(15,23,42,0.08)]">
                 <Avatar
                   src={viewerAvatar}
                   label={viewerName}
-                  sizeClass="h-12 w-12"
-                  textClass="text-sm"
+                  sizeClass="h-8 w-8"
+                  textClass="text-[10px]"
                 />
-                <div className="min-w-0">
-                  <p className="truncate text-base font-semibold text-slate-950">
-                    {viewerName}
-                  </p>
-                  <p className="mt-0.5 truncate text-sm text-slate-500">
-                    {normalizedAddress
-                      ? isLoadingProfile
-                        ? "Loading profile"
-                        : viewerSubtitle
-                      : "Connect wallet to load your profile"}
-                  </p>
-                </div>
+                <p className="max-w-[116px] truncate font-mono text-[11px] font-bold text-slate-800 sm:max-w-[170px]">
+                  {viewerAddressLabel}
+                </p>
               </div>
+            </div>
 
-              <div className="mt-4 grid grid-cols-2 gap-3">
-                <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-3">
-                  <p className="text-xs font-medium text-slate-500">Rank</p>
-                  <p className="mt-1 text-3xl font-semibold text-slate-950">
-                    {viewerRankLabel}
-                  </p>
-                </div>
-                <div className="rounded-lg border border-sky-100 bg-sky-50/70 px-3 py-3">
-                  <p className="text-xs font-medium text-slate-500">Score</p>
-                  <p className="mt-1 truncate text-xl font-semibold text-slate-950">
-                    {viewerScoreDisplay}
-                  </p>
-                  {viewerScoreDetail ? (
-                    <p className="mt-1 text-xs font-medium text-sky-700">
-                      {viewerScoreDetail}
-                    </p>
-                  ) : null}
-                </div>
-              </div>
-            </section>
-
-            <div className="grid grid-cols-2 gap-3 lg:grid-cols-1">
-              <CompactStatCard
-                label="Total PP"
-                value={`${formatWhole(visibleLeaderboard?.totalParticlePoints || 0)} PP`}
+            <div className="mt-2 grid grid-cols-2 gap-1.5 sm:grid-cols-4">
+              <OverviewMetric
+                label="Rank"
+                value={viewerRankLabel}
+                tone="gold"
                 isLoading={shouldShowBoardSkeleton}
               />
-              <CompactStatCard
-                label="Total users"
+              <OverviewMetric
+                label="Score"
+                value={viewerScoreLabel}
+                tone="blue"
+                isLoading={shouldShowBoardSkeleton}
+              />
+              <OverviewMetric
+                label="Total PP"
+                value={`${formatWhole(visibleLeaderboard?.totalParticlePoints || 0)} PP`}
+                tone="mint"
+                isLoading={shouldShowBoardSkeleton}
+              />
+              <OverviewMetric
+                label="Users"
                 value={formatWhole(visibleLeaderboard?.totalUserCount || 0)}
                 isLoading={shouldShowBoardSkeleton}
               />
             </div>
-          </div>
+          </section>
 
           <div className="flex gap-2 overflow-x-auto pb-1">
             {VISIBLE_BOARD_OPTIONS.map((option) => {
@@ -749,7 +707,7 @@ export default function LeaderboardPage() {
                     setSelectedBoard(option.id);
                     setCurrentPage(1);
                   }}
-                  className={`flex h-10 shrink-0 items-center justify-center rounded-full border px-4 text-sm font-semibold transition-colors ${
+                  className={`flex h-[30px] max-h-[30px] shrink-0 items-center justify-center rounded-full border px-3 text-xs font-semibold transition-colors ${
                     active
                       ? "border-[#0052ff] bg-[#0052ff] text-white"
                       : "border-slate-200 bg-white text-slate-700 hover:border-sky-200 hover:text-slate-950"
@@ -809,29 +767,29 @@ export default function LeaderboardPage() {
               </div>
             </div>
           ) : (
-            <section className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-[0_12px_30px_rgba(15,23,42,0.05)]">
-              <div className="flex items-center justify-between gap-3 px-3 py-3 sm:px-4">
+            <section className="overflow-hidden rounded-[16px] border border-amber-200/70 bg-white shadow-[0_18px_48px_rgba(15,23,42,0.08)]">
+              <div className="flex items-center justify-between gap-3 bg-[linear-gradient(135deg,#111827_0%,#0f766e_58%,#c4862c_100%)] px-3 py-2 sm:px-4">
                 <div>
-                  <p className="text-base font-semibold text-slate-950">
+                  <p className="text-sm font-bold text-white">
                     {selectedBoardLabel}
                   </p>
-                  <p className="text-sm text-slate-500">
+                  <p className="text-[11px] font-medium text-emerald-50/90">
                     Live rank and score
                   </p>
                 </div>
-                <div className="rounded-full border border-sky-100 bg-sky-50 px-2.5 py-1 text-xs font-semibold text-sky-700">
+                <div className="rounded-full border border-white/25 bg-white/15 px-2.5 py-1 text-[11px] font-bold text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.16)]">
                   Page {visibleLeaderboard?.page ?? currentPage}/{totalPages}
                 </div>
               </div>
 
               <div
-                className="grid min-h-10 items-center border-y border-slate-200 bg-slate-50 px-3 sm:px-4"
+                className="grid h-[30px] items-center border-y border-amber-100 bg-[linear-gradient(90deg,#fffaf0,#f0fdfa)] px-2 sm:px-3"
                 style={boardColumns}
               >
                 {boardHeaders.map((header, index) => (
                   <div
                     key={header}
-                    className={`truncate text-xs font-medium text-slate-500 ${
+                    className={`truncate text-[11px] font-bold uppercase text-slate-500 ${
                       index === 0 ? "" : index === 1 ? "" : "text-right"
                     }`}
                   >
@@ -840,7 +798,7 @@ export default function LeaderboardPage() {
                 ))}
               </div>
 
-              <div className="p-3 sm:p-4">
+              <div className="p-2 sm:p-3">
                 {refreshNotice ? (
                   <div className="mb-3 flex flex-col gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-3 text-sm text-amber-800 sm:flex-row sm:items-center sm:justify-between">
                     <span>{refreshNotice}</span>
@@ -876,7 +834,7 @@ export default function LeaderboardPage() {
                 ) : null}
 
                 {!shouldShowBoardSkeleton && !error && hasVisibleEntries ? (
-                  <div className="space-y-2">
+                  <div className="space-y-1.5">
                     {pinnedViewerEntry ? (
                       <LeaderboardRow
                         type={selectedBoard}
@@ -913,12 +871,12 @@ export default function LeaderboardPage() {
               </div>
 
               {!shouldShowBoardSkeleton && !error && totalPages > 1 ? (
-                <div className="mt-4 flex flex-wrap items-center justify-center gap-1.5 px-3 pb-4 sm:px-4">
+                <div className="mt-2 flex flex-wrap items-center justify-center gap-1.5 px-3 pb-3 sm:px-4">
                   <button
                     type="button"
                     onClick={() => setCurrentPage((page) => Math.max(1, page - 1))}
                     disabled={currentPage <= 1}
-                    className="flex h-9 items-center justify-center rounded-full border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 transition-colors hover:border-sky-200 hover:text-slate-950 disabled:cursor-not-allowed disabled:opacity-45"
+                    className="flex h-8 items-center justify-center rounded-full border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 transition-colors hover:border-sky-200 hover:text-slate-950 disabled:cursor-not-allowed disabled:opacity-45"
                   >
                     Prev
                   </button>
@@ -927,7 +885,7 @@ export default function LeaderboardPage() {
                     page === "ellipsis" ? (
                       <span
                         key={`ellipsis-${index}`}
-                        className="flex h-9 w-8 items-center justify-center text-xs font-semibold text-slate-400"
+                        className="flex h-8 w-8 items-center justify-center text-xs font-semibold text-slate-400"
                       >
                         ...
                       </span>
@@ -936,7 +894,7 @@ export default function LeaderboardPage() {
                         key={page}
                         type="button"
                         onClick={() => setCurrentPage(page)}
-                        className={`flex h-9 w-9 items-center justify-center rounded-full border text-xs font-semibold transition-colors ${
+                        className={`flex h-8 w-8 items-center justify-center rounded-full border text-xs font-semibold transition-colors ${
                           page === currentPage
                             ? "border-[#0052ff] bg-[#0052ff] text-white"
                             : "border-slate-200 bg-white text-slate-700 hover:border-sky-200 hover:text-slate-950"
@@ -951,7 +909,7 @@ export default function LeaderboardPage() {
                     type="button"
                     onClick={() => setCurrentPage((page) => Math.min(totalPages, page + 1))}
                     disabled={currentPage >= totalPages}
-                    className="flex h-9 items-center justify-center rounded-full border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 transition-colors hover:border-sky-200 hover:text-slate-950 disabled:cursor-not-allowed disabled:opacity-45"
+                    className="flex h-8 items-center justify-center rounded-full border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 transition-colors hover:border-sky-200 hover:text-slate-950 disabled:cursor-not-allowed disabled:opacity-45"
                   >
                     Next
                   </button>

@@ -261,6 +261,26 @@ CREATE TABLE IF NOT EXISTS social_accounts (
   UNIQUE(platform, platform_user_id)
 );
 
+CREATE TABLE IF NOT EXISTS user_profiles (
+  user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  username TEXT UNIQUE,
+  display_name TEXT,
+  discord_username TEXT,
+  pfp_url TEXT,
+  pfp_storage_key TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT user_profiles_username_format CHECK (
+    username IS NULL OR username ~ '^[a-z0-9._]{3,24}$'
+  ),
+  CONSTRAINT user_profiles_display_name_length CHECK (
+    display_name IS NULL OR char_length(display_name) BETWEEN 2 AND 32
+  ),
+  CONSTRAINT user_profiles_discord_length CHECK (
+    discord_username IS NULL OR char_length(discord_username) BETWEEN 2 AND 40
+  )
+);
+
 CREATE TABLE IF NOT EXISTS quest_progress (
   id                    BIGSERIAL PRIMARY KEY,
   quest_id              UUID NOT NULL REFERENCES quests(id) ON DELETE CASCADE,
@@ -322,6 +342,7 @@ CREATE TABLE IF NOT EXISTS quest_campaign_whitelist (
 CREATE INDEX IF NOT EXISTS idx_quests_status          ON quests(status, is_active, sort_order);
 CREATE INDEX IF NOT EXISTS idx_quests_campaign        ON quests(campaign_key, status, is_active, sort_order);
 CREATE INDEX IF NOT EXISTS idx_social_accounts_user   ON social_accounts(user_id, platform);
+CREATE INDEX IF NOT EXISTS idx_user_profiles_username ON user_profiles(username);
 CREATE INDEX IF NOT EXISTS idx_quest_progress_user    ON quest_progress(user_id, quest_id, cycle_key);
 CREATE INDEX IF NOT EXISTS idx_quest_logs_user        ON quest_verification_logs(user_id, quest_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_activity_events_user   ON activity_events(user_id, event_type, occurred_at DESC);
@@ -331,6 +352,7 @@ CREATE INDEX IF NOT EXISTS idx_campaign_whitelist_campaign ON quest_campaign_whi
 
 ALTER TABLE quests                   ENABLE ROW LEVEL SECURITY;
 ALTER TABLE social_accounts          ENABLE ROW LEVEL SECURITY;
+ALTER TABLE user_profiles            ENABLE ROW LEVEL SECURITY;
 ALTER TABLE quest_progress           ENABLE ROW LEVEL SECURITY;
 ALTER TABLE quest_verification_logs  ENABLE ROW LEVEL SECURITY;
 ALTER TABLE activity_events          ENABLE ROW LEVEL SECURITY;
@@ -338,12 +360,14 @@ ALTER TABLE quest_campaign_whitelist ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS "service_all_quests"           ON quests;
 DROP POLICY IF EXISTS "service_all_social_accounts"  ON social_accounts;
+DROP POLICY IF EXISTS "service_all_user_profiles"    ON user_profiles;
 DROP POLICY IF EXISTS "service_all_quest_progress"   ON quest_progress;
 DROP POLICY IF EXISTS "service_all_quest_logs"       ON quest_verification_logs;
 DROP POLICY IF EXISTS "service_all_activity_events"  ON activity_events;
 DROP POLICY IF EXISTS "service_all_campaign_whitelist" ON quest_campaign_whitelist;
 CREATE POLICY "service_all_quests"          ON quests                  FOR ALL USING (true);
 CREATE POLICY "service_all_social_accounts" ON social_accounts         FOR ALL USING (true);
+CREATE POLICY "service_all_user_profiles"   ON user_profiles           FOR ALL USING (true);
 CREATE POLICY "service_all_quest_progress"  ON quest_progress          FOR ALL USING (true);
 CREATE POLICY "service_all_quest_logs"      ON quest_verification_logs FOR ALL USING (true);
 CREATE POLICY "service_all_activity_events" ON activity_events         FOR ALL USING (true);
