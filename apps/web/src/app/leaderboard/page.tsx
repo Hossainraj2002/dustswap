@@ -249,7 +249,7 @@ function OverviewMetric({
   };
 
   return (
-    <div className={`min-w-0 rounded-lg border px-2 py-1 shadow-[0_8px_22px_rgba(15,23,42,0.045)] ${tones[tone]}`}>
+    <div className={`flex h-[1.5cm] min-h-[1.5cm] min-w-0 flex-col justify-center rounded-lg border px-2 py-1 shadow-[0_8px_22px_rgba(15,23,42,0.045)] ${tones[tone]}`}>
       <p className="truncate text-[8px] font-semibold uppercase leading-none text-slate-500">
         {label}
       </p>
@@ -707,7 +707,7 @@ export default function LeaderboardPage() {
                     setSelectedBoard(option.id);
                     setCurrentPage(1);
                   }}
-                  className={`flex h-[30px] max-h-[30px] shrink-0 items-center justify-center rounded-full border px-3 text-xs font-semibold transition-colors ${
+                  className={`flex !h-[0.8cm] !max-h-[0.8cm] !min-h-0 shrink-0 items-center justify-center rounded-full border px-2.5 text-[11px] font-semibold leading-none transition-colors ${
                     active
                       ? "border-[#0052ff] bg-[#0052ff] text-white"
                       : "border-slate-200 bg-white text-slate-700 hover:border-sky-200 hover:text-slate-950"
@@ -777,7 +777,7 @@ export default function LeaderboardPage() {
                     Live rank and score
                   </p>
                 </div>
-                <div className="rounded-full border border-white/25 bg-white/15 px-2.5 py-1 text-[11px] font-bold text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.16)]">
+                <div className="flex h-[0.8cm] max-h-[0.8cm] items-center rounded-full border border-white/25 bg-white/15 px-2.5 py-0 text-[11px] font-bold leading-none text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.16)]">
                   Page {visibleLeaderboard?.page ?? currentPage}/{totalPages}
                 </div>
               </div>
@@ -876,7 +876,7 @@ export default function LeaderboardPage() {
                     type="button"
                     onClick={() => setCurrentPage((page) => Math.max(1, page - 1))}
                     disabled={currentPage <= 1}
-                    className="flex h-[30px] max-h-[30px] items-center justify-center rounded-full border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 transition-colors hover:border-sky-200 hover:text-slate-950 disabled:cursor-not-allowed disabled:opacity-45"
+                    className="flex !h-[0.8cm] !max-h-[0.8cm] !min-h-0 items-center justify-center rounded-full border border-slate-200 bg-white px-3 text-xs font-semibold leading-none text-slate-700 transition-colors hover:border-sky-200 hover:text-slate-950 disabled:cursor-not-allowed disabled:opacity-45"
                   >
                     Prev
                   </button>
@@ -885,7 +885,7 @@ export default function LeaderboardPage() {
                     page === "ellipsis" ? (
                       <span
                         key={`ellipsis-${index}`}
-                        className="flex h-[30px] w-[30px] max-h-[30px] items-center justify-center text-xs font-semibold text-slate-400"
+                        className="flex h-[0.8cm] max-h-[0.8cm] w-[0.8cm] items-center justify-center text-xs font-semibold leading-none text-slate-400"
                       >
                         ...
                       </span>
@@ -894,7 +894,7 @@ export default function LeaderboardPage() {
                         key={page}
                         type="button"
                         onClick={() => setCurrentPage(page)}
-                        className={`flex h-[30px] max-h-[30px] w-[30px] items-center justify-center rounded-full border text-xs font-semibold transition-colors ${
+                        className={`flex !h-[0.8cm] !max-h-[0.8cm] !min-h-0 w-[0.8cm] !min-w-0 items-center justify-center rounded-full border text-xs font-semibold leading-none transition-colors ${
                           page === currentPage
                             ? "border-[#0052ff] bg-[#0052ff] text-white"
                             : "border-slate-200 bg-white text-slate-700 hover:border-sky-200 hover:text-slate-950"
@@ -909,7 +909,7 @@ export default function LeaderboardPage() {
                     type="button"
                     onClick={() => setCurrentPage((page) => Math.min(totalPages, page + 1))}
                     disabled={currentPage >= totalPages}
-                    className="flex h-[30px] max-h-[30px] items-center justify-center rounded-full border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 transition-colors hover:border-sky-200 hover:text-slate-950 disabled:cursor-not-allowed disabled:opacity-45"
+                    className="flex !h-[0.8cm] !max-h-[0.8cm] !min-h-0 items-center justify-center rounded-full border border-slate-200 bg-white px-3 text-xs font-semibold leading-none text-slate-700 transition-colors hover:border-sky-200 hover:text-slate-950 disabled:cursor-not-allowed disabled:opacity-45"
                   >
                     Next
                   </button>
