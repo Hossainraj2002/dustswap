@@ -67,6 +67,9 @@ export function ProfileSettingsModal({
     : isProfileSettingsLoading
       ? "Loading profile settings from the API..."
       : profileSettingsError ||
+        (!address
+          ? "Wallet address is not available yet. Reconnect your wallet and try again."
+          : null) ||
         "Profile settings did not load from the API. Check NEXT_PUBLIC_API_URL and API CORS.";
   const [username, setUsername] = useState("");
   const [displayName, setDisplayName] = useState("");

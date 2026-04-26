@@ -412,6 +412,27 @@ function ProfilePageContent() {
   }, [fetchNeynarProfile, fetchProfileData, fetchProfileSettingsData, isConnected]);
 
   useEffect(() => {
+    if (
+      !isSettingsOpen ||
+      !address ||
+      profileSettings ||
+      profileSettingsError ||
+      isProfileSettingsLoading
+    ) {
+      return;
+    }
+
+    void fetchProfileSettingsData();
+  }, [
+    address,
+    fetchProfileSettingsData,
+    isProfileSettingsLoading,
+    isSettingsOpen,
+    profileSettings,
+    profileSettingsError,
+  ]);
+
+  useEffect(() => {
     silentRefreshPromiseRef.current = null;
     lastSilentRefreshAtRef.current = 0;
   }, [address]);
@@ -1162,7 +1183,12 @@ function ProfilePageContent() {
         <section className="relative rounded-[28px] border border-white/70 bg-white/82 px-4 py-3 shadow-[0_20px_70px_rgba(15,23,42,0.08)] backdrop-blur sm:px-5 sm:py-4">
           <button
             type="button"
-            onClick={() => setIsSettingsOpen(true)}
+            onClick={() => {
+              setIsSettingsOpen(true);
+              if (!profileSettings && !isProfileSettingsLoading) {
+                void fetchProfileSettingsData();
+              }
+            }}
             className="absolute right-3 top-3 flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 bg-white/90 text-slate-500 shadow-sm transition hover:border-sky-200 hover:bg-sky-50 hover:text-sky-700"
             aria-label="Open profile settings"
           >

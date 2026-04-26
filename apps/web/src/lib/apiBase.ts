@@ -4,7 +4,7 @@ function normalizePublicApiOrigin(value?: string | null) {
   const normalized = value?.trim();
   const origin = normalized || DEFAULT_PUBLIC_API_ORIGIN;
 
-  return origin.replace(/\/+$/, "").replace(/\/api$/, "");
+  return origin.replace(/\/+$/, "").replace(/\/api(?:\/.*)?$/, "");
 }
 
 export function getPublicApiOrigin() {

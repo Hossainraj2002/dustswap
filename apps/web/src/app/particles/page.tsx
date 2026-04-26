@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { useAccount } from 'wagmi';
+import { buildPublicApiUrl } from '@/lib/apiBase';
 
 interface Balance {
   totalPoints:   number;
@@ -24,13 +25,13 @@ export default function ParticlesPage() {
 
   const fetchBalance = useCallback(async () => {
     if (!address) return;
-    const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/points/${address}`);
+    const res = await fetch(buildPublicApiUrl(`/api/points/${address}`));
     const data = await res.json();
     if (data.success) setBalance(data.balance);
   }, [address]);
 
   const fetchLeaderboard = useCallback(async () => {
-    const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/leaderboard`);
+    const res = await fetch(buildPublicApiUrl('/api/leaderboard'));
     const data = await res.json();
     if (data.success) setLeaderboard(data.leaderboard);
   }, []);

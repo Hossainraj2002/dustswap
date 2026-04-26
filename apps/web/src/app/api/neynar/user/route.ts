@@ -5,7 +5,7 @@ const DEFAULT_API_URL = "http://localhost:3001";
 function getPointsApiUrl(path = "") {
   const baseUrl = (process.env.NEXT_PUBLIC_API_URL || DEFAULT_API_URL)
     .replace(/\/+$/, "")
-    .replace(/\/api$/, "");
+    .replace(/\/api(?:\/.*)?$/, "");
 
   return `${baseUrl}/api/points${path}`;
 }
