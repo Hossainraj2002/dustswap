@@ -68,8 +68,11 @@ function parseJson<T>(response: Response): Promise<T> {
 }
 
 function getProfileSettingsApiUrl(path = "") {
+  const normalizedPath =
+    path && path !== "/" ? (path.startsWith("/") ? path : `/${path}`) : "";
+
   return buildPublicApiUrl(
-    `/api/profile-settings${path.startsWith("/") ? path : `/${path}`}`
+    `/api/profile-settings${normalizedPath}`
   );
 }
 

@@ -54,7 +54,7 @@ function getErrorPayload(error: unknown) {
   } as const;
 }
 
-profileSettingsRoutes.get("/", async (c) => {
+const handleGetProfileSettings = async (c: Context) => {
   try {
     const address = c.req.query("address");
     if (!address) {
@@ -67,9 +67,9 @@ profileSettingsRoutes.get("/", async (c) => {
     const payload = getErrorPayload(error);
     return c.json(payload.body, payload.status);
   }
-});
+};
 
-profileSettingsRoutes.post("/", async (c) => {
+const handleSaveProfileSettings = async (c: Context) => {
   try {
     const body = (await c.req.json()) as SaveProfileSettingsInput;
     const data = await profileSettingsService.saveProfileSettings(
@@ -82,7 +82,12 @@ profileSettingsRoutes.post("/", async (c) => {
     const payload = getErrorPayload(error);
     return c.json(payload.body, payload.status);
   }
-});
+};
+
+profileSettingsRoutes.get("/", handleGetProfileSettings);
+profileSettingsRoutes.get("", handleGetProfileSettings);
+profileSettingsRoutes.post("/", handleSaveProfileSettings);
+profileSettingsRoutes.post("", handleSaveProfileSettings);
 
 profileSettingsRoutes.post("/pfp-upload-url", async (c) => {
   try {
