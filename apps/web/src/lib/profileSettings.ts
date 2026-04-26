@@ -1,5 +1,5 @@
 import type { Hex } from "viem";
-import { buildPublicApiUrl } from "@/lib/apiBase";
+import { buildPublicApiUrl, getPublicApiOrigin } from "@/lib/apiBase";
 
 export type ProfileSettingsAction = "save-profile" | "pfp-upload-url";
 
@@ -253,16 +253,25 @@ export async function fetchProfileSettings(address: string) {
   const url = new URL(getProfileSettingsApiUrl("/"));
   url.searchParams.set("address", address);
 
-  const response = await fetch(url.toString(), {
-    headers: {
-      "Content-Type": "application/json",
-    },
-    cache: "no-store",
-  });
+  let response: Response;
+  try {
+    response = await fetch(url.toString(), {
+      headers: {
+        "Content-Type": "application/json",
+      },
+      cache: "no-store",
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Network request failed";
+    throw new Error(`Could not reach profile API at ${getPublicApiOrigin()}. ${message}`);
+  }
 
   const data = await parseJson<ProfileSettingsResponse>(response);
   if (!response.ok || !data.success) {
-    throw new Error(data.error || "Failed to load profile settings");
+    throw new Error(
+      data.error ||
+        `Profile API returned ${response.status} ${response.statusText || ""}`.trim()
+    );
   }
 
   return data;

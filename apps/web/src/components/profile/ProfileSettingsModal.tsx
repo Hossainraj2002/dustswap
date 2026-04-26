@@ -23,6 +23,9 @@ type ProfileSettingsModalProps = {
   open: boolean;
   address?: string;
   profileSettings: ProfileSettingsResponse | null;
+  isProfileSettingsLoading?: boolean;
+  profileSettingsError?: string | null;
+  onRetryLoad?: () => void;
   onClose: () => void;
   onSaved: (settings: ProfileSettingsResponse) => void;
 };
@@ -45,6 +48,9 @@ export function ProfileSettingsModal({
   open,
   address,
   profileSettings,
+  isProfileSettingsLoading = false,
+  profileSettingsError,
+  onRetryLoad,
   onClose,
   onSaved,
 }: ProfileSettingsModalProps) {
@@ -58,7 +64,10 @@ export function ProfileSettingsModal({
       ? `PFP upload is temporarily unavailable. Missing API env: ${missingR2EnvVars.join(", ")}.`
       : profileSettings.capabilities.pfpUploadUnavailableReason ||
         "PFP upload is temporarily unavailable."
-    : "Profile settings did not load from the API. Check NEXT_PUBLIC_API_URL and API CORS.";
+    : isProfileSettingsLoading
+      ? "Loading profile settings from the API..."
+      : profileSettingsError ||
+        "Profile settings did not load from the API. Check NEXT_PUBLIC_API_URL and API CORS.";
   const [username, setUsername] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [discordUsername, setDiscordUsername] = useState("");
@@ -304,9 +313,20 @@ export function ProfileSettingsModal({
                   PNG, JPG, JPEG, or WEBP under 1 MB.
                 </p>
                 {!uploadAvailable ? (
-                  <p className="mt-1 text-[11px] font-semibold leading-4 text-amber-700">
-                    {uploadUnavailableMessage}
-                  </p>
+                  <div className="mt-1">
+                    <p className="text-[11px] font-semibold leading-4 text-amber-700">
+                      {uploadUnavailableMessage}
+                    </p>
+                    {!isProfileSettingsLoading && !profileSettings && onRetryLoad ? (
+                      <button
+                        type="button"
+                        onClick={onRetryLoad}
+                        className="mt-1 !min-h-0 !min-w-0 p-0 text-[11px] font-bold text-sky-700 underline-offset-2 hover:underline"
+                      >
+                        Retry API check
+                      </button>
+                    ) : null}
+                  </div>
                 ) : selectedFile ? (
                   <p className="mt-1 truncate text-[11px] font-semibold text-sky-700">
                     {selectedFile.name} ({formatFileSize(selectedFile.size)})

@@ -185,6 +185,8 @@ function ProfilePageContent() {
   const [profile, setProfile] = useState<NeynarProfile | null>(null);
   const [profileSettings, setProfileSettings] =
     useState<ProfileSettingsResponse | null>(null);
+  const [isProfileSettingsLoading, setIsProfileSettingsLoading] = useState(false);
+  const [profileSettingsError, setProfileSettingsError] = useState<string | null>(null);
   const [balance, setBalance] = useState<PointsBalance | null>(null);
   const [stats, setStats] = useState<UserStats | null>(null);
   const [referral, setReferral] = useState<ReferralStats | null>(null);
@@ -365,14 +367,23 @@ function ProfilePageContent() {
   const fetchProfileSettingsData = useCallback(async () => {
     if (!address) {
       setProfileSettings(null);
+      setProfileSettingsError(null);
+      setIsProfileSettingsLoading(false);
       return;
     }
 
+    setIsProfileSettingsLoading(true);
     try {
       const nextSettings = await fetchProfileSettings(address);
       setProfileSettings(nextSettings);
-    } catch {
+      setProfileSettingsError(null);
+    } catch (error) {
       setProfileSettings(null);
+      setProfileSettingsError(
+        error instanceof Error ? error.message : "Failed to load profile settings"
+      );
+    } finally {
+      setIsProfileSettingsLoading(false);
     }
   }, [address]);
 
@@ -394,6 +405,8 @@ function ProfilePageContent() {
     setReferral(null);
     setProfile(null);
     setProfileSettings(null);
+    setProfileSettingsError(null);
+    setIsProfileSettingsLoading(false);
     setIsSettingsOpen(false);
     setIsLoading(false);
   }, [fetchNeynarProfile, fetchProfileData, fetchProfileSettingsData, isConnected]);
@@ -962,6 +975,7 @@ function ProfilePageContent() {
   const handleProfileSettingsSaved = useCallback(
     (settings: ProfileSettingsResponse) => {
       setProfileSettings(settings);
+      setProfileSettingsError(null);
       setIsSettingsOpen(false);
       setToast({
         kind: "success",
@@ -1489,6 +1503,9 @@ function ProfilePageContent() {
         open={isSettingsOpen}
         address={address}
         profileSettings={profileSettings}
+        isProfileSettingsLoading={isProfileSettingsLoading}
+        profileSettingsError={profileSettingsError}
+        onRetryLoad={() => void fetchProfileSettingsData()}
         onClose={() => setIsSettingsOpen(false)}
         onSaved={handleProfileSettingsSaved}
       />
