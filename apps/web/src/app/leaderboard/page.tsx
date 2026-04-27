@@ -23,6 +23,7 @@ type NeynarProfile = {
 
 const BOARD_PAGE_SIZE = 10;
 const LEADERBOARD_FALLBACK_REFRESH_MS = 300000;
+const REFERRAL_BOARD_REFRESH_LABEL = "Snapshot updates every 4 hours";
 
 function isEnabledFlag(value: string | undefined) {
   return ["1", "true", "yes", "on"].includes(String(value || "").trim().toLowerCase());
@@ -408,6 +409,7 @@ export default function LeaderboardPage() {
   const totalPages = visibleLeaderboard?.totalPages ?? 1;
   const visiblePages = getVisiblePages(currentPage, totalPages);
   const shouldShowBoardSkeleton = hasLeaderboardAccess && isLoadingBoard && !visibleLeaderboard;
+  const boardAutoRefreshEnabled = selectedBoard !== "referral";
 
   useEffect(() => {
     if (!VISIBLE_BOARD_OPTIONS.some((option) => option.id === selectedBoard)) {
@@ -600,6 +602,10 @@ export default function LeaderboardPage() {
   }, [hasLeaderboardAccess, normalizedAddress]);
 
   useEffect(() => {
+    if (!boardAutoRefreshEnabled) {
+      return;
+    }
+
     const unsubscribe = subscribeToDataInvalidation("leaderboard", () => {
       void loadLeaderboard({ silent: true });
     });
@@ -626,10 +632,12 @@ export default function LeaderboardPage() {
       document.removeEventListener("visibilitychange", handleVisibilityChange);
       window.clearInterval(intervalId);
     };
-  }, [loadLeaderboard]);
+  }, [boardAutoRefreshEnabled, loadLeaderboard]);
 
   const selectedBoardLabel =
     VISIBLE_BOARD_OPTIONS.find((option) => option.id === selectedBoard)?.label ?? "Particle Points";
+  const selectedBoardSubtitle =
+    selectedBoard === "referral" ? REFERRAL_BOARD_REFRESH_LABEL : "Live rank and score";
   const viewerRankLabel = viewer?.rank ? `#${formatWhole(viewer.rank)}` : "--";
   const viewerScoreDisplay = getViewerScoreDisplay(selectedBoard, viewer);
   const viewerScoreDetail = getViewerScoreDetail(selectedBoard, viewer);
@@ -774,7 +782,7 @@ export default function LeaderboardPage() {
                     {selectedBoardLabel}
                   </p>
                   <p className="text-[11px] font-medium text-sky-50/90">
-                    Live rank and score
+                    {selectedBoardSubtitle}
                   </p>
                 </div>
                 <div className="flex h-[0.8cm] max-h-[0.8cm] items-center rounded-full border border-white/25 bg-white/15 px-2.5 py-0 text-[11px] font-bold leading-none text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.16)]">

@@ -11,6 +11,7 @@ import { pointsRoutes } from "./routes/points";
 import { profileSettingsRoutes } from "./routes/profileSettings";
 import { questsRoutes } from "./routes/quests";
 import { swapsRoutes } from "./routes/swaps";
+import { pointsEngine } from "./services/pointsEngine";
 import tokens from "./routes/tokens";
 import { getAllowedAppOrigins, isAllowedAppOrigin } from "./config/appOrigins";
 import { getSupabaseDiagnostics } from "./services/supabase";
@@ -36,6 +37,8 @@ app.route("/api/points", pointsRoutes);
 app.route("/api/profile-settings", profileSettingsRoutes);
 app.route("/api/quests", questsRoutes);
 app.route("/api/swaps", swapsRoutes);
+
+pointsEngine.startReferralLeaderboardSnapshotScheduler();
 
 app.get("/", (c) => {
   return c.json({

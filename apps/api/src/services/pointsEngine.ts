@@ -95,6 +95,7 @@ const ENTRY_POINT_V06_ADDRESS = "0x5ff137d4b0fdcd49dca30c7cf57e578a026d2789";
 const DEFAULT_ETH_PRICE_USD = Number(process.env.DEFAULT_ETH_PRICE_USD || "3500");
 const REFERRAL_APPLY_IDEMPOTENCY_TTL_MS = 30 * 1000;
 const REFERRAL_APPLY_TERMINAL_TTL_MS = 30 * 1000;
+const REFERRAL_LEADERBOARD_SNAPSHOT_TTL_MS = 4 * 60 * 60 * 1000;
 const PRICE_SCALE = 100_000_000;
 const WEI_PER_ETH = 10n ** 18n;
 const USER_CREATE_MAX_ATTEMPTS = 5;
@@ -301,6 +302,11 @@ type ReferralLeaderboardRow = {
 };
 
 type ReferralLeaderboardCountRow = {
+  total_entries: number | string | null;
+};
+
+type ReferralLeaderboardSnapshotMetaRow = {
+  refreshed_at: string | null;
   total_entries: number | string | null;
 };
 
@@ -683,6 +689,8 @@ function pickSpinReward() {
 }
 
 export class PointsEngine {
+  private referralSnapshotRefreshTimer: NodeJS.Timeout | null = null;
+
   private readonly referralApplyInflight = new Map<
     string,
     {
@@ -924,6 +932,29 @@ export class PointsEngine {
     this.invalidateSummaryCache(address);
     this.invalidateLeaderboardCache();
     this.invalidateFootprintStatusCache(address);
+  }
+
+  startReferralLeaderboardSnapshotScheduler() {
+    if (this.referralSnapshotRefreshTimer) {
+      return;
+    }
+
+    const runRefresh = () => {
+      void runtimeCache
+        .singleFlight("leaderboard:referral:snapshot-refresh", async () => {
+          return this.refreshReferralLeaderboardSnapshot();
+        })
+        .catch((error) => {
+          console.error("[Referral Leaderboard Snapshot] Scheduled refresh failed", error);
+        });
+    };
+
+    runRefresh();
+    this.referralSnapshotRefreshTimer = setInterval(
+      runRefresh,
+      REFERRAL_LEADERBOARD_SNAPSHOT_TTL_MS
+    );
+    this.referralSnapshotRefreshTimer.unref?.();
   }
 
   private async fetchCurrentEthPriceUsd(): Promise<PriceFeedQuote> {
@@ -1718,6 +1749,152 @@ export class PointsEngine {
     return String(message || "").toLowerCase().includes("statement timeout");
   }
 
+  private isMissingRelationError(error: { code?: string; message?: string } | null) {
+    if (!error) {
+      return false;
+    }
+
+    return error.code === "42P01" || error.code === "PGRST205";
+  }
+
+  private isReferralLeaderboardSnapshotStale(meta: ReferralLeaderboardSnapshotMetaRow | null) {
+    if (!meta?.refreshed_at) {
+      return true;
+    }
+
+    const refreshedAt = Date.parse(meta.refreshed_at);
+    if (!Number.isFinite(refreshedAt)) {
+      return true;
+    }
+
+    return Date.now() - refreshedAt >= REFERRAL_LEADERBOARD_SNAPSHOT_TTL_MS;
+  }
+
+  private async getReferralLeaderboardSnapshotMeta() {
+    const { data, error } = await supabase
+      .from("referral_leaderboard_snapshot_meta")
+      .select("refreshed_at, total_entries")
+      .eq("singleton", 1)
+      .maybeSingle();
+
+    if (error) {
+      if (this.isMissingRelationError(error)) {
+        return null;
+      }
+
+      throw new Error(`Load referral leaderboard snapshot meta: ${error.message}`);
+    }
+
+    return (data as ReferralLeaderboardSnapshotMetaRow | null) ?? null;
+  }
+
+  private async refreshReferralLeaderboardSnapshot() {
+    const { data, error } = await supabase.rpc("refresh_referral_leaderboard_snapshot");
+
+    if (error) {
+      if (
+        this.isMissingRpcFunctionError(error.message, "refresh_referral_leaderboard_snapshot") ||
+        this.isMissingRelationError(error)
+      ) {
+        return null;
+      }
+
+      throw new Error(`Refresh referral leaderboard snapshot: ${error.message}`);
+    }
+
+    const row = firstRow(data as ReferralLeaderboardSnapshotMetaRow[] | null);
+    if (!row) {
+      return null;
+    }
+
+    return {
+      refreshed_at: row.refreshed_at || new Date().toISOString(),
+      total_entries: Number(row.total_entries || 0),
+    } satisfies ReferralLeaderboardSnapshotMetaRow;
+  }
+
+  private async ensureReferralLeaderboardSnapshot() {
+    const meta = await this.getReferralLeaderboardSnapshotMeta();
+    const refreshKey = "leaderboard:referral:snapshot-refresh";
+
+    if (!meta) {
+      return runtimeCache.singleFlight(refreshKey, async () => {
+        return this.refreshReferralLeaderboardSnapshot();
+      });
+    }
+
+    if (this.isReferralLeaderboardSnapshotStale(meta)) {
+      void runtimeCache
+        .singleFlight(refreshKey, async () => {
+          return this.refreshReferralLeaderboardSnapshot();
+        })
+        .catch((error) => {
+          console.error("[Referral Leaderboard Snapshot] Background refresh failed", error);
+        });
+    }
+
+    return meta;
+  }
+
+  private async getReferralLeaderboardSnapshotPage(offset: number, limit: number) {
+    const { data, error } = await supabase
+      .from("referral_leaderboard_snapshot_entries")
+      .select("rank, user_id, address, total_points, referral_points, referred_users")
+      .order("rank", { ascending: true })
+      .range(offset, offset + limit - 1);
+
+    if (error) {
+      if (this.isMissingRelationError(error)) {
+        return null;
+      }
+
+      throw new Error(`Load referral leaderboard snapshot page: ${error.message}`);
+    }
+
+    return ((data ?? []) as ReferralLeaderboardRow[])
+      .map((row) => ({
+        rank: Number(row.rank || 0),
+        userId: Number(row.user_id || 0),
+        address: String(row.address),
+        totalPoints: Number(row.total_points || 0),
+        referralPoints: Number(row.referral_points || 0),
+        referredUsers: Number(row.referred_users || 0),
+        swapVolume: 0,
+      }))
+      .filter((entry) => entry.referredUsers > 0);
+  }
+
+  private async getReferralLeaderboardSnapshotViewer(userId: number) {
+    const { data, error } = await supabase
+      .from("referral_leaderboard_snapshot_entries")
+      .select("rank, user_id, address, total_points, referral_points, referred_users")
+      .eq("user_id", userId)
+      .maybeSingle();
+
+    if (error) {
+      if (this.isMissingRelationError(error)) {
+        return null;
+      }
+
+      throw new Error(`Load referral leaderboard snapshot viewer: ${error.message}`);
+    }
+
+    const row = (data as ReferralLeaderboardRow | null) ?? null;
+    if (!row) {
+      return null;
+    }
+
+    return {
+      rank: Number(row.rank || 0),
+      userId: Number(row.user_id || 0),
+      address: String(row.address),
+      totalPoints: Number(row.total_points || 0),
+      referralPoints: Number(row.referral_points || 0),
+      referredUsers: Number(row.referred_users || 0),
+      swapVolume: 0,
+    } satisfies Omit<LeaderboardEntry, "profile">;
+  }
+
   private isFallbackLeaderboardEligibleUser(user: {
     current_streak?: number | string | null;
     last_check_in?: string | null;
@@ -1909,7 +2086,7 @@ export class PointsEngine {
     return entries.find((entry) => entry.userId === userId) ?? null;
   }
 
-  private async getReferralLeaderboardPage(offset: number, limit: number) {
+  private async getLiveReferralLeaderboardPage(offset: number, limit: number) {
     const { data, error } = await supabase.rpc("get_referral_leaderboard_page", {
       p_limit: limit,
       p_offset: offset,
@@ -1939,7 +2116,7 @@ export class PointsEngine {
       .filter((entry) => entry.referredUsers > 0);
   }
 
-  private async getReferralLeaderboardCount() {
+  private async getLiveReferralLeaderboardCount() {
     const { data, error } = await supabase.rpc("get_referral_leaderboard_count");
 
     if (error) {
@@ -1957,7 +2134,7 @@ export class PointsEngine {
     return Number(row?.total_entries || 0);
   }
 
-  private async getReferralLeaderboardViewer(userId: number) {
+  private async getLiveReferralLeaderboardViewer(userId: number) {
     const { data, error } = await supabase.rpc("get_referral_leaderboard_viewer", {
       p_user_id: userId,
     });
@@ -3854,14 +4031,57 @@ export class PointsEngine {
       }
 
       if (type === "referral") {
-        const referralTotalEntries = await this.getReferralLeaderboardCount();
+        const snapshotMeta = await this.ensureReferralLeaderboardSnapshot();
+        if (!snapshotMeta) {
+          const referralTotalEntries = await this.getLiveReferralLeaderboardCount();
+          const { currentPage, offset, totalEntries, totalPages } =
+            getPagination(referralTotalEntries);
+          const pageEntries = await this.getLiveReferralLeaderboardPage(offset, safeLimit);
+          const viewerUser = viewerAddress ? await this.findExistingUser(viewerAddress) : null;
+          const [profiles, viewerRow, viewerProfiles] = await Promise.all([
+            this.fetchCachedProfiles(pageEntries.map((entry) => entry.userId)),
+            viewerUser
+              ? this.getLiveReferralLeaderboardViewer(viewerUser.id)
+              : Promise.resolve(null),
+            viewerUser ? this.fetchCachedProfiles([viewerUser.id]) : Promise.resolve(new Map()),
+          ]);
+
+          return {
+            type,
+            limit: safeLimit,
+            page: currentPage,
+            pageSize: safeLimit,
+            totalEntries,
+            totalPages,
+            totalUserCount,
+            totalParticlePoints,
+            viewer: viewerRow
+              ? {
+                  ...viewerRow,
+                  profile: viewerProfiles.get(viewerRow.userId) ?? null,
+                }
+              : null,
+            entries: pageEntries.map((entry) => ({
+              ...entry,
+              profile: profiles.get(entry.userId) ?? null,
+            })),
+          } satisfies LeaderboardHubResponse;
+        }
+
+        const referralTotalEntries = Number(snapshotMeta.total_entries || 0);
         const { currentPage, offset, totalEntries, totalPages } =
           getPagination(referralTotalEntries);
-        const pageEntries = await this.getReferralLeaderboardPage(offset, safeLimit);
+        const pageEntries =
+          (await this.getReferralLeaderboardSnapshotPage(offset, safeLimit)) ??
+          (await this.getLiveReferralLeaderboardPage(offset, safeLimit));
         const viewerUser = viewerAddress ? await this.findExistingUser(viewerAddress) : null;
         const [profiles, viewerRow, viewerProfiles] = await Promise.all([
           this.fetchCachedProfiles(pageEntries.map((entry) => entry.userId)),
-          viewerUser ? this.getReferralLeaderboardViewer(viewerUser.id) : Promise.resolve(null),
+          viewerUser
+            ? this.getReferralLeaderboardSnapshotViewer(viewerUser.id).then((entry) => {
+                return entry ?? this.getLiveReferralLeaderboardViewer(viewerUser.id);
+              })
+            : Promise.resolve(null),
           viewerUser ? this.fetchCachedProfiles([viewerUser.id]) : Promise.resolve(new Map()),
         ]);
 
