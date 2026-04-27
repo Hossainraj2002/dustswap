@@ -12,7 +12,7 @@ const WIDGET_BASE_CONFIG = {
   variant: "compact",
   subvariant: "default",
   appearance: "light",
-  slippage: 0.005,
+  slippage: 0.01,
   theme: {
     palette: {
       primary: { main: "#006Eff" },
