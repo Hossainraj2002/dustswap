@@ -328,6 +328,10 @@ function hasOpenOceanCall(calls: WalletCall[]) {
   });
 }
 
+function hasOpenOceanApprovalCall(calls: WalletCall[]) {
+  return calls.some((call) => isOpenOceanApprovalCall(call?.data));
+}
+
 function isEligibleBuilderCodeSwapTransaction(
   request: Record<string, unknown>,
   resolvedChainId: number
@@ -861,6 +865,39 @@ export function useSwapCapture() {
       return null;
     };
 
+    const waitForApprovalWalletCall = async (
+      originalRequest: (args: EthereumRequestArguments) => Promise<unknown>,
+      callId: string
+    ) => {
+      for (let attempt = 0; attempt < APPROVAL_RECEIPT_MAX_ATTEMPTS; attempt += 1) {
+        let statusResult: WalletCallsStatusResult | null = null;
+
+        try {
+          statusResult = getCallsStatusResult(
+            await originalRequest({
+              method: "wallet_getCallsStatus",
+              params: [callId],
+            })
+          );
+        } catch {
+          return null;
+        }
+
+        const txHashes = getCallsStatusTxHashes(statusResult);
+        if (txHashes.length > 0) {
+          return txHashes;
+        }
+
+        if (getCallsStatusState(statusResult) === "failure") {
+          throw new Error("Approval wallet call reverted onchain");
+        }
+
+        await sleep(APPROVAL_RECEIPT_POLL_DELAY_MS);
+      }
+
+      return null;
+    };
+
     const wrapProvider = (providerKey: string, provider: RequestCapableProvider) => {
       if (!provider || typeof provider.request !== "function") {
         return;
@@ -901,6 +938,15 @@ export function useSwapCapture() {
 
           if (txHash) {
             result = txHash;
+          }
+        }
+
+        if (method === "wallet_sendCalls") {
+          const request = getWalletSendCallsRequest(args);
+          const callId = resolveCallsId(result);
+
+          if (callId && hasOpenOceanApprovalCall(request.calls || [])) {
+            await waitForApprovalWalletCall(originalRequest, callId);
           }
         }
 
