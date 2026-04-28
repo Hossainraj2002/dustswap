@@ -2,19 +2,12 @@
 
 import { useEffect, useRef } from "react";
 import { useConnection } from "wagmi";
-import { appendBuilderCodeToData, DATA_SUFFIX } from "@/lib/builderCode";
-import {
-  buildBasePaymasterCapabilities,
-  isErc20ApproveCall,
-  isOpenOceanRouterAddress,
-  isPaymasterEnabled,
-  isUserRejectedRequest,
-  toRpcHexValue,
-} from "@/lib/paymaster";
-import { BASE_CHAIN_ID } from "@/lib/tokens";
+import { appendBuilderCodeToData } from "@/lib/builderCode";
+import { isErc20ApproveCall, isOpenOceanRouterAddress } from "@/lib/paymaster";
 import { emitDataInvalidation } from "@/lib/clientEvents";
 import { buildPublicApiUrl } from "@/lib/apiBase";
 import { clearPointsSummaryCache } from "@/lib/points";
+import { BASE_CHAIN_ID } from "@/lib/tokens";
 import { isSupportedSwapCaptureChainId } from "@/config/swapChains";
 
 const STORAGE_KEY = "dustswap.swap.capture.queue";
@@ -25,8 +18,6 @@ const MAX_CALL_QUEUE_ITEMS = 25;
 const MAX_ITEM_AGE_MS = 24 * 60 * 60 * 1000;
 const FLUSH_INTERVAL_MS = 2000;
 const MAX_RETRY_DELAY_MS = 10000;
-const SPONSORED_TX_MAX_ATTEMPTS = 40;
-const SPONSORED_TX_POLL_DELAY_MS = 1500;
 const CONNECTOR_PROVIDER_KEY = "connector";
 const WINDOW_PROVIDER_KEY = "window";
 
@@ -78,15 +69,6 @@ type WalletCallsStatusResult = {
   receipts?: WalletCallsStatusReceipt[];
 };
 
-type WalletCapabilitiesResult = Record<
-  string,
-  {
-    paymasterService?: {
-      supported?: boolean;
-    };
-  }
->;
-
 type RequestError = Error & {
   code?: string;
   status?: number;
@@ -114,10 +96,6 @@ function normalizeAddress(value: string) {
 
 function normalizeCallId(value: string) {
   return value.trim();
-}
-
-function toHexChainId(chainId: number) {
-  return `0x${chainId.toString(16)}`;
 }
 
 function resolveChainId(...values: Array<unknown>) {
@@ -341,7 +319,7 @@ function hasOpenOceanCall(calls: WalletCall[]) {
   });
 }
 
-function isEligibleSponsoredSwapTransaction(
+function isEligibleBuilderCodeSwapTransaction(
   request: Record<string, unknown>,
   resolvedChainId: number
 ) {
@@ -360,7 +338,7 @@ function applyBuilderCodeToEligibleSwapTransaction(
   request: Record<string, unknown>,
   resolvedChainId: number
 ) {
-  if (!isEligibleSponsoredSwapTransaction(request, resolvedChainId)) {
+  if (!isEligibleBuilderCodeSwapTransaction(request, resolvedChainId)) {
     return args;
   }
 
@@ -453,10 +431,6 @@ function getCallsStatusTxHashes(result: WalletCallsStatusResult | null) {
   return Array.from(txHashes);
 }
 
-async function sleep(ms: number) {
-  await new Promise((resolve) => window.setTimeout(resolve, ms));
-}
-
 function getProviderCandidates(
   windowProvider: RequestCapableProvider | null,
   connectorProvider: RequestCapableProvider | null
@@ -538,8 +512,6 @@ export function useSwapCapture() {
     let cancelled = false;
     const providerRecords = new Map<string, WrappedProviderRecord>();
     const providerRestorers: Array<() => void> = [];
-    const paymasterSupportCache = new Map<string, boolean>();
-
     queueRef.current = pruneCaptureQueue(readStoredItems<CaptureQueueItem>(STORAGE_KEY));
     callQueueRef.current = pruneCallQueue(
       readStoredItems<SmartWalletCallQueueItem>(CALLS_STORAGE_KEY)
@@ -633,62 +605,6 @@ export function useSwapCapture() {
           )
         );
       }
-    };
-
-    const getPaymasterSupport = async (
-      providerKey: string,
-      originalRequest: (args: EthereumRequestArguments) => Promise<unknown>,
-      accountAddress: string,
-      targetChainId: number
-    ) => {
-      const cacheKey = `${providerKey}:${accountAddress}:${targetChainId}`;
-      const cached = paymasterSupportCache.get(cacheKey);
-      if (typeof cached === "boolean") {
-        return cached;
-      }
-
-      try {
-        const result = (await originalRequest({
-          method: "wallet_getCapabilities",
-          params: [accountAddress],
-        })) as WalletCapabilitiesResult | null;
-        const chainKey = toHexChainId(targetChainId).toLowerCase();
-        const chainCapabilities = result
-          ? Object.entries(result).find(([candidate]) => candidate.toLowerCase() === chainKey)?.[1]
-          : null;
-        const supported = Boolean(chainCapabilities?.paymasterService?.supported);
-        paymasterSupportCache.set(cacheKey, supported);
-        return supported;
-      } catch {
-        paymasterSupportCache.set(cacheKey, false);
-        return false;
-      }
-    };
-
-    const waitForSponsoredTxHash = async (
-      originalRequest: (args: EthereumRequestArguments) => Promise<unknown>,
-      callId: string
-    ) => {
-      for (let attempt = 0; attempt < SPONSORED_TX_MAX_ATTEMPTS; attempt += 1) {
-        const result = await originalRequest({
-          method: "wallet_getCallsStatus",
-          params: [callId],
-        });
-        const statusResult = getCallsStatusResult(result);
-        const txHashes = getCallsStatusTxHashes(statusResult);
-
-        if (txHashes.length > 0) {
-          return txHashes[0];
-        }
-
-        if (getCallsStatusState(statusResult) === "failure") {
-          throw new Error("Sponsored swap transaction failed");
-        }
-
-        await sleep(SPONSORED_TX_POLL_DELAY_MS);
-      }
-
-      throw new Error("Timed out waiting for sponsored swap transaction receipt");
     };
 
     const flushQueue = async (force = false) => {
@@ -861,12 +777,10 @@ export function useSwapCapture() {
       const originalRequest = provider.request.bind(provider);
       const wrappedRequest = async (args: EthereumRequestArguments) => {
         const method = args?.method;
-        let result: unknown;
         let forwardedArgs = args;
 
         if (method === "eth_sendTransaction" || method === "wallet_sendTransaction") {
           const request = getRequestPayload(args);
-          const resolvedAddress = normalizeAddress(String(request.from || address || ""));
           const resolvedChainId = resolveChainId(
             request.chainId,
             chainId,
@@ -874,71 +788,16 @@ export function useSwapCapture() {
             (window as Window & { ethereum?: RequestCapableProvider }).ethereum?.chainId
           );
 
+          // Preserve builder code attribution on swap and approval calls,
+          // but keep the original wallet method so the widget can track state correctly.
           forwardedArgs = applyBuilderCodeToEligibleSwapTransaction(
             args,
             request,
             resolvedChainId
           );
-
-          if (
-            isPaymasterEnabled() &&
-            resolvedAddress &&
-            isEligibleSponsoredSwapTransaction(request, resolvedChainId)
-          ) {
-            try {
-              const supportsPaymaster = await getPaymasterSupport(
-                providerKey,
-                originalRequest,
-                resolvedAddress,
-                resolvedChainId
-              );
-
-              if (supportsPaymaster) {
-                const sendCallsResult = await originalRequest({
-                  method: "wallet_sendCalls",
-                  params: [
-                    {
-                      version: "2.0.0",
-                      chainId: toHexChainId(resolvedChainId),
-                      from: resolvedAddress,
-                      atomicRequired: true,
-                      calls: [
-                        {
-                          to: String(request.to),
-                          data:
-                            typeof request.data === "string" && request.data
-                              ? request.data
-                              : "0x",
-                          value: toRpcHexValue(request.value),
-                          dataSuffix: DATA_SUFFIX,
-                        },
-                      ],
-                      capabilities: buildBasePaymasterCapabilities(),
-                    },
-                  ],
-                });
-                const callId = resolveCallsId(sendCallsResult);
-
-                if (callId) {
-                  result = await waitForSponsoredTxHash(originalRequest, callId);
-                }
-              }
-            } catch (error) {
-              if (isUserRejectedRequest(error)) {
-                throw error;
-              }
-
-              console.warn(
-                "Falling back to unsponsored Base swap transaction after paymaster attempt failed.",
-                error
-              );
-            }
-          }
         }
 
-        if (typeof result === "undefined") {
-          result = await originalRequest(forwardedArgs);
-        }
+        let result = await originalRequest(forwardedArgs);
 
         if (method === "eth_sendTransaction" || method === "wallet_sendTransaction") {
           const txHash = extractTxHashFromWalletResult(result);
