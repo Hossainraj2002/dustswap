@@ -184,6 +184,7 @@ export function AppShell({ children }: AppShellProps) {
       isLandingPage ||
       isShelllessPage ||
       pathname.startsWith('/admin') ||
+      pathname.startsWith('/partner') ||
       pathname.startsWith('/ref/')
     ) {
       checkedRef.current = null;

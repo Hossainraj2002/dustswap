@@ -7,6 +7,7 @@ import { cors } from "hono/cors";
 import { logger } from "hono/logger";
 import { prettyJSON } from "hono/pretty-json";
 import { authRoutes } from "./routes/auth";
+import { partnerRoutes } from "./routes/partner";
 import { pointsRoutes } from "./routes/points";
 import { profileSettingsRoutes } from "./routes/profileSettings";
 import { questsRoutes } from "./routes/quests";
@@ -33,6 +34,7 @@ app.use(
 
 app.route("/api/tokens", tokens);
 app.route("/api/auth", authRoutes);
+app.route("/api/partner", partnerRoutes);
 app.route("/api/points", pointsRoutes);
 app.route("/api/profile-settings", profileSettingsRoutes);
 app.route("/api/quests", questsRoutes);
@@ -54,6 +56,9 @@ app.get("/", (c) => {
       "POST /api/tokens/batch-quote": "Get batch swap quotes",
       "GET /api/tokens/health": "Service health check",
       "GET /api/points/:address": "Get points balance",
+      "GET /api/partner/dashboard?address=": "Get partner dashboard state and metrics",
+      "GET /api/partner/history?address=": "Get partner distribution history",
+      "POST /api/partner/join": "Verify partner join signature and unlock dashboard access",
       "GET /api/profile-settings?address=": "Get merged profile settings",
       "POST /api/profile-settings": "Save signed profile settings",
       "POST /api/profile-settings/pfp-upload-url": "Create signed R2 PFP upload URL",
