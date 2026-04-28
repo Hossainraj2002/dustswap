@@ -30,7 +30,7 @@ importers:
         specifier: ^0.15.39
         version: 0.15.39(@solana/web3.js@1.98.4(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6))(bs58@6.0.0)(fastestsmallesttextencoderdecoder@1.0.22)(react-native@0.84.1(@babel/core@7.29.0)(@types/react@19.2.14)(bufferutil@4.1.0)(react@19.2.4)(utf-8-validate@6.0.6))(react@19.2.4)(typescript@5.9.3)
       '@tanstack/react-query':
-        specifier: ^5.62.0
+        specifier: ^5.72.0
         version: 5.95.2(react@19.2.4)
       next:
         specifier: 15.1.11
