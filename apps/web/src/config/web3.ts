@@ -26,7 +26,11 @@ export const SUPPORTED_CHAINS = {
 } as const;
 
 const rpcUrlByChainId: Record<number, string | undefined> = {
-  [base.id]: process.env.NEXT_PUBLIC_BASE_RPC_URL,
+  [base.id]: 
+    process.env.NEXT_PUBLIC_BASE_RPC_URL || 
+    (process.env.NEXT_PUBLIC_ALCHEMY_API_KEY 
+      ? `https://base-mainnet.g.alchemy.com/v2/${process.env.NEXT_PUBLIC_ALCHEMY_API_KEY}`
+      : undefined),
   [mainnet.id]: process.env.NEXT_PUBLIC_ETHEREUM_RPC_URL,
   [arbitrum.id]: process.env.NEXT_PUBLIC_ARBITRUM_RPC_URL,
   [optimism.id]: process.env.NEXT_PUBLIC_OPTIMISM_RPC_URL,
