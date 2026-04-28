@@ -18,6 +18,8 @@ const MAX_CALL_QUEUE_ITEMS = 25;
 const MAX_ITEM_AGE_MS = 24 * 60 * 60 * 1000;
 const FLUSH_INTERVAL_MS = 2000;
 const MAX_RETRY_DELAY_MS = 10000;
+const APPROVAL_RECEIPT_POLL_DELAY_MS = 1000;
+const APPROVAL_RECEIPT_MAX_ATTEMPTS = 20;
 const CONNECTOR_PROVIDER_KEY = "connector";
 const WINDOW_PROVIDER_KEY = "window";
 
@@ -67,6 +69,13 @@ type WalletCallsStatusResult = {
   status?: string | number;
   statusCode?: number;
   receipts?: WalletCallsStatusReceipt[];
+};
+
+type TransactionReceiptResult = {
+  blockHash?: string | null;
+  blockNumber?: string | null;
+  status?: string | number;
+  transactionHash?: string;
 };
 
 type RequestError = Error & {
@@ -431,6 +440,57 @@ function getCallsStatusTxHashes(result: WalletCallsStatusResult | null) {
   return Array.from(txHashes);
 }
 
+function extractApproveSpender(data: unknown) {
+  if (!isErc20ApproveCall(data)) {
+    return null;
+  }
+
+  const normalized = (data as string).toLowerCase();
+  if (normalized.length < 74) {
+    return null;
+  }
+
+  return `0x${normalized.slice(34, 74)}`;
+}
+
+function isOpenOceanApprovalCall(data: unknown) {
+  const spender = extractApproveSpender(data);
+  return spender ? isOpenOceanRouterAddress(spender) : false;
+}
+
+function getTransactionReceiptResult(result: unknown): TransactionReceiptResult | null {
+  if (!result || typeof result !== "object") {
+    return null;
+  }
+
+  return result as TransactionReceiptResult;
+}
+
+function hasReceiptBeenMined(receipt: TransactionReceiptResult | null) {
+  if (!receipt) {
+    return false;
+  }
+
+  return Boolean(receipt.blockHash || receipt.blockNumber);
+}
+
+function isSuccessfulReceiptStatus(status: string | number | undefined) {
+  if (typeof status === "number") {
+    return status === 1;
+  }
+
+  if (typeof status === "string") {
+    const normalized = status.toLowerCase();
+    return normalized === "0x1" || normalized === "1" || normalized === "success";
+  }
+
+  return true;
+}
+
+async function sleep(ms: number) {
+  await new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
 function getProviderCandidates(
   windowProvider: RequestCapableProvider | null,
   connectorProvider: RequestCapableProvider | null
@@ -769,6 +829,38 @@ export function useSwapCapture() {
       }
     };
 
+    const waitForApprovalReceipt = async (
+      originalRequest: (args: EthereumRequestArguments) => Promise<unknown>,
+      txHash: string
+    ) => {
+      for (let attempt = 0; attempt < APPROVAL_RECEIPT_MAX_ATTEMPTS; attempt += 1) {
+        let receiptResult: TransactionReceiptResult | null = null;
+
+        try {
+          receiptResult = getTransactionReceiptResult(
+            await originalRequest({
+              method: "eth_getTransactionReceipt",
+              params: [txHash],
+            })
+          );
+        } catch {
+          return null;
+        }
+
+        if (hasReceiptBeenMined(receiptResult)) {
+          if (!isSuccessfulReceiptStatus(receiptResult?.status)) {
+            throw new Error("Approval transaction reverted onchain");
+          }
+
+          return receiptResult;
+        }
+
+        await sleep(APPROVAL_RECEIPT_POLL_DELAY_MS);
+      }
+
+      return null;
+    };
+
     const wrapProvider = (providerKey: string, provider: RequestCapableProvider) => {
       if (!provider || typeof provider.request !== "function") {
         return;
@@ -801,6 +893,12 @@ export function useSwapCapture() {
 
         if (method === "eth_sendTransaction" || method === "wallet_sendTransaction") {
           const txHash = extractTxHashFromWalletResult(result);
+          const request = getRequestPayload(forwardedArgs);
+
+          if (txHash && isOpenOceanApprovalCall(request.data)) {
+            await waitForApprovalReceipt(originalRequest, txHash);
+          }
+
           if (txHash) {
             result = txHash;
           }
