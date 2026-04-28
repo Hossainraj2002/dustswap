@@ -2,6 +2,7 @@
   "name": "dustsweep-api",
   "version": "1.0.0",
   "description": "DustSweep backend API",
+  "packageManager": "pnpm@9.15.4",
   "main": "dist/index.js",
   "scripts": {
     "dev": "nodemon --exec ts-node src/index.ts",
