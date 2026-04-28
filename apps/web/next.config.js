@@ -39,7 +39,7 @@ const nextConfig = {
   },
 
   webpack: (config) => {
-    config.externals.push('pino-pretty', 'lokijs', 'encoding');
+    config.externals = [...(config.externals || []), 'lokijs', 'encoding'];
     config.resolve.fallback = { 
       ...config.resolve.fallback, 
       fs: false, 
@@ -52,3 +52,4 @@ const nextConfig = {
 };
 
 module.exports = nextConfig;
+
