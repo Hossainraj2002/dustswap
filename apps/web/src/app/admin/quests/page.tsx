@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { AdminManualPointsPanel } from "@/components/admin/AdminManualPointsPanel";
 import {
   fetchAdminCampaignWhitelist,
   deleteAdminQuest,
@@ -484,8 +485,11 @@ export default function AdminQuestsPage() {
           If it still fails, check that <code>NEXT_PUBLIC_API_URL</code> on Vercel points to the Railway root URL without <code>/api</code>, and make sure the same token is set in Railway API env.
         </section>
       ) : (
-        <div className="grid gap-5 lg:grid-cols-[1.1fr_0.9fr]">
-          <section className="rounded-[28px] border border-gray-200 bg-white shadow-sm p-5">
+        <>
+          <AdminManualPointsPanel adminToken={adminToken} />
+
+          <div className="grid gap-5 lg:grid-cols-[1.1fr_0.9fr]">
+            <section className="rounded-[28px] border border-gray-200 bg-white shadow-sm p-5">
             <div className="flex items-center justify-between gap-3">
               <h2 className="text-lg font-semibold text-gray-900">
                 {form.id ? "Edit Quest" : "Create Quest"}
@@ -839,130 +843,131 @@ export default function AdminQuestsPage() {
             >
               {isSaving ? "Saving..." : form.id ? "Update Quest" : "Create Quest"}
             </button>
-          </section>
+            </section>
 
-          <section className="rounded-[28px] border border-gray-200 bg-white shadow-sm p-5">
-            <h2 className="text-lg font-semibold text-gray-900">Current quests</h2>
-            <div className="mt-4 space-y-3">
-              {quests.length === 0 ? (
-                <div className="rounded-2xl border border-dashed border-gray-200 bg-white px-4 py-6 text-sm text-gray-500">
-                  No quests found yet.
-                </div>
-              ) : (
-                quests.map((quest) => {
-                  const isQuestSwap =
-                    quest.action_type === "swap_volume" || quest.action_type === "swap_count";
-                  const swapRuleSummary = isQuestSwap
-                    ? formatSwapQuestRuleSummary(quest.rules || {})
-                    : null;
-
-                  return (
-                  <article
-                    key={quest.id}
-                    className="rounded-2xl border border-gray-200 bg-white p-4"
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <p className="text-[11px] uppercase tracking-[0.25em] text-gray-500">
-                          {quest.platform} / {quest.action_type}
-                        </p>
-                        <h3 className="mt-2 text-base font-semibold text-gray-900">{quest.title}</h3>
-                        <p className="mt-1 text-xs text-gray-500">
-                          {quest.slug} / {quest.reward_points} PP
-                        </p>
-                        <p className="mt-1 text-xs text-gray-500">
-                          Field {quest.campaign_key || "general"}
-                        </p>
-                        <p className="mt-1 text-xs text-gray-500">
-                          Target {quest.target_value} / Sort {quest.sort_order}
-                        </p>
-                        {swapRuleSummary ? (
-                          <div className="mt-2 rounded-xl border border-sky-100 bg-sky-50 px-3 py-2 text-xs leading-5 text-sky-800">
-                            <p>Chain: {swapRuleSummary.chainLabel}</p>
-                            <p>Token: {swapRuleSummary.tokenLabel}</p>
-                          </div>
-                        ) : null}
-                        {quest.starts_at ? (
-                          <p className="mt-1 text-xs text-gray-500">
-                            Opens {new Date(quest.starts_at).toLocaleString()}
-                          </p>
-                        ) : null}
-                        {quest.ends_at ? (
-                          <p className="mt-1 text-xs text-gray-500">
-                            Closes {new Date(quest.ends_at).toLocaleString()}
-                          </p>
-                        ) : null}
-                      </div>
-                      <span
-                        className={`rounded-full border px-3 py-1 text-[11px] uppercase tracking-[0.22em] ${
-                          quest.status === "published"
-                            ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-                            : "border-gray-200 bg-gray-100 text-gray-600"
-                        }`}
-                      >
-                        {quest.status}
-                      </span>
-                    </div>
-
-                    <div className="mt-4 flex gap-2">
-                      <button
-                        type="button"
-                        onClick={() => startEdit(quest)}
-                        className="rounded-2xl border border-gray-200 px-4 py-2 text-sm font-medium text-gray-900 transition hover:bg-gray-50"
-                      >
-                        Edit
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => void handleDelete(quest.id)}
-                        className="rounded-2xl border border-rose-200 px-4 py-2 text-sm font-medium text-rose-700 transition hover:bg-rose-50 bg-white"
-                      >
-                        Delete
-                      </button>
-                    </div>
-                  </article>
-                  );
-                })
-              )}
-            </div>
-
-            <div className="mt-6">
-              <div className="flex items-center justify-between gap-3">
-                <h3 className="text-base font-semibold text-gray-900">coFounder pass whitelist</h3>
-                <button
-                  type="button"
-                  onClick={() => void loadQuests()}
-                  disabled={!adminToken || isLoading}
-                  className="rounded-2xl border border-gray-200 px-3 py-2 text-xs font-medium text-gray-900 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  Refresh
-                </button>
-              </div>
-              <p className="mt-2 text-xs leading-6 text-gray-500">
-                Wallets are saved here permanently once they complete every live coFounder pass quest. If you add new pass tasks later, the quest-page message can disappear, but these whitelist addresses stay in the database.
-              </p>
-              <div className="mt-3 space-y-2">
-                {cofounderWhitelist.length === 0 ? (
-                  <div className="rounded-2xl border border-dashed border-gray-200 bg-white px-4 py-4 text-sm text-gray-500">
-                    No wallets have been whitelisted yet.
+            <section className="rounded-[28px] border border-gray-200 bg-white shadow-sm p-5">
+              <h2 className="text-lg font-semibold text-gray-900">Current quests</h2>
+              <div className="mt-4 space-y-3">
+                {quests.length === 0 ? (
+                  <div className="rounded-2xl border border-dashed border-gray-200 bg-white px-4 py-6 text-sm text-gray-500">
+                    No quests found yet.
                   </div>
                 ) : (
-                  cofounderWhitelist.map((entry) => (
-                    <div
-                      key={entry.id}
-                      className="rounded-2xl border border-gray-200 bg-white px-4 py-3"
+                  quests.map((quest) => {
+                    const isQuestSwap =
+                      quest.action_type === "swap_volume" || quest.action_type === "swap_count";
+                    const swapRuleSummary = isQuestSwap
+                      ? formatSwapQuestRuleSummary(quest.rules || {})
+                      : null;
+
+                    return (
+                    <article
+                      key={quest.id}
+                      className="rounded-2xl border border-gray-200 bg-white p-4"
                     >
-                      <p className="text-sm font-medium text-gray-900">{entry.wallet_address}</p>
-                      <p className="mt-1 text-xs text-gray-500">
-                        Added {new Date(entry.created_at).toLocaleString()}
-                      </p>
-                    </div>
-                  ))
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <p className="text-[11px] uppercase tracking-[0.25em] text-gray-500">
+                            {quest.platform} / {quest.action_type}
+                          </p>
+                          <h3 className="mt-2 text-base font-semibold text-gray-900">{quest.title}</h3>
+                          <p className="mt-1 text-xs text-gray-500">
+                            {quest.slug} / {quest.reward_points} PP
+                          </p>
+                          <p className="mt-1 text-xs text-gray-500">
+                            Field {quest.campaign_key || "general"}
+                          </p>
+                          <p className="mt-1 text-xs text-gray-500">
+                            Target {quest.target_value} / Sort {quest.sort_order}
+                          </p>
+                          {swapRuleSummary ? (
+                            <div className="mt-2 rounded-xl border border-sky-100 bg-sky-50 px-3 py-2 text-xs leading-5 text-sky-800">
+                              <p>Chain: {swapRuleSummary.chainLabel}</p>
+                              <p>Token: {swapRuleSummary.tokenLabel}</p>
+                            </div>
+                          ) : null}
+                          {quest.starts_at ? (
+                            <p className="mt-1 text-xs text-gray-500">
+                              Opens {new Date(quest.starts_at).toLocaleString()}
+                            </p>
+                          ) : null}
+                          {quest.ends_at ? (
+                            <p className="mt-1 text-xs text-gray-500">
+                              Closes {new Date(quest.ends_at).toLocaleString()}
+                            </p>
+                          ) : null}
+                        </div>
+                        <span
+                          className={`rounded-full border px-3 py-1 text-[11px] uppercase tracking-[0.22em] ${
+                            quest.status === "published"
+                              ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                              : "border-gray-200 bg-gray-100 text-gray-600"
+                          }`}
+                        >
+                          {quest.status}
+                        </span>
+                      </div>
+
+                      <div className="mt-4 flex gap-2">
+                        <button
+                          type="button"
+                          onClick={() => startEdit(quest)}
+                          className="rounded-2xl border border-gray-200 px-4 py-2 text-sm font-medium text-gray-900 transition hover:bg-gray-50"
+                        >
+                          Edit
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void handleDelete(quest.id)}
+                          className="rounded-2xl border border-rose-200 px-4 py-2 text-sm font-medium text-rose-700 transition hover:bg-rose-50 bg-white"
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </article>
+                    );
+                  })
                 )}
               </div>
-            </div>
-          </section>
-        </div>
+
+              <div className="mt-6">
+                <div className="flex items-center justify-between gap-3">
+                  <h3 className="text-base font-semibold text-gray-900">coFounder pass whitelist</h3>
+                  <button
+                    type="button"
+                    onClick={() => void loadQuests()}
+                    disabled={!adminToken || isLoading}
+                    className="rounded-2xl border border-gray-200 px-3 py-2 text-xs font-medium text-gray-900 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Refresh
+                  </button>
+                </div>
+                <p className="mt-2 text-xs leading-6 text-gray-500">
+                  Wallets are saved here permanently once they complete every live coFounder pass quest. If you add new pass tasks later, the quest-page message can disappear, but these whitelist addresses stay in the database.
+                </p>
+                <div className="mt-3 space-y-2">
+                  {cofounderWhitelist.length === 0 ? (
+                    <div className="rounded-2xl border border-dashed border-gray-200 bg-white px-4 py-4 text-sm text-gray-500">
+                      No wallets have been whitelisted yet.
+                    </div>
+                  ) : (
+                    cofounderWhitelist.map((entry) => (
+                      <div
+                        key={entry.id}
+                        className="rounded-2xl border border-gray-200 bg-white px-4 py-3"
+                      >
+                        <p className="text-sm font-medium text-gray-900">{entry.wallet_address}</p>
+                        <p className="mt-1 text-xs text-gray-500">
+                          Added {new Date(entry.created_at).toLocaleString()}
+                        </p>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            </section>
+          </div>
+        </>
       )}
     </div>
   );

@@ -1,5 +1,6 @@
 import { Hono, type Context } from "hono";
 import { questEngine, type AdminQuestInput } from "../services/questEngine";
+import { pointsEngine } from "../services/pointsEngine";
 import { runtimeCache } from "../utils/runtimeCache";
 
 const questsRoutes = new Hono();
@@ -98,6 +99,41 @@ questsRoutes.get("/admin/campaigns/:key/whitelist", async (c) => {
     return c.json(
       { success: false, error: (error as Error).message },
       500
+    );
+  }
+});
+
+questsRoutes.post("/admin/manual-points", async (c) => {
+  const authError = assertAdmin(c);
+  if (authError) {
+    return authError;
+  }
+
+  try {
+    const body = (await c.req.json()) as {
+      entries?: Array<{ address?: string; points?: number }>;
+      note?: string;
+      requestId?: string;
+      source?: string;
+    };
+
+    const data = await pointsEngine.awardAdminPointsBatch({
+      entries: Array.isArray(body.entries)
+        ? body.entries.map((entry) => ({
+            address: String(entry.address || ""),
+            points: Number(entry.points || 0),
+          }))
+        : [],
+      note: body.note,
+      requestId: body.requestId,
+      source: body.source || "quest_admin_console",
+    });
+
+    return c.json({ success: true, data });
+  } catch (error) {
+    return c.json(
+      { success: false, error: (error as Error).message },
+      400
     );
   }
 });

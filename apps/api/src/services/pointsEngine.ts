@@ -96,6 +96,8 @@ const DEFAULT_ETH_PRICE_USD = Number(process.env.DEFAULT_ETH_PRICE_USD || "3500"
 const REFERRAL_APPLY_IDEMPOTENCY_TTL_MS = 30 * 1000;
 const REFERRAL_APPLY_TERMINAL_TTL_MS = 30 * 1000;
 const REFERRAL_LEADERBOARD_SNAPSHOT_TTL_MS = 4 * 60 * 60 * 1000;
+const ADMIN_POINT_GRANT_ACTION = "admin_manual_pp_grant";
+const ADMIN_POINT_GRANT_MAX_BATCH_SIZE = 500;
 const PRICE_SCALE = 100_000_000;
 const WEI_PER_ETH = 10n ** 18n;
 const USER_CREATE_MAX_ATTEMPTS = 5;
@@ -342,6 +344,29 @@ type PointEventRow = {
   total_awarded: number | string | null;
   metadata: Record<string, unknown> | null;
   created_at: string | null;
+};
+
+type AdminPointGrantEventRow = {
+  user_id: number | string | null;
+  points: number | string | null;
+  total_awarded: number | string | null;
+  metadata: Record<string, unknown> | null;
+  created_at: string | null;
+};
+
+type AdminPointGrantInput = {
+  address: string;
+  points: number;
+};
+
+type AdminPointGrantResult = {
+  address: string;
+  userId: number;
+  requestedPoints: number;
+  totalAwarded: number;
+  totalPoints: number;
+  createdAt: string | null;
+  idempotent: boolean;
 };
 
 type ParticlePointLeaderboardEntryRow = {
@@ -611,6 +636,23 @@ function getUsdcUnitsForUsd(usdAmount: number) {
 function parseUsdAmount(value: string | number | null | undefined) {
   const normalized = typeof value === "number" ? value : Number.parseFloat(String(value ?? ""));
   return Number.isFinite(normalized) && normalized > 0 ? normalized : null;
+}
+
+function buildAdminPointGrantSignature(
+  entries: AdminPointGrantInput[],
+  note: string
+) {
+  return createHash("sha256")
+    .update(
+      JSON.stringify({
+        note,
+        entries: entries.map((entry) => ({
+          address: entry.address,
+          points: entry.points,
+        })),
+      })
+    )
+    .digest("hex");
 }
 
 function firstRow<T>(rows: T[] | null | undefined) {
@@ -2680,6 +2722,148 @@ export class PointsEngine {
 
     const result = await this.addPoints(address, pts, action, txHash, meta);
     return result.totalAwarded;
+  }
+
+  async awardAdminPointsBatch(args: {
+    entries: AdminPointGrantInput[];
+    note?: string;
+    requestId?: string;
+    source?: string;
+  }) {
+    const note = typeof args.note === "string" ? args.note.trim() : "";
+    const requestId = String(args.requestId || "").trim();
+    const source = String(args.source || "quest_admin_console").trim() || "quest_admin_console";
+    const rawEntries = Array.isArray(args.entries) ? args.entries : [];
+
+    if (!requestId) {
+      throw new Error("requestId is required");
+    }
+
+    if (rawEntries.length === 0) {
+      throw new Error("At least one wallet is required");
+    }
+
+    if (rawEntries.length > ADMIN_POINT_GRANT_MAX_BATCH_SIZE) {
+      throw new Error(
+        `A single batch can include up to ${ADMIN_POINT_GRANT_MAX_BATCH_SIZE} wallets`
+      );
+    }
+
+    const seenAddresses = new Set<string>();
+    const entries = rawEntries.map((entry, index) => {
+      const normalizedAddress = getAddress(String(entry.address || "")).toLowerCase();
+      const points = Number(entry.points);
+
+      if (!Number.isInteger(points) || points <= 0) {
+        throw new Error(`Wallet ${index + 1} must have a positive whole-number PP amount`);
+      }
+
+      if (seenAddresses.has(normalizedAddress)) {
+        throw new Error(`Duplicate wallet in batch: ${normalizedAddress}`);
+      }
+
+      seenAddresses.add(normalizedAddress);
+      return {
+        address: normalizedAddress,
+        points,
+      } satisfies AdminPointGrantInput;
+    });
+
+    const requestSignature = buildAdminPointGrantSignature(entries, note);
+    const totalRequestedPoints = entries.reduce((sum, entry) => sum + entry.points, 0);
+    const { data: existingEvents, error: existingEventsError } = await supabase
+      .from("point_events")
+      .select("user_id, points, total_awarded, metadata, created_at")
+      .eq("action", ADMIN_POINT_GRANT_ACTION)
+      .contains("metadata", { requestId });
+
+    if (existingEventsError) {
+      throw new Error(`Load existing admin grant batch: ${existingEventsError.message}`);
+    }
+
+    const existingByUserId = new Map<number, AdminPointGrantEventRow>();
+    for (const row of (existingEvents ?? []) as AdminPointGrantEventRow[]) {
+      const metadata =
+        row.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata)
+          ? row.metadata
+          : {};
+
+      if (
+        metadata.requestSignature &&
+        String(metadata.requestSignature) !== requestSignature
+      ) {
+        throw new Error(
+          "This grant batch was already used for a different wallet list. Refresh the page and try again."
+        );
+      }
+
+      const userId = Number(row.user_id || 0);
+      if (userId > 0 && !existingByUserId.has(userId)) {
+        existingByUserId.set(userId, row);
+      }
+    }
+
+    const grants: AdminPointGrantResult[] = [];
+
+    for (const entry of entries) {
+      const user = await this.getOrCreate(entry.address);
+      const existingGrant = existingByUserId.get(user.id);
+
+      if (existingGrant) {
+        grants.push({
+          address: entry.address,
+          userId: user.id,
+          requestedPoints: entry.points,
+          totalAwarded: Number(
+            existingGrant.total_awarded || existingGrant.points || entry.points
+          ),
+          totalPoints: Number(user.total_points || 0),
+          createdAt: existingGrant.created_at || null,
+          idempotent: true,
+        });
+        continue;
+      }
+
+      const award = await this.addPoints(
+        entry.address,
+        entry.points,
+        ADMIN_POINT_GRANT_ACTION,
+        undefined,
+        {
+          note: note || null,
+          requestId,
+          requestSignature,
+          requestedPoints: entry.points,
+          source,
+          batchSize: entries.length,
+          totalRequestedPoints,
+        },
+        {
+          applyStreakBoost: false,
+          applyReferralCommission: false,
+        }
+      );
+
+      grants.push({
+        address: entry.address,
+        userId: award.user.id,
+        requestedPoints: entry.points,
+        totalAwarded: award.totalAwarded,
+        totalPoints: Number(award.user.total_points || 0),
+        createdAt: new Date().toISOString(),
+        idempotent: false,
+      });
+    }
+
+    return {
+      requestId,
+      recipientCount: grants.length,
+      grantedCount: grants.filter((grant) => !grant.idempotent).length,
+      reusedCount: grants.filter((grant) => grant.idempotent).length,
+      totalRequestedPoints,
+      totalAwardedPoints: grants.reduce((sum, grant) => sum + grant.totalAwarded, 0),
+      grants,
+    };
   }
 
   async awardOneTimeCampaignPoints(args: {

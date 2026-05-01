@@ -118,3 +118,26 @@ export type AdminQuestInput = {
   endsAt?: string | null;
   rules?: QuestRules;
 };
+
+export type AdminManualPointsEntryInput = {
+  address: string;
+  points: number;
+};
+
+export type AdminManualPointsGrantResult = {
+  requestId: string;
+  recipientCount: number;
+  grantedCount: number;
+  reusedCount: number;
+  totalRequestedPoints: number;
+  totalAwardedPoints: number;
+  grants: Array<{
+    address: string;
+    userId: number;
+    requestedPoints: number;
+    totalAwarded: number;
+    totalPoints: number;
+    createdAt: string | null;
+    idempotent: boolean;
+  }>;
+};

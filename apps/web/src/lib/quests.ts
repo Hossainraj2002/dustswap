@@ -1,4 +1,9 @@
-import type { AdminQuestInput, QuestBoardResponse } from "@/types/quests";
+import type {
+  AdminManualPointsEntryInput,
+  AdminManualPointsGrantResult,
+  AdminQuestInput,
+  QuestBoardResponse,
+} from "@/types/quests";
 import { buildPublicApiUrl } from "@/lib/apiBase";
 
 const SAVE_X_USERNAME_RECENT_TTL_MS = 15_000;
@@ -331,6 +336,31 @@ export async function saveAdminQuest(adminToken: string, input: AdminQuestInput)
   return parseJson<{
     success: boolean;
     data?: any;
+    error?: string;
+  }>(response);
+}
+
+export async function grantAdminManualPoints(
+  adminToken: string,
+  input: {
+    entries: AdminManualPointsEntryInput[];
+    note?: string;
+    requestId: string;
+    source?: string;
+  }
+) {
+  const response = await fetch(getQuestsApiUrl("/admin/manual-points"), {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-admin-token": adminToken,
+    },
+    body: JSON.stringify(input),
+  });
+
+  return parseJson<{
+    success: boolean;
+    data?: AdminManualPointsGrantResult;
     error?: string;
   }>(response);
 }
