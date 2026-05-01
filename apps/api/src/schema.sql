@@ -817,14 +817,14 @@ BEGIN
     refreshed_at
   )
   SELECT
-    rank,
-    user_id,
-    address,
-    total_points,
-    referral_points,
-    referred_users,
-    refreshed_at
-  FROM tmp_referral_leaderboard_snapshot
+    snapshot.rank,
+    snapshot.user_id,
+    snapshot.address,
+    snapshot.total_points,
+    snapshot.referral_points,
+    snapshot.referred_users,
+    snapshot.refreshed_at
+  FROM tmp_referral_leaderboard_snapshot AS snapshot
   ORDER BY rank;
 
   INSERT INTO referral_leaderboard_snapshot_meta (

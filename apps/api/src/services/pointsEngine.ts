@@ -1814,13 +1814,26 @@ export class PointsEngine {
   }
 
   private async ensureReferralLeaderboardSnapshot() {
-    const meta = await this.getReferralLeaderboardSnapshotMeta();
+    let meta: ReferralLeaderboardSnapshotMetaRow | null = null;
+
+    try {
+      meta = await this.getReferralLeaderboardSnapshotMeta();
+    } catch (error) {
+      console.error("[Referral Leaderboard Snapshot] Failed to load snapshot meta", error);
+      return null;
+    }
+
     const refreshKey = "leaderboard:referral:snapshot-refresh";
 
     if (!meta) {
-      return runtimeCache.singleFlight(refreshKey, async () => {
-        return this.refreshReferralLeaderboardSnapshot();
-      });
+      try {
+        return await runtimeCache.singleFlight(refreshKey, async () => {
+          return this.refreshReferralLeaderboardSnapshot();
+        });
+      } catch (error) {
+        console.error("[Referral Leaderboard Snapshot] Initial refresh failed", error);
+        return null;
+      }
     }
 
     if (this.isReferralLeaderboardSnapshotStale(meta)) {
