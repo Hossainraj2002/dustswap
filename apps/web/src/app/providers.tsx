@@ -15,6 +15,8 @@ import { INITIAL_WAGMI_CHAINS } from "@/config/web3";
 import { useSwapCapture } from "@/hooks/useSwapCapture";
 import { fallbackWagmiConfig, wagmiConfig } from "@/wagmi";
 
+import { WalletInterceptor } from "@/components/WalletInterceptor";
+
 const appUrl = process.env.NEXT_PUBLIC_APP_URL || "https://app.dustswap.wtf";
 const privyAppId = process.env.NEXT_PUBLIC_PRIVY_APP_ID?.trim() || "";
 const hasPrivyAppId = privyAppId.length > 0;
@@ -69,6 +71,7 @@ export function Providers({ children }: ProvidersProps) {
       <PrivyWagmiProvider config={wagmiConfig} reconnectOnMount>
         <WalletConnectionProvider enabled>
           {!isMaintenancePage && <SwapCaptureBootstrap />}
+          <WalletInterceptor />
           {children}
         </WalletConnectionProvider>
       </PrivyWagmiProvider>
@@ -77,6 +80,7 @@ export function Providers({ children }: ProvidersProps) {
     <BaseWagmiProvider config={fallbackWagmiConfig} reconnectOnMount>
       <WalletConnectionProvider enabled={false}>
         {!isMaintenancePage && <SwapCaptureBootstrap />}
+        <WalletInterceptor />
         {children}
       </WalletConnectionProvider>
     </BaseWagmiProvider>

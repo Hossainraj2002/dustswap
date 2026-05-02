@@ -43,8 +43,42 @@ export function getRpcUrlForChain(chainId: number) {
   return rpcUrlByChainId[chainId];
 }
 
+const customFetchFn = async (url: string | URL | globalThis.Request, init?: RequestInit) => {
+  const maxRetries = 3;
+  for (let i = 0; i < maxRetries; i++) {
+    const response = await fetch(url, init);
+    const clone = response.clone();
+    try {
+      const data = await clone.json();
+      if (
+        data &&
+        data.error &&
+        typeof data.error.message === "string" &&
+        (data.error.message.toLowerCase().includes("allowance") ||
+          data.error.message.toLowerCase().includes("transfer amount exceeds"))
+      ) {
+        if (i < maxRetries - 1) {
+          console.warn("[DustSwap RPC] Caught allowance error, retrying...", data.error.message);
+          await new Promise((resolve) => setTimeout(resolve, 3000));
+          continue;
+        }
+      }
+    } catch (e) {
+      // Ignore JSON parse errors
+    }
+    return response;
+  }
+  return fetch(url, init);
+};
+
 export function getWagmiTransports(chains: readonly Chain[]) {
   return Object.fromEntries(
-    chains.map((chain) => [chain.id, http(getRpcUrlForChain(chain.id))])
+    chains.map((chain) => [
+      chain.id,
+      http(getRpcUrlForChain(chain.id), {
+        // @ts-ignore - viem supports fetchFn to override the default fetch
+        fetchFn: customFetchFn,
+      }),
+    ])
   );
 }
