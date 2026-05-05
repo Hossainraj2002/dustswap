@@ -1,9 +1,27 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { History, X } from "lucide-react";
 import { useAccount } from "wagmi";
 import { fetchPointHistory, type PointHistoryEntry } from "@/lib/points";
+
+function HistoryIcon({ className }: { className?: string }) {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+      <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+      <path d="M3 3v5h5" />
+      <path d="M12 7v5l4 2" />
+    </svg>
+  );
+}
+
+function XIcon({ className }: { className?: string }) {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+      <path d="M18 6 6 18" />
+      <path d="m6 6 12 12" />
+    </svg>
+  );
+}
 
 export function LeaderboardHistory() {
   const { address, isConnected } = useAccount();
@@ -44,7 +62,7 @@ export function LeaderboardHistory() {
         className="flex h-8 w-8 items-center justify-center rounded-full bg-white/20 text-white transition hover:bg-white/30"
         title="View PP History"
       >
-        <History className="h-4 w-4" />
+        <HistoryIcon className="h-4 w-4" />
       </button>
 
       {isOpen && (
@@ -56,7 +74,7 @@ export function LeaderboardHistory() {
                 onClick={() => setIsOpen(false)}
                 className="rounded-full p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
               >
-                <X className="h-5 w-5" />
+                <XIcon className="h-5 w-5" />
               </button>
             </div>
 
@@ -72,7 +90,7 @@ export function LeaderboardHistory() {
                 </div>
               ) : history.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-10 text-center">
-                  <History className="mb-3 h-10 w-10 text-slate-300" />
+                  <HistoryIcon className="mb-3 h-10 w-10 text-slate-300" />
                   <p className="text-sm font-medium text-slate-600">No history found</p>
                   <p className="mt-1 text-xs text-slate-500">
                     Complete quests or spin to earn PP.
