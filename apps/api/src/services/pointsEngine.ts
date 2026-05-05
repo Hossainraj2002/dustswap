@@ -4147,7 +4147,7 @@ export class PointsEngine {
   }
 
   async getPointHistory(address: string, limit = 50) {
-    const user = await this.getExistingUser(address);
+    const user = await this.findExistingUser(address);
     if (!user) {
       return [];
     }
