@@ -664,16 +664,19 @@ export default function LeaderboardPage() {
                 className="h-7 w-auto min-w-0 max-w-[170px] object-contain sm:h-8 sm:max-w-[220px]"
               />
 
-              <div className="flex min-w-0 shrink-0 items-center gap-2 rounded-full border border-white/80 bg-white/90 px-2 py-1 shadow-[0_10px_28px_rgba(15,23,42,0.08)]">
-                <Avatar
-                  src={viewerAvatar}
-                  label={viewerName}
-                  sizeClass="h-8 w-8"
-                  textClass="text-[10px]"
-                />
-                <p className="max-w-[116px] truncate font-mono text-[11px] font-bold text-slate-800 sm:max-w-[170px]">
-                  {viewerAddressLabel}
-                </p>
+              <div className="flex min-w-0 shrink-0 items-center gap-2">
+                <LeaderboardHistory />
+                <div className="flex min-w-0 shrink-0 items-center gap-2 rounded-full border border-white/80 bg-white/90 px-2 py-1 shadow-[0_10px_28px_rgba(15,23,42,0.08)]">
+                  <Avatar
+                    src={viewerAvatar}
+                    label={viewerName}
+                    sizeClass="h-8 w-8"
+                    textClass="text-[10px]"
+                  />
+                  <p className="max-w-[116px] truncate font-mono text-[11px] font-bold text-slate-800 sm:max-w-[170px]">
+                    {viewerAddressLabel}
+                  </p>
+                </div>
               </div>
             </div>
 
@@ -786,11 +789,8 @@ export default function LeaderboardPage() {
                     {selectedBoardSubtitle}
                   </p>
                 </div>
-                <div className="flex items-center gap-2">
-                  <LeaderboardHistory />
-                  <div className="flex h-[0.8cm] max-h-[0.8cm] items-center rounded-full border border-white/25 bg-white/15 px-2.5 py-0 text-[11px] font-bold leading-none text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.16)]">
-                    Page {visibleLeaderboard?.page ?? currentPage}/{totalPages}
-                  </div>
+                <div className="flex h-[0.8cm] max-h-[0.8cm] items-center rounded-full border border-white/25 bg-white/15 px-2.5 py-0 text-[11px] font-bold leading-none text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.16)]">
+                  Page {visibleLeaderboard?.page ?? currentPage}/{totalPages}
                 </div>
               </div>
 

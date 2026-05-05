@@ -59,10 +59,10 @@ export function LeaderboardHistory() {
     <>
       <button
         onClick={() => setIsOpen(true)}
-        className="flex h-8 w-8 items-center justify-center rounded-full bg-white/20 text-white transition hover:bg-white/30"
+        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 shadow-[0_8px_20px_rgba(15,23,42,0.04)] transition hover:border-sky-200 hover:bg-sky-50 hover:text-sky-700"
         title="View PP History"
       >
-        <HistoryIcon className="h-4 w-4" />
+        <HistoryIcon className="h-3.5 w-3.5" />
       </button>
 
       {isOpen && (
