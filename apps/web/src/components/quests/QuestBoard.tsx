@@ -176,6 +176,28 @@ function formatResetCountdown(windowType: QuestItem["progressWindow"]) {
   return `Reset in ${minutes}m`;
 }
 
+function formatEndCountdown(endsAt: string) {
+  const diff = new Date(endsAt).getTime() - Date.now();
+  if (diff <= 0) {
+    return "Ending";
+  }
+
+  const totalMinutes = Math.ceil(diff / 60000);
+  const days = Math.floor(totalMinutes / (60 * 24));
+  const hours = Math.floor((totalMinutes % (60 * 24)) / 60);
+  const minutes = totalMinutes % 60;
+
+  if (days > 0) {
+    return `Ending in ${days}d ${hours}h`;
+  }
+
+  if (hours > 0) {
+    return `Ending in ${hours}h ${minutes}m`;
+  }
+
+  return `Ending in ${minutes}m`;
+}
+
 function formatGoalValue(quest: QuestItem) {
   if (quest.actionType === "swap_volume") {
     return `$${quest.targetValue.toLocaleString()}`;
@@ -219,6 +241,14 @@ function StatusPill({ quest }: { quest: QuestItem }) {
     return (
       <span className="rounded-full border border-sky-200/90 bg-sky-50/90 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-sky-700">
         {formatResetCountdown(quest.progressWindow)}
+      </span>
+    );
+  }
+
+  if (quest.endsAt) {
+    return (
+      <span className="rounded-full border border-rose-200/90 bg-rose-50/90 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-rose-700">
+        {formatEndCountdown(quest.endsAt)}
       </span>
     );
   }

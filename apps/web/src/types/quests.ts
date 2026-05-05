@@ -65,6 +65,7 @@ export type QuestItem = {
   ctaUrl: string | null;
   rules: QuestRules;
   progress: QuestProgress | null;
+  endsAt?: string | null;
 };
 
 export type QuestCampaignSummary = {

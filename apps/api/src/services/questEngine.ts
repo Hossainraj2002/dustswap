@@ -985,6 +985,7 @@ export class QuestEngine {
           ctaLabel: quest.cta_label,
           ctaUrl: quest.cta_url,
           rules: safeRules(quest.rules),
+          endsAt: quest.ends_at,
           progress: progress
             ? {
                 status: progress.status,
