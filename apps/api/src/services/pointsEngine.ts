@@ -4146,6 +4146,60 @@ export class PointsEngine {
     };
   }
 
+  async getPointHistory(address: string, limit = 50) {
+    const user = await this.getExistingUser(address);
+    if (!user) {
+      return [];
+    }
+
+    const { data, error } = await supabase
+      .from("point_events")
+      .select("id, action, points, metadata, created_at")
+      .eq("user_id", user.id)
+      .order("created_at", { ascending: false })
+      .limit(limit);
+
+    if (error) {
+      throw new Error(`Load point history: ${error.message}`);
+    }
+
+    const formatAction = (action: string) => {
+      if (action === "spin") return "Spin";
+      if (action === "referral_new_user") return "Referral join";
+      if (action === "referral_commission") return "Referral";
+      if (action.startsWith("quest_completion")) return "Quest";
+      if (action === "check_in") return "Daily Check-in";
+      if (action === "footprint_airdrop_claim") return "Footprint Airdrop";
+      if (action === "sweep") return "Dust Sweep";
+      if (action === "swap") return "Swap";
+      if (action === "bridge") return "Bridge";
+      if (action === "burn") return "Burn";
+      if (action === "admin_manual_pp_grant") return "Admin Bonus";
+      
+      return action
+        .split("_")
+        .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+        .join(" ");
+    };
+
+    return (data || []).map((row) => {
+      let label = formatAction(row.action);
+      if (row.action === "quest_completion" && row.metadata?.questTitle) {
+        label = String(row.metadata.questTitle);
+      } else if (row.action === "admin_manual_pp_grant" && row.metadata?.note) {
+        label = `Bonus: ${row.metadata.note}`;
+      }
+
+      return {
+        id: row.id,
+        action: row.action,
+        label,
+        points: Number(row.points || 0),
+        createdAt: row.created_at,
+      };
+    });
+  }
+
   async getLeaderboard(page = 1, limit = 50) {
     const offset = (page - 1) * limit;
     const pageEntries = await this.getParticlePointLeaderboardPage(offset, limit);

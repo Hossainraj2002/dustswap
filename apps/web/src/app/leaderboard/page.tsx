@@ -13,6 +13,7 @@ import {
   type LeaderboardHubEntry,
   type LeaderboardHubResponse,
 } from "@/lib/points";
+import { LeaderboardHistory } from "@/components/leaderboard/LeaderboardHistory";
 
 type NeynarProfile = {
   fid: number;
@@ -785,8 +786,11 @@ export default function LeaderboardPage() {
                     {selectedBoardSubtitle}
                   </p>
                 </div>
-                <div className="flex h-[0.8cm] max-h-[0.8cm] items-center rounded-full border border-white/25 bg-white/15 px-2.5 py-0 text-[11px] font-bold leading-none text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.16)]">
-                  Page {visibleLeaderboard?.page ?? currentPage}/{totalPages}
+                <div className="flex items-center gap-2">
+                  <LeaderboardHistory />
+                  <div className="flex h-[0.8cm] max-h-[0.8cm] items-center rounded-full border border-white/25 bg-white/15 px-2.5 py-0 text-[11px] font-bold leading-none text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.16)]">
+                    Page {visibleLeaderboard?.page ?? currentPage}/{totalPages}
+                  </div>
                 </div>
               </div>
 

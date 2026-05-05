@@ -252,7 +252,26 @@ pointsRoutes.get("/:address/summary", async (c) => {
   }
 });
 
-// GET /api/points/:address/spin-history
+// GET /api/points/history
+pointsRoutes.get("/history", async (c) => {
+  if (isMaintenanceModeEnabled()) {
+    return maintenanceUnavailable(c);
+  }
+
+  try {
+    const address = c.req.query("address");
+    if (!address) {
+      return c.json({ success: false, error: "address is required" }, 400);
+    }
+    const limit = parseInt(c.req.query("limit") || "50", 10);
+    const data = await pointsEngine.getPointHistory(address, limit);
+    return c.json({ success: true, history: data });
+  } catch (e: unknown) {
+    return c.json({ success: false, error: (e as Error).message }, 500);
+  }
+});
+
+// GET /api/points/:address/summary
 pointsRoutes.get("/:address/spin-history", async (c) => {
   try {
     const data = await pointsEngine.getSpinHistory(c.req.param("address"));

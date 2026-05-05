@@ -500,3 +500,26 @@ export async function fetchSpinHistory(address: string) {
     error?: string;
   }>(response);
 }
+
+export type PointHistoryEntry = {
+  id: number | string;
+  action: string;
+  label: string;
+  points: number;
+  createdAt: string | null;
+};
+
+export async function fetchPointHistory(address: string, limit = 50) {
+  const response = await fetch(getPointsApiUrl(`/history?address=${address}&limit=${limit}`), {
+    headers: {
+      "Content-Type": "application/json",
+    },
+    cache: "no-store",
+  });
+
+  return parseJson<{
+    success: boolean;
+    history: PointHistoryEntry[];
+    error?: string;
+  }>(response);
+}
