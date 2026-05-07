@@ -1,6 +1,6 @@
 "use client";
 
-import { WalletConnectButton } from "@/components/wallet/WalletConnectButton";
+import { useWalletConnection } from "@/hooks/useWalletConnection";
 
 export function WalletGateModal({
   isOpen,
@@ -13,6 +13,8 @@ export function WalletGateModal({
   reason: string | null;
   onClose: () => void;
 }) {
+  const walletConnection = useWalletConnection();
+
   if (!isOpen) return null;
 
   return (
@@ -56,14 +58,15 @@ export function WalletGateModal({
         </div>
 
         <div className="mt-5">
-          <WalletConnectButton
-            connectLabel="Switch Wallet"
-            connectedLabel="Switch Wallet"
-            description="Connect a DustSweep-supported wallet."
-            fullWidth
-            showDisconnect
-            className="bg-blue-600 text-white hover:border-blue-600 hover:bg-blue-700 hover:text-white"
-          />
+          <button
+            type="button"
+            onClick={() => {
+              void walletConnection.openWalletModal("Connect a DustSweep-supported wallet.");
+            }}
+            className="h-11 w-full rounded-[8px] bg-blue-600 px-4 text-sm font-semibold text-white transition-colors hover:bg-blue-700"
+          >
+            Switch Wallet
+          </button>
         </div>
       </div>
     </div>

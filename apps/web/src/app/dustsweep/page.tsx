@@ -145,6 +145,7 @@ export default function DustSweepPage() {
             selectedTokens={sweep.selectedTokens}
             onRemove={sweep.removeToken}
             onClearAll={sweep.clearSelectedTokens}
+            onSelectAll={sweep.selectAllTokens}
             onAddMore={() => setTokenModalMode("multi")}
             autoMode={sweep.autoMode}
             onToggleAuto={() => sweep.setAutoMode(!sweep.autoMode)}

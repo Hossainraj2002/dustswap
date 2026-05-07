@@ -6,8 +6,8 @@ import { base } from "viem/chains";
 import { type Address, type Hex } from "viem";
 import { useTokenBalances } from "@/hooks/useTokenBalances";
 import { useWalletWhitelist } from "@/hooks/useWalletWhitelist";
-import { buildPermit2TypedData, appendSignatureToCalldata, getPermit2SignatureErrorMessage } from "@/lib/permit2";
-import { parseDustSweepError } from "@/lib/dustsweep-router";
+import { buildPermit2TypedData, getPermit2SignatureErrorMessage } from "@/lib/permit2";
+import { encodeDustSweepPermit2Calldata, parseDustSweepError } from "@/lib/dustsweep-router";
 import { USDC_ADDRESS, WETH_ADDRESS } from "@/lib/tokens";
 import {
   type DustSweepBuildTxResponse,
@@ -62,6 +62,7 @@ export type UseDustSweepReturn = {
   setAutoMode: (value: boolean) => void;
   setSelectedTokens: (tokens: SelectedToken[]) => void;
   addToken: (token: SelectedToken) => void;
+  selectAllTokens: () => void;
   removeToken: (address: string) => void;
   clearSelectedTokens: () => void;
   clearUnavailableTokens: () => void;
@@ -221,6 +222,11 @@ export function useDustSweep(): UseDustSweepReturn {
     });
   }, []);
 
+  const selectAllTokens = useCallback(() => {
+    setAutoMode(false);
+    setSelectedTokens(swappableTokens.slice(0, 50));
+  }, [swappableTokens]);
+
   const removeToken = useCallback((tokenAddress: string) => {
     setAutoMode(false);
     setSelectedTokens((current) =>
@@ -322,7 +328,14 @@ export function useDustSweep(): UseDustSweepReturn {
       }
 
       setSweepStep("pending");
-      const fullCalldata = appendSignatureToCalldata(buildTx.calldata, signature);
+      const fullCalldata = encodeDustSweepPermit2Calldata({
+        routes: quote.routes,
+        tokenOut: tokenOut.address,
+        receiver: address,
+        deadline: quote.deadline,
+        permit2Nonce: quote.permit2Nonce,
+        signature,
+      });
       const paymasterUrl = process.env.NEXT_PUBLIC_PAYMASTER_URL;
 
       const hash = (await walletClient.sendTransaction({
@@ -404,6 +417,7 @@ export function useDustSweep(): UseDustSweepReturn {
     setAutoMode,
     setSelectedTokens,
     addToken,
+    selectAllTokens,
     removeToken,
     clearSelectedTokens,
     clearUnavailableTokens,

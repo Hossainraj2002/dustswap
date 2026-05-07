@@ -34,6 +34,7 @@ export function TokenFromPanel({
   selectedTokens,
   onRemove,
   onClearAll,
+  onSelectAll,
   onAddMore,
   autoMode,
   onToggleAuto,
@@ -42,6 +43,7 @@ export function TokenFromPanel({
   selectedTokens: SelectedToken[];
   onRemove: (address: string) => void;
   onClearAll: () => void;
+  onSelectAll: () => void;
   onAddMore: () => void;
   autoMode: boolean;
   onToggleAuto: () => void;
@@ -54,7 +56,7 @@ export function TokenFromPanel({
           <p className="text-sm font-medium text-slate-500">From</p>
           <p className="mt-1 text-xs text-slate-400">{selectedTokens.length}/50 selected</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center justify-end gap-2">
           <button
             type="button"
             onClick={onOpenSettings}
@@ -70,6 +72,13 @@ export function TokenFromPanel({
             className="rounded-full px-2 text-sm font-medium text-slate-500 transition-colors hover:text-slate-900"
           >
             Clear all
+          </button>
+          <button
+            type="button"
+            onClick={onSelectAll}
+            className="rounded-full px-2 text-sm font-medium text-blue-600 transition-colors hover:text-blue-800"
+          >
+            Select all
           </button>
           <button
             type="button"

@@ -10,6 +10,7 @@ const TIER_2_CONNECTORS = new Set([
   "metaMask",
   "rainbow",
   "injected",
+  "privy",
   "trust",
   "tokenPocket",
   "okx",
@@ -18,6 +19,39 @@ const TIER_2_CONNECTORS = new Set([
   "walletConnect",
   "phantom",
   "coinbaseWalletSDK",
+]);
+
+const PRIVY_WALLET_NAMES: Record<string, string> = {
+  base_account: "Coinbase Smart Wallet",
+  coinbase_smart_wallet: "Coinbase Smart Wallet",
+  smart_wallet: "Smart Wallet",
+  coinbase_wallet: "Coinbase Wallet",
+  metamask: "MetaMask",
+  rainbow: "Rainbow",
+  wallet_connect: "WalletConnect",
+  detected_ethereum_wallets: "Injected Wallet",
+  rabby_wallet: "Rabby",
+  rabby: "Rabby",
+  trust: "Trust Wallet",
+  trust_wallet: "Trust Wallet",
+  token_pocket: "Token Pocket",
+  tokenpocket: "Token Pocket",
+  okx_wallet: "OKX Wallet",
+  okx: "OKX Wallet",
+  zerion: "Zerion",
+  im_token: "imToken",
+  imtoken: "imToken",
+  phantom: "Phantom",
+  embedded: "Privy Embedded Wallet",
+};
+
+const BLOCKED_PRIVY_WALLET_TYPES = new Set([
+  "ledger",
+  "ledger_live",
+  "mew",
+  "myetherwallet",
+  "unknown_legacy",
+  "unknownLegacy",
 ]);
 
 type EthereumFlags = {
@@ -54,7 +88,26 @@ function detectInjectedWalletName(connectorId: string | null) {
   return connectorId || "Unknown wallet";
 }
 
-function isWhitelistedConnector(connectorId: string | null) {
+function normalizeWalletClientType(walletClientType: string | null) {
+  return walletClientType?.trim().toLowerCase() ?? null;
+}
+
+function getPrivyWalletName(walletClientType: string | null) {
+  const normalized = normalizeWalletClientType(walletClientType);
+  if (!normalized) return null;
+  return PRIVY_WALLET_NAMES[normalized] ?? null;
+}
+
+function isWhitelistedPrivyWallet(walletClientType: string | null) {
+  const normalized = normalizeWalletClientType(walletClientType);
+  if (!normalized) return false;
+  if (BLOCKED_PRIVY_WALLET_TYPES.has(normalized)) return false;
+
+  return Boolean(PRIVY_WALLET_NAMES[normalized]);
+}
+
+function isWhitelistedConnector(connectorId: string | null, walletClientType: string | null) {
+  if (isWhitelistedPrivyWallet(walletClientType)) return true;
   if (!connectorId) return false;
   if (TIER_1_CONNECTORS.has(connectorId)) return true;
   if (TIER_2_CONNECTORS.has(connectorId)) return true;
@@ -85,9 +138,15 @@ export function useWalletWhitelist(): WalletWhitelistStatus {
     let cancelled = false;
 
     async function checkEIP712Support() {
-      if (!isConnected || !walletClient) {
+      if (!isConnected) {
         setSupportsEIP712(false);
         setIsChecking(false);
+        return;
+      }
+
+      if (!walletClient) {
+        setSupportsEIP712(false);
+        setIsChecking(true);
         return;
       }
 
@@ -116,15 +175,16 @@ export function useWalletWhitelist(): WalletWhitelistStatus {
   }, [isConnected, walletClient, connectorId]);
 
   return useMemo<WalletWhitelistStatus>(() => {
+    const privyWalletName = getPrivyWalletName(walletClientType);
     const walletName =
       walletClientType === "base_account" ||
       walletClientType === "coinbase_smart_wallet"
         ? "Coinbase Smart Wallet"
-        : detectInjectedWalletName(connectorId);
+        : privyWalletName || detectInjectedWalletName(connectorId);
     const whitelisted =
       walletClientType === "base_account" ||
       walletClientType === "coinbase_smart_wallet" ||
-      isWhitelistedConnector(connectorId);
+      isWhitelistedConnector(connectorId, walletClientType);
     const tier = TIER_1_CONNECTORS.has(connectorId || "") || walletName === "Coinbase Smart Wallet"
       ? "tier1"
       : whitelisted
