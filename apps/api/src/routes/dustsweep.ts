@@ -901,6 +901,11 @@ type OnchainPoolCandidate = {
   liquidityUSD: number;
 };
 
+const DEFAULT_BLOCKSCOUT_MAX_REQUESTS_PER_KEY = 100;
+
+let blockscoutKeyIndex = 0;
+let blockscoutKeyCalls = 0;
+
 const ONCHAIN_QUOTE_TOKENS = new Map<string, { address: Address; symbol: string; decimals: number; usd?: number }>([
   [USDC_ADDRESS.toLowerCase(), { address: USDC_ADDRESS, symbol: "USDC", decimals: 6, usd: 1 }],
   [USDBC_ADDRESS.toLowerCase(), { address: USDBC_ADDRESS, symbol: "USDbC", decimals: 6, usd: 1 }],
@@ -908,6 +913,48 @@ const ONCHAIN_QUOTE_TOKENS = new Map<string, { address: Address; symbol: string;
   [DAI_ADDRESS.toLowerCase(), { address: DAI_ADDRESS, symbol: "DAI", decimals: 18, usd: 1 }],
   [WETH_ADDRESS.toLowerCase(), { address: WETH_ADDRESS, symbol: "WETH", decimals: 18 }],
 ]);
+
+function splitCsvEnv(value?: string) {
+  return String(value || "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function getBlockscoutApiBaseUrl() {
+  return process.env.BLOCKSCOUT_BASE_API_URL || "https://base.blockscout.com/api";
+}
+
+function getBlockscoutMaxRequestsPerKey() {
+  const parsed = Number.parseInt(
+    process.env.BLOCKSCOUT_MAX_REQUESTS_PER_KEY ||
+      process.env.BASE_RPC_ROTATION_CALLS ||
+      "",
+    10,
+  );
+
+  return Number.isFinite(parsed) && parsed > 0
+    ? parsed
+    : DEFAULT_BLOCKSCOUT_MAX_REQUESTS_PER_KEY;
+}
+
+function getBlockscoutApiKey() {
+  const keys = [
+    ...splitCsvEnv(process.env.BLOCKSCOUT_API_KEYS),
+    ...splitCsvEnv(process.env.BLOCKSCOUT_API_KEY),
+  ];
+  if (keys.length === 0) return "";
+
+  const key = keys[blockscoutKeyIndex % keys.length];
+  blockscoutKeyCalls += 1;
+
+  if (blockscoutKeyCalls >= getBlockscoutMaxRequestsPerKey()) {
+    blockscoutKeyCalls = 0;
+    blockscoutKeyIndex = (blockscoutKeyIndex + 1) % keys.length;
+  }
+
+  return key;
+}
 
 function getOnchainDexFactories() {
   return [
@@ -1000,14 +1047,76 @@ async function getLogsChunk(args: {
   fromBlock: number;
   toBlock: number;
 }) {
-  return baseRpcRequest<RpcLog[]>("eth_getLogs", [
-    {
-      address: args.address,
-      fromBlock: toHex(args.fromBlock),
-      toBlock: toHex(args.toBlock),
-      topics: [args.topic],
-    },
-  ]);
+  try {
+    const url = new URL(getBlockscoutApiBaseUrl());
+    url.searchParams.set("module", "logs");
+    url.searchParams.set("action", "getLogs");
+    url.searchParams.set("fromBlock", String(args.fromBlock));
+    url.searchParams.set("toBlock", String(args.toBlock));
+    url.searchParams.set("address", args.address);
+    url.searchParams.set("topic0", args.topic);
+    url.searchParams.set("page", "1");
+    url.searchParams.set("offset", "10000");
+    const apiKey = getBlockscoutApiKey();
+    if (apiKey) url.searchParams.set("apikey", apiKey);
+
+    const response = await fetch(url, {
+      headers: {
+        Accept: "application/json",
+        "User-Agent": "DustSwap/1.0 (+https://app.dustswap.wtf)",
+      },
+    });
+    if (!response.ok) {
+      throw new Error(`Blockscout ${response.status}`);
+    }
+
+    const payload = (await response.json()) as {
+      status?: string;
+      message?: string;
+      result?: Array<{
+        address?: string;
+        topics?: Hex[];
+        data?: Hex;
+        blockNumber?: Hex;
+        transactionHash?: Hex;
+        logIndex?: Hex;
+      }> | string;
+    };
+
+    if (Array.isArray(payload.result)) {
+      return payload.result
+        .filter(
+          (log) =>
+            log.address &&
+            log.topics?.length &&
+            log.data &&
+            log.blockNumber &&
+            log.transactionHash &&
+            log.logIndex,
+        )
+        .map((log) => ({
+          address: normalizeAddress(log.address as string),
+          topics: log.topics as Hex[],
+          data: log.data as Hex,
+          blockNumber: log.blockNumber as Hex,
+          transactionHash: log.transactionHash as Hex,
+          logIndex: log.logIndex as Hex,
+        }));
+    }
+
+    const message = String(payload.message || payload.result || "");
+    if (message.toLowerCase().includes("no logs")) return [];
+    throw new Error(message || "Blockscout logs unavailable");
+  } catch {
+    return baseRpcRequest<RpcLog[]>("eth_getLogs", [
+      {
+        address: args.address,
+        fromBlock: toHex(args.fromBlock),
+        toBlock: toHex(args.toBlock),
+        topics: [args.topic],
+      },
+    ]);
+  }
 }
 
 function decodePoolLog(log: RpcLog, eventType: "v2" | "v3" | "aerodrome") {
