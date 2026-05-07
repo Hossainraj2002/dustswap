@@ -20,6 +20,47 @@ CREATE TABLE IF NOT EXISTS users (
 
 ALTER TABLE users ADD COLUMN IF NOT EXISTS spin_tickets INTEGER NOT NULL DEFAULT 0;
 
+-- DustSweep token whitelist
+CREATE TABLE IF NOT EXISTS tokens (
+  id            SERIAL PRIMARY KEY,
+  address       TEXT NOT NULL UNIQUE,
+  symbol        TEXT NOT NULL,
+  name          TEXT NOT NULL,
+  decimals      INTEGER NOT NULL DEFAULT 18,
+  logo_uri      TEXT,
+  chain_id      INTEGER NOT NULL DEFAULT 8453,
+  is_active     BOOLEAN DEFAULT true,
+  source        TEXT,
+  liquidity_usd NUMERIC,
+  last_checked  TIMESTAMPTZ DEFAULT NOW(),
+  created_at    TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- DustSweep history
+CREATE TABLE IF NOT EXISTS sweeps (
+  id              SERIAL PRIMARY KEY,
+  user_address    TEXT NOT NULL,
+  tx_hash         TEXT UNIQUE,
+  tokens_in       JSONB,
+  token_out       TEXT,
+  amount_out      TEXT,
+  value_usd       NUMERIC,
+  fee_usd         NUMERIC,
+  tokens_swapped  INTEGER,
+  tokens_failed   INTEGER,
+  chain_id        INTEGER DEFAULT 8453,
+  created_at      TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_sweeps_user ON sweeps(user_address);
+
+-- Optional short-lived cache for /api/dustsweep/tokens/:address
+CREATE TABLE IF NOT EXISTS dustsweep_token_cache (
+  address    TEXT PRIMARY KEY,
+  payload    JSONB NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 -- Point events ledger
 CREATE TABLE IF NOT EXISTS point_events (
   id            SERIAL PRIMARY KEY,

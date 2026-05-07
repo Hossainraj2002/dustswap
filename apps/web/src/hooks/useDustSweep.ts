@@ -1,525 +1,415 @@
-'use client';
+"use client";
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
-import { useAccount } from 'wagmi';
-import { type Address, formatUnits, encodeFunctionData } from 'viem';
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useAccount, usePublicClient, useWalletClient } from "wagmi";
+import { base } from "viem/chains";
+import { type Address, type Hex } from "viem";
+import { useTokenBalances } from "@/hooks/useTokenBalances";
+import { useWalletWhitelist } from "@/hooks/useWalletWhitelist";
+import { buildPermit2TypedData, appendSignatureToCalldata, getPermit2SignatureErrorMessage } from "@/lib/permit2";
+import { parseDustSweepError } from "@/lib/dustsweep-router";
+import { USDC_ADDRESS, WETH_ADDRESS } from "@/lib/tokens";
+import {
+  type DustSweepBuildTxResponse,
+  type DustSweepQuoteResponse,
+  type SelectedToken,
+  type SweepStep,
+  type SwappableToken,
+  type Token,
+  type UnavailableToken,
+} from "@/types/dustsweep";
 
-// ─── Types ────────────────────────────────────────────────────────────────────
+export const DEFAULT_OUTPUT_TOKENS: Token[] = [
+  {
+    address: USDC_ADDRESS,
+    symbol: "USDC",
+    name: "USD Coin",
+    decimals: 6,
+    logoURI: "https://basescan.org/token/images/centre-usdc_28.png",
+  },
+  {
+    address: WETH_ADDRESS,
+    symbol: "WETH",
+    name: "Wrapped Ether",
+    decimals: 18,
+    logoURI: "https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/info/logo.png",
+  },
+];
 
-export interface DustToken {
-  address: Address;
-  name: string;
-  symbol: string;
-  decimals: number;
-  balance: string;
-  balanceFormatted: string;
-  usdValue: number;
-  priceUsd: number;
-  logoURI?: string;
-  hasLiquidity: boolean;
-  isContentCoin?: boolean;
-  isOwnContentCoin?: boolean;
-}
+type ExecuteSweepResult = {
+  txHash: Hex;
+};
 
-export interface PerTokenQuote {
-  tokenIn: string;
-  amountIn: string;
-  amountOut: string;
-  estimatedAmountOut: string;
-  minAmountOut: string;
-  fromAmountUSD: string;
-  toAmountUSD: string;
-  priceImpact: string;
-  poolFee: number;
-  maxSwappablePercent?: number;
-  success: boolean;
-  error?: string;
-  source?: string; // "cdp", "0x", or "uniswap"
-  // Transaction data — gas/value are string|number for BigInt safety
-  approveTransaction?: {
-    to: string;
-    data: string;
-    gas: string | number;
-    value: string | number;
-  };
-  swapTransaction?: {
-    to: string;
-    data: string;
-    gas: string | number;
-    value: string | number;
-  };
-}
-
-export interface BatchQuote {
-  selectedCount: number;
-  totalDustValueUsd: number;
-  swapFeeUsd: number;
-  swapFeePercent: number;
-  feeAmount?: string;
-  estimatedOutput: string;
-  estimatedOutputFormatted: string;
-  outputToken: OutputTokenOption;
-  outputTokenSymbol: string;
-  outputTokenDecimals: number;
-  perTokenQuotes: PerTokenQuote[];
-  approveTransactions?: {
-    to: string;
-    data: string;
-    gas: string | number;
-    value: string | number;
-  }[];
-  sweepTransaction?: {
-    to: string;
-    data: string;
-    gas: string | number;
-    value: string | number;
-  };
-}
-
-export interface TransactionCall {
-  to: Address;
-  data: `0x${string}`;
-  value?: bigint;
-}
-
-export interface SuccessData {
-  txHash: string;
-  tokensSwept: number;
-  amountReceived: string;
-  outputSymbol: string;
-  particlesEarned: number;
-}
-
-export type ThresholdValue = 1 | 2 | 5 | 10;
-export type OutputTokenOption = 'ETH' | 'USDC' | 'WETH';
-
-export interface UseDustSweepReturn {
-  dustTokens: DustToken[];
-  noLiquidityTokens: DustToken[];
-  selectedTokens: DustToken[];
-  threshold: ThresholdValue;
-  setThreshold: (t: ThresholdValue) => void;
-  toggleToken: (address: Address) => void;
-  selectAll: () => void;
-  deselectAll: () => void;
-  outputToken: OutputTokenOption;
-  setOutputToken: (token: OutputTokenOption) => void;
-  quote: BatchQuote | null;
-  getQuote: () => Promise<void>;
-  sweepCalls: TransactionCall[];
+export type UseDustSweepReturn = {
+  swappableTokens: SwappableToken[];
+  unavailableTokens: UnavailableToken[];
+  selectedTokens: SelectedToken[];
+  tokenOut: Token | null;
+  quote: DustSweepQuoteResponse | null;
+  slippageBps: number;
   isLoading: boolean;
   isQuoting: boolean;
   isSweeping: boolean;
+  sweepStep: SweepStep;
+  txHash: Hex | null;
   error: string | null;
   quoteError: string | null;
-  handleSuccess: (txHash: string) => Promise<void>;
-  particlesEarned: number | null;
-  successData: SuccessData | null;
-  clearSuccess: () => void;
-}
-
-// ─── Constants ────────────────────────────────────────────────────────────────
-
-const USDC_ADDRESS: Address = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
-const WETH_ADDRESS: Address = '0x4200000000000000000000000000000000000006';
-
-const OUTPUT_TOKEN_MAP: Record<
-  OutputTokenOption,
-  { address: Address; symbol: string; decimals: number; logoURI: string }
-> = {
-  ETH:  { address: WETH_ADDRESS, symbol: 'ETH',  decimals: 18, logoURI: 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/info/logo.png' },
-  USDC: { address: USDC_ADDRESS, symbol: 'USDC', decimals: 6,  logoURI: 'https://basescan.org/token/images/centre-usdc_28.png' },
-  WETH: { address: WETH_ADDRESS, symbol: 'WETH', decimals: 18, logoURI: 'https://basescan.org/token/images/weth_28.png' },
+  autoMode: boolean;
+  outputTokens: Token[];
+  walletStatus: ReturnType<typeof useWalletWhitelist>;
+  setTokenOut: (token: Token | null) => void;
+  setSlippageBps: (value: number) => void;
+  setAutoMode: (value: boolean) => void;
+  setSelectedTokens: (tokens: SelectedToken[]) => void;
+  addToken: (token: SelectedToken) => void;
+  removeToken: (address: string) => void;
+  clearSelectedTokens: () => void;
+  clearUnavailableTokens: () => void;
+  refreshTokens: () => Promise<void>;
+  refreshQuote: () => Promise<void>;
+  executeSweep: () => Promise<ExecuteSweepResult | null>;
+  resetSweepState: () => void;
 };
 
-const MAX_SELECTED_TOKENS = 10;
-const BASE_PARTICLES = 50;
-const PER_TOKEN_PARTICLES = 5;
+function isSameAddress(a?: string | null, b?: string | null) {
+  return Boolean(a && b && a.toLowerCase() === b.toLowerCase());
+}
 
-// ─── Hook ─────────────────────────────────────────────────────────────────────
+function normalizeQuotePayload(payload: unknown): DustSweepQuoteResponse {
+  const data =
+    payload &&
+    typeof payload === "object" &&
+    "data" in payload &&
+    (payload as { data?: unknown }).data
+      ? (payload as { data: unknown }).data
+      : payload;
+
+  if (!data || typeof data !== "object") {
+    throw new Error("Quote response was empty");
+  }
+
+  return data as DustSweepQuoteResponse;
+}
 
 export function useDustSweep(): UseDustSweepReturn {
   const { address, isConnected } = useAccount();
+  const { data: walletClient } = useWalletClient();
+  const publicClient = usePublicClient();
+  const walletStatus = useWalletWhitelist();
+  const balances = useTokenBalances(address);
+  const refetchBalances = balances.refetch;
 
-  // ── State ──────────────────────────────────────────────────────────────────
-
-  const [threshold, setThreshold] = useState<ThresholdValue>(5);
-  const [allDustTokens, setAllDustTokens] = useState<DustToken[]>([]);
-  const [allNoLiquidityTokens, setAllNoLiquidityTokens] = useState<DustToken[]>([]);
-  const [selectedAddresses, setSelectedAddresses] = useState<Set<Address>>(new Set());
-  const [outputToken, setOutputToken] = useState<OutputTokenOption>('ETH');
-  const [quote, setQuote] = useState<BatchQuote | null>(null);
-
-  const [isLoading, setIsLoading] = useState(false);
+  const [unavailableTokens, setUnavailableTokens] = useState<UnavailableToken[]>([]);
+  const [selectedTokens, setSelectedTokens] = useState<SelectedToken[]>([]);
+  const [tokenOut, setTokenOut] = useState<Token | null>(DEFAULT_OUTPUT_TOKENS[0]);
+  const [quote, setQuote] = useState<DustSweepQuoteResponse | null>(null);
+  const [slippageBps, setSlippageBps] = useState(50);
+  const [autoMode, setAutoMode] = useState(true);
   const [isQuoting, setIsQuoting] = useState(false);
   const [isSweeping, setIsSweeping] = useState(false);
+  const [sweepStep, setSweepStep] = useState<SweepStep>("idle");
+  const [txHash, setTxHash] = useState<Hex | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [quoteError, setQuoteError] = useState<string | null>(null);
 
-  const [particlesEarned, setParticlesEarned] = useState<number | null>(null);
-  const [successData, setSuccessData] = useState<SuccessData | null>(null);
-
-
-  // ── Derived State ──────────────────────────────────────────────────────────
-
-  const dustTokens = allDustTokens;
-  const noLiquidityTokens = allNoLiquidityTokens;
-
-  const selectedTokens = useMemo(
-    () => dustTokens.filter((t) => selectedAddresses.has(t.address)),
-    [dustTokens, selectedAddresses]
-  );
-
-  // ── 1. Fetch Dust Tokens ───────────────────────────────────────────────────
-
-  const fetchDustTokens = useCallback(async () => {
-    if (!address || !isConnected) {
-      setAllDustTokens([]);
-      setAllNoLiquidityTokens([]);
-      return;
+  const swappableTokens = balances.swappableTokens;
+  const outputTokens = useMemo(() => {
+    const byAddress = new Map<string, Token>();
+    for (const token of DEFAULT_OUTPUT_TOKENS) {
+      byAddress.set(token.address.toLowerCase(), token);
     }
-
-    setIsLoading(true);
-    setError(null);
-
-    try {
-      const response = await fetch(
-        `/api/tokens/dust?address=${address}&threshold=${threshold}`
-      );
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({})) as { error?: string };
-        throw new Error(errorData.error || `Failed to fetch dust tokens: ${response.status}`);
+    for (const token of [...balances.swappableTokens, ...balances.unavailableTokens]) {
+      if (
+        token.symbol === "USDC" ||
+        token.symbol === "USDbC" ||
+        token.symbol === "WETH" ||
+        token.symbol === "ETH"
+      ) {
+        byAddress.set(token.address.toLowerCase(), token);
       }
-
-      const json = await response.json() as { data?: Record<string, unknown> } & Record<string, unknown>;
-
-      // Handle both wrapped { data: {...} } and flat response formats
-      const data = (json.data || json) as {
-        dustTokens?: Record<string, unknown>[];
-        noLiquidityTokens?: Record<string, unknown>[];
-      };
-
-      const rawDustTokens = data.dustTokens || [];
-      const rawNoLiquidityTokens = data.noLiquidityTokens || [];
-
-      const parseToken = (t: Record<string, unknown>): DustToken => ({
-        address:          (t.address || t.tokenAddress) as Address,
-        name:             (t.name || 'Unknown') as string,
-        symbol:           (t.symbol || '???') as string,
-        decimals:         Number(t.decimals ?? 18),
-        balance:          String(t.balance || '0'),
-        balanceFormatted: String(t.balanceFormatted || t.balance || '0'),
-        usdValue:         Number(t.usdValue || t.valueUsd || t.fiatBalance || 0),
-        priceUsd:         Number(t.priceUsd || 0),
-        logoURI:          (t.logoURI || t.image || undefined) as string | undefined,
-        hasLiquidity:     t.hasLiquidity !== false,
-        isContentCoin:    Boolean(t.isContentCoin),
-        isOwnContentCoin: Boolean(t.isOwnContentCoin),
-      });
-
-      const parsedDust = rawDustTokens.map(parseToken);
-      const parsedNoLiq = rawNoLiquidityTokens.map((t) => ({
-        ...parseToken(t),
-        hasLiquidity: false,
-      }));
-
-      setAllDustTokens(parsedDust);
-      setAllNoLiquidityTokens(parsedNoLiq);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to fetch dust tokens';
-      setError(message);
-      setAllDustTokens([]);
-      setAllNoLiquidityTokens([]);
-    } finally {
-      setIsLoading(false);
     }
-  }, [address, isConnected, threshold]);
+    return Array.from(byAddress.values());
+  }, [balances.swappableTokens, balances.unavailableTokens]);
 
   useEffect(() => {
-    fetchDustTokens();
-  }, [fetchDustTokens]);
+    setUnavailableTokens(balances.unavailableTokens);
+  }, [balances.unavailableTokens]);
 
+  useEffect(() => {
+    if (!isConnected || !address) {
+      setSelectedTokens([]);
+      setQuote(null);
+      setTxHash(null);
+      setSweepStep("idle");
+    }
+  }, [address, isConnected]);
 
+  useEffect(() => {
+    if (!autoMode) return;
+    setSelectedTokens(swappableTokens.slice(0, 50));
+  }, [autoMode, swappableTokens]);
 
-  // Clear quote when selection or output changes
   useEffect(() => {
     setQuote(null);
     setQuoteError(null);
-  }, [selectedAddresses, outputToken]);
+  }, [selectedTokens, tokenOut, slippageBps]);
 
-  // ── 2. Toggle / Select Tokens ──────────────────────────────────────────────
+  const refreshTokens = useCallback(async () => {
+    await refetchBalances();
+  }, [refetchBalances]);
 
-  const toggleToken = useCallback((tokenAddress: Address) => {
-    setSelectedAddresses((prev) => {
-      const next = new Set(prev);
-      if (next.has(tokenAddress)) {
-        next.delete(tokenAddress);
-      } else {
-        const visibleSelectedCount = dustTokens.filter(t => prev.has(t.address)).length;
-        if (visibleSelectedCount >= MAX_SELECTED_TOKENS) return prev;
-        next.add(tokenAddress);
-      }
-      return next;
-    });
-  }, [dustTokens]);
-
-  const selectAll = useCallback(() => {
-    const selectable = dustTokens
-      .filter((t) => t.hasLiquidity)
-      .slice(0, MAX_SELECTED_TOKENS)
-      .map((t) => t.address);
-    setSelectedAddresses(new Set(selectable));
-  }, [dustTokens]);
-
-  const deselectAll = useCallback(() => {
-    setSelectedAddresses(new Set());
-  }, []);
-
-  // ── 3. Get Batch Quote ─────────────────────────────────────────────────────
-
-  const getQuote = useCallback(async () => {
-    if (selectedTokens.length === 0) {
-      setQuoteError('No tokens selected');
-      return;
-    }
-
-    if (!address) {
-      setQuoteError('Wallet not connected');
+  const refreshQuote = useCallback(async () => {
+    if (!address || !tokenOut || selectedTokens.length === 0) {
+      setQuote(null);
       return;
     }
 
     setIsQuoting(true);
     setQuoteError(null);
-    setQuote(null);
 
     try {
-      const tokenOutInfo = OUTPUT_TOKEN_MAP[outputToken];
-
-      const response = await fetch('/api/tokens/batch-quote', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+      const response = await fetch("/api/dustsweep/quote", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          orders: selectedTokens.map((t) => ({
-            tokenIn: t.address,
-            amountIn: t.balance,
-            decimals: t.decimals,
-            symbol: t.symbol,
-            name: t.name,
-          })),
-          tokenOut: tokenOutInfo.address,
-          walletAddress: address,
+          tokenIns: selectedTokens.map((token) => token.address),
+          amounts: selectedTokens.map((token) => token.balance),
+          tokenOut: tokenOut.address,
+          slippageBps,
+          userAddress: address,
         }),
       });
+      const payload = await response.json().catch(() => null);
 
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({})) as { error?: string };
-        throw new Error(errorData.error || `Quote failed: ${response.status}`);
+        const message =
+          payload && typeof payload === "object" && "error" in payload
+            ? String((payload as { error?: unknown }).error)
+            : "Couldn't get quote";
+        throw new Error(message);
       }
 
-      const json = await response.json() as Record<string, unknown>;
-      const data = (json.data || json) as Record<string, unknown>;
-      const summary = (data.summary || data) as Record<string, unknown>;
-      const quotesRaw = (data.perTokenQuotes || data.quotes || []) as PerTokenQuote[];
-
-      // Filter only successful quotes
-      const validQuotes = quotesRaw.filter((q) => q.success && q.amountOut && q.amountOut !== '0');
-
-      if (validQuotes.length === 0) {
-        throw new Error('No tokens could be quoted — they may have no swap liquidity');
-      }
-
-      const outputDecimals = tokenOutInfo.decimals;
-      const netOutputRaw = String(summary.netOutput || summary.estimatedOutput || '0');
-
-      let totalDustUsd = 0;
-      for (const q of validQuotes) {
-        totalDustUsd += parseFloat(q.fromAmountUSD || '0');
-      }
-
-      let estimatedOutputFormatted = '0';
-      try {
-        estimatedOutputFormatted = formatUnits(BigInt(netOutputRaw || '0'), outputDecimals);
-      } catch {
-        estimatedOutputFormatted = '0';
-      }
-
-      const feePercent = Number(summary.dustSweepFeeBps ?? 200) / 100;
-      const swapFeeUsd = Number(data.swapFeeUsd || (totalDustUsd * feePercent) / 100);
-
-      // Extract contract-routed transaction data
-      const apiApproveTransactions = (data.approveTransactions || []) as BatchQuote['approveTransactions'];
-      const apiSweepTransaction = (data.sweepTransaction || undefined) as BatchQuote['sweepTransaction'];
-
-      const batchQuote: BatchQuote = {
-        selectedCount: validQuotes.length,
-        totalDustValueUsd: Math.round(totalDustUsd * 100) / 100,
-        swapFeeUsd: Math.round(swapFeeUsd * 100) / 100,
-        swapFeePercent: feePercent,
-        estimatedOutput: netOutputRaw,
-        estimatedOutputFormatted,
-        outputToken,
-        outputTokenSymbol: tokenOutInfo.symbol,
-        outputTokenDecimals: outputDecimals,
-        perTokenQuotes: validQuotes,
-        approveTransactions: apiApproveTransactions,
-        sweepTransaction: apiSweepTransaction,
-      };
-
-      setQuote(batchQuote);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to get quote';
+      setQuote(normalizeQuotePayload(payload));
+    } catch (quoteFetchError) {
+      const message =
+        quoteFetchError instanceof Error
+          ? quoteFetchError.message
+          : "Couldn't get quote";
+      setQuote(null);
       setQuoteError(message);
     } finally {
       setIsQuoting(false);
     }
-  }, [selectedTokens, outputToken, address]);
+  }, [address, selectedTokens, slippageBps, tokenOut]);
 
-  // Auto-quote when selection changes (debounced)
   useEffect(() => {
-    if (selectedTokens.length > 0 && address) {
-      const timer = setTimeout(() => { getQuote(); }, 500);
-      return () => clearTimeout(timer);
-    }
-  }, [selectedTokens.length, outputToken]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (!address || !tokenOut || selectedTokens.length === 0) return;
+    const timeoutId = window.setTimeout(() => {
+      void refreshQuote();
+    }, 500);
 
-  // ── 4. Build Sweep Transaction Calls ──────────────────────────────────────
-  // Uses the pre-built transaction data from buildSwapTransaction API
+    return () => window.clearTimeout(timeoutId);
+  }, [address, refreshQuote, selectedTokens.length, slippageBps, tokenOut]);
 
-  const sweepCalls = useMemo((): TransactionCall[] => {
-    if (!quote || !address || selectedTokens.length === 0) {
-      return [];
-    }
-
-    const calls: TransactionCall[] = [];
-    let totalMinOutput = BigInt(0);
-
-    // 1. Add all per-token approve and swap calls
-    for (const pq of quote.perTokenQuotes) {
-      if (!pq.success) continue;
-
-      if (pq.approveTransaction && pq.approveTransaction.to && pq.approveTransaction.data) {
-        calls.push({
-          to: pq.approveTransaction.to as Address,
-          data: pq.approveTransaction.data as `0x${string}`,
-          value: BigInt(pq.approveTransaction.value || 0),
-        });
+  const addToken = useCallback((token: SelectedToken) => {
+    setAutoMode(false);
+    setSelectedTokens((current) => {
+      if (current.some((item) => isSameAddress(item.address, token.address))) {
+        return current;
       }
-
-      if (pq.swapTransaction && pq.swapTransaction.to && pq.swapTransaction.data) {
-        calls.push({
-          to: pq.swapTransaction.to as Address,
-          data: pq.swapTransaction.data as `0x${string}`,
-          value: BigInt(pq.swapTransaction.value || 0),
-        });
-      }
-
-      if (pq.minAmountOut) {
-        totalMinOutput += BigInt(pq.minAmountOut);
-      }
-    }
-
-    // 2. Add 2% Fee Transfer
-    const feeCollector = (process.env.NEXT_PUBLIC_FEE_COLLECTOR_ADDRESS || '0x37f9061676b0425b652d7e54f3c386cf6015c7d3') as Address;
-    const feeAmount = (totalMinOutput * BigInt(2)) / BigInt(100);
-    const outTokenAddr = outputToken === 'USDC' ? USDC_ADDRESS : WETH_ADDRESS;
-
-    if (feeAmount > BigInt(0) && calls.length > 0) {
-      calls.push({
-        to: outTokenAddr,
-        data: encodeFunctionData({
-          abi: [{ inputs: [{ name: "to", type: "address" }, { name: "amount", type: "uint256" }], name: "transfer", outputs: [{ name: "", type: "bool" }], stateMutability: "nonpayable", type: "function" }],
-          functionName: "transfer",
-          args: [feeCollector, feeAmount]
-        }),
-        value: BigInt(0),
-      });
-    }
-
-    // 3. Unwrap WETH if output is ETH
-    const netOutput = totalMinOutput - feeAmount;
-    if (outputToken === 'ETH' && netOutput > BigInt(0) && calls.length > 0) {
-      calls.push({
-        to: WETH_ADDRESS,
-        data: encodeFunctionData({
-          abi: [{ inputs: [{ name: "amount", type: "uint256" }], name: "withdraw", outputs: [], stateMutability: "nonpayable", type: "function" }],
-          functionName: "withdraw",
-          args: [netOutput]
-        }),
-        value: BigInt(0),
-      });
-    }
-
-    return calls;
-  }, [quote, address, selectedTokens, outputToken]);
-
-  // ── 5. Handle Success ─────────────────────────────────────────────────────
-
-  const handleSuccess = useCallback(
-    async (txHash: string) => {
-      setIsSweeping(false);
-
-      const tokensSwept = selectedTokens.length;
-      const earned = BASE_PARTICLES + PER_TOKEN_PARTICLES * tokensSwept;
-
-      try {
-        if (address) {
-          await fetch('/api/points/record-sweep', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ address, txHash, tokensSwept, outputToken, threshold }),
-          });
-        }
-      } catch {
-        console.error('Failed to award particles');
-      }
-
-      setParticlesEarned(earned);
-      setSuccessData({
-        txHash,
-        tokensSwept,
-        amountReceived: quote?.estimatedOutputFormatted || '0',
-        outputSymbol: OUTPUT_TOKEN_MAP[outputToken].symbol,
-        particlesEarned: earned,
-      });
-
-      setSelectedAddresses(new Set());
-      setQuote(null);
-
-      setTimeout(() => { fetchDustTokens(); }, 3000);
-    },
-    [address, selectedTokens, outputToken, threshold, quote, fetchDustTokens]
-  );
-
-  const clearSuccess = useCallback(() => {
-    setSuccessData(null);
-    setParticlesEarned(null);
+      return [...current, token].slice(0, 50);
+    });
   }, []);
 
-  // ── Return ─────────────────────────────────────────────────────────────────
+  const removeToken = useCallback((tokenAddress: string) => {
+    setAutoMode(false);
+    setSelectedTokens((current) =>
+      current.filter((token) => !isSameAddress(token.address, tokenAddress)),
+    );
+  }, []);
+
+  const clearSelectedTokens = useCallback(() => {
+    setAutoMode(false);
+    setSelectedTokens([]);
+  }, []);
+
+  const clearUnavailableTokens = useCallback(() => {
+    setUnavailableTokens([]);
+  }, []);
+
+  const resetSweepState = useCallback(() => {
+    setSweepStep("idle");
+    setTxHash(null);
+    setError(null);
+  }, []);
+
+  const executeSweep = useCallback(async () => {
+    if (!address || !walletClient || !publicClient) {
+      setError("Connect a wallet first");
+      return null;
+    }
+
+    if (!walletStatus.isSupported) {
+      setError(walletStatus.reason || "Wallet not supported");
+      return null;
+    }
+
+    if (!tokenOut || !quote || selectedTokens.length === 0) {
+      setError("Select tokens and wait for a route");
+      return null;
+    }
+
+    const now = Math.floor(Date.now() / 1000);
+    if (quote.deadline <= now) {
+      setError("Deadline expired. Refreshing quote.");
+      await refreshQuote();
+      return null;
+    }
+
+    if (quote.routes.some((route) => route.priceImpactBps > 500)) {
+      const confirmed = window.confirm("High price impact. Proceed with this sweep?");
+      if (!confirmed) {
+        return null;
+      }
+    }
+
+    setIsSweeping(true);
+    setSweepStep("signing");
+    setError(null);
+
+    try {
+      const response = await fetch("/api/dustsweep/build-tx", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          routes: quote.routes,
+          tokenOut: tokenOut.address,
+          receiver: address,
+          deadline: quote.deadline,
+          permit2Nonce: quote.permit2Nonce,
+          userAddress: address,
+        }),
+      });
+      const payload = await response.json().catch(() => null);
+
+      if (!response.ok) {
+        const message =
+          payload && typeof payload === "object" && "error" in payload
+            ? String((payload as { error?: unknown }).error)
+            : "Failed to build sweep transaction";
+        throw new Error(message);
+      }
+
+      const buildTx = payload as DustSweepBuildTxResponse;
+      const permit2 = buildTx.permit2 ?? buildPermit2TypedData({
+        routes: quote.routes,
+        spender: buildTx.contractAddress,
+        nonce: quote.permit2Nonce,
+        deadline: quote.deadline,
+      });
+
+      let signature: Hex;
+      try {
+        signature = (await walletClient.signTypedData({
+          account: address,
+          domain: permit2.domain,
+          types: permit2.types,
+          primaryType: "PermitBatchTransferFrom",
+          message: permit2.message,
+        } as never)) as Hex;
+      } catch (signatureError) {
+        throw new Error(getPermit2SignatureErrorMessage(signatureError));
+      }
+
+      setSweepStep("pending");
+      const fullCalldata = appendSignatureToCalldata(buildTx.calldata, signature);
+      const paymasterUrl = process.env.NEXT_PUBLIC_PAYMASTER_URL;
+
+      const hash = (await walletClient.sendTransaction({
+        account: address,
+        chain: base,
+        to: buildTx.contractAddress,
+        data: fullCalldata,
+        ...(walletStatus.isCoinbaseSmartWallet && paymasterUrl
+          ? {
+              capabilities: {
+                paymasterService: { url: paymasterUrl },
+              },
+            }
+          : {}),
+      } as never)) as Hex;
+
+      setTxHash(hash);
+      await publicClient.waitForTransactionReceipt({ hash });
+
+      setSweepStep("success");
+      await fetch("/api/dustsweep/record-sweep", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          txHash: hash,
+          userAddress: address,
+          tokensSwapped: quote.routes.length,
+          valueUSD: quote.totalEstimatedOutUSD,
+        }),
+      }).catch(() => null);
+
+      setSelectedTokens([]);
+      setQuote(null);
+      void refreshTokens();
+
+      return { txHash: hash };
+    } catch (sweepError) {
+      const message =
+        sweepError instanceof Error
+          ? parseDustSweepError(sweepError)
+          : "Transaction failed";
+      setError(message);
+      setSweepStep("error");
+      return null;
+    } finally {
+      setIsSweeping(false);
+    }
+  }, [
+    address,
+    publicClient,
+    quote,
+    refreshQuote,
+    refreshTokens,
+    selectedTokens.length,
+    tokenOut,
+    walletClient,
+    walletStatus,
+  ]);
 
   return {
-    dustTokens,
-    noLiquidityTokens,
+    swappableTokens,
+    unavailableTokens,
     selectedTokens,
-    threshold,
-    setThreshold,
-    toggleToken,
-    selectAll,
-    deselectAll,
-    outputToken,
-    setOutputToken,
+    tokenOut,
     quote,
-    getQuote,
-    sweepCalls,
-    isLoading,
+    slippageBps,
+    isLoading: balances.isLoading,
     isQuoting,
     isSweeping,
-    error,
+    sweepStep,
+    txHash,
+    error: error || balances.error,
     quoteError,
-    handleSuccess,
-    particlesEarned,
-    successData,
-    clearSuccess,
+    autoMode,
+    outputTokens,
+    walletStatus,
+    setTokenOut,
+    setSlippageBps,
+    setAutoMode,
+    setSelectedTokens,
+    addToken,
+    removeToken,
+    clearSelectedTokens,
+    clearUnavailableTokens,
+    refreshTokens,
+    refreshQuote,
+    executeSweep,
+    resetSweepState,
   };
 }

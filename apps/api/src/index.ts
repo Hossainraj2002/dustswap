@@ -12,6 +12,7 @@ import { pointsRoutes } from "./routes/points";
 import { profileSettingsRoutes } from "./routes/profileSettings";
 import { questsRoutes } from "./routes/quests";
 import { swapsRoutes } from "./routes/swaps";
+import { dustsweepRoutes } from "./routes/dustsweep";
 import { pointsEngine } from "./services/pointsEngine";
 import tokens from "./routes/tokens";
 import { getAllowedAppOrigins, isAllowedAppOrigin } from "./config/appOrigins";
@@ -39,6 +40,7 @@ app.route("/api/points", pointsRoutes);
 app.route("/api/profile-settings", profileSettingsRoutes);
 app.route("/api/quests", questsRoutes);
 app.route("/api/swaps", swapsRoutes);
+app.route("/api/dustsweep", dustsweepRoutes);
 
 pointsEngine.startReferralLeaderboardSnapshotScheduler();
 
@@ -69,6 +71,10 @@ app.get("/", (c) => {
       "GET /api/quests": "Get active quests and user progress",
       "POST /api/quests/activities/swap": "Record swap activity for quest progress",
       "POST /api/swaps/record": "Capture and decode an OpenOcean swap transaction",
+      "GET /api/dustsweep/tokens/:address": "Get sweepable wallet tokens",
+      "POST /api/dustsweep/quote": "Build a DustSweep quote",
+      "POST /api/dustsweep/build-tx": "Build DustSweep Permit2 typed data and calldata",
+      "POST /api/dustsweep/record-sweep": "Record a completed DustSweep",
     },
   });
 });
