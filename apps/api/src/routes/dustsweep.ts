@@ -1048,6 +1048,7 @@ async function scanOnchainPools(args: {
   const latestBlock = await getLatestBaseBlockNumber();
   const toBlock = Math.min(args.toBlock || latestBlock, latestBlock);
   const pools: Array<{ token0: Address; token1: Address; pool: Address; source: string }> = [];
+  const errors: string[] = [];
 
   for (const dex of getOnchainDexFactories()) {
     const fromBlock = Math.max(0, Math.floor(Number(args.fromBlock ?? dex.defaultFromBlock)));
@@ -1073,7 +1074,11 @@ async function scanOnchainPools(args: {
           const decoded = decodePoolLog(log, dex.eventType);
           if (decoded) pools.push({ ...decoded, source: dex.source });
         }
-      } catch {
+      } catch (error) {
+        if (errors.length < 8) {
+          const message = error instanceof Error ? error.message : String(error);
+          errors.push(`${dex.source} ${start}-${end}: ${message}`);
+        }
         // Some RPC providers reject busy ranges. Use a smaller blockStep and rerun
         // the same range if you need exact completeness for that window.
       }
@@ -1084,7 +1089,7 @@ async function scanOnchainPools(args: {
     }
   }
 
-  return pools;
+  return { pools, errors };
 }
 
 async function readErc20Balance(token: Address, holder: Address) {
@@ -1167,12 +1172,16 @@ export async function syncWhitelistFromOnchainDexes(args: {
   delayMs?: number;
 }) {
   const ethUsd = await fetchEthUsdPrice();
-  const pools = await scanOnchainPools({
+  const scan = await scanOnchainPools({
     fromBlock: args.fromBlock,
     toBlock: args.toBlock,
     blockStep: args.blockStep,
     delayMs: args.delayMs || 0,
   });
+  const pools = scan.pools;
+  if (pools.length === 0 && scan.errors.length > 0) {
+    throw new Error(`Onchain pool scan failed: ${scan.errors.join("; ")}`);
+  }
   const bestByToken = new Map<string, OnchainPoolCandidate>();
 
   for (const pool of pools) {
@@ -1282,6 +1291,7 @@ export async function syncWhitelistFromOnchainDexes(args: {
 
   return {
     poolsScanned: pools.length,
+    logErrors: scan.errors,
     tokensConsidered: bestByToken.size,
     tokensUpserted: rows.length,
   };
