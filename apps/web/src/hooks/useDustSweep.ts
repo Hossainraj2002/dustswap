@@ -8,6 +8,8 @@ import { useTokenBalances } from "@/hooks/useTokenBalances";
 import { useWalletWhitelist } from "@/hooks/useWalletWhitelist";
 import { buildPermit2TypedData, getPermit2SignatureErrorMessage } from "@/lib/permit2";
 import { encodeDustSweepPermit2Calldata, parseDustSweepError } from "@/lib/dustsweep-router";
+import { DATA_SUFFIX } from "@/lib/builderCode";
+import { buildBasePaymasterCapabilities } from "@/lib/paymaster";
 import { USDC_ADDRESS, WETH_ADDRESS } from "@/lib/tokens";
 import {
   type DustSweepBuildTxResponse,
@@ -343,11 +345,10 @@ export function useDustSweep(): UseDustSweepReturn {
         chain: base,
         to: buildTx.contractAddress,
         data: fullCalldata,
+        dataSuffix: DATA_SUFFIX,
         ...(walletStatus.isCoinbaseSmartWallet && paymasterUrl
           ? {
-              capabilities: {
-                paymasterService: { url: paymasterUrl },
-              },
+              capabilities: buildBasePaymasterCapabilities(),
             }
           : {}),
       } as never)) as Hex;
