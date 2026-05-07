@@ -851,6 +851,42 @@ type GeckoPool = {
   };
 };
 
+async function fetchGeckoPoolsPage(page: number) {
+  const maxRetries = Math.max(0, Number(process.env.DUST_SWEEP_WHITELIST_MAX_RETRIES || "6"));
+  const retryMs = Math.max(1000, Number(process.env.DUST_SWEEP_WHITELIST_RETRY_MS || "15000"));
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const url = new URL("https://api.geckoterminal.com/api/v2/networks/base/pools");
+    url.searchParams.set("page", String(page));
+    url.searchParams.set("include", "base_token,quote_token,dex");
+
+    const response = await fetch(url, {
+      headers: {
+        Accept: "application/json",
+        "User-Agent": "DustSwap/1.0 (+https://app.dustswap.wtf)",
+      },
+    });
+
+    if (response.ok) {
+      return (await response.json()) as {
+        data?: GeckoPool[];
+        included?: GeckoToken[];
+      };
+    }
+
+    if (response.status === 429 && attempt < maxRetries) {
+      const retryAfterSeconds = Number(response.headers.get("retry-after") || 0);
+      const waitMs = retryAfterSeconds > 0 ? retryAfterSeconds * 1000 : retryMs * (attempt + 1);
+      await sleep(waitMs);
+      continue;
+    }
+
+    throw new Error(`GeckoTerminal sync failed with ${response.status}`);
+  }
+
+  throw new Error("GeckoTerminal sync failed after retries");
+}
+
 function getAllowedGeckoDexIds() {
   const configured = String(process.env.DUST_SWEEP_WHITELIST_DEX_IDS || "")
     .split(",")
@@ -874,6 +910,7 @@ function sleep(ms: number) {
 }
 
 export async function syncWhitelistFromGeckoTerminal(args: {
+  startPage?: number;
   maxPages: number;
   maxTokens: number;
   minLiquidityUSD: number;
@@ -882,23 +919,11 @@ export async function syncWhitelistFromGeckoTerminal(args: {
 }) {
   const allowedDexIds = getAllowedGeckoDexIds();
   const byAddress = new Map<string, TokenWhitelistRow>();
+  const startPage = Math.max(1, Math.floor(Number(args.startPage || 1)));
+  const endPage = startPage + args.maxPages - 1;
 
-  for (let page = 1; page <= args.maxPages; page++) {
-    const url = new URL("https://api.geckoterminal.com/api/v2/networks/base/pools");
-    url.searchParams.set("page", String(page));
-    url.searchParams.set("include", "base_token,quote_token,dex");
-
-    const response = await fetch(url, {
-      headers: { Accept: "application/json" },
-    });
-    if (!response.ok) {
-      throw new Error(`GeckoTerminal sync failed with ${response.status}`);
-    }
-
-    const payload = (await response.json()) as {
-      data?: GeckoPool[];
-      included?: GeckoToken[];
-    };
+  for (let page = startPage; page <= endPage; page++) {
+    const payload = await fetchGeckoPoolsPage(page);
     const tokensById = new Map<string, GeckoToken>();
     for (const token of payload.included || []) {
       if (token.id) tokensById.set(token.id, token);
@@ -938,7 +963,7 @@ export async function syncWhitelistFromGeckoTerminal(args: {
       }
     }
 
-    if (args.delayMs && page < args.maxPages) {
+    if (args.delayMs && page < endPage) {
       await sleep(args.delayMs);
     }
   }
@@ -979,7 +1004,12 @@ export async function syncWhitelistFromGeckoTerminal(args: {
     if (error) throw new Error(error.message);
   }
 
-  return { tokensConsidered: byAddress.size, tokensUpserted: rows.length };
+  return {
+    startPage,
+    endPage,
+    tokensConsidered: byAddress.size,
+    tokensUpserted: rows.length,
+  };
 }
 
 dustsweepRoutes.post("/admin/sync-whitelist", async (c) => {
@@ -989,12 +1019,14 @@ dustsweepRoutes.post("/admin/sync-whitelist", async (c) => {
   }
 
   const body: {
+    startPage?: number;
     maxPages?: number;
     maxTokens?: number;
     minLiquidityUSD?: number;
     replaceActive?: boolean;
     delayMs?: number;
   } = await c.req.json<{
+    startPage?: number;
     maxPages?: number;
     maxTokens?: number;
     minLiquidityUSD?: number;
@@ -1004,6 +1036,7 @@ dustsweepRoutes.post("/admin/sync-whitelist", async (c) => {
 
   try {
     const result = await syncWhitelistFromGeckoTerminal({
+      startPage: Math.max(1, Number(body.startPage || 1)),
       maxPages: Math.max(1, Math.min(250, Number(body.maxPages || 200))),
       maxTokens: Math.max(1, Math.min(5000, Number(body.maxTokens || 4000))),
       minLiquidityUSD: Math.max(0, Number(body.minLiquidityUSD ?? MIN_WL_LIQUIDITY_USD)),

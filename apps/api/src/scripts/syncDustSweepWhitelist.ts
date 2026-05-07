@@ -16,6 +16,7 @@ function getBoolArg(name: string, fallback = false) {
 
 async function main() {
   const result = await syncWhitelistFromGeckoTerminal({
+    startPage: Math.max(1, Number(getArg("startPage", "1"))),
     maxPages: Math.max(1, Math.min(250, Number(getArg("maxPages", "200")))),
     maxTokens: Math.max(1, Math.min(5000, Number(getArg("maxTokens", "4000")))),
     minLiquidityUSD: Math.max(0, Number(getArg("minLiquidityUSD", process.env.DUST_SWEEP_WHITELIST_MIN_LIQUIDITY_USD || "1000"))),
