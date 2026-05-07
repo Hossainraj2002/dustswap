@@ -1,13 +1,18 @@
 import { randomBytes } from "crypto";
 import { Hono } from "hono";
 import {
+  decodeEventLog,
   decodeFunctionResult,
   encodeAbiParameters,
   encodeFunctionData,
   encodePacked,
+  erc20Abi,
   formatUnits,
   getAddress,
   isAddress,
+  parseAbi,
+  toEventSelector,
+  toHex,
   type Address,
   type Hex,
 } from "viem";
@@ -40,6 +45,15 @@ const BASESWAP_ROUTER_ADDRESS = (process.env.BASESWAP_ROUTER_ADDRESS ||
   "0x327Df1E6de05895d2ab08513aaDD9313Fe505d86") as Address;
 const ZEROX_ALLOWANCE_HOLDER = (process.env.ZEROX_ALLOWANCE_HOLDER ||
   "0x0000000000001fF3684f28c67538d4D072C22734") as Address;
+const UNISWAP_V3_FACTORY_ADDRESS = (process.env.UNISWAP_V3_FACTORY_ADDRESS ||
+  "0x33128a8fC17869897dcE68Ed026d694621f6FDfD") as Address;
+const PANCAKE_V3_FACTORY_ADDRESS = (process.env.PANCAKE_V3_FACTORY_ADDRESS ||
+  "0x0BFbCF9fa4f9C56B0F40a671Ad40E0805A091865") as Address;
+const BASESWAP_FACTORY_ADDRESS = (process.env.BASESWAP_FACTORY_ADDRESS ||
+  "0xFDa619b6d20975be80A10332cD39b9a4b0FAa8BB") as Address;
+const USDBC_ADDRESS = "0xd9aAEc86B65D86f6A7B5B1b0c42FFA531710b6CA" as Address;
+const USDT_ADDRESS = "0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2" as Address;
+const DAI_ADDRESS = "0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb" as Address;
 const UNISWAP_FEE_TIERS = [500, 3000, 10000, 100] as const;
 const PANCAKE_FEE_TIERS = [500, 2500, 10000, 100] as const;
 const TWO_HOP_FEE_PAIRS = [
@@ -158,6 +172,25 @@ const BASESWAP_ROUTER_ABI = [
     type: "function",
   },
 ] as const;
+
+const V3_FACTORY_EVENT_ABI = parseAbi([
+  "event PoolCreated(address indexed token0,address indexed token1,uint24 indexed fee,int24 tickSpacing,address pool)",
+]);
+const V2_FACTORY_EVENT_ABI = parseAbi([
+  "event PairCreated(address indexed token0,address indexed token1,address pair,uint256)",
+]);
+const AERODROME_FACTORY_EVENT_ABI = parseAbi([
+  "event PairCreated(address indexed token0,address indexed token1,bool stable,address pair,uint256)",
+]);
+const V3_POOL_CREATED_TOPIC = toEventSelector(
+  "PoolCreated(address,address,uint24,int24,address)",
+);
+const V2_PAIR_CREATED_TOPIC = toEventSelector(
+  "PairCreated(address,address,address,uint256)",
+);
+const AERODROME_PAIR_CREATED_TOPIC = toEventSelector(
+  "PairCreated(address,address,bool,address,uint256)",
+);
 
 const DUST_SWEEP_ROUTER_ABI = [
   {
@@ -851,6 +884,60 @@ type GeckoPool = {
   };
 };
 
+type RpcLog = {
+  address: Address;
+  topics: Hex[];
+  data: Hex;
+  blockNumber: Hex;
+  transactionHash: Hex;
+  logIndex: Hex;
+};
+
+type OnchainPoolCandidate = {
+  token: Address;
+  quoteToken: Address;
+  pool: Address;
+  source: string;
+  liquidityUSD: number;
+};
+
+const ONCHAIN_QUOTE_TOKENS = new Map<string, { address: Address; symbol: string; decimals: number; usd?: number }>([
+  [USDC_ADDRESS.toLowerCase(), { address: USDC_ADDRESS, symbol: "USDC", decimals: 6, usd: 1 }],
+  [USDBC_ADDRESS.toLowerCase(), { address: USDBC_ADDRESS, symbol: "USDbC", decimals: 6, usd: 1 }],
+  [USDT_ADDRESS.toLowerCase(), { address: USDT_ADDRESS, symbol: "USDT", decimals: 6, usd: 1 }],
+  [DAI_ADDRESS.toLowerCase(), { address: DAI_ADDRESS, symbol: "DAI", decimals: 18, usd: 1 }],
+  [WETH_ADDRESS.toLowerCase(), { address: WETH_ADDRESS, symbol: "WETH", decimals: 18 }],
+]);
+
+function getOnchainDexFactories() {
+  return [
+    {
+      source: "onchain:uniswap-v3-base",
+      factory: UNISWAP_V3_FACTORY_ADDRESS,
+      eventType: "v3" as const,
+      defaultFromBlock: Number(process.env.UNISWAP_V3_FACTORY_FROM_BLOCK || "1371000"),
+    },
+    {
+      source: "onchain:pancakeswap-v3-base",
+      factory: PANCAKE_V3_FACTORY_ADDRESS,
+      eventType: "v3" as const,
+      defaultFromBlock: Number(process.env.PANCAKE_V3_FACTORY_FROM_BLOCK || "0"),
+    },
+    {
+      source: "onchain:aerodrome",
+      factory: AERODROME_FACTORY_ADDRESS,
+      eventType: "aerodrome" as const,
+      defaultFromBlock: Number(process.env.AERODROME_FACTORY_FROM_BLOCK || "0"),
+    },
+    {
+      source: "onchain:baseswap",
+      factory: BASESWAP_FACTORY_ADDRESS,
+      eventType: "v2" as const,
+      defaultFromBlock: Number(process.env.BASESWAP_FACTORY_FROM_BLOCK || "0"),
+    },
+  ];
+}
+
 async function fetchGeckoPoolsPage(page: number) {
   const maxRetries = Math.max(0, Number(process.env.DUST_SWEEP_WHITELIST_MAX_RETRIES || "6"));
   const retryMs = Math.max(1000, Number(process.env.DUST_SWEEP_WHITELIST_RETRY_MS || "15000"));
@@ -885,6 +972,319 @@ async function fetchGeckoPoolsPage(page: number) {
   }
 
   throw new Error("GeckoTerminal sync failed after retries");
+}
+
+async function getLatestBaseBlockNumber() {
+  const result = await baseRpcRequest<Hex>("eth_blockNumber", []);
+  return Number(BigInt(result));
+}
+
+async function fetchEthUsdPrice() {
+  try {
+    const response = await fetch("https://api.coinbase.com/v2/prices/ETH-USD/spot", {
+      headers: { Accept: "application/json" },
+    });
+    if (!response.ok) throw new Error("ETH price unavailable");
+    const payload = (await response.json()) as { data?: { amount?: string } };
+    const price = Number(payload.data?.amount || 0);
+    if (Number.isFinite(price) && price > 0) return price;
+  } catch {
+    // Fallback below.
+  }
+  return Number(process.env.DEFAULT_ETH_PRICE_USD || "3500");
+}
+
+async function getLogsChunk(args: {
+  address: Address;
+  topic: Hex;
+  fromBlock: number;
+  toBlock: number;
+}) {
+  return baseRpcRequest<RpcLog[]>("eth_getLogs", [
+    {
+      address: args.address,
+      fromBlock: toHex(args.fromBlock),
+      toBlock: toHex(args.toBlock),
+      topics: [args.topic],
+    },
+  ]);
+}
+
+function decodePoolLog(log: RpcLog, eventType: "v2" | "v3" | "aerodrome") {
+  const abi =
+    eventType === "v3"
+      ? V3_FACTORY_EVENT_ABI
+      : eventType === "aerodrome"
+        ? AERODROME_FACTORY_EVENT_ABI
+        : V2_FACTORY_EVENT_ABI;
+  const decoded = decodeEventLog({
+    abi,
+    data: log.data,
+    topics: log.topics as [Hex, ...Hex[]],
+  });
+  const args = decoded.args as {
+    token0?: Address;
+    token1?: Address;
+    pool?: Address;
+    pair?: Address;
+  };
+
+  const pool = args.pool || args.pair;
+  if (!args.token0 || !args.token1 || !pool) return null;
+
+  return {
+    token0: normalizeAddress(args.token0),
+    token1: normalizeAddress(args.token1),
+    pool: normalizeAddress(pool),
+  };
+}
+
+async function scanOnchainPools(args: {
+  fromBlock?: number;
+  toBlock?: number;
+  blockStep: number;
+  delayMs: number;
+}) {
+  const latestBlock = await getLatestBaseBlockNumber();
+  const toBlock = Math.min(args.toBlock || latestBlock, latestBlock);
+  const pools: Array<{ token0: Address; token1: Address; pool: Address; source: string }> = [];
+
+  for (const dex of getOnchainDexFactories()) {
+    const fromBlock = Math.max(0, Math.floor(Number(args.fromBlock ?? dex.defaultFromBlock)));
+    if (fromBlock > toBlock) continue;
+
+    const topic =
+      dex.eventType === "v3"
+        ? V3_POOL_CREATED_TOPIC
+        : dex.eventType === "aerodrome"
+          ? AERODROME_PAIR_CREATED_TOPIC
+          : V2_PAIR_CREATED_TOPIC;
+
+    for (let start = fromBlock; start <= toBlock; start += args.blockStep) {
+      const end = Math.min(toBlock, start + args.blockStep - 1);
+      try {
+        const logs = await getLogsChunk({
+          address: dex.factory,
+          topic,
+          fromBlock: start,
+          toBlock: end,
+        });
+        for (const log of logs) {
+          const decoded = decodePoolLog(log, dex.eventType);
+          if (decoded) pools.push({ ...decoded, source: dex.source });
+        }
+      } catch {
+        // Some RPC providers reject busy ranges. Use a smaller blockStep and rerun
+        // the same range if you need exact completeness for that window.
+      }
+
+      if (args.delayMs && end < toBlock) {
+        await sleep(args.delayMs);
+      }
+    }
+  }
+
+  return pools;
+}
+
+async function readErc20Balance(token: Address, holder: Address) {
+  const data = encodeFunctionData({
+    abi: erc20Abi,
+    functionName: "balanceOf",
+    args: [holder],
+  });
+  const result = await callContract(token, data);
+  return decodeFunctionResult({
+    abi: erc20Abi,
+    functionName: "balanceOf",
+    data: result,
+  }) as bigint;
+}
+
+async function readErc20Metadata(token: Address) {
+  const fallbackSymbol = `${token.slice(0, 6)}...${token.slice(-4)}`;
+  const [symbolResult, nameResult, decimalsResult] = await Promise.allSettled([
+    callContract(
+      token,
+      encodeFunctionData({ abi: erc20Abi, functionName: "symbol" }),
+    ),
+    callContract(
+      token,
+      encodeFunctionData({ abi: erc20Abi, functionName: "name" }),
+    ),
+    callContract(
+      token,
+      encodeFunctionData({ abi: erc20Abi, functionName: "decimals" }),
+    ),
+  ]);
+
+  let symbol = fallbackSymbol;
+  let name = fallbackSymbol;
+  let decimals = 18;
+
+  try {
+    if (symbolResult.status === "fulfilled") {
+      symbol = String(
+        decodeFunctionResult({ abi: erc20Abi, functionName: "symbol", data: symbolResult.value }),
+      ).slice(0, 32);
+    }
+  } catch {
+    // Keep fallback.
+  }
+  try {
+    if (nameResult.status === "fulfilled") {
+      name = String(
+        decodeFunctionResult({ abi: erc20Abi, functionName: "name", data: nameResult.value }),
+      ).slice(0, 120);
+    }
+  } catch {
+    // Keep fallback.
+  }
+  try {
+    if (decimalsResult.status === "fulfilled") {
+      decimals = Number(
+        decodeFunctionResult({ abi: erc20Abi, functionName: "decimals", data: decimalsResult.value }),
+      );
+    }
+  } catch {
+    // Keep fallback.
+  }
+
+  return {
+    symbol: symbol || fallbackSymbol,
+    name: name || symbol || fallbackSymbol,
+    decimals: Number.isFinite(decimals) ? decimals : 18,
+  };
+}
+
+export async function syncWhitelistFromOnchainDexes(args: {
+  fromBlock?: number;
+  toBlock?: number;
+  blockStep: number;
+  maxTokens: number;
+  minLiquidityUSD: number;
+  replaceActive?: boolean;
+  delayMs?: number;
+}) {
+  const ethUsd = await fetchEthUsdPrice();
+  const pools = await scanOnchainPools({
+    fromBlock: args.fromBlock,
+    toBlock: args.toBlock,
+    blockStep: args.blockStep,
+    delayMs: args.delayMs || 0,
+  });
+  const bestByToken = new Map<string, OnchainPoolCandidate>();
+
+  for (const pool of pools) {
+    const token0Quote = ONCHAIN_QUOTE_TOKENS.get(pool.token0.toLowerCase());
+    const token1Quote = ONCHAIN_QUOTE_TOKENS.get(pool.token1.toLowerCase());
+    if (token0Quote && token1Quote) continue;
+    const quote = token0Quote || token1Quote;
+    if (!quote) continue;
+
+    const token = token0Quote ? pool.token1 : pool.token0;
+    try {
+      const quoteBalance = await readErc20Balance(quote.address, pool.pool);
+      const quoteAmount = Number(formatUnits(quoteBalance, quote.decimals));
+      const quoteUsd = quote.usd ?? ethUsd;
+      const liquidityUSD = quoteAmount * quoteUsd * 2;
+      if (!Number.isFinite(liquidityUSD) || liquidityUSD < args.minLiquidityUSD) {
+        continue;
+      }
+
+      const key = token.toLowerCase();
+      const existing = bestByToken.get(key);
+      if (!existing || existing.liquidityUSD < liquidityUSD) {
+        bestByToken.set(key, {
+          token,
+          quoteToken: quote.address,
+          pool: pool.pool,
+          source: pool.source,
+          liquidityUSD,
+        });
+      }
+    } catch {
+      // Ignore pools with non-standard quote token behavior.
+    }
+
+    if (args.delayMs) await sleep(args.delayMs);
+  }
+
+  const selected = Array.from(bestByToken.values())
+    .sort((a, b) => b.liquidityUSD - a.liquidityUSD)
+    .slice(0, args.maxTokens);
+  const rows: TokenWhitelistRow[] = [];
+
+  for (const candidate of selected) {
+    const metadata = await readErc20Metadata(candidate.token).catch(() => ({
+      symbol: `${candidate.token.slice(0, 6)}...${candidate.token.slice(-4)}`,
+      name: `${candidate.token.slice(0, 6)}...${candidate.token.slice(-4)}`,
+      decimals: 18,
+    }));
+    rows.push({
+      address: candidate.token,
+      symbol: metadata.symbol,
+      name: metadata.name,
+      decimals: metadata.decimals,
+      logo_uri: null,
+      liquidity_usd: candidate.liquidityUSD,
+      source: `${candidate.source}:${candidate.pool}`,
+    });
+  }
+
+  if (args.replaceActive) {
+    const { error } = await supabase
+      .from("tokens")
+      .update({
+        is_active: false,
+        last_checked: new Date().toISOString(),
+      })
+      .eq("chain_id", BASE_CHAIN_ID)
+      .like("source", "onchain:%");
+    if (error) throw new Error(error.message);
+  }
+
+  for (let i = 0; i < rows.length; i += 500) {
+    const chunkRows = rows.slice(i, i + 500);
+    const existingByAddress = new Map<string, number>();
+    const { data: existingRows } = await supabase
+      .from("tokens")
+      .select("address,liquidity_usd")
+      .in("address", chunkRows.map((row) => row.address));
+    for (const existing of (existingRows || []) as Array<{ address?: string; liquidity_usd?: string | number | null }>) {
+      if (existing.address) {
+        existingByAddress.set(existing.address.toLowerCase(), Number(existing.liquidity_usd || 0));
+      }
+    }
+
+    const chunk = chunkRows
+      .filter((row) => Number(row.liquidity_usd || 0) >= (existingByAddress.get(row.address.toLowerCase()) || 0))
+      .map((row) => ({
+      address: row.address,
+      symbol: row.symbol,
+      name: row.name,
+      decimals: row.decimals,
+      logo_uri: row.logo_uri,
+      chain_id: BASE_CHAIN_ID,
+      is_active: true,
+      source: row.source,
+      liquidity_usd: row.liquidity_usd,
+      last_checked: new Date().toISOString(),
+    }));
+
+    if (chunk.length === 0) continue;
+
+    const { error } = await supabase.from("tokens").upsert(chunk, {
+      onConflict: "address",
+    });
+    if (error) throw new Error(error.message);
+  }
+
+  return {
+    poolsScanned: pools.length,
+    tokensConsidered: bestByToken.size,
+    tokensUpserted: rows.length,
+  };
 }
 
 function getAllowedGeckoDexIds() {
@@ -1051,6 +1451,51 @@ dustsweepRoutes.post("/admin/sync-whitelist", async (c) => {
   } catch (error) {
     console.error("[dustsweep/admin/sync-whitelist] Error:", error);
     return c.json(errorJson((error as Error).message || "Failed to sync whitelist"), 500);
+  }
+});
+
+dustsweepRoutes.post("/admin/sync-whitelist-onchain", async (c) => {
+  const expected = process.env.DUST_SWEEP_ADMIN_TOKEN || process.env.QUEST_ADMIN_TOKEN;
+  if (!expected || c.req.header("x-admin-token") !== expected) {
+    return c.json(errorJson("Unauthorized"), 401);
+  }
+
+  const body: {
+    fromBlock?: number;
+    toBlock?: number;
+    blockStep?: number;
+    maxTokens?: number;
+    minLiquidityUSD?: number;
+    replaceActive?: boolean;
+    delayMs?: number;
+  } = await c.req.json<{
+    fromBlock?: number;
+    toBlock?: number;
+    blockStep?: number;
+    maxTokens?: number;
+    minLiquidityUSD?: number;
+    replaceActive?: boolean;
+    delayMs?: number;
+  }>().catch(() => ({}));
+
+  try {
+    const result = await syncWhitelistFromOnchainDexes({
+      fromBlock: body.fromBlock === undefined ? undefined : Math.max(0, Number(body.fromBlock)),
+      toBlock: body.toBlock === undefined ? undefined : Math.max(0, Number(body.toBlock)),
+      blockStep: Math.max(1_000, Math.min(250_000, Number(body.blockStep || 50_000))),
+      maxTokens: Math.max(1, Math.min(5000, Number(body.maxTokens || 4000))),
+      minLiquidityUSD: Math.max(0, Number(body.minLiquidityUSD ?? MIN_WL_LIQUIDITY_USD)),
+      replaceActive: Boolean(body.replaceActive),
+      delayMs: Math.max(
+        0,
+        Math.min(5000, Number(body.delayMs ?? process.env.DUST_SWEEP_ONCHAIN_SYNC_DELAY_MS ?? 0)),
+      ),
+    });
+
+    return c.json({ success: true, ...result });
+  } catch (error) {
+    console.error("[dustsweep/admin/sync-whitelist-onchain] Error:", error);
+    return c.json(errorJson((error as Error).message || "Failed to sync onchain whitelist"), 500);
   }
 });
 

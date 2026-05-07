@@ -76,6 +76,7 @@ app.get("/", (c) => {
       "POST /api/dustsweep/build-tx": "Build DustSweep Permit2 typed data and calldata",
       "POST /api/dustsweep/record-sweep": "Record a completed DustSweep",
       "POST /api/dustsweep/admin/sync-whitelist": "Admin: sync liquid Base token whitelist",
+      "POST /api/dustsweep/admin/sync-whitelist-onchain": "Admin: sync whitelist from onchain Base DEX pools",
     },
   });
 });
