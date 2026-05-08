@@ -317,12 +317,15 @@ export class XVerificationService {
   }
 
   async resolveUser(input: { userId?: string | null; username?: string | null }) {
-    if (input.userId) {
-      return this.getUserById(input.userId);
+    if (input.username) {
+      return {
+        id: input.userId || "",
+        userName: normalizeXUsername(input.username),
+      } satisfies GetXUserProfile;
     }
 
-    if (input.username) {
-      return this.getUserByUsername(input.username);
+    if (input.userId) {
+      return this.getUserById(input.userId);
     }
 
     throw new Error("X target user id is required");
@@ -345,22 +348,8 @@ export class XVerificationService {
 
     return runtimeCache.getOrSet(cacheKey, GETX_FOLLOW_CACHE_TTL_MS, async () => {
       const [sourceUser, targetUser] = await Promise.all([
-        source.userId
-          ? this.getUserById(source.userId)
-          : source.username
-            ? Promise.resolve({
-                id: "",
-                userName: normalizeXUsername(source.username),
-              } satisfies GetXUserProfile)
-            : Promise.reject(new Error("Source X user id or username is required")),
-        target.userId
-          ? this.getUserById(target.userId)
-          : target.username
-            ? Promise.resolve({
-                id: "",
-                userName: normalizeXUsername(target.username),
-              } satisfies GetXUserProfile)
-            : Promise.reject(new Error("Target X user id or username is required")),
+        this.resolveUser(source),
+        this.resolveUser(target),
       ]);
 
       const payload = await this.requestGetX<{

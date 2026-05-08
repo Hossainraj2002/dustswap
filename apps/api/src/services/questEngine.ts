@@ -1912,8 +1912,11 @@ export class QuestEngine {
         });
       }
 
-      const followCheck = await xVerificationService.checkFollowById(
-        connectedAccount.xUserId,
+      const followCheck = await xVerificationService.checkFollowRelationship(
+        {
+          userId: connectedAccount.xUserId,
+          username: connectedAccount.username,
+        },
         target
       );
 

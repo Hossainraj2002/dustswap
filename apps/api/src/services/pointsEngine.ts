@@ -4028,8 +4028,11 @@ export class PointsEngine {
     const user = await this.getOrCreate(normalizedAddress);
     const connectedAccount = await xVerificationService.requireConnectedAccount(user.id);
     const checkedAt = new Date().toISOString();
-    const followCheck = await xVerificationService.checkFollowById(
-      connectedAccount.xUserId,
+    const followCheck = await xVerificationService.checkFollowRelationship(
+      {
+        userId: connectedAccount.xUserId,
+        username: connectedAccount.username,
+      },
       target
     );
 
