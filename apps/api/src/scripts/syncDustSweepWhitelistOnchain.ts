@@ -24,7 +24,7 @@ async function main() {
     fromBlock: getOptionalNumberArg("fromBlock"),
     toBlock: getOptionalNumberArg("toBlock"),
     blockStep: Math.max(1_000, Math.min(250_000, Number(getArg("blockStep", "50000")))),
-    maxTokens: Math.max(1, Math.min(5000, Number(getArg("maxTokens", "4000")))),
+    maxTokens: Math.max(1, Math.min(50_000, Number(getArg("maxTokens", "4000")))),
     minLiquidityUSD: Math.max(0, Number(getArg("minLiquidityUSD", process.env.DUST_SWEEP_WHITELIST_MIN_LIQUIDITY_USD || "1000"))),
     replaceActive: getBoolArg("replaceActive", false),
     delayMs: Math.max(0, Math.min(5000, Number(getArg("delayMs", process.env.DUST_SWEEP_ONCHAIN_SYNC_DELAY_MS || "0")))),

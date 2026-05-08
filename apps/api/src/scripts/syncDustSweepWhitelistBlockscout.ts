@@ -17,7 +17,7 @@ function getBoolArg(name: string, fallback = false) {
 async function main() {
   const result = await syncWhitelistFromBlockscoutDexScreener({
     maxPages: Math.max(1, Math.min(500, Number(getArg("maxPages", "120")))),
-    maxTokens: Math.max(1, Math.min(5000, Number(getArg("maxTokens", "4000")))),
+    maxTokens: Math.max(1, Math.min(50_000, Number(getArg("maxTokens", "4000")))),
     minLiquidityUSD: Math.max(0, Number(getArg("minLiquidityUSD", process.env.DUST_SWEEP_WHITELIST_MIN_LIQUIDITY_USD || "1000"))),
     replaceActive: getBoolArg("replaceActive", false),
     delayMs: Math.max(0, Math.min(5000, Number(getArg("delayMs", process.env.DUST_SWEEP_BLOCKSCOUT_SYNC_DELAY_MS || "0")))),

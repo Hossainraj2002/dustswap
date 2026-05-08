@@ -325,6 +325,16 @@ function normalizeAddress(value: string) {
   return getAddress(value);
 }
 
+function sanitizeDbText(value: unknown, fallback: string, maxLength: number) {
+  const cleaned = String(value || fallback)
+    .replace(/\u0000/g, "")
+    .replace(/[\u0001-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "")
+    .trim()
+    .slice(0, maxLength);
+
+  return cleaned || fallback.slice(0, maxLength);
+}
+
 function bestDexFromSource(source?: string | null) {
   const normalized = String(source || "").toLowerCase();
   if (normalized.includes("aero")) return "AERODROME";
@@ -927,6 +937,12 @@ type DexScreenerPair = {
   info?: { imageUrl?: string };
 };
 
+type TokenUpsertResult = {
+  written: number;
+  skipped: number;
+  errors: string[];
+};
+
 const DEFAULT_BLOCKSCOUT_MAX_REQUESTS_PER_KEY = 100;
 
 let blockscoutKeyIndex = 0;
@@ -1298,9 +1314,58 @@ async function readErc20Metadata(token: Address) {
   }
 
   return {
-    symbol: symbol || fallbackSymbol,
-    name: name || symbol || fallbackSymbol,
+    symbol: sanitizeDbText(symbol, fallbackSymbol, 32),
+    name: sanitizeDbText(name, symbol || fallbackSymbol, 120),
     decimals: Number.isFinite(decimals) ? decimals : 18,
+  };
+}
+
+function toTokenUpsertRow(row: TokenWhitelistRow) {
+  const fallbackSymbol = `${row.address.slice(0, 6)}...${row.address.slice(-4)}`;
+  return {
+    address: row.address,
+    symbol: sanitizeDbText(row.symbol, fallbackSymbol, 32),
+    name: sanitizeDbText(row.name, row.symbol || fallbackSymbol, 120),
+    decimals: Number.isFinite(Number(row.decimals)) ? Number(row.decimals) : 18,
+    logo_uri: row.logo_uri ? sanitizeDbText(row.logo_uri, "", 500) || null : null,
+    chain_id: BASE_CHAIN_ID,
+    is_active: true,
+    source: sanitizeDbText(row.source, "unknown", 180),
+    liquidity_usd: Number.isFinite(Number(row.liquidity_usd)) ? Number(row.liquidity_usd) : null,
+    last_checked: new Date().toISOString(),
+  };
+}
+
+async function upsertTokenRows(rows: TokenWhitelistRow[]): Promise<TokenUpsertResult> {
+  if (rows.length === 0) return { written: 0, skipped: 0, errors: [] };
+
+  const payload = rows.map(toTokenUpsertRow);
+  const { error } = await supabase.from("tokens").upsert(payload, {
+    onConflict: "address",
+  });
+
+  if (!error) {
+    return { written: rows.length, skipped: 0, errors: [] };
+  }
+
+  if (rows.length === 1) {
+    return {
+      written: 0,
+      skipped: 1,
+      errors: [`${rows[0].address}: ${error.message}`],
+    };
+  }
+
+  const mid = Math.ceil(rows.length / 2);
+  const [left, right] = await Promise.all([
+    upsertTokenRows(rows.slice(0, mid)),
+    upsertTokenRows(rows.slice(mid)),
+  ]);
+
+  return {
+    written: left.written + right.written,
+    skipped: left.skipped + right.skipped,
+    errors: [...left.errors, ...right.errors].slice(0, 12),
   };
 }
 
@@ -1361,9 +1426,11 @@ export async function syncWhitelistFromOnchainDexes(args: {
     if (args.delayMs) await sleep(args.delayMs);
   }
 
-  const selected = Array.from(bestByToken.values())
-    .sort((a, b) => b.liquidityUSD - a.liquidityUSD)
-    .slice(0, args.maxTokens);
+  const sortedCandidates = Array.from(bestByToken.values())
+    .sort((a, b) => b.liquidityUSD - a.liquidityUSD);
+  const selected = args.maxTokens > 0
+    ? sortedCandidates.slice(0, args.maxTokens)
+    : sortedCandidates;
   const rows: TokenWhitelistRow[] = [];
 
   for (const candidate of selected) {
@@ -1395,6 +1462,10 @@ export async function syncWhitelistFromOnchainDexes(args: {
     if (error) throw new Error(error.message);
   }
 
+  let tokensWritten = 0;
+  let tokensSkipped = 0;
+  const upsertErrors: string[] = [];
+
   for (let i = 0; i < rows.length; i += 500) {
     const chunkRows = rows.slice(i, i + 500);
     const existingByAddress = new Map<string, number>();
@@ -1411,24 +1482,18 @@ export async function syncWhitelistFromOnchainDexes(args: {
     const chunk = chunkRows
       .filter((row) => Number(row.liquidity_usd || 0) >= (existingByAddress.get(row.address.toLowerCase()) || 0))
       .map((row) => ({
-      address: row.address,
-      symbol: row.symbol,
-      name: row.name,
-      decimals: row.decimals,
-      logo_uri: row.logo_uri,
-      chain_id: BASE_CHAIN_ID,
-      is_active: true,
-      source: row.source,
-      liquidity_usd: row.liquidity_usd,
-      last_checked: new Date().toISOString(),
-    }));
+        ...row,
+        symbol: sanitizeDbText(row.symbol, `${row.address.slice(0, 6)}...${row.address.slice(-4)}`, 32),
+        name: sanitizeDbText(row.name, row.symbol, 120),
+        source: sanitizeDbText(row.source, "onchain", 180),
+      }));
 
     if (chunk.length === 0) continue;
 
-    const { error } = await supabase.from("tokens").upsert(chunk, {
-      onConflict: "address",
-    });
-    if (error) throw new Error(error.message);
+    const result = await upsertTokenRows(chunk);
+    tokensWritten += result.written;
+    tokensSkipped += result.skipped;
+    upsertErrors.push(...result.errors);
   }
 
   return {
@@ -1436,6 +1501,9 @@ export async function syncWhitelistFromOnchainDexes(args: {
     logErrors: scan.errors,
     tokensConsidered: bestByToken.size,
     tokensUpserted: rows.length,
+    tokensWritten,
+    tokensSkipped,
+    upsertErrors: upsertErrors.slice(0, 12),
   };
 }
 
@@ -1660,6 +1728,138 @@ export async function syncWhitelistFromBlockscoutDexScreener(args: {
   };
 }
 
+export async function syncWhitelistFromPoolEventsDexScreener(args: {
+  fromBlock?: number;
+  toBlock?: number;
+  blockStep: number;
+  maxTokens: number;
+  minLiquidityUSD: number;
+  replaceActive?: boolean;
+  delayMs?: number;
+}) {
+  const scan = await scanOnchainPools({
+    fromBlock: args.fromBlock,
+    toBlock: args.toBlock,
+    blockStep: args.blockStep,
+    delayMs: 0,
+  });
+  const pools = scan.pools;
+  if (pools.length === 0 && scan.errors.length > 0) {
+    throw new Error(`Pool-event scan failed: ${scan.errors.join("; ")}`);
+  }
+
+  const tokenAddresses = Array.from(
+    new Set(
+      pools
+        .flatMap((pool) => [pool.token0, pool.token1])
+        .map((address) => normalizeAddress(address).toLowerCase()),
+    ),
+  ).map((address) => normalizeAddress(address));
+
+  const bestByToken = new Map<string, TokenWhitelistRow>();
+  let pairsScanned = 0;
+  const batchSize = 30;
+
+  for (let i = 0; i < tokenAddresses.length; i += batchSize) {
+    const batch = tokenAddresses.slice(i, i + batchSize);
+    const pairs = await fetchDexScreenerPairs(batch);
+    pairsScanned += pairs.length;
+
+    for (const pair of pairs) {
+      if (String(pair.chainId || "").toLowerCase() !== "base") continue;
+      const dexSource = getDexScreenerDexSource(pair);
+      if (!dexSource) continue;
+
+      const liquidityUSD = parsePositiveNumber(pair.liquidity?.usd);
+      if (liquidityUSD < args.minLiquidityUSD) continue;
+
+      const pairTokens = [
+        { token: pair.baseToken, usePairImage: true },
+        { token: pair.quoteToken, usePairImage: false },
+      ];
+
+      for (const { token, usePairImage } of pairTokens) {
+        if (!token?.address || !isAddress(token.address)) continue;
+
+        const address = normalizeAddress(token.address);
+        const key = address.toLowerCase();
+        const existing = bestByToken.get(key);
+        if (existing && Number(existing.liquidity_usd || 0) >= liquidityUSD) continue;
+
+        const fallbackSymbol = `${address.slice(0, 6)}...${address.slice(-4)}`;
+        bestByToken.set(key, {
+          address,
+          symbol: sanitizeDbText(token.symbol, fallbackSymbol, 32),
+          name: sanitizeDbText(token.name, token.symbol || fallbackSymbol, 120),
+          decimals: 18,
+          logo_uri: usePairImage ? pair.info?.imageUrl || null : null,
+          liquidity_usd: liquidityUSD,
+          source: `pool-events:${dexSource}:${pair.pairAddress || "unknown"}`,
+        });
+      }
+    }
+
+    if (args.delayMs && i + batchSize < tokenAddresses.length) {
+      await sleep(args.delayMs);
+    }
+  }
+
+  const rows = Array.from(bestByToken.values())
+    .sort((a, b) => Number(b.liquidity_usd || 0) - Number(a.liquidity_usd || 0))
+    .slice(0, args.maxTokens);
+
+  if (args.replaceActive) {
+    const { error } = await supabase
+      .from("tokens")
+      .update({
+        is_active: false,
+        last_checked: new Date().toISOString(),
+      })
+      .eq("chain_id", BASE_CHAIN_ID)
+      .like("source", "pool-events:%");
+    if (error) throw new Error(error.message);
+  }
+
+  let tokensWritten = 0;
+  let tokensSkipped = 0;
+  const upsertErrors: string[] = [];
+
+  for (let i = 0; i < rows.length; i += 500) {
+    const chunkRows = rows.slice(i, i + 500);
+    const existingByAddress = new Map<string, number>();
+    const { data: existingRows } = await supabase
+      .from("tokens")
+      .select("address,liquidity_usd")
+      .in("address", chunkRows.map((row) => row.address));
+
+    for (const existing of (existingRows || []) as Array<{ address?: string; liquidity_usd?: string | number | null }>) {
+      if (existing.address) {
+        existingByAddress.set(existing.address.toLowerCase(), Number(existing.liquidity_usd || 0));
+      }
+    }
+
+    const chunk = chunkRows.filter(
+      (row) => Number(row.liquidity_usd || 0) >= (existingByAddress.get(row.address.toLowerCase()) || 0),
+    );
+    const result = await upsertTokenRows(chunk);
+    tokensWritten += result.written;
+    tokensSkipped += result.skipped;
+    upsertErrors.push(...result.errors);
+  }
+
+  return {
+    poolsScanned: pools.length,
+    tokenCandidates: tokenAddresses.length,
+    pairsScanned,
+    logErrors: scan.errors,
+    tokensWithLiquidity: bestByToken.size,
+    tokensUpserted: rows.length,
+    tokensWritten,
+    tokensSkipped,
+    upsertErrors: upsertErrors.slice(0, 12),
+  };
+}
+
 export async function syncWhitelistFromGeckoTerminal(args: {
   startPage?: number;
   maxPages: number;
@@ -1789,7 +1989,7 @@ dustsweepRoutes.post("/admin/sync-whitelist", async (c) => {
     const result = await syncWhitelistFromGeckoTerminal({
       startPage: Math.max(1, Number(body.startPage || 1)),
       maxPages: Math.max(1, Math.min(250, Number(body.maxPages || 200))),
-      maxTokens: Math.max(1, Math.min(5000, Number(body.maxTokens || 4000))),
+      maxTokens: Math.max(1, Math.min(50_000, Number(body.maxTokens || 4000))),
       minLiquidityUSD: Math.max(0, Number(body.minLiquidityUSD ?? MIN_WL_LIQUIDITY_USD)),
       replaceActive: Boolean(body.replaceActive),
       delayMs: Math.max(
@@ -1802,6 +2002,55 @@ dustsweepRoutes.post("/admin/sync-whitelist", async (c) => {
   } catch (error) {
     console.error("[dustsweep/admin/sync-whitelist] Error:", error);
     return c.json(errorJson((error as Error).message || "Failed to sync whitelist"), 500);
+  }
+});
+
+dustsweepRoutes.get("/admin/token-counts", async (c) => {
+  const expected = process.env.DUST_SWEEP_ADMIN_TOKEN || process.env.QUEST_ADMIN_TOKEN;
+  if (!expected || c.req.header("x-admin-token") !== expected) {
+    return c.json(errorJson("Unauthorized"), 401);
+  }
+
+  try {
+    const countFor = async (sourceLike?: string) => {
+      let query = supabase
+        .from("tokens")
+        .select("id", { count: "exact", head: true })
+        .eq("chain_id", BASE_CHAIN_ID)
+        .eq("is_active", true);
+
+      if (sourceLike) {
+        query = query.like("source", sourceLike);
+      }
+
+      const { count, error } = await query;
+      if (error) throw new Error(error.message);
+      return count || 0;
+    };
+
+    const [activeTotal, onchain, poolEvents, dexscreener, geckoterminal, defaults] = await Promise.all([
+      countFor(),
+      countFor("onchain:%"),
+      countFor("pool-events:%"),
+      countFor("dexscreener:%"),
+      countFor("geckoterminal:%"),
+      countFor("default"),
+    ]);
+
+    return c.json({
+      success: true,
+      activeTotal,
+      sources: {
+        onchain,
+        poolEvents,
+        dexscreener,
+        geckoterminal,
+        default: defaults,
+      },
+    });
+  } catch (error) {
+    console.error("[dustsweep/admin/token-counts] Error:", error);
+    return c.json(errorJson((error as Error).message || "Failed to count whitelist tokens"), 500);
   }
 });
 
@@ -1828,7 +2077,7 @@ dustsweepRoutes.post("/admin/sync-whitelist-blockscout", async (c) => {
   try {
     const result = await syncWhitelistFromBlockscoutDexScreener({
       maxPages: Math.max(1, Math.min(500, Number(body.maxPages || 120))),
-      maxTokens: Math.max(1, Math.min(5000, Number(body.maxTokens || 4000))),
+      maxTokens: Math.max(1, Math.min(50_000, Number(body.maxTokens || 4000))),
       minLiquidityUSD: Math.max(0, Number(body.minLiquidityUSD ?? MIN_WL_LIQUIDITY_USD)),
       replaceActive: Boolean(body.replaceActive),
       delayMs: Math.max(
@@ -1873,7 +2122,7 @@ dustsweepRoutes.post("/admin/sync-whitelist-onchain", async (c) => {
       fromBlock: body.fromBlock === undefined ? undefined : Math.max(0, Number(body.fromBlock)),
       toBlock: body.toBlock === undefined ? undefined : Math.max(0, Number(body.toBlock)),
       blockStep: Math.max(1_000, Math.min(250_000, Number(body.blockStep || 50_000))),
-      maxTokens: Math.max(1, Math.min(5000, Number(body.maxTokens || 4000))),
+      maxTokens: Math.max(1, Math.min(50_000, Number(body.maxTokens || 4000))),
       minLiquidityUSD: Math.max(0, Number(body.minLiquidityUSD ?? MIN_WL_LIQUIDITY_USD)),
       replaceActive: Boolean(body.replaceActive),
       delayMs: Math.max(
@@ -1886,6 +2135,51 @@ dustsweepRoutes.post("/admin/sync-whitelist-onchain", async (c) => {
   } catch (error) {
     console.error("[dustsweep/admin/sync-whitelist-onchain] Error:", error);
     return c.json(errorJson((error as Error).message || "Failed to sync onchain whitelist"), 500);
+  }
+});
+
+dustsweepRoutes.post("/admin/sync-whitelist-pool-events", async (c) => {
+  const expected = process.env.DUST_SWEEP_ADMIN_TOKEN || process.env.QUEST_ADMIN_TOKEN;
+  if (!expected || c.req.header("x-admin-token") !== expected) {
+    return c.json(errorJson("Unauthorized"), 401);
+  }
+
+  const body: {
+    fromBlock?: number;
+    toBlock?: number;
+    blockStep?: number;
+    maxTokens?: number;
+    minLiquidityUSD?: number;
+    replaceActive?: boolean;
+    delayMs?: number;
+  } = await c.req.json<{
+    fromBlock?: number;
+    toBlock?: number;
+    blockStep?: number;
+    maxTokens?: number;
+    minLiquidityUSD?: number;
+    replaceActive?: boolean;
+    delayMs?: number;
+  }>().catch(() => ({}));
+
+  try {
+    const result = await syncWhitelistFromPoolEventsDexScreener({
+      fromBlock: body.fromBlock === undefined ? undefined : Math.max(0, Number(body.fromBlock)),
+      toBlock: body.toBlock === undefined ? undefined : Math.max(0, Number(body.toBlock)),
+      blockStep: Math.max(1_000, Math.min(250_000, Number(body.blockStep || 50_000))),
+      maxTokens: Math.max(1, Math.min(50_000, Number(body.maxTokens || 50_000))),
+      minLiquidityUSD: Math.max(0, Number(body.minLiquidityUSD ?? MIN_WL_LIQUIDITY_USD)),
+      replaceActive: Boolean(body.replaceActive),
+      delayMs: Math.max(
+        0,
+        Math.min(5000, Number(body.delayMs ?? process.env.DUST_SWEEP_POOL_EVENT_SYNC_DELAY_MS ?? 150)),
+      ),
+    });
+
+    return c.json({ success: true, ...result });
+  } catch (error) {
+    console.error("[dustsweep/admin/sync-whitelist-pool-events] Error:", error);
+    return c.json(errorJson((error as Error).message || "Failed to sync pool-event whitelist"), 500);
   }
 });
 
