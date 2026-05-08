@@ -36,6 +36,7 @@ const startQuestRecent = new Map<
     value: {
       success: boolean;
       nextVerificationAt?: string;
+      status?: string;
       error?: string;
       idempotent?: boolean;
     };
@@ -46,6 +47,7 @@ const startQuestInflight = new Map<
   Promise<{
     success: boolean;
     nextVerificationAt?: string;
+    status?: string;
     error?: string;
     idempotent?: boolean;
   }>
@@ -214,6 +216,7 @@ export async function startQuest(questId: string, address: string) {
       parseJson<{
         success: boolean;
         nextVerificationAt?: string;
+        status?: string;
         error?: string;
         idempotent?: boolean;
       }>(response)

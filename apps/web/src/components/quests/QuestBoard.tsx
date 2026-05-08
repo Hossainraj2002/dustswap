@@ -239,6 +239,14 @@ function StatusPill({ quest }: { quest: QuestItem }) {
     );
   }
 
+  if (quest.progress?.status === "pending_review") {
+    return (
+      <span className="rounded-full border border-sky-200/90 bg-sky-50/90 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-sky-700">
+        Pending Review
+      </span>
+    );
+  }
+
   if (quest.progressWindow === "daily" || quest.progressWindow === "weekly") {
     return (
       <span className="rounded-full border border-sky-200/90 bg-sky-50/90 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-sky-700">
@@ -620,7 +628,12 @@ export function QuestBoard() {
         throw new Error(response.error || "Failed to start quest");
       }
 
-      refreshWithMessage("Quest opened. Come back when verify unlocks.", "quest-started");
+      refreshWithMessage(
+        response.status === "pending_review"
+          ? "Task submitted for review."
+          : "Quest opened. Come back when verify unlocks.",
+        "quest-started"
+      );
     } catch (startError) {
       setError(getDisplayError(startError));
     } finally {
@@ -653,6 +666,9 @@ export function QuestBoard() {
         emitDataInvalidation("quests", "quest-retry-required");
       } else if (!response.success) {
         throw new Error(response.error || "Verification failed");
+      } else if (response.status === "pending_review") {
+        setMessage(response.message || "Task submitted for review.");
+        emitDataInvalidation("quests", "delay-quest-pending-review");
       } else {
         setMessage(`Quest completed. You earned ${formatPoints(response.awardedPoints || 0)}.`);
         clearPointsSummaryCache(address);
@@ -723,6 +739,7 @@ export function QuestBoard() {
     const progressValue = Number(quest.progress?.value || 0);
     const percent = getProgressPercent(progressValue, quest.targetValue);
     const isDone = Boolean(quest.progress?.completedAt);
+    const isPendingReview = quest.progress?.status === "pending_review";
     const isPending = Boolean(pending[quest.id]);
     const inlineError = questInlineErrors[quest.id];
     const canVerifyDelay =
@@ -887,24 +904,38 @@ export function QuestBoard() {
               <button
                 type="button"
                 onClick={() => void handleDelayQuestStart(quest)}
-                disabled={(!questUrl && !xLocked) || isPending || isDone}
+                disabled={(!questUrl && !xLocked) || isPending || isDone || isPendingReview}
                 className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-900 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                {isDone ? "Task Completed" : isPending ? "Opening..." : primaryLabel}
+                {isDone
+                  ? "Task Completed"
+                  : isPendingReview
+                    ? "Pending Review"
+                    : isPending
+                      ? "Opening..."
+                      : primaryLabel}
               </button>
               <button
                 type="button"
                 onClick={() => void handleDelayVerify(quest)}
-                disabled={(!xLocked && !canVerifyDelay) || isPending || isDone || isConnectingX}
+                disabled={
+                  (!xLocked && !canVerifyDelay) ||
+                  isPending ||
+                  isDone ||
+                  isConnectingX ||
+                  isPendingReview
+                }
                 className="w-full rounded-2xl bg-sky-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-40"
               >
                 {xLocked
                   ? "Connect X"
                   : isDone
                     ? "Verified"
-                    : isPending
-                      ? "Checking..."
-                      : countdownLabel || "Verify"}
+                    : isPendingReview
+                      ? "Pending Review"
+                      : isPending
+                        ? "Checking..."
+                        : countdownLabel || "Verify"}
               </button>
               {quest.progress?.status === "retry_required" ? (
                 <p className="text-[11px] text-amber-700">

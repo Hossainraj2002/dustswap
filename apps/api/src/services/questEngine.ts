@@ -144,6 +144,7 @@ type StartDelayQuestResult = {
   success: true;
   questId: string;
   nextVerificationAt?: string | null;
+  status?: string;
   idempotent?: boolean;
 };
 
@@ -972,12 +973,14 @@ export class QuestEngine {
   private buildStartDelayQuestResult(
     questId: string,
     nextVerificationAt?: string | null,
-    idempotent = false
+    idempotent = false,
+    status?: string
   ) {
     return {
       success: true,
       questId,
       nextVerificationAt,
+      ...(status ? { status } : {}),
       ...(idempotent ? { idempotent: true } : {}),
     } satisfies StartDelayQuestResult;
   }
@@ -1806,7 +1809,8 @@ export class QuestEngine {
           const existingResult = this.buildStartDelayQuestResult(
             quest.id,
             existingProgress.next_verification_at,
-            true
+            true,
+            existingProgress.status
           );
 
           runtimeCache.set(cacheKey, existingResult, START_DELAY_QUEST_DEDUPE_TTL_MS);
@@ -1827,10 +1831,13 @@ export class QuestEngine {
       }
 
       const delaySeconds =
-        quest.platform === "x" && quest.action_type === "follow"
+        quest.platform === "x" &&
+        (quest.action_type === "follow" || quest.action_type === "repost")
           ? 0
           : toNumber(rules.delaySeconds, 20);
       const nowIso = now.toISOString();
+      const isRepostPendingReviewQuest =
+        quest.platform === "x" && quest.action_type === "repost";
       const result = await runtimeCache.singleFlight(`${cacheKey}:inflight`, async () => {
         const existing = await this.getProgress(userId, quest.id, cycleKey);
         if (
@@ -1841,7 +1848,8 @@ export class QuestEngine {
           return this.buildStartDelayQuestResult(
             quest.id,
             existing.next_verification_at,
-            true
+            true,
+            existing.status
           );
         }
 
@@ -1851,18 +1859,32 @@ export class QuestEngine {
           cycleKey,
           existing,
           updates: {
-            status: "in_progress",
+            status: isRepostPendingReviewQuest ? "pending_review" : "in_progress",
+            progress: 0,
+            target_value: quest.target_value,
             opened_at: nowIso,
-            next_verification_at: new Date(
-              now.getTime() + delaySeconds * 1000
-            ).toISOString(),
+            next_verification_at: isRepostPendingReviewQuest
+              ? null
+              : new Date(now.getTime() + delaySeconds * 1000).toISOString(),
+            verified_by_api: isRepostPendingReviewQuest ? false : existing?.verified_by_api ?? false,
+            verified_at: isRepostPendingReviewQuest ? nowIso : existing?.verified_at ?? null,
+            metadata: isRepostPendingReviewQuest
+              ? {
+                  ...(existing?.metadata || {}),
+                  review_status: "pending",
+                  pending_review_at: nowIso,
+                  review_reason: "repost_task_opened",
+                }
+              : existing?.metadata ?? {},
           },
         });
 
         this.invalidateQuestBoardCache(normalizedAddress);
         return this.buildStartDelayQuestResult(
           quest.id,
-          progress.next_verification_at
+          progress.next_verification_at,
+          false,
+          progress.status
         );
       });
 
@@ -2008,6 +2030,60 @@ export class QuestEngine {
         success: true,
         status: "completed",
         awardedPoints: completed.awardedPoints,
+      };
+    }
+
+    if (quest.platform === "x" && quest.action_type === "repost") {
+      const connectedAccount = await xVerificationService.requireConnectedAccount(user.id);
+      const nowIso = new Date().toISOString();
+
+      const updated = await this.upsertProgress({
+        userId: user.id,
+        quest,
+        cycleKey,
+        existing: progress,
+        updates: {
+          status: "pending_review",
+          progress: 0,
+          target_value: quest.target_value,
+          opened_at: progress?.opened_at || nowIso,
+          next_verification_at: null,
+          verification_attempts: (progress?.verification_attempts || 0) + 1,
+          verified_by_api: false,
+          verified_at: nowIso,
+          metadata: {
+            ...(progress?.metadata || {}),
+            review_status: "pending",
+            pending_review_at: nowIso,
+            review_reason: "repost_task_submitted",
+            source_x_user_id: connectedAccount.xUserId,
+            source_x_username: connectedAccount.username,
+          },
+        },
+      });
+
+      await this.logVerificationAttempt(
+        user.id,
+        quest.id,
+        updated.cycle_key,
+        "pending_review",
+        {
+          verificationType: quest.verification_type,
+          actionType: quest.action_type,
+          sourceXUserId: connectedAccount.xUserId,
+        },
+        {
+          verifiedByApi: false,
+          attempts: updated.verification_attempts,
+        }
+      );
+
+      this.invalidateQuestBoardCache(normalizedAddress);
+      return {
+        success: true,
+        status: "pending_review",
+        awardedPoints: 0,
+        message: "Task submitted for review.",
       };
     }
 
@@ -2237,6 +2313,76 @@ export class QuestEngine {
       parentTweetId,
       awardedPoints: completed.awardedPoints,
     };
+  }
+
+  async completePendingReviewProgress(
+    progressId: number,
+    metadata: Record<string, unknown> = {}
+  ) {
+    const { data: progressRow, error: progressError } = await supabase
+      .from("quest_progress")
+      .select("*")
+      .eq("id", progressId)
+      .maybeSingle();
+
+    if (progressError) {
+      throw new Error(`Failed to load pending quest progress: ${progressError.message}`);
+    }
+
+    const progress = (progressRow as QuestProgressRecord | null) ?? null;
+    if (!progress) {
+      throw new Error("Quest progress was not found");
+    }
+
+    if (progress.status !== "pending_review") {
+      throw new Error("Quest progress is not pending review");
+    }
+
+    if (progress.completed_at || progress.rewarded_at) {
+      return {
+        progress,
+        awardedPoints: 0,
+      };
+    }
+
+    const { data: questRow, error: questError } = await supabase
+      .from("quests")
+      .select("*")
+      .eq("id", progress.quest_id)
+      .maybeSingle();
+
+    if (questError || !questRow) {
+      throw new Error(`Failed to load pending quest: ${questError?.message || "not found"}`);
+    }
+
+    const quest = questRow as QuestRecord;
+    if (quest.platform !== "x" || quest.action_type !== "repost") {
+      throw new Error("Only X repost quests can be completed from pending review");
+    }
+
+    const { data: userRow, error: userError } = await supabase
+      .from("users")
+      .select("id, address")
+      .eq("id", progress.user_id)
+      .maybeSingle();
+
+    if (userError || !userRow?.address) {
+      throw new Error(`Failed to load pending quest user: ${userError?.message || "not found"}`);
+    }
+
+    return this.completeQuest(
+      Number(userRow.id),
+      normalizeAddress(String(userRow.address)),
+      quest,
+      progress.cycle_key,
+      {
+        verificationType: quest.verification_type,
+        review_status: "approved",
+        reviewed_at: new Date().toISOString(),
+        verified_by_api: false,
+        ...metadata,
+      }
+    );
   }
 
   async syncRecentSwapActivity(address: string, options?: { force?: boolean }) {

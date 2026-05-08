@@ -155,6 +155,18 @@ const EMPTY_FORM: AdminQuestInput = {
 };
 
 function getRulesExample(form: AdminQuestInput) {
+  if (form.platform === "x" && form.actionType === "reply") {
+    return `{
+  "requiredAnyOf": ["@dustswaponbase", "#dustswaponbase"]
+}`;
+  }
+
+  if (form.platform === "x" && form.actionType === "repost") {
+    return `{
+  "dailyReview": true
+}`;
+  }
+
   if (form.verificationType === "x_post_link") {
     return `{
   "requiredAnyOf": ["@dustswaponbase", "#dustswaponbase", "@akbarx402"],
@@ -571,7 +583,7 @@ export default function AdminQuestsPage() {
                 {
                   key: "verificationType",
                   label: "Verification",
-                  help: "Defines how the backend confirms completion. swap_volume reads swap progress, x_post_link checks a pasted tweet URL against the connected X user ID plus your any-of tag or mention rules, delay_gate waits 20 seconds, and X follow quests use GetX follow verification.",
+                  help: "Defines how the backend confirms completion. swap_volume reads swap progress. x_post_link verifies pasted post or reply links with GetX. X follow tasks use GetX follow checks. X repost tasks move to daily review after the CTA is opened.",
                   options: ["swap_volume", "x_post_link", "delay_gate", "delay_gate_retry"],
                 },
                 {
@@ -826,6 +838,8 @@ export default function AdminQuestsPage() {
               <p className="mt-1">
                 <code>delaySeconds</code> controls the wait time before verify.
                 <code className="ml-1">targetXUserId</code> or <code>targetXUsername</code> identifies the account for GetX follow checks.
+                <code className="ml-1">Reply tasks</code> use the CTA URL as the parent post and verify the pasted reply link.
+                <code className="ml-1">Repost tasks</code> use the CTA URL and move opened tasks into daily review.
                 <code className="ml-1">requiredAnyOf</code> means the post only needs one of those allowed X mentions or hashtags.
                 <code className="ml-1">x_post_link</code> also checks that the tweet author ID matches the connected X account.
                 <code className="ml-1">externalUrl</code> is the page users open.
