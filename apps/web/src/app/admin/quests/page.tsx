@@ -203,6 +203,66 @@ function getRulesExample(form: AdminQuestInput) {
 }`;
 }
 
+function getVerificationGuide(form: AdminQuestInput) {
+  if (form.actionType === "swap_volume" || form.actionType === "swap_count") {
+    return {
+      recommended: "swap_volume",
+      text: "Swap quests: use swap_volume. The backend reads captured swap progress, so CTA URL can point to /swap.",
+    };
+  }
+
+  if (form.platform === "x" && form.actionType === "follow") {
+    return {
+      recommended: "delay_gate",
+      text: "X follow quests: use delay_gate. Set CTA URL to the X profile or follow intent, and set targetXUsername or targetXUserId in rules. Backend verifies follow with GetX after X OAuth connection.",
+    };
+  }
+
+  if (form.platform === "x" && form.actionType === "reply") {
+    return {
+      recommended: "x_post_link",
+      text: "X reply quests: use x_post_link. Set CTA URL to the parent post. User pastes their reply link, and backend verifies author, parent post, and required tags with GetX.",
+    };
+  }
+
+  if (form.platform === "x" && form.actionType === "post") {
+    return {
+      recommended: "x_post_link",
+      text: "X post quests: use x_post_link. User pastes their post link, and backend verifies the connected X user owns it and includes your required tags or links.",
+    };
+  }
+
+  if (form.platform === "x" && form.actionType === "repost") {
+    return {
+      recommended: "delay_gate",
+      text: "X repost quests: use delay_gate. Set CTA URL to the post. Opening the CTA submits it for daily review; the 00 UTC job awards pending rows.",
+    };
+  }
+
+  if (form.verificationType === "delay_gate_retry") {
+    return {
+      recommended: "delay_gate_retry",
+      text: "Use delay_gate_retry only when you intentionally want the old retry-style visit flow.",
+    };
+  }
+
+  return {
+    recommended: "delay_gate",
+    text: "Visit or like tasks: use delay_gate. Set CTA URL to the destination users should open.",
+  };
+}
+
+function getVerificationOptionLabel(option: string) {
+  const labels: Record<string, string> = {
+    swap_volume: "swap_volume - swap progress",
+    x_post_link: "x_post_link - post or reply link",
+    delay_gate: "delay_gate - open CTA / follow / repost",
+    delay_gate_retry: "delay_gate_retry - retry visit flow",
+  };
+
+  return labels[option] || option;
+}
+
 function HelpLabel({
   label,
   help,
@@ -254,6 +314,7 @@ export default function AdminQuestsPage() {
   const [isSaving, setIsSaving] = useState(false);
   const [isUnlocked, setIsUnlocked] = useState(false);
   const rulesExample = getRulesExample(form);
+  const verificationGuide = getVerificationGuide(form);
   const parsedRules = parseRulesText(rulesText);
   const chainRuleValue = getRuleChainValue(parsedRules);
   const tokenRuleAddress = getRuleTokenAddress(parsedRules);
@@ -546,6 +607,14 @@ export default function AdminQuestsPage() {
                 </label>
               ))}
 
+              <div className="sm:col-span-2 rounded-2xl border border-sky-100 bg-sky-50/70 px-4 py-3 text-xs leading-6 text-sky-900">
+                <p>
+                  <span className="font-semibold">Recommended verification:</span>{" "}
+                  <code>{verificationGuide.recommended}</code>
+                </p>
+                <p className="mt-1">{verificationGuide.text}</p>
+              </div>
+
               {[
                 {
                   key: "campaignKey",
@@ -643,7 +712,9 @@ export default function AdminQuestsPage() {
                   >
                     {field.options.map((option) => (
                       <option key={option} value={option}>
-                        {option}
+                        {field.key === "verificationType"
+                          ? getVerificationOptionLabel(option)
+                          : option}
                       </option>
                     ))}
                   </select>
