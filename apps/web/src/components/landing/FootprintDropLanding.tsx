@@ -11,7 +11,12 @@ import { useBaseChainSwitch } from "@/hooks/useBaseChainSwitch";
 import { useWalletConnection } from "@/hooks/useWalletConnection";
 import { DATA_SUFFIX } from "@/lib/builderCode";
 import { emitDataInvalidation } from "@/lib/clientEvents";
-import { claimFootprintDrop, lookupFootprintDrop, type FootprintDropStatus } from "@/lib/footprintDrop";
+import {
+  claimFootprintDrop,
+  lookupFootprintDrop,
+  verifyFootprintFollow,
+  type FootprintDropStatus,
+} from "@/lib/footprintDrop";
 import {
   buildBasePaymasterCapabilities,
   isPaymasterEnabled,
@@ -32,6 +37,11 @@ import {
   saveStoredSiweSession,
   verifySiweSession,
 } from "@/lib/siweAuth";
+import {
+  buildXAccountMessage,
+  createXConnectUrl,
+  fetchXAccount,
+} from "@/lib/quests";
 import { BASE_CHAIN_ID, USDC_ADDRESS } from "@/lib/tokens";
 
 const NAV_ITEMS = [
@@ -42,7 +52,6 @@ const NAV_ITEMS = [
 ] as const;
 
 const FOLLOW_VERIFY_DELAY_MS = 20_000;
-const FOLLOW_GATE_FAKE_FAILURE_COUNT = 1;
 const FOLLOW_GATE_STORAGE_PREFIX = "dustswap:footprint-follow-gate";
 const REFERRAL_CODE_PATTERN = /^DUST-[A-Z0-9]{5}$/;
 const FOOTPRINT_FOLLOW_TARGETS = [
@@ -62,13 +71,17 @@ type ReferralBanner =
     }
   | null;
 
+type ConnectedXAccountState = {
+  username?: string | null;
+  connected?: boolean;
+  connectedAt?: string | null;
+} | null;
+
 type FootprintFollowTaskKey = (typeof FOOTPRINT_FOLLOW_TARGETS)[number]["key"];
 
 type FootprintFollowTaskState = {
   openedAt: number | null;
   verifiedAt: number | null;
-  retryRequiredAt: number | null;
-  fakeFailuresServed: number;
 };
 
 type FootprintFollowGateState = Record<FootprintFollowTaskKey, FootprintFollowTaskState>;
@@ -168,8 +181,6 @@ function createEmptyFollowTaskState(): FootprintFollowTaskState {
   return {
     openedAt: null,
     verifiedAt: null,
-    retryRequiredAt: null,
-    fakeFailuresServed: 0,
   };
 }
 
@@ -185,11 +196,7 @@ function createEmptyFollowGateState(): FootprintFollowGateState {
 
 function isFollowGateStateEmpty(state: FootprintFollowGateState) {
   return Object.values(state).every(
-    (taskState) =>
-      !taskState.openedAt &&
-      !taskState.verifiedAt &&
-      !taskState.retryRequiredAt &&
-      taskState.fakeFailuresServed === 0
+    (taskState) => !taskState.openedAt && !taskState.verifiedAt
   );
 }
 
@@ -205,17 +212,11 @@ function normalizeStoredFollowTaskState(value: unknown): FootprintFollowTaskStat
   const candidate = value as {
     openedAt?: unknown;
     verifiedAt?: unknown;
-    retryRequiredAt?: unknown;
-    fakeFailuresServed?: unknown;
   };
 
   return {
     openedAt: typeof candidate.openedAt === "number" ? candidate.openedAt : null,
     verifiedAt: typeof candidate.verifiedAt === "number" ? candidate.verifiedAt : null,
-    retryRequiredAt:
-      typeof candidate.retryRequiredAt === "number" ? candidate.retryRequiredAt : null,
-    fakeFailuresServed:
-      typeof candidate.fakeFailuresServed === "number" ? candidate.fakeFailuresServed : 0,
   };
 }
 
@@ -258,13 +259,11 @@ function readFollowGateState(address?: string): FootprintFollowGateState {
     for (const { key } of FOOTPRINT_FOLLOW_TARGETS) {
       const storedTask = parsed[key];
       nextState[key] = storedTask
-        ? normalizeStoredFollowTaskState(storedTask)
-        : {
-            openedAt: getLegacyFollowOpenedAt(parsed.dustswapOpened, legacyStartedAt),
-            verifiedAt: parsed.dustswapOpened ? legacyVerifiedAt : null,
-            retryRequiredAt: null,
-            fakeFailuresServed: legacyVerifiedAt ? FOLLOW_GATE_FAKE_FAILURE_COUNT : 0,
-          };
+          ? normalizeStoredFollowTaskState(storedTask)
+          : {
+              openedAt: getLegacyFollowOpenedAt(parsed.dustswapOpened, legacyStartedAt),
+              verifiedAt: parsed.dustswapOpened ? legacyVerifiedAt : null,
+            };
     }
 
     return nextState;
@@ -620,6 +619,7 @@ function ClaimFollowGate({
   remainingSecondsByTask,
   verifiedTasksCount,
   isVerified,
+  isXConnected,
   isApplyingReferral,
   claimState,
   onOpenTask,
@@ -629,6 +629,7 @@ function ClaimFollowGate({
   remainingSecondsByTask: Record<FootprintFollowTaskKey, number>;
   verifiedTasksCount: number;
   isVerified: boolean;
+  isXConnected: boolean;
   isApplyingReferral: boolean;
   claimState: "idle" | "claiming" | "claimed";
   onOpenTask: (taskKey: FootprintFollowTaskKey, href: string) => void;
@@ -662,23 +663,22 @@ function ClaimFollowGate({
             const taskState = getFollowTaskState(followGateState, task.key);
             const opened = Boolean(taskState.openedAt);
             const verified = Boolean(taskState.verifiedAt);
-            const retryRequired = Boolean(taskState.retryRequiredAt) && !verified;
             const remainingSeconds = remainingSecondsByTask[task.key];
             const actionDisabled =
               claimState === "claiming" ||
               isApplyingReferral ||
               verified ||
-              (opened && !verified && !retryRequired && remainingSeconds > 0);
+              (opened && !verified && remainingSeconds > 0);
             const actionLabel = verified
               ? "Done"
-              : retryRequired
-                ? "Open again"
               : !opened
                 ? "Open"
+                : !isXConnected
+                  ? "Connect"
                 : remainingSeconds > 0
                   ? `${remainingSeconds}s`
                   : "Verify";
-            const shouldVerify = opened && !retryRequired && remainingSeconds === 0;
+            const shouldVerify = opened && remainingSeconds === 0;
 
             return (
               <div
@@ -690,8 +690,6 @@ function ClaimFollowGate({
                     "h-2.5 w-2.5 shrink-0 rounded-full",
                     verified
                       ? "bg-emerald-500"
-                      : retryRequired
-                        ? "bg-amber-400"
                         : opened
                           ? "bg-sky-500"
                           : "bg-slate-300"
@@ -710,8 +708,6 @@ function ClaimFollowGate({
                         "ml-1.5",
                         verified
                           ? "text-emerald-600"
-                          : retryRequired
-                            ? "text-amber-600"
                             : opened
                             ? "text-sky-600"
                             : "text-slate-400"
@@ -719,8 +715,6 @@ function ClaimFollowGate({
                     >
                       {verified
                         ? "Verified"
-                        : retryRequired
-                          ? "Retry"
                         : opened
                           ? remainingSeconds > 0
                             ? `${remainingSeconds}s left`
@@ -742,8 +736,6 @@ function ClaimFollowGate({
                     "inline-flex min-w-[76px] shrink-0 items-center justify-center rounded-full border px-3 py-1.5 text-[11px] font-semibold transition-colors",
                     verified
                       ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-                      : retryRequired
-                        ? "border-amber-200 bg-amber-50 text-amber-800 hover:bg-amber-100"
                       : opened && remainingSeconds > 0
                         ? "border-sky-200 bg-sky-50 text-sky-700"
                         : "border-slate-200 bg-white text-slate-900 hover:bg-slate-100",
@@ -780,23 +772,22 @@ function ClaimFollowGate({
             const taskState = getFollowTaskState(followGateState, task.key);
             const opened = Boolean(taskState.openedAt);
             const verified = Boolean(taskState.verifiedAt);
-            const retryRequired = Boolean(taskState.retryRequiredAt) && !verified;
             const remainingSeconds = remainingSecondsByTask[task.key];
             const actionDisabled =
               claimState === "claiming" ||
               isApplyingReferral ||
               verified ||
-              (opened && !verified && !retryRequired && remainingSeconds > 0);
+              (opened && !verified && remainingSeconds > 0);
             const actionLabel = verified
               ? "Verified"
-              : retryRequired
-                ? "Open again"
               : !opened
                 ? "Follow on X"
+                : !isXConnected
+                  ? "Connect X"
                 : remainingSeconds > 0
                   ? `Wait ${remainingSeconds}s`
                   : "Verify";
-            const shouldVerify = opened && !retryRequired && remainingSeconds === 0;
+            const shouldVerify = opened && remainingSeconds === 0;
 
             return (
               <div
@@ -817,8 +808,6 @@ function ClaimFollowGate({
                         "rounded-full border px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em]",
                         verified
                           ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-                          : retryRequired
-                            ? "border-amber-200 bg-amber-50 text-amber-800"
                           : opened
                             ? "border-sky-200 bg-sky-50 text-sky-700"
                             : "border-slate-200 bg-slate-50 text-slate-500"
@@ -826,8 +815,6 @@ function ClaimFollowGate({
                     >
                       {verified
                         ? "Verified"
-                        : retryRequired
-                          ? "Retry"
                         : opened
                           ? remainingSeconds > 0
                             ? `${remainingSeconds}s left`
@@ -846,8 +833,6 @@ function ClaimFollowGate({
                         "inline-flex items-center justify-center rounded-full border px-4 py-2 text-sm font-semibold transition-colors",
                         verified
                           ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-                          : retryRequired
-                            ? "border-amber-200 bg-amber-50 text-amber-800 hover:bg-amber-100"
                           : opened && remainingSeconds > 0
                             ? "border-sky-200 bg-sky-50 text-sky-700"
                             : shouldVerify
@@ -888,6 +873,7 @@ function FootprintStatusPanel({
   followTaskRemainingSeconds,
   verifiedFollowTasksCount,
   isFollowGateVerified,
+  isXConnected,
   onClaim,
   onOpenFollowTask,
   onVerifyFollowTask,
@@ -904,6 +890,7 @@ function FootprintStatusPanel({
   followTaskRemainingSeconds: Record<FootprintFollowTaskKey, number>;
   verifiedFollowTasksCount: number;
   isFollowGateVerified: boolean;
+  isXConnected: boolean;
   onClaim: () => void | Promise<void>;
   onOpenFollowTask: (
     taskKey: FootprintFollowTaskKey,
@@ -1043,6 +1030,7 @@ function FootprintStatusPanel({
           remainingSecondsByTask={followTaskRemainingSeconds}
           verifiedTasksCount={verifiedFollowTasksCount}
           isVerified={isFollowGateVerified}
+          isXConnected={isXConnected}
           isApplyingReferral={isApplyingReferral}
           claimState={claimState}
           onOpenTask={onOpenFollowTask}
@@ -1110,7 +1098,9 @@ export default function FootprintDropLanding({
   const [followGateState, setFollowGateState] = useState<FootprintFollowGateState>(
     createEmptyFollowGateState
   );
-  const [followGateTick, setFollowGateTick] = useState(0);
+  const [, setFollowGateTick] = useState(0);
+  const [xAccount, setXAccount] = useState<ConnectedXAccountState>(null);
+  const [xConnectState, setXConnectState] = useState<"idle" | "connecting">("idle");
   const blockedAutoLookupRef = useRef<Set<string>>(new Set());
   const lookupInFlightRef = useRef<Map<string, Promise<void>>>(new Map());
   const signInInFlightRef = useRef<{ key: string; promise: Promise<void> } | null>(null);
@@ -1121,6 +1111,7 @@ export default function FootprintDropLanding({
     () => (address ? getAddress(address) : undefined),
     [address]
   );
+  const isXConnected = xAccount?.connected === true;
   const claimUsdcAddress = (status?.claimConfig?.usdcAddress || USDC_ADDRESS) as `0x${string}`;
   const { data: claimUsdcBalanceRaw } = useReadContract({
     address: claimUsdcAddress,
@@ -1140,24 +1131,20 @@ export default function FootprintDropLanding({
     const requiredUsdc = BigInt(status.claimConfig.usdcAmountUnits);
     return requiredUsdc > 0n && claimUsdcBalance >= requiredUsdc ? "usdc" : "eth";
   }, [claimUsdcBalance, status?.claimConfig]);
-  const followTaskRemainingSeconds = useMemo(
-    () =>
-      FOOTPRINT_FOLLOW_TARGETS.reduce(
-        (remainingByTask, { key }) => {
-          remainingByTask[key] = getFollowTaskRemainingSeconds(
-            getFollowTaskState(followGateState, key)
-          );
-          return remainingByTask;
-        },
-        {} as Record<FootprintFollowTaskKey, number>
-      ),
-    [followGateState, followGateTick]
+  const followTaskRemainingSeconds = FOOTPRINT_FOLLOW_TARGETS.reduce(
+    (remainingByTask, { key }) => {
+      remainingByTask[key] = getFollowTaskRemainingSeconds(
+        getFollowTaskState(followGateState, key)
+      );
+      return remainingByTask;
+    },
+    {} as Record<FootprintFollowTaskKey, number>
   );
   const verifiedFollowTasksCount = FOOTPRINT_FOLLOW_TARGETS.reduce(
     (count, { key }) => count + Number(Boolean(getFollowTaskState(followGateState, key).verifiedAt)),
     0
   );
-  const isFollowGateVerified = verifiedFollowTasksCount === FOOTPRINT_FOLLOW_TARGETS.length;
+  const isFollowGateVerified = status?.footprintFollowVerified === true;
   const hasPendingFollowCountdown = FOOTPRINT_FOLLOW_TARGETS.some(
     ({ key }) => followTaskRemainingSeconds[key] > 0
   );
@@ -1173,6 +1160,30 @@ export default function FootprintDropLanding({
   useEffect(() => {
     setHasSiweSession(hasStoredSiweSession(address));
   }, [address, isConnected]);
+
+  useEffect(() => {
+    if (!connectedAddress) {
+      setXAccount(null);
+      return;
+    }
+
+    let cancelled = false;
+    void fetchXAccount(connectedAddress)
+      .then((response) => {
+        if (!cancelled && response.success) {
+          setXAccount(response.account || null);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setXAccount(null);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [connectedAddress]);
 
   useEffect(() => {
     if (!connectedAddress) {
@@ -1208,6 +1219,21 @@ export default function FootprintDropLanding({
   useEffect(() => {
     setFollowGateVisible(false);
   }, [status?.address]);
+
+  useEffect(() => {
+    if (!connectedAddress || !status?.footprintFollowVerified) {
+      return;
+    }
+
+    setFollowGateState((current) => ({
+      ...current,
+      dustswap: {
+        ...getFollowTaskState(current, "dustswap"),
+        openedAt: getFollowTaskState(current, "dustswap").openedAt ?? Date.now(),
+        verifiedAt: getFollowTaskState(current, "dustswap").verifiedAt ?? Date.now(),
+      },
+    }));
+  }, [connectedAddress, status?.footprintFollowVerified]);
 
   useEffect(() => {
     if (
@@ -1783,6 +1809,41 @@ export default function FootprintDropLanding({
     status,
   ]);
 
+  const connectXAccount = useCallback(async () => {
+    if (!connectedAddress || xConnectState !== "idle") {
+      return;
+    }
+
+    setClaimError(null);
+    setXConnectState("connecting");
+
+    try {
+      const messageToSign = buildXAccountMessage(connectedAddress, "connect-x");
+      const signature = (await signMessageAsync({
+        message: messageToSign,
+      })) as `0x${string}`;
+      const returnTo =
+        typeof window !== "undefined"
+          ? new URL("/", window.location.origin).toString()
+          : "/";
+      const response = await createXConnectUrl({
+        address: connectedAddress,
+        message: messageToSign,
+        signature,
+        returnTo,
+      });
+
+      if (!response.success || !response.authUrl) {
+        throw new Error(response.error || "Failed to start X connection.");
+      }
+
+      window.location.assign(response.authUrl);
+    } catch (error) {
+      setClaimError(getErrorMessage(error));
+      setXConnectState("idle");
+    }
+  }, [connectedAddress, signMessageAsync, xConnectState]);
+
   const handleOpenFollowTask = useCallback(
     (taskKey: FootprintFollowTaskKey, href: string) => {
       setFollowGateVisible(true);
@@ -1790,14 +1851,13 @@ export default function FootprintDropLanding({
 
       const taskState = getFollowTaskState(followGateState, taskKey);
       const nextState =
-        taskState.openedAt && !taskState.retryRequiredAt
+        taskState.openedAt
           ? followGateState
           : {
               ...followGateState,
               [taskKey]: {
                 ...taskState,
                 openedAt: taskState.openedAt ?? Date.now(),
-                retryRequiredAt: null,
               },
             };
 
@@ -1838,51 +1898,51 @@ export default function FootprintDropLanding({
       return;
     }
 
-    if (taskState.retryRequiredAt) {
-      setClaimError("Open X once more, then verify again.");
-      return;
-    }
-
     const remainingSeconds = followTaskRemainingSeconds[taskKey];
     if (remainingSeconds > 0) {
       setClaimError(`Please wait ${remainingSeconds}s more before verifying this task.`);
       return;
     }
 
-    if (taskState.fakeFailuresServed < FOLLOW_GATE_FAKE_FAILURE_COUNT) {
-      setClaimError("Verification failed, try again after you follow.");
-      setFollowGateState((current) => {
-        const currentTaskState = getFollowTaskState(current, taskKey);
-        return {
-          ...current,
-          [taskKey]: {
-            ...currentTaskState,
-            retryRequiredAt: Date.now(),
-            fakeFailuresServed: currentTaskState.fakeFailuresServed + 1,
-          },
-        };
-      });
+    if (!isXConnected) {
+      await connectXAccount();
       return;
     }
 
-    setClaimError(null);
-    setFollowGateState((current) => ({
-      ...current,
-      [taskKey]: {
-        ...getFollowTaskState(current, taskKey),
-        retryRequiredAt: null,
-        fakeFailuresServed: Math.max(
-          getFollowTaskState(current, taskKey).fakeFailuresServed,
-          FOLLOW_GATE_FAKE_FAILURE_COUNT
-        ),
-        verifiedAt: Date.now(),
-      },
-    }));
+    try {
+      const result = await verifyFootprintFollow({
+        address: connectedAddress,
+        taskKey,
+      });
+
+      if (!result.success || !result.verified) {
+        setClaimError(result.message || result.error || "Follow on X, then verify again.");
+        return;
+      }
+
+      setClaimError(null);
+      setFollowGateState((current) => ({
+        ...current,
+        [taskKey]: {
+          ...getFollowTaskState(current, taskKey),
+          verifiedAt: Date.now(),
+        },
+      }));
+      setStatus((current) =>
+        current && current.address.toLowerCase() === connectedAddress.toLowerCase()
+          ? { ...current, footprintFollowVerified: true }
+          : current
+      );
+    } catch (error) {
+      setClaimError(getErrorMessage(error));
+    }
   }, [
+    connectXAccount,
     connectedAddress,
     followGateState,
     followTaskRemainingSeconds,
     hasSiweSession,
+    isXConnected,
     status,
   ]);
 
@@ -2061,6 +2121,7 @@ export default function FootprintDropLanding({
                     followTaskRemainingSeconds={followTaskRemainingSeconds}
                     verifiedFollowTasksCount={verifiedFollowTasksCount}
                     isFollowGateVerified={isFollowGateVerified}
+                    isXConnected={isXConnected}
                     onClaim={handleClaim}
                     onOpenFollowTask={handleOpenFollowTask}
                     onVerifyFollowTask={handleVerifyFollowTask}

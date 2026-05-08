@@ -7,7 +7,6 @@ import {
   buildProfileSettingsMessage,
   normalizeDisplayName,
   normalizeProfileUsername,
-  normalizeXUsername,
   requestPfpUploadUrl,
   saveProfileSettings,
   uploadPfpFile,
@@ -15,9 +14,13 @@ import {
   validateDisplayName,
   validatePfpFile,
   validateProfileUsername,
-  validateXUsername,
   type ProfileSettingsResponse,
 } from "@/lib/profileSettings";
+import {
+  buildXAccountMessage,
+  createXConnectUrl,
+  disconnectXAccount,
+} from "@/lib/quests";
 
 type ProfileSettingsModalProps = {
   open: boolean;
@@ -74,12 +77,12 @@ export function ProfileSettingsModal({
   const [username, setUsername] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [discordUsername, setDiscordUsername] = useState("");
-  const [xUsername, setXUsername] = useState("");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState("");
   const [fieldError, setFieldError] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+  const [xActionState, setXActionState] = useState<"idle" | "connecting" | "disconnecting">("idle");
 
   const initialPreviewUrl =
     profile?.custom.pfpUrl || profile?.fallback.pfpUrl || "";
@@ -101,7 +104,6 @@ export function ProfileSettingsModal({
       profile?.custom.displayName || profile?.fallback.displayName || ""
     );
     setDiscordUsername(profile?.custom.discordUsername || "");
-    setXUsername(profile?.xUsername || "");
     setSelectedFile(null);
     setPreviewUrl("");
     setFieldError(null);
@@ -135,10 +137,9 @@ export function ProfileSettingsModal({
     return (
       validateProfileUsername(username) ||
       validateDisplayName(displayName) ||
-      validateDiscordUsername(discordUsername) ||
-      validateXUsername(xUsername)
+      validateDiscordUsername(discordUsername)
     );
-  }, [discordUsername, displayName, username, xUsername]);
+  }, [discordUsername, displayName, username]);
 
   if (!open) {
     return null;
@@ -235,7 +236,6 @@ export function ProfileSettingsModal({
         discordUsername: normalizeDisplayName(discordUsername),
         pfpUrl,
         pfpStorageKey,
-        xUsername: normalizeXUsername(xUsername),
       });
 
       onSaved(saved);
@@ -244,6 +244,83 @@ export function ProfileSettingsModal({
     } finally {
       setStatusMessage(null);
       setIsSaving(false);
+    }
+  }
+
+  async function handleConnectX() {
+    if (!address || !profileSettings || xActionState !== "idle") {
+      return;
+    }
+
+    setFieldError(null);
+    setStatusMessage(null);
+    setXActionState("connecting");
+
+    try {
+      const messageToSign = buildXAccountMessage(address, "connect-x");
+      const signature = (await signMessageAsync({
+        message: messageToSign,
+      })) as Hex;
+      const returnTo =
+        typeof window !== "undefined"
+          ? new URL("/profile", window.location.origin).toString()
+          : "/profile";
+      const response = await createXConnectUrl({
+        address,
+        message: messageToSign,
+        signature,
+        returnTo,
+      });
+
+      if (!response.success || !response.authUrl) {
+        throw new Error(response.error || "Failed to start X connection.");
+      }
+
+      window.location.assign(response.authUrl);
+    } catch (error) {
+      setFieldError((error as Error).message || "Failed to connect X.");
+      setXActionState("idle");
+    }
+  }
+
+  async function handleDisconnectX() {
+    if (!address || !profileSettings || xActionState !== "idle") {
+      return;
+    }
+
+    setFieldError(null);
+    setStatusMessage(null);
+    setXActionState("disconnecting");
+
+    try {
+      const messageToSign = buildXAccountMessage(address, "disconnect-x");
+      const signature = (await signMessageAsync({
+        message: messageToSign,
+      })) as Hex;
+      const response = await disconnectXAccount({
+        address,
+        message: messageToSign,
+        signature,
+      });
+
+      if (!response.success) {
+        throw new Error(response.error || "Failed to disconnect X.");
+      }
+
+      setStatusMessage("X disconnected.");
+      onSaved({
+        ...(profileSettings as ProfileSettingsResponse),
+        profile: {
+          ...(profileSettings as ProfileSettingsResponse).profile,
+          xConnected: false,
+          xConnectedAt: null,
+          xUserId: null,
+        },
+      });
+    } catch (error) {
+      setFieldError((error as Error).message || "Failed to disconnect X.");
+    } finally {
+      setXActionState("idle");
     }
   }
 
@@ -410,22 +487,57 @@ export function ProfileSettingsModal({
               />
             </label>
 
-            <label className="grid gap-1.5">
-              <span className="text-xs font-bold text-slate-600">
-                X username
-              </span>
-              <input
-                value={xUsername}
-                onChange={(event) => {
-                  setXUsername(event.target.value.replace(/^@+/, ""));
-                  setFieldError(null);
-                }}
-                placeholder="X username"
-                maxLength={15}
-                disabled={isSaving}
-                className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-950 outline-none transition placeholder:text-slate-400 focus:border-sky-300 focus:ring-2 focus:ring-sky-100 disabled:cursor-not-allowed disabled:opacity-60"
-              />
-            </label>
+            <div className="rounded-2xl border border-slate-200 bg-white p-3">
+              <div className="flex items-center gap-3">
+                {profile?.xAvatar ? (
+                  <img
+                    src={profile.xAvatar}
+                    alt="Connected X profile"
+                    className="h-11 w-11 shrink-0 rounded-full border border-slate-100 object-cover"
+                    referrerPolicy="no-referrer"
+                  />
+                ) : (
+                  <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-slate-50 text-xs font-black text-slate-500">
+                    X
+                  </div>
+                )}
+                <div className="min-w-0 flex-1">
+                  <p className="text-xs font-bold text-slate-600">X account</p>
+                  <p className="mt-1 truncate text-sm font-semibold text-slate-950">
+                    {profile?.xConnected
+                      ? `@${profile.xUsername || "connected"}`
+                      : profile?.xUsername
+                        ? `Legacy saved: @${profile.xUsername}`
+                        : "Not connected"}
+                  </p>
+                </div>
+              </div>
+
+              <div className="mt-3 flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => void handleConnectX()}
+                  disabled={isSaving || xActionState !== "idle" || !address}
+                  className="min-h-[40px] flex-1 rounded-full bg-[#0052ff] px-4 py-2 text-xs font-black text-white transition hover:bg-[#0047db] disabled:cursor-not-allowed disabled:bg-slate-300"
+                >
+                  {xActionState === "connecting"
+                    ? "Connecting..."
+                    : profile?.xConnected
+                      ? "Reconnect X"
+                      : "Connect X"}
+                </button>
+                {profile?.xConnected ? (
+                  <button
+                    type="button"
+                    onClick={() => void handleDisconnectX()}
+                    disabled={isSaving || xActionState !== "idle" || !address}
+                    className="min-h-[40px] flex-1 rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-bold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {xActionState === "disconnecting" ? "Disconnecting..." : "Disconnect"}
+                  </button>
+                ) : null}
+              </div>
+            </div>
           </div>
 
           {fieldError || validationMessage ? (

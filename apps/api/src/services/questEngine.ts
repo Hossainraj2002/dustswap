@@ -1,10 +1,24 @@
-import { randomBytes, createHash, createHmac } from "crypto";
-import { isAddress } from "viem";
+import { randomBytes, createHash } from "crypto";
+import {
+  createPublicClient,
+  getAddress,
+  http,
+  isAddress,
+  type Hex,
+} from "viem";
 import { base } from "viem/chains";
 import { pointsEngine } from "./pointsEngine";
 import { recordSwap } from "./swapRecorder";
 import { supabase } from "./supabase";
 import { runtimeCache } from "../utils/runtimeCache";
+import { isAllowedAppDomain, isAllowedAppOrigin } from "../config/appOrigins";
+import {
+  getConnectedXUserId,
+  isConnectedXAccount,
+  toXAccountSummary,
+  xVerificationService,
+  type XSocialAccountRecord,
+} from "./xVerification";
 
 type QuestCategory = "social" | "onchain";
 type QuestCampaignKey = "general" | "cofounder_pass";
@@ -27,7 +41,6 @@ type QuestProgressWindow = "once" | "daily" | "weekly";
 
 type QuestRules = {
   delaySeconds?: number;
-  fakeFailureCount?: number;
   chainId?: number;
   chainIds?: number[];
   tokenAddress?: string;
@@ -40,6 +53,12 @@ type QuestRules = {
   requiredLinks?: string[];
   composeText?: string;
   externalUrl?: string;
+  targetXUserId?: string;
+  targetUserId?: string;
+  targetUsername?: string;
+  targetXUsername?: string;
+  parentTweetId?: string;
+  replyToTweetId?: string;
   source?: string;
   [key: string]: unknown;
 };
@@ -84,6 +103,8 @@ type QuestProgressRecord = {
   next_verification_at: string | null;
   completed_at: string | null;
   rewarded_at: string | null;
+  verified_by_api?: boolean | null;
+  verified_at?: string | null;
   metadata: Record<string, unknown> | null;
   updated_at: string;
 };
@@ -160,6 +181,13 @@ export type SwapActivityInput = {
   metadata?: Record<string, unknown>;
 };
 
+export type XAccountAuthInput = {
+  address?: string;
+  message?: string;
+  signature?: Hex;
+  returnTo?: string | null;
+};
+
 type OpenOceanWalletTransaction = {
   txHash?: string;
   tradeTime?: string;
@@ -171,6 +199,12 @@ type OpenOceanWalletTransaction = {
 };
 
 const X_SCOPES = ["tweet.read", "users.read", "offline.access"];
+const X_ACCOUNT_STATEMENT = "DustSwap X Account Connection";
+const X_OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
+const X_OAUTH_STATE_CACHE_TTL_MS = 10 * 60 * 1000;
+const X_STORE_OAUTH_TOKENS = ["1", "true", "yes", "on"].includes(
+  String(process.env.X_STORE_OAUTH_TOKENS || "").trim().toLowerCase()
+);
 const OPENOCEAN_API_BASE =
   process.env.OPENOCEAN_API_BASE || "https://open-api.openocean.finance/v3";
 const OPENOCEAN_SWAP_SYNC_PAGE_SIZE = Math.min(
@@ -201,6 +235,15 @@ const QUEST_BOARD_CACHE_TTL_MS = 10_000;
 const SWAP_SYNC_DEDUPE_TTL_MS = 25_000;
 const MANUAL_X_USERNAME_DEDUPE_TTL_MS = 15_000;
 const START_DELAY_QUEST_DEDUPE_TTL_MS = 15_000;
+
+const publicClient = createPublicClient({
+  chain: base,
+  transport: http(
+    process.env.BASE_RPC_URL ||
+      process.env.NEXT_PUBLIC_BASE_RPC_URL ||
+      "https://mainnet.base.org"
+  ),
+});
 
 function toNumber(value: unknown, fallback = 0): number {
   const parsed = Number(value);
@@ -448,43 +491,63 @@ function createCodeChallenge(verifier: string) {
   return createHash("sha256").update(verifier).digest("base64url");
 }
 
-function getStateSecret() {
-  const secret = process.env.X_STATE_SECRET || process.env.QUEST_STATE_SECRET;
-  if (!secret) {
-    throw new Error("X_STATE_SECRET is required for X account linking");
-  }
-  return secret;
+function hashOAuthState(state: string) {
+  return createHash("sha256").update(state).digest("hex");
 }
 
-function encodeState(payload: Record<string, unknown>) {
-  const json = JSON.stringify(payload);
-  const body = Buffer.from(json).toString("base64url");
-  const signature = createHmac("sha256", getStateSecret())
-    .update(body)
-    .digest("base64url");
-  return `${body}.${signature}`;
+function getOAuthStateCacheKey(stateHash: string) {
+  return `x-oauth-state:${stateHash}`;
 }
 
-function decodeState(state: string) {
-  const [body, signature] = state.split(".");
-  if (!body || !signature) {
-    throw new Error("Invalid X auth state");
+function getDefaultReturnTo() {
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+  return new URL("/quests", appUrl).toString();
+}
+
+function normalizeReturnTo(returnTo?: string | null) {
+  const fallback = getDefaultReturnTo();
+  if (!returnTo) {
+    return fallback;
   }
 
-  const expected = createHmac("sha256", getStateSecret())
-    .update(body)
-    .digest("base64url");
+  try {
+    const url = new URL(returnTo, fallback);
+    const allowedOrigin = isAllowedAppOrigin(url.origin);
+    if (!allowedOrigin) {
+      return fallback;
+    }
 
-  if (signature !== expected) {
-    throw new Error("Invalid X auth signature");
+    return url.toString();
+  } catch {
+    return fallback;
+  }
+}
+
+function parseXAccountMessage(message: string) {
+  const lines = message.split(/\r?\n/).map((line) => line.trim());
+  if (lines[0] !== X_ACCOUNT_STATEMENT) {
+    throw new Error("Invalid X connection message");
   }
 
-  const payload = JSON.parse(Buffer.from(body, "base64url").toString("utf8"));
-  return payload as {
-    address: string;
-    returnTo: string;
-    codeVerifier: string;
-    createdAt: string;
+  const fields = new Map<string, string>();
+  for (const line of lines.slice(1)) {
+    const separator = line.indexOf(":");
+    if (separator <= 0) {
+      continue;
+    }
+
+    fields.set(
+      line.slice(0, separator).trim().toLowerCase(),
+      line.slice(separator + 1).trim()
+    );
+  }
+
+  return {
+    address: fields.get("address") || "",
+    action: fields.get("action") || "",
+    timestamp: fields.get("timestamp") || "",
+    nonce: fields.get("nonce") || "",
+    domain: fields.get("domain") || "",
   };
 }
 
@@ -506,14 +569,6 @@ function getXRedirectUri() {
     throw new Error("X_REDIRECT_URI is required");
   }
   return redirectUri;
-}
-
-function getXBearerToken() {
-  const token = process.env.X_BEARER_TOKEN;
-  if (!token) {
-    throw new Error("X_BEARER_TOKEN is required for X post verification");
-  }
-  return token;
 }
 
 function normalizeXUsernameInput(input: string) {
@@ -587,18 +642,101 @@ function extractPostId(input: string) {
   return match?.[1] ?? null;
 }
 
+function getXUsernameFromUrl(input?: string | null) {
+  if (!input) {
+    return null;
+  }
+
+  try {
+    const parsed = new URL(input);
+    const host = parsed.hostname.toLowerCase();
+    if (!["x.com", "www.x.com", "twitter.com", "www.twitter.com"].includes(host)) {
+      return null;
+    }
+
+    const [candidate] = parsed.pathname.split("/").filter(Boolean);
+    if (!candidate || ["i", "intent"].includes(candidate.toLowerCase())) {
+      return null;
+    }
+
+    return normalizeMentionValue(candidate);
+  } catch {
+    return null;
+  }
+}
+
+function getTargetXUserRef(quest: QuestRecord, rules: QuestRules) {
+  const rulesRecord = rules as QuestRules & Record<string, unknown>;
+  const slug = quest.slug.toLowerCase();
+  const userIdCandidates = [
+    rules.targetXUserId,
+    rules.targetUserId,
+    rulesRecord.target_x_user_id,
+    rulesRecord.target_user_id,
+    slug.includes("founder") ? process.env.FOUNDER_X_USER_ID : null,
+    slug.includes("dustswap") ? process.env.DUSTSWAP_X_USER_ID : null,
+  ];
+  const usernameCandidates = [
+    rules.targetXUsername,
+    rules.targetUsername,
+    rulesRecord.target_x_username,
+    rulesRecord.target_username,
+    slug.includes("founder") ? process.env.FOUNDER_X_USERNAME || "akbarx402" : null,
+    slug.includes("dustswap") ? process.env.DUSTSWAP_X_USERNAME || "DustswapOnBase" : null,
+    getXUsernameFromUrl(quest.cta_url),
+    getXUsernameFromUrl(String(rules.externalUrl || "")),
+  ];
+
+  const userId = userIdCandidates
+    .map((value) => String(value || "").trim())
+    .find((value) => /^\d+$/.test(value));
+  const username = usernameCandidates
+    .map((value) => String(value || "").trim().replace(/^@+/, ""))
+    .find((value) => /^[A-Za-z0-9_]{1,15}$/.test(value));
+
+  return {
+    userId: userId || null,
+    username: username || null,
+  };
+}
+
+function getReplyParentTweetId(quest: QuestRecord, rules: QuestRules) {
+  const rulesRecord = rules as QuestRules & Record<string, unknown>;
+  const candidates = [
+    rules.parentTweetId,
+    rules.replyToTweetId,
+    rulesRecord.parent_tweet_id,
+    rulesRecord.reply_to_tweet_id,
+    String(rulesRecord.parentTweetUrl || ""),
+    String(rulesRecord.replyToTweetUrl || ""),
+    String(rulesRecord.parent_tweet_url || ""),
+    String(rulesRecord.reply_to_tweet_url || ""),
+    extractPostId(String(quest.cta_url || "")),
+    extractPostId(String(rules.externalUrl || "")),
+    quest.slug.toLowerCase().includes("launch")
+      ? process.env.DUSTSWAP_LAUNCH_TWEET_ID || ""
+      : "",
+  ];
+
+  return (
+    candidates
+      .map((value) => extractPostId(String(value || "")) || String(value || "").trim())
+      .find((value) => /^\d+$/.test(value)) || null
+  );
+}
+
 function includesToken(text: string, expected: string) {
   return text.toLowerCase().includes(expected.toLowerCase());
 }
 
 function listMentionCandidates(tweet: any): string[] {
-  const mentions = tweet?.entities?.mentions;
+  const mentions = tweet?.entities?.mentions || tweet?.entities?.user_mentions;
   if (!Array.isArray(mentions)) {
     return [];
   }
 
   return mentions
-    .map((item) => item?.username)
+    .map((item) => item?.username || item?.screen_name || item?.screenName)
     .filter(Boolean)
     .map((value) => normalizeMentionValue(String(value)));
 }
@@ -610,7 +748,7 @@ function listHashtagCandidates(tweet: any): string[] {
   }
 
   return hashtags
-    .map((item) => item?.tag)
+    .map((item) => item?.tag || item?.text)
     .filter(Boolean)
     .map((value) => normalizeHashtagValue(String(value)));
 }
@@ -889,6 +1027,181 @@ export class QuestEngine {
     return data ? Number((data as { id: number }).id) : null;
   }
 
+  private async assertAuthenticatedXAccountAction(
+    input: XAccountAuthInput,
+    expectedAction: "connect-x" | "disconnect-x"
+  ) {
+    if (!input.address || !input.message || !input.signature) {
+      throw new Error("address, message, and signature are required");
+    }
+
+    if (!isAddress(input.address)) {
+      throw new Error("A valid wallet address is required");
+    }
+
+    const normalizedAddress = getAddress(input.address).toLowerCase();
+    const parsed = parseXAccountMessage(input.message);
+    const messageAddress = getAddress(parsed.address).toLowerCase();
+
+    if (messageAddress !== normalizedAddress) {
+      throw new Error("X connection signature address mismatch");
+    }
+
+    if (parsed.action !== expectedAction) {
+      throw new Error("Invalid X connection action");
+    }
+
+    if (!parsed.domain || !isAllowedAppDomain(parsed.domain)) {
+      throw new Error("Unexpected X connection domain");
+    }
+
+    if (!parsed.nonce || parsed.nonce.length < 8 || parsed.nonce.length > 128) {
+      throw new Error("Invalid X connection nonce");
+    }
+
+    const timestampMs = Date.parse(parsed.timestamp);
+    if (!Number.isFinite(timestampMs)) {
+      throw new Error("Invalid X connection timestamp");
+    }
+
+    const now = Date.now();
+    if (now - timestampMs > 5 * 60 * 1000) {
+      throw new Error("Expired X connection signature");
+    }
+
+    if (timestampMs - now > 60 * 1000) {
+      throw new Error("Invalid X connection timestamp");
+    }
+
+    const replayKey = `x-account:replay:${createHash("sha256")
+      .update(`${input.message}|${input.signature.toLowerCase()}`)
+      .digest("hex")}`;
+
+    if (runtimeCache.get(replayKey)) {
+      throw new Error("X connection signature was already used");
+    }
+
+    const valid = await publicClient.verifyMessage({
+      address: normalizedAddress as `0x${string}`,
+      message: input.message,
+      signature: input.signature,
+    });
+
+    if (!valid) {
+      throw new Error("Invalid X connection signature");
+    }
+
+    runtimeCache.set(replayKey, true, 5 * 60 * 1000);
+    return normalizedAddress;
+  }
+
+  private async storeXOAuthState(args: {
+    state: string;
+    userId: number;
+    address: string;
+    returnTo: string;
+    codeVerifier: string;
+  }) {
+    const stateHash = hashOAuthState(args.state);
+    const expiresAt = new Date(Date.now() + X_OAUTH_STATE_TTL_MS).toISOString();
+    const cached = {
+      userId: args.userId,
+      address: args.address,
+      returnTo: args.returnTo,
+      codeVerifier: args.codeVerifier,
+      expiresAt,
+    };
+
+    try {
+      const { error } = await supabase.from("oauth_states").insert({
+        state_hash: stateHash,
+        platform: "x",
+        user_id: args.userId,
+        wallet_address: args.address,
+        return_to: args.returnTo,
+        code_verifier: args.codeVerifier,
+        expires_at: expiresAt,
+      });
+
+      if (error) {
+        throw new Error(error.message);
+      }
+    } catch (error) {
+      console.warn("[X OAuth] Falling back to runtime OAuth state cache:", error);
+      runtimeCache.set(getOAuthStateCacheKey(stateHash), cached, X_OAUTH_STATE_CACHE_TTL_MS);
+    }
+  }
+
+  private async consumeXOAuthState(state: string) {
+    const stateHash = hashOAuthState(state);
+    const cacheKey = getOAuthStateCacheKey(stateHash);
+    const cached = runtimeCache.get<{
+      userId: number;
+      address: string;
+      returnTo: string;
+      codeVerifier: string;
+      expiresAt: string;
+    }>(cacheKey);
+
+    if (cached) {
+      runtimeCache.invalidate(cacheKey);
+      if (Date.now() > new Date(cached.expiresAt).getTime()) {
+        throw new Error("X auth session expired, please try again");
+      }
+
+      return cached;
+    }
+
+    const { data, error } = await supabase
+      .from("oauth_states")
+      .select("*")
+      .eq("state_hash", stateHash)
+      .eq("platform", "x")
+      .is("consumed_at", null)
+      .maybeSingle();
+
+    if (error) {
+      throw new Error(`Failed to load X auth state: ${error.message}`);
+    }
+
+    const row = data as
+      | {
+          user_id: number;
+          wallet_address: string;
+          return_to: string;
+          code_verifier: string;
+          expires_at: string;
+        }
+      | null;
+
+    if (!row) {
+      throw new Error("Invalid or already used X auth state");
+    }
+
+    if (Date.now() > new Date(row.expires_at).getTime()) {
+      throw new Error("X auth session expired, please try again");
+    }
+
+    const { error: consumeError } = await supabase
+      .from("oauth_states")
+      .update({ consumed_at: new Date().toISOString() })
+      .eq("state_hash", stateHash)
+      .eq("platform", "x")
+      .is("consumed_at", null);
+
+    if (consumeError) {
+      throw new Error(`Failed to consume X auth state: ${consumeError.message}`);
+    }
+
+    return {
+      userId: Number(row.user_id),
+      address: normalizeAddress(row.wallet_address),
+      returnTo: normalizeReturnTo(row.return_to),
+      codeVerifier: row.code_verifier,
+      expiresAt: row.expires_at,
+    };
+  }
+
   async getQuestBoard(address?: string) {
     const normalizedAddress = address ? normalizeAddress(address) : null;
     const cacheKey = this.getQuestBoardCacheKey(normalizedAddress);
@@ -939,12 +1252,15 @@ export class QuestEngine {
           linkedAccounts = Object.fromEntries(
             ((socialData ?? []) as SocialAccountRecord[]).map((account) => [
               account.platform,
-              {
-                username: account.username,
-                platformUserId: account.platform_user_id,
-                displayName: account.display_name,
-                profileImageUrl: account.profile_image_url,
-              },
+              account.platform === "x"
+                ? toXAccountSummary(account as unknown as XSocialAccountRecord)
+                : {
+                    username: account.username,
+                    platformUserId: account.platform_user_id,
+                    displayName: account.display_name,
+                    profileImageUrl: account.profile_image_url,
+                    connected: true,
+                  },
             ])
           );
 
@@ -992,7 +1308,6 @@ export class QuestEngine {
                 value: progress.progress,
                 targetValue: progress.target_value,
                 verificationAttempts: progress.verification_attempts,
-                fakeFailuresServed: progress.fake_failures_served,
                 nextVerificationAt: progress.next_verification_at,
                 openedAt: progress.opened_at,
                 completedAt: progress.completed_at,
@@ -1015,6 +1330,26 @@ export class QuestEngine {
         serverTime: now.toISOString(),
       };
     });
+  }
+
+  async getXAccount(address: string) {
+    if (!isAddress(address)) {
+      throw new Error("A valid wallet address is required");
+    }
+
+    const normalizedAddress = normalizeAddress(address);
+    const userId = await this.getExistingUserId(normalizedAddress);
+    if (!userId) {
+      return {
+        success: true,
+        account: null,
+      } as const;
+    }
+
+    return {
+      success: true,
+      account: await xVerificationService.getAccountSummary(userId),
+    } as const;
   }
 
   async saveManualXUsername(address: string, username: string) {
@@ -1159,20 +1494,24 @@ export class QuestEngine {
     return result;
   }
 
-  async createXAuthUrl(address: string, returnTo: string) {
-    if (!isAddress(address)) {
-      throw new Error("A valid wallet address is required");
-    }
-
+  async createXAuthUrl(input: XAccountAuthInput) {
+    const normalizedAddress = await this.assertAuthenticatedXAccountAction(
+      input,
+      "connect-x"
+    );
+    const returnTo = normalizeReturnTo(input.returnTo);
+    const user = await pointsEngine.getOrCreate(normalizedAddress);
     const codeVerifier = createCodeVerifier();
     const codeChallenge = createCodeChallenge(codeVerifier);
     const redirectUri = getXRedirectUri();
 
-    const state = encodeState({
-      address: normalizeAddress(address),
+    const state = randomBytes(32).toString("base64url");
+    await this.storeXOAuthState({
+      state,
+      userId: user.id,
+      address: normalizedAddress,
       returnTo,
       codeVerifier,
-      createdAt: new Date().toISOString(),
     });
 
     const url = new URL("https://x.com/i/oauth2/authorize");
@@ -1188,11 +1527,7 @@ export class QuestEngine {
   }
 
   async handleXCallback(code: string, state: string) {
-    const payload = decodeState(state);
-    const createdAt = new Date(payload.createdAt);
-    if (Date.now() - createdAt.getTime() > 10 * 60 * 1000) {
-      throw new Error("X auth session expired, please try again");
-    }
+    const payload = await this.consumeXOAuthState(state);
 
     const tokenBody = new URLSearchParams({
       code,
@@ -1231,7 +1566,10 @@ export class QuestEngine {
       expires_in?: number;
     };
 
-    const meResponse = await fetch("https://api.x.com/2/users/me", {
+    const meUrl = new URL("https://api.x.com/2/users/me");
+    meUrl.searchParams.set("user.fields", "profile_image_url");
+
+    const meResponse = await fetch(meUrl, {
       headers: {
         Authorization: `Bearer ${tokenJson.access_token}`,
       },
@@ -1255,32 +1593,37 @@ export class QuestEngine {
       throw new Error("X profile lookup returned no user");
     }
 
-    const user = await pointsEngine.getOrCreate(payload.address);
     const tokenExpiresAt = tokenJson.expires_in
       ? new Date(Date.now() + tokenJson.expires_in * 1000).toISOString()
       : null;
 
     const normalizedUsername = normalizeXUsernameInput(meJson.data.username);
+    const connectedAt = new Date().toISOString();
 
     const { error } = await supabase
       .from("social_accounts")
       .upsert(
         {
-          user_id: user.id,
+          user_id: payload.userId,
           platform: "x",
-          platform_user_id: normalizedUsername.key,
-          username: normalizedUsername.display,
+          platform_user_id: meJson.data.id,
+          username: normalizedUsername.key,
           display_name: meJson.data.name || null,
           profile_image_url: meJson.data.profile_image_url || null,
-          access_token: tokenJson.access_token,
-          refresh_token: tokenJson.refresh_token || null,
+          access_token: X_STORE_OAUTH_TOKENS ? tokenJson.access_token : null,
+          refresh_token: X_STORE_OAUTH_TOKENS ? tokenJson.refresh_token || null : null,
           scope: tokenJson.scope || X_SCOPES.join(" "),
           token_expires_at: tokenExpiresAt,
           metadata: {
-            linkedAt: new Date().toISOString(),
-            authorId: meJson.data.id,
+            linkedAt: connectedAt,
+            connectedAt,
+            oauthConnected: true,
+            xConnected: true,
+            xUserId: meJson.data.id,
+            username: normalizedUsername.key,
+            tokenStorage: X_STORE_OAUTH_TOKENS ? "database" : "discarded",
           },
-          updated_at: new Date().toISOString(),
+          updated_at: connectedAt,
         },
         {
           onConflict: "user_id,platform",
@@ -1291,11 +1634,115 @@ export class QuestEngine {
       throw new Error(`Failed to save X account: ${error.message}`);
     }
 
+    const { error: userUpdateError } = await supabase
+      .from("users")
+      .update({
+        x_user_id: meJson.data.id,
+        x_username: normalizedUsername.key,
+        x_name: meJson.data.name || null,
+        x_avatar: meJson.data.profile_image_url || null,
+        x_connected: true,
+        x_connected_at: connectedAt,
+        updated_at: connectedAt,
+      })
+      .eq("id", payload.userId);
+
+    if (userUpdateError) {
+      throw new Error(`Failed to save X account on user: ${userUpdateError.message}`);
+    }
+
+    xVerificationService.invalidateForXUser(meJson.data.id);
+    pointsEngine.invalidateUserReadCaches(payload.address);
+
     return {
       address: payload.address,
       returnTo: payload.returnTo,
-      username: normalizedUsername.display,
+      username: normalizedUsername.key,
+      xUserId: meJson.data.id,
     };
+  }
+
+  async disconnectXAccount(input: XAccountAuthInput) {
+    const normalizedAddress = await this.assertAuthenticatedXAccountAction(
+      input,
+      "disconnect-x"
+    );
+    const userId = await this.getExistingUserId(normalizedAddress);
+    if (!userId) {
+      return {
+        success: true,
+        disconnected: true,
+        account: null,
+      } as const;
+    }
+
+    const { data: accountData, error: accountError } = await supabase
+      .from("social_accounts")
+      .select("*")
+      .eq("user_id", userId)
+      .eq("platform", "x")
+      .maybeSingle();
+
+    if (accountError) {
+      throw new Error(`Failed to load X account: ${accountError.message}`);
+    }
+
+    const account = (accountData as XSocialAccountRecord | null) ?? null;
+    const xUserId = account ? getConnectedXUserId(account) : null;
+    const disconnectedAt = new Date().toISOString();
+
+    if (account) {
+      const metadata =
+        account.metadata && typeof account.metadata === "object" && !Array.isArray(account.metadata)
+          ? account.metadata
+          : {};
+      const { error } = await supabase
+        .from("social_accounts")
+        .update({
+          platform_user_id: `disconnected:${userId}:${Date.now()}`,
+          access_token: null,
+          refresh_token: null,
+          token_expires_at: null,
+          metadata: {
+            ...metadata,
+            previousPlatformUserId: account.platform_user_id,
+            previousXUserId: xUserId,
+            oauthConnected: false,
+            xConnected: false,
+            disconnectedAt,
+          },
+          updated_at: disconnectedAt,
+        })
+        .eq("id", account.id);
+
+      if (error) {
+        throw new Error(`Failed to disconnect X account: ${error.message}`);
+      }
+    }
+
+    const { error: userUpdateError } = await supabase
+      .from("users")
+      .update({
+        x_user_id: null,
+        x_connected: false,
+        x_connected_at: null,
+        updated_at: disconnectedAt,
+      })
+      .eq("id", userId);
+
+    if (userUpdateError) {
+      throw new Error(`Failed to update disconnected X user state: ${userUpdateError.message}`);
+    }
+
+    xVerificationService.invalidateForXUser(xUserId);
+    this.invalidateQuestBoardCache(normalizedAddress);
+    pointsEngine.invalidateUserReadCaches(normalizedAddress);
+
+    return {
+      success: true,
+      disconnected: true,
+      account: null,
+    } as const;
   }
 
   async startDelayQuest(address: string, questId: string) {
@@ -1379,7 +1826,10 @@ export class QuestEngine {
         await this.assertLinkedSocialAccount(userId, "x");
       }
 
-      const delaySeconds = toNumber(rules.delaySeconds, 20);
+      const delaySeconds =
+        quest.platform === "x" && quest.action_type === "follow"
+          ? 0
+          : toNumber(rules.delaySeconds, 20);
       const nowIso = now.toISOString();
       const result = await runtimeCache.singleFlight(`${cacheKey}:inflight`, async () => {
         const existing = await this.getProgress(userId, quest.id, cycleKey);
@@ -1430,13 +1880,133 @@ export class QuestEngine {
     const quest = await this.getQuestById(questId);
     const rules = safeRules(quest.rules);
     const user = await pointsEngine.getOrCreate(address);
+    const normalizedAddress = normalizeAddress(address);
 
     if (quest.platform === "x") {
       await this.assertLinkedSocialAccount(user.id, "x");
     }
 
     const cycleKey = getCycleKey(quest.progress_window, getNow());
-    const progress = await this.getProgress(user.id, quest.id, cycleKey);
+    let progress = await this.getProgress(user.id, quest.id, cycleKey);
+
+    if (quest.platform === "x" && quest.action_type === "follow") {
+      const connectedAccount = await xVerificationService.requireConnectedAccount(user.id);
+      const target = getTargetXUserRef(quest, rules);
+      if (!target.userId && !target.username) {
+        throw new Error("This follow quest is missing an X target account");
+      }
+
+      const nowIso = new Date().toISOString();
+      if (!progress) {
+        progress = await this.upsertProgress({
+          userId: user.id,
+          quest,
+          cycleKey,
+          updates: {
+            status: "in_progress",
+            progress: 0,
+            target_value: quest.target_value,
+            opened_at: nowIso,
+            next_verification_at: nowIso,
+          },
+        });
+      }
+
+      const followCheck = await xVerificationService.checkFollowById(
+        connectedAccount.xUserId,
+        target
+      );
+
+      if (!followCheck.verified) {
+        const updated = await this.upsertProgress({
+          userId: user.id,
+          quest,
+          cycleKey,
+          existing: progress,
+          updates: {
+            status: "in_progress",
+            verification_attempts: progress.verification_attempts + 1,
+            verified_by_api: false,
+            verified_at: nowIso,
+            metadata: {
+              ...(progress.metadata || {}),
+              verified_by_api: false,
+              verified_at: nowIso,
+              verification_provider: "getx",
+              target_x_user_id: followCheck.targetUser.id,
+              target_x_username: followCheck.targetUser.userName,
+              source_x_user_id: connectedAccount.xUserId,
+            },
+          },
+        });
+
+        await this.logVerificationAttempt(
+          user.id,
+          quest.id,
+          cycleKey,
+          "failed",
+          {
+            verificationType: quest.verification_type,
+            actionType: quest.action_type,
+            sourceXUserId: connectedAccount.xUserId,
+            targetXUserId: followCheck.targetUser.id,
+          },
+          {
+            verifiedByApi: false,
+            sourceFollowsTarget: followCheck.raw?.sourceFollowsTarget === true,
+            attempts: updated.verification_attempts,
+          }
+        );
+
+        this.invalidateQuestBoardCache(normalizedAddress);
+        return {
+          success: false,
+          status: "not_following",
+          error: `Follow @${followCheck.targetUser.userName}, then verify again.`,
+        };
+      }
+
+      const completed = await this.completeQuest(
+        user.id,
+        normalizedAddress,
+        quest,
+        cycleKey,
+        {
+          verificationType: quest.verification_type,
+          verification_provider: "getx",
+          verified_by_api: true,
+          verified_at: nowIso,
+          source_x_user_id: connectedAccount.xUserId,
+          source_x_username: followCheck.sourceUser.userName,
+          target_x_user_id: followCheck.targetUser.id,
+          target_x_username: followCheck.targetUser.userName,
+        }
+      );
+
+      await this.logVerificationAttempt(
+        user.id,
+        quest.id,
+        cycleKey,
+        "completed",
+        {
+          verificationType: quest.verification_type,
+          actionType: quest.action_type,
+          sourceXUserId: connectedAccount.xUserId,
+          targetXUserId: followCheck.targetUser.id,
+        },
+        {
+          verifiedByApi: true,
+          rewardedPoints: completed.awardedPoints,
+        }
+      );
+
+      this.invalidateQuestBoardCache(normalizedAddress);
+      return {
+        success: true,
+        status: "completed",
+        awardedPoints: completed.awardedPoints,
+      };
+    }
 
     if (!progress?.next_verification_at) {
       throw new Error("Open the quest first before verifying");
@@ -1453,40 +2023,9 @@ export class QuestEngine {
       };
     }
 
-    const fakeFailureCount = toNumber(rules.fakeFailureCount, 0);
-
-    if (progress.fake_failures_served < fakeFailureCount) {
-      const updated = await this.upsertProgress({
-        userId: user.id,
-        quest,
-        cycleKey,
-        updates: {
-          status: "retry_required",
-          verification_attempts: progress.verification_attempts + 1,
-          fake_failures_served: progress.fake_failures_served + 1,
-        },
-      });
-
-      await this.logVerificationAttempt(
-        user.id,
-        quest.id,
-        cycleKey,
-        "retry_required",
-        { verificationType: quest.verification_type },
-        { fakeFailuresServed: updated.fake_failures_served }
-      );
-
-      this.invalidateQuestBoardCache(address);
-      return {
-        success: false,
-        status: "retry_required",
-        message: "We could not confirm it yet. Revisit the task and try again.",
-      };
-    }
-
     const completed = await this.completeQuest(
       user.id,
-      normalizeAddress(address),
+      normalizedAddress,
       quest,
       cycleKey,
       {
@@ -1503,7 +2042,7 @@ export class QuestEngine {
       { rewardedPoints: completed.awardedPoints }
     );
 
-    this.invalidateQuestBoardCache(address);
+    this.invalidateQuestBoardCache(normalizedAddress);
     return {
       success: true,
       status: "completed",
@@ -1517,21 +2056,15 @@ export class QuestEngine {
     const user = await pointsEngine.getOrCreate(address);
     const now = getNow();
     const cycleKey = getCycleKey(quest.progress_window, now);
-
-    const { data: accountData, error: accountError } = await supabase
-      .from("social_accounts")
-      .select("*")
-      .eq("user_id", user.id)
-      .eq("platform", "x")
-      .single();
-
-    if (accountError || !accountData) {
-      throw new Error("Add your X username before verifying this quest");
-    }
+    const connectedAccount = await xVerificationService.requireConnectedAccount(user.id);
 
     const postId = extractPostId(postUrl);
     if (!postId) {
-      throw new Error("Enter a valid X post link");
+      throw new Error(
+        quest.action_type === "reply"
+          ? "Enter a valid X reply link"
+          : "Enter a valid X post link"
+      );
     }
 
     await this.upsertProgress({
@@ -1546,73 +2079,66 @@ export class QuestEngine {
       },
     });
 
-    const lookupUrl = new URL(`https://api.x.com/2/tweets/${postId}`);
-    lookupUrl.searchParams.set(
-      "tweet.fields",
-      "author_id,created_at,entities,text,referenced_tweets"
-    );
-    lookupUrl.searchParams.set("expansions", "author_id");
-    lookupUrl.searchParams.set("user.fields", "username");
-
-    const tweetResponse = await fetch(lookupUrl, {
-      headers: {
-        Authorization: `Bearer ${getXBearerToken()}`,
-      },
-    });
-
-    const rawResponse = await tweetResponse.text();
-    if (!tweetResponse.ok) {
+    let tweet: Awaited<ReturnType<typeof xVerificationService.getTweetDetail>>;
+    try {
+      tweet = await xVerificationService.getTweetDetail(postId);
+    } catch (error) {
       await this.logVerificationAttempt(
         user.id,
         quest.id,
         cycleKey,
         "failed",
         { postUrl },
-        { error: rawResponse }
+        { error: (error as Error).message }
       );
       throw new Error("We could not read that X post. Check the link and try again.");
     }
 
-    const tweetJson = JSON.parse(rawResponse) as {
-      data?: {
-        id: string;
-        author_id?: string;
-        text?: string;
-        entities?: Record<string, unknown>;
-      };
-      includes?: {
-        users?: Array<{
-          id?: string;
-          username?: string;
-        }>;
-      };
-    };
-
-    const tweet = tweetJson.data;
-    if (!tweet?.id || !tweet.author_id || !tweet.text) {
+    const authorId = String(tweet.author?.id || tweet.author_id || "").trim();
+    const authorUsername = String(tweet.author?.userName || "").trim();
+    if (!tweet?.id || !authorId || !tweet.text) {
       throw new Error("That X post is missing required data for verification");
     }
 
-    const includedUsers = tweetJson.includes?.users || [];
-    const author =
-      includedUsers.find((userRow) => userRow.id === tweet.author_id) ||
-      includedUsers[0];
-    const authorUsername = author?.username?.toLowerCase();
-    const linkedAccount = accountData as SocialAccountRecord;
-    const savedUsernameKeys = getNormalizedLinkedXKeys(linkedAccount);
-
-    if (!authorUsername) {
-      throw new Error("That X post is missing author username data");
+    if (authorId !== connectedAccount.xUserId) {
+      const enteredUsername = connectedAccount.username
+        ? getLinkedXUsernameDisplay({
+            id: connectedAccount.id,
+            user_id: connectedAccount.userId,
+            platform: "x",
+            platform_user_id: connectedAccount.xUserId,
+            username: connectedAccount.username,
+            display_name: connectedAccount.displayName,
+            profile_image_url: connectedAccount.avatarUrl,
+            access_token: null,
+            refresh_token: null,
+            scope: null,
+            token_expires_at: null,
+            metadata: null,
+          })
+        : "your connected X account";
+      throw new Error(
+        `X account mismatch. Kindly post from ${enteredUsername} and try again.`
+      );
     }
 
-    if (
-      savedUsernameKeys.length === 0 ||
-      !savedUsernameKeys.includes(authorUsername)
-    ) {
-      const enteredUsername = getLinkedXUsernameDisplay(linkedAccount);
-      throw new Error(
-        `X username not match. Kindly post from ${enteredUsername} id and try verify again.`
-      );
+    let parentTweetId: string | null = null;
+    if (quest.action_type === "reply") {
+      parentTweetId = getReplyParentTweetId(quest, rules);
+      if (!parentTweetId) {
+        throw new Error("This reply quest is missing the target X post link");
+      }
+
+      const directParentId = String(tweet.inReplyToId || "").trim();
+      const conversationId = String(tweet.conversationId || "").trim();
+      const isCorrectReply =
+        tweet.isReply === true &&
+        (directParentId === parentTweetId ||
+          (!directParentId && conversationId === parentTweetId));
+
+      if (!isCorrectReply) {
+        throw new Error("That link is not a reply to the required X post.");
+      }
     }
 
     const text = tweet.text;
@@ -1675,8 +2201,12 @@ export class QuestEngine {
       {
         postId,
         postUrl,
-        authorId: tweet.author_id,
+        parentTweetId,
+        authorId,
         authorUsername,
+        verification_provider: "getx",
+        verified_by_api: true,
+        verified_at: now.toISOString(),
       }
     );
 
@@ -1686,7 +2216,14 @@ export class QuestEngine {
       cycleKey,
       "completed",
       { postUrl },
-      { postId, authorUsername, rewardedPoints: completed.awardedPoints }
+      {
+        postId,
+        parentTweetId,
+        authorId,
+        authorUsername,
+        verifiedByApi: true,
+        rewardedPoints: completed.awardedPoints,
+      }
     );
 
     this.invalidateQuestBoardCache(address);
@@ -1694,6 +2231,7 @@ export class QuestEngine {
       success: true,
       status: "completed",
       postId,
+      parentTweetId,
       awardedPoints: completed.awardedPoints,
     };
   }
@@ -2145,7 +2683,7 @@ export class QuestEngine {
   private async assertLinkedSocialAccount(userId: number, platform: QuestPlatform) {
     const { data, error } = await supabase
       .from("social_accounts")
-      .select("id")
+      .select("*")
       .eq("user_id", userId)
       .eq("platform", platform)
       .maybeSingle();
@@ -2156,10 +2694,14 @@ export class QuestEngine {
 
     if (!data) {
       if (platform === "x") {
-        throw new Error("Add your X username before starting this quest");
+        throw new Error("Connect X before starting this quest");
       }
 
       throw new Error(`Connect your ${platform.toUpperCase()} account before starting this quest`);
+    }
+
+    if (platform === "x" && !isConnectedXAccount(data as XSocialAccountRecord)) {
+      throw new Error("Connect X before starting this quest");
     }
   }
 
@@ -2284,6 +2826,35 @@ export class QuestEngine {
     }
 
     if (progress.rewarded_at) {
+      const nowIso = new Date().toISOString();
+      const nextMetadata = {
+        ...(progress.metadata || {}),
+        ...metadata,
+        completedAt: progress.completed_at || nowIso,
+      };
+      const updated = progress.completed_at
+        ? progress
+        : await this.upsertProgress({
+            userId,
+            quest,
+            cycleKey,
+            updates: {
+              status: "completed",
+              progress: Math.max(progress.progress, quest.target_value),
+              target_value: quest.target_value,
+              completed_at: nowIso,
+              verified_by_api:
+                metadata.verified_by_api === true
+                  ? true
+                  : progress.verified_by_api ?? false,
+              verified_at:
+                typeof metadata.verified_at === "string"
+                  ? metadata.verified_at
+                  : progress.verified_at ?? null,
+              metadata: nextMetadata,
+            },
+          });
+
       await this.syncCampaignWhitelistForUser(
         userId,
         address,
@@ -2291,7 +2862,7 @@ export class QuestEngine {
       );
       this.invalidateQuestBoardCache(address);
       return {
-        progress,
+        progress: updated,
         awardedPoints: 0,
       };
     }
@@ -2313,6 +2884,12 @@ export class QuestEngine {
         target_value: quest.target_value,
         completed_at: progress.completed_at || nowIso,
         rewarded_at: nowIso,
+        verified_by_api:
+          metadata.verified_by_api === true ? true : progress.verified_by_api ?? false,
+        verified_at:
+          typeof metadata.verified_at === "string"
+            ? metadata.verified_at
+            : progress.verified_at ?? null,
         metadata: nextMetadata,
       },
     });
@@ -2405,6 +2982,8 @@ export class QuestEngine {
       next_verification_at: existing?.next_verification_at ?? null,
       completed_at: existing?.completed_at ?? null,
       rewarded_at: existing?.rewarded_at ?? null,
+      verified_by_api: existing?.verified_by_api ?? false,
+      verified_at: existing?.verified_at ?? null,
       metadata: existing?.metadata ?? {},
       updated_at: new Date().toISOString(),
       ...args.updates,

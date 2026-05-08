@@ -35,6 +35,7 @@ export type FootprintDropStatus = {
   totalActivity: number | null;
   claimedAt: string | null;
   claimConfig?: FootprintClaimConfig | null;
+  footprintFollowVerified?: boolean;
   referralCommissionPct: number;
   error?: string;
 };
@@ -91,6 +92,38 @@ export async function claimFootprintDrop(
   const data = await parseJson<FootprintDropStatus>(response);
   if (!response.ok || !data.success) {
     throw new Error(data.error || "Failed to claim Footprint Drop");
+  }
+
+  return data;
+}
+
+export async function verifyFootprintFollow(input: {
+  address: string;
+  taskKey: string;
+}) {
+  const response = await fetch(getPointsApiUrl("/airdrop/verify-follow"), {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(input),
+    cache: "no-store",
+  });
+
+  const data = await parseJson<{
+    success: boolean;
+    verified?: boolean;
+    taskKey?: string;
+    targetUsername?: string;
+    targetXUserId?: string;
+    sourceXUserId?: string;
+    verifiedAt?: string | null;
+    message?: string;
+    error?: string;
+  }>(response);
+
+  if (!response.ok && !data.success) {
+    throw new Error(data.error || "Failed to verify X follow");
   }
 
   return data;

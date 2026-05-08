@@ -10,10 +10,10 @@ import {
 } from "viem";
 import { base } from "viem/chains";
 import { pointsEngine } from "./pointsEngine";
-import { questEngine } from "./questEngine";
 import { supabase } from "./supabase";
 import { isAllowedAppDomain } from "../config/appOrigins";
 import { runtimeCache } from "../utils/runtimeCache";
+import { toXAccountSummary, type XSocialAccountRecord } from "./xVerification";
 
 const PROFILE_SIGNATURE_TTL_MS = 5 * 60 * 1000;
 const PROFILE_SIGNATURE_FUTURE_SKEW_MS = 60 * 1000;
@@ -32,11 +32,14 @@ const ALLOWED_PFP_EXTENSIONS = new Set(["png", "jpg", "jpeg", "webp"]);
 const PROFILE_SETTINGS_STATEMENT = "DustSwap Profile Settings";
 
 type SocialAccountRecord = {
+  id?: number;
   user_id: number;
+  platform?: string;
   platform_user_id: string;
   username: string | null;
   display_name: string | null;
   profile_image_url: string | null;
+  metadata?: Record<string, unknown> | null;
   updated_at?: string | null;
 };
 
@@ -64,6 +67,12 @@ export type ProfileSettingsResponse = {
   pfpUrl: string | null;
   pfpStorageKey: string | null;
   xUsername: string | null;
+  xUserId: string | null;
+  xName: string | null;
+  xAvatar: string | null;
+  xConnected: boolean;
+  xConnectedAt: string | null;
+  xLegacyManual: boolean;
   source: "custom" | "fallback" | "wallet";
   custom: {
     username: string | null;
@@ -210,27 +219,6 @@ function normalizeOptionalDiscordUsername(value: unknown) {
 
   if (normalized.length < 2 || normalized.length > 40) {
     throw new ProfileSettingsError("Discord username must be 2-40 characters.", 400);
-  }
-
-  return normalized;
-}
-
-function normalizeOptionalXUsername(value: unknown) {
-  if (value == null) {
-    return null;
-  }
-
-  const normalized = String(value).trim().replace(/^@+/, "");
-  if (!normalized) {
-    return null;
-  }
-
-  if (/https?:\/\//i.test(normalized) || normalized.includes("/") || /\s/.test(normalized)) {
-    throw new ProfileSettingsError("Enter a valid X username.", 400);
-  }
-
-  if (!/^[A-Za-z0-9_]{1,15}$/.test(normalized)) {
-    throw new ProfileSettingsError("Enter a valid X username.", 400);
   }
 
   return normalized;
@@ -401,6 +389,7 @@ function buildProfileResponse(args: {
     fallback?.display_name ||
     fallback?.username ||
     null;
+  const xSummary = toXAccountSummary(args.xAccount as XSocialAccountRecord | null);
 
   return {
     address: args.address,
@@ -409,7 +398,13 @@ function buildProfileResponse(args: {
     discordUsername: custom?.discord_username || null,
     pfpUrl: custom?.pfp_url || fallback?.profile_image_url || null,
     pfpStorageKey: custom?.pfp_storage_key || null,
-    xUsername: toStoredXUsername(args.xAccount?.username || args.xAccount?.platform_user_id),
+    xUsername: toStoredXUsername(xSummary?.username || args.xAccount?.username),
+    xUserId: xSummary?.xUserId || null,
+    xName: xSummary?.displayName || null,
+    xAvatar: xSummary?.profileImageUrl || null,
+    xConnected: xSummary?.connected === true,
+    xConnectedAt: xSummary?.connectedAt || null,
+    xLegacyManual: xSummary?.legacyManual === true,
     source: customHasDisplayValue ? "custom" : fallbackHasDisplayValue ? "fallback" : "wallet",
     custom: {
       username: custom?.username || null,
@@ -457,7 +452,7 @@ export class ProfileSettingsService {
         supabase
           .from("social_accounts")
           .select(
-            "user_id, platform_user_id, username, display_name, profile_image_url, updated_at, platform"
+            "id, user_id, platform_user_id, username, display_name, profile_image_url, metadata, updated_at, platform"
           )
           .eq("user_id", user.id)
           .in("platform", ["farcaster", "x"]),
@@ -673,9 +668,6 @@ export class ProfileSettingsService {
       input.discordUsername !== undefined
         ? normalizeOptionalDiscordUsername(input.discordUsername)
         : undefined;
-    const xUsername =
-      input.xUsername !== undefined ? normalizeOptionalXUsername(input.xUsername) : undefined;
-
     const nextPfpUrl =
       typeof input.pfpUrl === "string" && input.pfpUrl.trim()
         ? input.pfpUrl.trim()
@@ -735,16 +727,12 @@ export class ProfileSettingsService {
       throw new ProfileSettingsError(`Failed to save profile: ${upsertError.message}`, 500);
     }
 
-    if (xUsername) {
-      await questEngine.saveManualXUsername(auth.address, xUsername);
-    }
-
     pointsEngine.invalidateLeaderboardCache();
 
     const latest = await this.getProfileSettings(auth.address);
     return {
       ...latest,
-      savedXUsername: xUsername || latest.profile.xUsername,
+      savedXUsername: latest.profile.xUsername,
     } as const;
   }
 }

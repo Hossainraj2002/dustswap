@@ -165,7 +165,7 @@ function getRulesExample(form: AdminQuestInput) {
   if (form.verificationType === "delay_gate_retry") {
     return `{
   "delaySeconds": 20,
-  "fakeFailureCount": 1,
+  "targetXUsername": "dustswap",
   "externalUrl": "https://x.com/dustswap"
 }`;
   }
@@ -571,7 +571,7 @@ export default function AdminQuestsPage() {
                 {
                   key: "verificationType",
                   label: "Verification",
-                  help: "Defines how the backend confirms completion. swap_volume reads swap progress, x_post_link checks a pasted tweet URL against the saved X username plus your any-of tag or mention rules, delay_gate waits 20 seconds, and delay_gate_retry adds the fake first failure behavior.",
+                  help: "Defines how the backend confirms completion. swap_volume reads swap progress, x_post_link checks a pasted tweet URL against the connected X user ID plus your any-of tag or mention rules, delay_gate waits 20 seconds, and X follow quests use GetX follow verification.",
                   options: ["swap_volume", "x_post_link", "delay_gate", "delay_gate_retry"],
                 },
                 {
@@ -825,9 +825,9 @@ export default function AdminQuestsPage() {
               <p className="font-semibold text-gray-900">Quick rules guide</p>
               <p className="mt-1">
                 <code>delaySeconds</code> controls the wait time before verify.
-                <code className="ml-1">fakeFailureCount</code> is only for the follow-style fake first failure.
+                <code className="ml-1">targetXUserId</code> or <code>targetXUsername</code> identifies the account for GetX follow checks.
                 <code className="ml-1">requiredAnyOf</code> means the post only needs one of those allowed X mentions or hashtags.
-                <code className="ml-1">x_post_link</code> also checks that the tweet author username matches the X username saved by the wallet.
+                <code className="ml-1">x_post_link</code> also checks that the tweet author ID matches the connected X account.
                 <code className="ml-1">externalUrl</code> is the page users open.
                 <code className="ml-1">source</code> is used for onchain swap tracking.
                 <code className="ml-1">chainIds</code>, <code>tokenAddress</code>, and{" "}

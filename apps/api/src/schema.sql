@@ -19,6 +19,15 @@ CREATE TABLE IF NOT EXISTS users (
 );
 
 ALTER TABLE users ADD COLUMN IF NOT EXISTS spin_tickets INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS x_user_id TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS x_username TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS x_name TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS x_avatar TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS x_connected BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS x_connected_at TIMESTAMPTZ;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_x_user_id_unique
+  ON users(x_user_id)
+  WHERE x_user_id IS NOT NULL;
 
 -- DustSweep token whitelist
 CREATE TABLE IF NOT EXISTS tokens (
@@ -330,6 +339,25 @@ CREATE TABLE IF NOT EXISTS social_accounts (
   UNIQUE(platform, platform_user_id)
 );
 
+CREATE TABLE IF NOT EXISTS oauth_states (
+  id            BIGSERIAL PRIMARY KEY,
+  state_hash    TEXT NOT NULL UNIQUE,
+  platform      TEXT NOT NULL,
+  user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  wallet_address VARCHAR(42) NOT NULL,
+  return_to     TEXT NOT NULL,
+  code_verifier TEXT NOT NULL,
+  expires_at    TIMESTAMPTZ NOT NULL,
+  consumed_at   TIMESTAMPTZ,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS app_migration_runs (
+  key        TEXT PRIMARY KEY,
+  metadata   JSONB NOT NULL DEFAULT '{}'::jsonb,
+  ran_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS user_profiles (
   user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
   username TEXT UNIQUE,
@@ -364,11 +392,16 @@ CREATE TABLE IF NOT EXISTS quest_progress (
   next_verification_at  TIMESTAMPTZ,
   completed_at          TIMESTAMPTZ,
   rewarded_at           TIMESTAMPTZ,
+  verified_by_api       BOOLEAN NOT NULL DEFAULT false,
+  verified_at           TIMESTAMPTZ,
   metadata              JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   UNIQUE(user_id, quest_id, cycle_key)
 );
+
+ALTER TABLE quest_progress ADD COLUMN IF NOT EXISTS verified_by_api BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE quest_progress ADD COLUMN IF NOT EXISTS verified_at TIMESTAMPTZ;
 
 CREATE TABLE IF NOT EXISTS quest_verification_logs (
   id               BIGSERIAL PRIMARY KEY,
@@ -408,9 +441,27 @@ CREATE TABLE IF NOT EXISTS quest_campaign_whitelist (
   UNIQUE(campaign_key, wallet_address)
 );
 
+CREATE TABLE IF NOT EXISTS footprint_social_verifications (
+  id                 BIGSERIAL PRIMARY KEY,
+  user_id            INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  wallet_address     VARCHAR(42) NOT NULL,
+  task_key           TEXT NOT NULL,
+  platform           TEXT NOT NULL DEFAULT 'x',
+  source_x_user_id   TEXT NOT NULL,
+  target_x_user_id   TEXT NOT NULL,
+  target_username    TEXT,
+  verified_by_api    BOOLEAN NOT NULL DEFAULT false,
+  verified_at        TIMESTAMPTZ,
+  metadata           JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(user_id, task_key, platform)
+);
+
 CREATE INDEX IF NOT EXISTS idx_quests_status          ON quests(status, is_active, sort_order);
 CREATE INDEX IF NOT EXISTS idx_quests_campaign        ON quests(campaign_key, status, is_active, sort_order);
 CREATE INDEX IF NOT EXISTS idx_social_accounts_user   ON social_accounts(user_id, platform);
+CREATE INDEX IF NOT EXISTS idx_oauth_states_state     ON oauth_states(state_hash, platform, consumed_at);
 CREATE INDEX IF NOT EXISTS idx_user_profiles_username ON user_profiles(username);
 CREATE INDEX IF NOT EXISTS idx_quest_progress_user    ON quest_progress(user_id, quest_id, cycle_key);
 CREATE INDEX IF NOT EXISTS idx_quest_logs_user        ON quest_verification_logs(user_id, quest_id, created_at DESC);
@@ -421,26 +472,35 @@ CREATE INDEX IF NOT EXISTS idx_campaign_whitelist_campaign ON quest_campaign_whi
 
 ALTER TABLE quests                   ENABLE ROW LEVEL SECURITY;
 ALTER TABLE social_accounts          ENABLE ROW LEVEL SECURITY;
+ALTER TABLE oauth_states             ENABLE ROW LEVEL SECURITY;
+ALTER TABLE app_migration_runs       ENABLE ROW LEVEL SECURITY;
 ALTER TABLE user_profiles            ENABLE ROW LEVEL SECURITY;
 ALTER TABLE quest_progress           ENABLE ROW LEVEL SECURITY;
 ALTER TABLE quest_verification_logs  ENABLE ROW LEVEL SECURITY;
 ALTER TABLE activity_events          ENABLE ROW LEVEL SECURITY;
 ALTER TABLE quest_campaign_whitelist ENABLE ROW LEVEL SECURITY;
+ALTER TABLE footprint_social_verifications ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS "service_all_quests"           ON quests;
 DROP POLICY IF EXISTS "service_all_social_accounts"  ON social_accounts;
+DROP POLICY IF EXISTS "service_all_oauth_states"     ON oauth_states;
+DROP POLICY IF EXISTS "service_all_app_migration_runs" ON app_migration_runs;
 DROP POLICY IF EXISTS "service_all_user_profiles"    ON user_profiles;
 DROP POLICY IF EXISTS "service_all_quest_progress"   ON quest_progress;
 DROP POLICY IF EXISTS "service_all_quest_logs"       ON quest_verification_logs;
 DROP POLICY IF EXISTS "service_all_activity_events"  ON activity_events;
 DROP POLICY IF EXISTS "service_all_campaign_whitelist" ON quest_campaign_whitelist;
+DROP POLICY IF EXISTS "service_all_footprint_social_verifications" ON footprint_social_verifications;
 CREATE POLICY "service_all_quests"          ON quests                  FOR ALL USING (true);
 CREATE POLICY "service_all_social_accounts" ON social_accounts         FOR ALL USING (true);
+CREATE POLICY "service_all_oauth_states"    ON oauth_states            FOR ALL USING (true);
+CREATE POLICY "service_all_app_migration_runs" ON app_migration_runs   FOR ALL USING (true);
 CREATE POLICY "service_all_user_profiles"   ON user_profiles           FOR ALL USING (true);
 CREATE POLICY "service_all_quest_progress"  ON quest_progress          FOR ALL USING (true);
 CREATE POLICY "service_all_quest_logs"      ON quest_verification_logs FOR ALL USING (true);
 CREATE POLICY "service_all_activity_events" ON activity_events         FOR ALL USING (true);
 CREATE POLICY "service_all_campaign_whitelist" ON quest_campaign_whitelist FOR ALL USING (true);
+CREATE POLICY "service_all_footprint_social_verifications" ON footprint_social_verifications FOR ALL USING (true);
 
 CREATE OR REPLACE FUNCTION get_user_sweep_stats(p_user_id INTEGER)
 RETURNS TABLE (
@@ -1103,7 +1163,7 @@ INSERT INTO quests (
   (
     'x-post-proof',
     'Post About DustSwap',
-    'Add your X username, publish your post, and send the link for verification.',
+    'Connect X, publish your post, and send the link for verification.',
     'general',
     'social',
     'x',
@@ -1136,7 +1196,7 @@ INSERT INTO quests (
     'published',
     true,
     50,
-    '{"delaySeconds":20,"fakeFailureCount":1,"externalUrl":"https://x.com/dustswap"}'::jsonb
+    '{"delaySeconds":20,"targetXUsername":"dustswap","externalUrl":"https://x.com/dustswap"}'::jsonb
   ),
   (
     'x-repost-soft',
@@ -1212,7 +1272,7 @@ INSERT INTO quests (
     'published',
     true,
     10,
-    '{"delaySeconds":20,"fakeFailureCount":1,"externalUrl":"https://x.com/akbarx402"}'::jsonb
+    '{"delaySeconds":20,"targetXUsername":"akbarx402","externalUrl":"https://x.com/akbarx402"}'::jsonb
   ),
   (
     'cofounder-follow-dustswap',
@@ -1231,7 +1291,7 @@ INSERT INTO quests (
     'published',
     true,
     20,
-    '{"delaySeconds":20,"fakeFailureCount":1,"externalUrl":"https://x.com/dustswaponbase"}'::jsonb
+    '{"delaySeconds":20,"targetXUsername":"dustswaponbase","externalUrl":"https://x.com/dustswaponbase"}'::jsonb
   ),
   (
     'cofounder-like-repost-launch',

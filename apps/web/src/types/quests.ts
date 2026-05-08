@@ -19,7 +19,6 @@ export type QuestProgressWindow = "once" | "daily" | "weekly";
 
 export type QuestRules = {
   delaySeconds?: number;
-  fakeFailureCount?: number;
   chainId?: number;
   chainIds?: number[];
   tokenAddress?: string;
@@ -41,7 +40,6 @@ export type QuestProgress = {
   value: number;
   targetValue: number;
   verificationAttempts: number;
-  fakeFailuresServed: number;
   nextVerificationAt: string | null;
   openedAt: string | null;
   completedAt: string | null;
@@ -86,8 +84,12 @@ export type QuestBoardResponse = {
     {
       username?: string;
       platformUserId?: string;
+      xUserId?: string | null;
       displayName?: string;
       profileImageUrl?: string;
+      connected?: boolean;
+      connectedAt?: string | null;
+      legacyManual?: boolean;
     }
   >;
   campaigns: Record<string, QuestCampaignSummary>;

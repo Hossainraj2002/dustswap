@@ -5,9 +5,11 @@ import type {
   QuestBoardResponse,
 } from "@/types/quests";
 import { buildPublicApiUrl } from "@/lib/apiBase";
+import type { Hex } from "viem";
 
 const SAVE_X_USERNAME_RECENT_TTL_MS = 15_000;
 const START_QUEST_RECENT_TTL_MS = 15_000;
+const X_ACCOUNT_STATEMENT = "DustSwap X Account Connection";
 const saveXUsernameRecent = new Map<
   string,
   {
@@ -74,6 +76,41 @@ function getStartQuestCacheKey(questId: string, address: string) {
   return `${questId}:${address.toLowerCase()}`;
 }
 
+function createNonce() {
+  const browserCrypto =
+    typeof globalThis !== "undefined" ? globalThis.crypto : undefined;
+
+  if (browserCrypto?.randomUUID) {
+    return browserCrypto.randomUUID();
+  }
+
+  const bytes = new Uint8Array(16);
+  if (browserCrypto?.getRandomValues) {
+    browserCrypto.getRandomValues(bytes);
+    return Array.from(bytes)
+      .map((byte) => byte.toString(16).padStart(2, "0"))
+      .join("");
+  }
+
+  return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+export type XAccountAction = "connect-x" | "disconnect-x";
+
+export function buildXAccountMessage(address: string, action: XAccountAction) {
+  const domain =
+    typeof window !== "undefined" ? window.location.host : "localhost:3000";
+
+  return [
+    X_ACCOUNT_STATEMENT,
+    `Address: ${address}`,
+    `Action: ${action}`,
+    `Timestamp: ${new Date().toISOString()}`,
+    `Nonce: ${createNonce()}`,
+    `Domain: ${domain}`,
+  ].join("\n");
+}
+
 export async function fetchQuestBoard(address?: string) {
   const url = new URL(getQuestsApiUrl());
   if (address) {
@@ -88,6 +125,65 @@ export async function fetchQuestBoard(address?: string) {
   });
 
   return parseJson<QuestBoardResponse>(response);
+}
+
+export async function fetchXAccount(address: string) {
+  const url = new URL(getQuestsApiUrl("/x/account"));
+  url.searchParams.set("address", address);
+
+  const response = await fetch(url.toString(), {
+    headers: {
+      "Content-Type": "application/json",
+    },
+    cache: "no-store",
+  });
+
+  return parseJson<{
+    success: boolean;
+    account?: QuestBoardResponse["linkedAccounts"][string] | null;
+    error?: string;
+  }>(response);
+}
+
+export async function createXConnectUrl(input: {
+  address: string;
+  message: string;
+  signature: Hex;
+  returnTo?: string;
+}) {
+  const response = await fetch(getQuestsApiUrl("/x/connect"), {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(input),
+  });
+
+  return parseJson<{
+    success: boolean;
+    authUrl?: string;
+    error?: string;
+  }>(response);
+}
+
+export async function disconnectXAccount(input: {
+  address: string;
+  message: string;
+  signature: Hex;
+}) {
+  const response = await fetch(getQuestsApiUrl("/x/disconnect"), {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(input),
+  });
+
+  return parseJson<{
+    success: boolean;
+    disconnected?: boolean;
+    error?: string;
+  }>(response);
 }
 
 export async function startQuest(questId: string, address: string) {

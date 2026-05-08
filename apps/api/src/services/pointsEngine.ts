@@ -18,6 +18,7 @@ import {
   type FootprintLookupResult,
   type FootprintLookupSource,
 } from "./footprintAirdrop";
+import { xVerificationService } from "./xVerification";
 import { runtimeCache } from "../utils/runtimeCache";
 
 function isEnabledFlag(value: string | undefined) {
@@ -87,6 +88,18 @@ const FOOTPRINT_CLAIM_USDC_ADDRESS =
   process.env.FOOTPRINT_CLAIM_USDC_ADDRESS ||
   process.env.NEXT_PUBLIC_FOOTPRINT_CLAIM_USDC_ADDRESS ||
   STREAK_SAVE_USDC_ADDRESS;
+const FOOTPRINT_FOLLOW_TARGETS = {
+  dustswap: {
+    userId:
+      process.env.FOOTPRINT_DUSTSWAP_X_USER_ID ||
+      process.env.DUSTSWAP_X_USER_ID ||
+      null,
+    username:
+      process.env.FOOTPRINT_DUSTSWAP_X_USERNAME ||
+      process.env.DUSTSWAP_X_USERNAME ||
+      "DustswapOnBase",
+  },
+} as const;
 const SPIN_CONTRACT_ADDRESS = (
   process.env.SPIN_CONTRACT_ADDRESS ||
   process.env.NEXT_PUBLIC_SPIN_CONTRACT_ADDRESS ||
@@ -237,6 +250,7 @@ type PriceFeedQuote = {
 
 type StreakStatus = "ready" | "active" | "checked_in" | "broken";
 type SaveAsset = "eth" | "usdc";
+type FootprintFollowTaskKey = keyof typeof FOOTPRINT_FOLLOW_TARGETS;
 
 type StreakSnapshot = {
   status: StreakStatus;
@@ -3951,12 +3965,129 @@ export class PointsEngine {
     return this.buildBalance(user);
   }
 
+  private normalizeFootprintFollowTask(taskKey?: string | null): FootprintFollowTaskKey {
+    const key = String(taskKey || "dustswap").trim().toLowerCase();
+    if (key in FOOTPRINT_FOLLOW_TARGETS) {
+      return key as FootprintFollowTaskKey;
+    }
+
+    throw new Error("Unknown Footprint Drop X follow task");
+  }
+
+  private async getFootprintFollowVerification(
+    userId: number,
+    taskKey: FootprintFollowTaskKey
+  ) {
+    const { data, error } = await supabase
+      .from("footprint_social_verifications")
+      .select("*")
+      .eq("user_id", userId)
+      .eq("task_key", taskKey)
+      .eq("platform", "x")
+      .maybeSingle();
+
+    if (error) {
+      const message = String(error.message || "").toLowerCase();
+      if (
+        error.code === "42P01" ||
+        error.code === "PGRST205" ||
+        message.includes("footprint_social_verifications")
+      ) {
+        return null;
+      }
+
+      throw new Error(`Load Footprint X verification: ${error.message}`);
+    }
+
+    return (data as
+      | {
+          verified_by_api: boolean | null;
+          verified_at: string | null;
+          source_x_user_id: string | null;
+          target_x_user_id: string | null;
+        }
+      | null) ?? null;
+  }
+
+  private async isFootprintFollowVerified(userId: number) {
+    const verification = await this.getFootprintFollowVerification(userId, "dustswap");
+    return Boolean(verification?.verified_by_api && verification.verified_at);
+  }
+
+  private async assertFootprintFollowVerified(userId: number) {
+    const verified = await this.isFootprintFollowVerified(userId);
+    if (!verified) {
+      throw new Error("Verify the DustSwap X follow before claiming your Footprint Drop.");
+    }
+  }
+
+  async verifyFootprintFollow(address: string, taskKey?: string | null) {
+    const normalizedAddress = getAddress(address).toLowerCase();
+    const normalizedTaskKey = this.normalizeFootprintFollowTask(taskKey);
+    const target = FOOTPRINT_FOLLOW_TARGETS[normalizedTaskKey];
+    const user = await this.getOrCreate(normalizedAddress);
+    const connectedAccount = await xVerificationService.requireConnectedAccount(user.id);
+    const checkedAt = new Date().toISOString();
+    const followCheck = await xVerificationService.checkFollowById(
+      connectedAccount.xUserId,
+      target
+    );
+
+    const row = {
+      user_id: user.id,
+      wallet_address: normalizedAddress,
+      task_key: normalizedTaskKey,
+      platform: "x",
+      source_x_user_id: connectedAccount.xUserId,
+      target_x_user_id: followCheck.targetUser.id,
+      target_username: followCheck.targetUser.userName,
+      verified_by_api: followCheck.verified,
+      verified_at: followCheck.verified ? checkedAt : null,
+      metadata: {
+        provider: "getx",
+        checkedAt,
+        sourceUsername: followCheck.sourceUser.userName,
+        targetUsername: followCheck.targetUser.userName,
+        rawRelationship: followCheck.raw,
+      },
+      updated_at: checkedAt,
+    };
+
+    const { error } = await supabase
+      .from("footprint_social_verifications")
+      .upsert(row, {
+        onConflict: "user_id,task_key,platform",
+      });
+
+    if (error) {
+      throw new Error(`Save Footprint X verification: ${error.message}`);
+    }
+
+    this.invalidateFootprintStatusCache(normalizedAddress);
+
+    return {
+      success: true,
+      verified: followCheck.verified,
+      taskKey: normalizedTaskKey,
+      targetUsername: followCheck.targetUser.userName,
+      targetXUserId: followCheck.targetUser.id,
+      sourceXUserId: connectedAccount.xUserId,
+      verifiedAt: followCheck.verified ? checkedAt : null,
+      message: followCheck.verified
+        ? "X follow verified."
+        : `Follow @${followCheck.targetUser.userName}, then verify again.`,
+    } as const;
+  }
+
   async getFootprintAirdropStatus(address: string) {
     const normalizedAddress = getAddress(address).toLowerCase();
     const cacheKey = this.getFootprintStatusCacheKey(normalizedAddress);
 
     return runtimeCache.getOrSet(cacheKey, FOOTPRINT_STATUS_CACHE_TTL_MS, async () => {
       const existingUser = await this.findExistingUser(normalizedAddress);
+      const footprintFollowVerified = existingUser
+        ? await this.isFootprintFollowVerified(existingUser.id)
+        : false;
 
       if (existingUser) {
         const existingClaim = await this.getExistingFootprintClaimByUserId(existingUser.id);
@@ -3964,6 +4095,7 @@ export class PointsEngine {
           return {
             ...this.normalizeFootprintClaim(normalizedAddress, existingClaim),
             claimConfig: null,
+            footprintFollowVerified: true,
             referralCommissionPct: CFG.REFERRAL_COMMISSION_PCT,
           };
         }
@@ -3988,6 +4120,7 @@ export class PointsEngine {
         claimable: lookup.eligible,
         claimedAt: null,
         claimConfig,
+        footprintFollowVerified,
         referralCommissionPct: CFG.REFERRAL_COMMISSION_PCT,
       };
     });
@@ -4009,6 +4142,7 @@ export class PointsEngine {
         alreadyClaimed: true,
         claimConfig: null,
         totalPoints: user.total_points,
+        footprintFollowVerified: true,
         referralCommissionPct: CFG.REFERRAL_COMMISSION_PCT,
       };
     }
@@ -4020,6 +4154,8 @@ export class PointsEngine {
         lookup.reason || "This wallet is not eligible for the Footprint Drop."
       );
     }
+
+    await this.assertFootprintFollowVerified(user.id);
 
     if (!txHash) {
       throw new Error("txHash required for onchain Footprint Drop claim verification");
@@ -4078,6 +4214,7 @@ export class PointsEngine {
       alreadyClaimed: false,
       claimConfig: null,
       totalPoints: award.user.total_points,
+      footprintFollowVerified: true,
       referralCommissionPct: CFG.REFERRAL_COMMISSION_PCT,
     };
   }

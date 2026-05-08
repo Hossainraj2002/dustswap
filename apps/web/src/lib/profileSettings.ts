@@ -11,6 +11,12 @@ export type ProfileSettingsProfile = {
   pfpUrl: string | null;
   pfpStorageKey: string | null;
   xUsername: string | null;
+  xUserId: string | null;
+  xName: string | null;
+  xAvatar: string | null;
+  xConnected: boolean;
+  xConnectedAt: string | null;
+  xLegacyManual: boolean;
   source: "custom" | "fallback" | "wallet";
   custom: {
     username: string | null;

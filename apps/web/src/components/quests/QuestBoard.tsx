@@ -2,10 +2,12 @@
 
 import Link from "next/link";
 import { startTransition, useCallback, useEffect, useMemo, useState } from "react";
-import { useAccount } from "wagmi";
+import { useAccount, useSignMessage } from "wagmi";
+import type { Hex } from "viem";
 import {
+  buildXAccountMessage,
+  createXConnectUrl,
   fetchQuestBoard,
-  saveXUsername,
   syncSwapQuestActivity,
   startQuest,
   verifyDelayQuest,
@@ -308,6 +310,7 @@ function SectionBadge({ label, count }: { label: string; count: number }) {
 
 export function QuestBoard() {
   const { address, isConnected } = useAccount();
+  const { signMessageAsync } = useSignMessage();
   const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>("social");
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -319,8 +322,7 @@ export function QuestBoard() {
   const [questInlineErrors, setQuestInlineErrors] = useState<QuestInlineErrorState>({});
   const [postVerificationFailures, setPostVerificationFailures] =
     useState<PostVerificationFailureState>({});
-  const [xUsernameInput, setXUsernameInput] = useState("");
-  const [isSavingXUsername, setIsSavingXUsername] = useState(false);
+  const [isConnectingX, setIsConnectingX] = useState(false);
 
   const loadBoard = useCallback(
     async (options?: { silent?: boolean }) => {
@@ -394,12 +396,8 @@ export function QuestBoard() {
   }, [loadBoard]);
 
   const linkedXAccount = board?.linkedAccounts?.x;
-  const isXLinked = Boolean(linkedXAccount?.username);
+  const isXConnected = linkedXAccount?.connected === true;
   const savedXUsername = formatXUsernameDisplay(linkedXAccount?.username);
-
-  useEffect(() => {
-    setXUsernameInput(savedXUsername);
-  }, [savedXUsername]);
 
   const visibleQuests = useMemo(() => {
     return (board?.quests || []).filter(
@@ -549,55 +547,44 @@ export function QuestBoard() {
     }
   }
 
-  function focusXUsernameInput() {
-    if (typeof document === "undefined") {
-      return;
-    }
-
-    const input = document.getElementById("quest-x-username") as HTMLInputElement | null;
-    input?.focus();
-    input?.scrollIntoView({ behavior: "smooth", block: "center" });
-  }
-
-  async function handleSaveXUsername() {
+  async function handleConnectX(returnPath = "/quests") {
     if (!address) {
       setError("Connect your wallet first");
       return;
     }
 
+    if (isConnectingX) {
+      return;
+    }
+
     setError(null);
     setMessage(null);
-    setIsSavingXUsername(true);
+    setIsConnectingX(true);
 
     try {
-      const response = await saveXUsername(address, xUsernameInput);
-      if (!response.success || !response.username) {
-        throw new Error(response.error || "Failed to save X username");
+      const returnTo =
+        typeof window !== "undefined"
+          ? new URL(returnPath, window.location.origin).toString()
+          : returnPath;
+      const messageToSign = buildXAccountMessage(address, "connect-x");
+      const signature = (await signMessageAsync({
+        message: messageToSign,
+      })) as Hex;
+      const response = await createXConnectUrl({
+        address,
+        message: messageToSign,
+        signature,
+        returnTo,
+      });
+
+      if (!response.success || !response.authUrl) {
+        throw new Error(response.error || "Failed to start X connection");
       }
 
-      setBoard((current) =>
-        current
-          ? {
-              ...current,
-              linkedAccounts: {
-                ...current.linkedAccounts,
-                x: {
-                  ...(current.linkedAccounts?.x || {}),
-                  username: response.username,
-                },
-              },
-            }
-          : current
-      );
-      setXUsernameInput(response.username);
-      setQuestInlineErrors({});
-      setPostVerificationFailures({});
-      refreshWithMessage(`X username saved as ${response.username}.`, "x-username-saved");
-      emitDataInvalidation("profile", "x-username-saved");
-    } catch (saveError) {
-      setError(getDisplayError(saveError));
-    } finally {
-      setIsSavingXUsername(false);
+      window.location.assign(response.authUrl);
+    } catch (connectError) {
+      setError(getDisplayError(connectError));
+      setIsConnectingX(false);
     }
   }
 
@@ -607,20 +594,25 @@ export function QuestBoard() {
       return;
     }
 
-    if (quest.platform === "x" && !isXLinked) {
-      setError("Add your X username first before starting X quests.");
-      focusXUsernameInput();
-      return;
-    }
-
     const questUrl = normalizeQuestUrl(quest);
     if (!questUrl) {
       setError("This quest is missing a destination URL");
       return;
     }
 
+    if (quest.platform === "x" && !isXConnected && quest.actionType !== "follow") {
+      await handleConnectX("/quests");
+      return;
+    }
+
     setPending((current) => ({ ...current, [quest.id]: true }));
     openExternal(questUrl);
+
+    if (quest.platform === "x" && !isXConnected && quest.actionType === "follow") {
+      setMessage("Follow on X, then connect X here to verify.");
+      setPending((current) => ({ ...current, [quest.id]: false }));
+      return;
+    }
 
     try {
       const response = await startQuest(quest.id, address);
@@ -642,9 +634,8 @@ export function QuestBoard() {
       return;
     }
 
-    if (quest.platform === "x" && !isXLinked) {
-      setError("Add your X username first before verifying X quests.");
-      focusXUsernameInput();
+    if (quest.platform === "x" && !isXConnected) {
+      await handleConnectX("/quests");
       return;
     }
 
@@ -685,13 +676,9 @@ export function QuestBoard() {
       return;
     }
 
-    if (!isXLinked) {
+    if (!isXConnected) {
       clearPostVerificationFailure(quest.id);
-      setQuestInlineError(
-        quest.id,
-        "Add your X username first before verifying X quests."
-      );
-      focusXUsernameInput();
+      await handleConnectX("/quests");
       return;
     }
 
@@ -742,16 +729,19 @@ export function QuestBoard() {
       quest.progress?.nextVerificationAt &&
       new Date(quest.progress.nextVerificationAt).getTime() <= Date.now();
     const isXQuest = quest.platform === "x";
-    const xLocked = isXQuest && !isXLinked;
+    const xLocked = isXQuest && !isXConnected;
+    const isReplyQuest = isXQuest && quest.actionType === "reply";
+    const isPostLinkQuest = quest.verificationType === "x_post_link" || isReplyQuest;
     const postRequirementHint = getPostRequirementHint(quest);
     const showPostRequirementHint =
       !xLocked &&
       Boolean(postInputs[quest.id]?.trim()) &&
       Boolean(postRequirementHint) &&
       Boolean(postVerificationFailures[quest.id]);
-    const primaryLabel = xLocked
-      ? "Add X Username First"
-      : quest.ctaLabel || (quest.category === "onchain" ? "Open Swap" : "Open Task");
+    const primaryLabel =
+      xLocked && quest.actionType !== "follow"
+        ? "Connect X"
+        : quest.ctaLabel || (quest.category === "onchain" ? "Open Swap" : "Open Task");
 
     return (
       <article
@@ -821,7 +811,7 @@ export function QuestBoard() {
               </button>
             </div>
           </div>
-        ) : quest.verificationType === "x_post_link" ? (
+        ) : isPostLinkQuest ? (
           <div className="rounded-[20px] border border-slate-200/80 bg-white/88 p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.55)]">
             <div className="space-y-2.5">
               {quest.rules.composeText ? (
@@ -838,11 +828,7 @@ export function QuestBoard() {
                 type="button"
                 onClick={() => {
                   if (xLocked) {
-                    setQuestInlineError(
-                      quest.id,
-                      "Add your X username first before opening X quests."
-                    );
-                    focusXUsernameInput();
+                    void handleConnectX("/quests");
                     return;
                   }
 
@@ -855,7 +841,7 @@ export function QuestBoard() {
                 disabled={!questUrl}
                 className="w-full rounded-2xl border border-sky-200 bg-white px-4 py-2.5 text-sm font-semibold text-sky-700 transition hover:bg-sky-50 disabled:cursor-not-allowed disabled:opacity-40"
               >
-                {xLocked ? "Add X Username First" : quest.ctaLabel || "Open Composer"}
+                {xLocked ? "Connect X" : quest.ctaLabel || (isReplyQuest ? "Open Post" : "Open Composer")}
               </button>
               <input
                 value={postInputs[quest.id] || ""}
@@ -869,7 +855,7 @@ export function QuestBoard() {
                     }));
                   }
                 }
-                placeholder="Paste your X post link"
+                placeholder={isReplyQuest ? "Paste your X reply link" : "Paste your X post link"}
                 className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none placeholder:text-slate-400 focus:border-sky-300"
               />
               {inlineError ? (
@@ -880,16 +866,18 @@ export function QuestBoard() {
               <button
                 type="button"
                 onClick={() => void handleVerifyPost(quest)}
-                disabled={xLocked || isPending || isDone}
+                disabled={isPending || isDone || isConnectingX}
                 className="w-full rounded-2xl bg-sky-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {xLocked
-                  ? "Add X Username First"
+                  ? "Connect X"
                   : isDone
                     ? "Verified"
                     : isPending
                       ? "Verifying..."
-                      : "Verify Post"}
+                      : isReplyQuest
+                        ? "Verify Reply"
+                        : "Verify Post"}
               </button>
             </div>
           </div>
@@ -907,11 +895,11 @@ export function QuestBoard() {
               <button
                 type="button"
                 onClick={() => void handleDelayVerify(quest)}
-                disabled={xLocked || !canVerifyDelay || isPending || isDone}
+                disabled={(!xLocked && !canVerifyDelay) || isPending || isDone || isConnectingX}
                 className="w-full rounded-2xl bg-sky-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-40"
               >
                 {xLocked
-                  ? "Add X Username First"
+                  ? "Connect X"
                   : isDone
                     ? "Verified"
                     : isPending
@@ -956,36 +944,28 @@ export function QuestBoard() {
                     <WalletConnectButton
                       fullWidth
                       connectLabel="Connect Wallet"
-                      description="Connect your wallet to start quests and link your X username."
+                      description="Connect your wallet to start quests and connect your X account."
                       className="min-h-[46px] rounded-2xl border-sky-200 bg-[#0052ff] px-4 py-2.5 text-sm font-semibold text-white shadow-[0_14px_30px_rgba(0,82,255,0.2)] hover:border-sky-300 hover:bg-sky-600 hover:text-white"
                     />
                   </div>
-                ) : !isXLinked ? (
+                ) : !isXConnected ? (
                   <div className="rounded-[24px] border border-white/80 bg-white/82 p-3 shadow-[0_18px_44px_rgba(0,82,255,0.08)]">
-                    <label
-                      htmlFor="quest-x-username"
-                      className="mb-2 block text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500"
+                    <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">
+                      X Account
+                    </p>
+                    {savedXUsername ? (
+                      <p className="mb-2 truncate text-xs font-medium text-slate-500">
+                        Legacy saved: {savedXUsername}
+                      </p>
+                    ) : null}
+                    <button
+                      type="button"
+                      onClick={() => void handleConnectX("/quests")}
+                      disabled={isConnectingX}
+                      className="inline-flex w-full shrink-0 items-center justify-center rounded-2xl bg-sky-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-40"
                     >
-                      X Username
-                    </label>
-                    <div className="flex gap-2">
-                      <input
-                        id="quest-x-username"
-                        value={xUsernameInput}
-                        onChange={(event) => setXUsernameInput(event.target.value)}
-                        placeholder="@DustswapOnBase"
-                        disabled={isSavingXUsername}
-                        className="min-w-0 flex-1 rounded-2xl border border-sky-100 bg-white px-4 py-2.5 text-sm text-slate-900 outline-none placeholder:text-slate-400 focus:border-sky-300 disabled:cursor-not-allowed disabled:opacity-50"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => void handleSaveXUsername()}
-                        disabled={isSavingXUsername || !xUsernameInput.trim()}
-                        className="inline-flex shrink-0 items-center justify-center rounded-2xl bg-sky-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-40"
-                      >
-                        {isSavingXUsername ? "Saving..." : "Save"}
-                      </button>
-                    </div>
+                      {isConnectingX ? "Connecting..." : "Connect X"}
+                    </button>
                   </div>
                 ) : (
                   <div className="grid grid-cols-2 gap-2">
@@ -996,12 +976,12 @@ export function QuestBoard() {
               </div>
             </div>
 
-            {!isXLinked ? (
+            {!isXConnected ? (
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
               <InfoChip label="Completed" value={completedCount.toLocaleString()} />
               <InfoChip
                 label="X Account"
-                value={isXLinked ? savedXUsername : "Not linked"}
+                value={savedXUsername ? `${savedXUsername} (legacy)` : "Not connected"}
               />
             </div>
             ) : null}

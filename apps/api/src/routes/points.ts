@@ -219,6 +219,37 @@ pointsRoutes.post("/airdrop/claim", async (c) => {
   }
 });
 
+// POST /api/points/airdrop/verify-follow
+pointsRoutes.post("/airdrop/verify-follow", async (c) => {
+  if (isMaintenanceModeEnabled()) {
+    return maintenanceUnavailable(c);
+  }
+
+  const body = await c.req.json<{
+    address?: string;
+    taskKey?: string;
+  }>();
+
+  if (!body.address) {
+    return c.json({ success: false, error: "address required" }, 400);
+  }
+
+  const rateLimit = consumeFootprintAirdropLimits(c, body.address);
+  if (!rateLimit.allowed) {
+    return rateLimited(c, rateLimit.retryAfterMs);
+  }
+
+  try {
+    const data = await pointsEngine.verifyFootprintFollow(
+      body.address,
+      body.taskKey
+    );
+    return c.json(data, data.verified ? 200 : 202);
+  } catch (e: unknown) {
+    return c.json({ success: false, error: (e as Error).message }, 400);
+  }
+});
+
 // POST /api/points/spin
 pointsRoutes.post("/spin", async (c) => {
   const body = await c.req.json<{

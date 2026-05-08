@@ -1,5 +1,9 @@
 import { Hono, type Context } from "hono";
-import { questEngine, type AdminQuestInput } from "../services/questEngine";
+import {
+  questEngine,
+  type AdminQuestInput,
+  type XAccountAuthInput,
+} from "../services/questEngine";
 import { pointsEngine } from "../services/pointsEngine";
 import { runtimeCache } from "../utils/runtimeCache";
 
@@ -160,42 +164,27 @@ questsRoutes.post("/x/username", async (c) => {
     return maintenanceUnavailable(c);
   }
 
+  return c.json(
+    {
+      success: false,
+      error: "Manual X username linking is deprecated. Connect X with OAuth.",
+    },
+    410
+  );
+});
+
+questsRoutes.get("/x/account", async (c) => {
+  if (isMaintenanceModeEnabled()) {
+    return maintenanceUnavailable(c);
+  }
+
   try {
-    const body = (await c.req.json()) as {
-      address?: string;
-      username?: string;
-    };
-
-    if (!body.address || !body.username) {
-      return c.json(
-        { success: false, error: "address and username are required" },
-        400
-      );
+    const address = c.req.query("address");
+    if (!address) {
+      return c.json({ success: false, error: "address is required" }, 400);
     }
 
-    const normalizedAddress = body.address.trim().toLowerCase();
-    const usernameRateLimit = runtimeCache.consumeRateLimit(
-      `quests:x-username:cooldown:${normalizedAddress}`,
-      4,
-      10_000
-    );
-
-    if (!usernameRateLimit.allowed) {
-      return c.json(
-        {
-          success: false,
-          error: "X username save is cooling down. Please wait a few seconds.",
-        },
-        429
-      );
-    }
-
-    const guardKey = `quests:x-username:${normalizedAddress}:${body.username
-      .trim()
-      .toLowerCase()}`;
-    const data = await runtimeCache.singleFlight(guardKey, () =>
-      questEngine.saveManualXUsername(body.address!, body.username!)
-    );
+    const data = await questEngine.getXAccount(address);
     return c.json(data);
   } catch (error) {
     return c.json(
@@ -205,21 +194,42 @@ questsRoutes.post("/x/username", async (c) => {
   }
 });
 
-questsRoutes.get("/x/connect", async (c) => {
-  const address = c.req.query("address");
-  const returnTo = c.req.query("returnTo") || `${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}/quests`;
-  const format = c.req.query("format");
-
-  if (!address) {
-    return c.json({ success: false, error: "address is required" }, 400);
+questsRoutes.post("/x/connect", async (c) => {
+  if (isMaintenanceModeEnabled()) {
+    return maintenanceUnavailable(c);
   }
 
   try {
-    const authUrl = await questEngine.createXAuthUrl(address, returnTo);
-    if (format === "json") {
-      return c.json({ success: true, authUrl });
-    }
-    return c.redirect(authUrl, 302);
+    const body = (await c.req.json()) as XAccountAuthInput;
+    const authUrl = await questEngine.createXAuthUrl(body);
+    return c.json({ success: true, authUrl });
+  } catch (error) {
+    return c.json(
+      { success: false, error: (error as Error).message },
+      400
+    );
+  }
+});
+
+questsRoutes.get("/x/connect", async (c) => {
+  return c.json(
+    {
+      success: false,
+      error: "Use signed POST /api/quests/x/connect to connect X.",
+    },
+    405
+  );
+});
+
+questsRoutes.post("/x/disconnect", async (c) => {
+  if (isMaintenanceModeEnabled()) {
+    return maintenanceUnavailable(c);
+  }
+
+  try {
+    const body = (await c.req.json()) as XAccountAuthInput;
+    const data = await questEngine.disconnectXAccount(body);
+    return c.json(data);
   } catch (error) {
     return c.json(
       { success: false, error: (error as Error).message },
