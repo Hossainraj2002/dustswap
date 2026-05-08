@@ -1573,17 +1573,27 @@ async function fetchBlockscoutTokenPage(nextPageParams?: Record<string, unknown>
 async function fetchDexScreenerPairs(addresses: Address[]) {
   if (addresses.length === 0) return [];
 
-  const response = await fetch(`https://api.dexscreener.com/tokens/v1/base/${addresses.join(",")}`, {
-    headers: {
-      Accept: "application/json",
-      "User-Agent": "DustSwap/1.0 (+https://app.dustswap.wtf)",
-    },
-  });
-  if (!response.ok) {
+  for (let attempt = 0; attempt <= getDexScreenerMaxRetries(); attempt++) {
+    const response = await fetch(`https://api.dexscreener.com/tokens/v1/base/${addresses.join(",")}`, {
+      headers: {
+        Accept: "application/json",
+        "User-Agent": "DustSwap/1.0 (+https://app.dustswap.wtf)",
+      },
+    });
+
+    if (response.ok) {
+      return (await response.json()) as DexScreenerPair[];
+    }
+
+    if ((response.status === 429 || response.status >= 500) && attempt < getDexScreenerMaxRetries()) {
+      await sleepForDexScreenerRetry(response, attempt);
+      continue;
+    }
+
     throw new Error(`DexScreener token liquidity failed with ${response.status}`);
   }
 
-  return (await response.json()) as DexScreenerPair[];
+  return [];
 }
 
 function getPairTokenAddresses(pair: DexScreenerPair) {
@@ -1598,6 +1608,24 @@ function getPairTokenAddresses(pair: DexScreenerPair) {
 function parsePositiveNumber(value: unknown) {
   const parsed = Number(value || 0);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+}
+
+function getDexScreenerMaxRetries() {
+  const parsed = Number(process.env.DUST_SWEEP_DEXSCREENER_MAX_RETRIES || "8");
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : 8;
+}
+
+function getDexScreenerRetryMs() {
+  const parsed = Number(process.env.DUST_SWEEP_DEXSCREENER_RETRY_MS || "15000");
+  return Number.isFinite(parsed) && parsed >= 1000 ? parsed : 15_000;
+}
+
+async function sleepForDexScreenerRetry(response: Response, attempt: number) {
+  const retryAfterSeconds = Number(response.headers.get("retry-after") || 0);
+  const waitMs = retryAfterSeconds > 0
+    ? retryAfterSeconds * 1000
+    : getDexScreenerRetryMs() * Math.max(1, attempt + 1);
+  await sleep(Math.min(waitMs, 120_000));
 }
 
 export async function syncWhitelistFromBlockscoutDexScreener(args: {
@@ -1646,12 +1674,18 @@ export async function syncWhitelistFromBlockscoutDexScreener(args: {
   const candidateRows = Array.from(candidates.values());
   const bestByToken = new Map<string, TokenWhitelistRow>();
   let pairsScanned = 0;
+  const dexScreenerErrors: string[] = [];
   const batchSize = 30;
 
   for (let i = 0; i < candidateRows.length; i += batchSize) {
     const batch = candidateRows.slice(i, i + batchSize);
     const tokenByAddress = new Map(batch.map((token) => [token.address.toLowerCase(), token]));
-    const pairs = await fetchDexScreenerPairs(batch.map((token) => token.address as Address));
+    const pairs = await fetchDexScreenerPairs(batch.map((token) => token.address as Address)).catch((error) => {
+      if (dexScreenerErrors.length < 12) {
+        dexScreenerErrors.push(`batch ${i}-${i + batch.length - 1}: ${(error as Error).message}`);
+      }
+      return [];
+    });
     pairsScanned += pairs.length;
 
     for (const pair of pairs) {
@@ -1723,6 +1757,7 @@ export async function syncWhitelistFromBlockscoutDexScreener(args: {
     pagesScanned,
     candidatesConsidered: candidateRows.length,
     pairsScanned,
+    dexScreenerErrors,
     tokensWithLiquidity: bestByToken.size,
     tokensUpserted: rows.length,
   };
@@ -1758,11 +1793,17 @@ export async function syncWhitelistFromPoolEventsDexScreener(args: {
 
   const bestByToken = new Map<string, TokenWhitelistRow>();
   let pairsScanned = 0;
+  const dexScreenerErrors: string[] = [];
   const batchSize = 30;
 
   for (let i = 0; i < tokenAddresses.length; i += batchSize) {
     const batch = tokenAddresses.slice(i, i + batchSize);
-    const pairs = await fetchDexScreenerPairs(batch);
+    const pairs = await fetchDexScreenerPairs(batch).catch((error) => {
+      if (dexScreenerErrors.length < 12) {
+        dexScreenerErrors.push(`batch ${i}-${i + batch.length - 1}: ${(error as Error).message}`);
+      }
+      return [];
+    });
     pairsScanned += pairs.length;
 
     for (const pair of pairs) {
@@ -1851,6 +1892,7 @@ export async function syncWhitelistFromPoolEventsDexScreener(args: {
     poolsScanned: pools.length,
     tokenCandidates: tokenAddresses.length,
     pairsScanned,
+    dexScreenerErrors,
     logErrors: scan.errors,
     tokensWithLiquidity: bestByToken.size,
     tokensUpserted: rows.length,
