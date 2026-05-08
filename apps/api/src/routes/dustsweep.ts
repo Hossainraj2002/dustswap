@@ -901,6 +901,32 @@ type OnchainPoolCandidate = {
   liquidityUSD: number;
 };
 
+type BlockscoutTokenItem = {
+  address_hash?: string;
+  address?: string;
+  name?: string | null;
+  symbol?: string | null;
+  decimals?: string | number | null;
+  icon_url?: string | null;
+  type?: string;
+  reputation?: string | null;
+  circulating_market_cap?: string | number | null;
+  volume_24h?: string | number | null;
+  holders_count?: string | number | null;
+};
+
+type DexScreenerPair = {
+  chainId?: string;
+  dexId?: string;
+  pairAddress?: string;
+  labels?: string[];
+  baseToken?: { address?: string; name?: string; symbol?: string };
+  quoteToken?: { address?: string; name?: string; symbol?: string };
+  liquidity?: { usd?: number };
+  volume?: { h24?: number };
+  info?: { imageUrl?: string };
+};
+
 const DEFAULT_BLOCKSCOUT_MAX_REQUESTS_PER_KEY = 100;
 
 let blockscoutKeyIndex = 0;
@@ -923,6 +949,13 @@ function splitCsvEnv(value?: string) {
 
 function getBlockscoutApiBaseUrl() {
   return process.env.BLOCKSCOUT_BASE_API_URL || "https://base.blockscout.com/api";
+}
+
+function getBlockscoutApiV2BaseUrl() {
+  return (
+    process.env.BLOCKSCOUT_BASE_API_V2_URL ||
+    getBlockscoutApiBaseUrl().replace(/\/api\/?$/, "/api/v2")
+  ).replace(/\/$/, "");
 }
 
 function getBlockscoutMaxRequestsPerKey() {
@@ -1428,6 +1461,205 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function getDexScreenerDexSource(pair: DexScreenerPair) {
+  const dexId = String(pair.dexId || "").toLowerCase();
+  const labels = (pair.labels || []).map((label) => label.toLowerCase());
+
+  if (dexId === "aerodrome") return "aerodrome";
+  if (dexId === "baseswap") return "baseswap";
+  if (dexId === "pancakeswap") return "pancakeswap-v3-base";
+  if (dexId === "uniswap" && labels.includes("v3")) return "uniswap-v3-base";
+
+  return null;
+}
+
+async function fetchBlockscoutTokenPage(nextPageParams?: Record<string, unknown>) {
+  const url = new URL(`${getBlockscoutApiV2BaseUrl()}/tokens`);
+  url.searchParams.set("type", "ERC-20");
+
+  for (const [key, value] of Object.entries(nextPageParams || {})) {
+    if (value !== undefined && value !== null) {
+      url.searchParams.set(key, String(value));
+    }
+  }
+
+  const apiKey = getBlockscoutApiKey();
+  if (apiKey) url.searchParams.set("apikey", apiKey);
+
+  const response = await fetch(url, {
+    headers: {
+      Accept: "application/json",
+      "User-Agent": "DustSwap/1.0 (+https://app.dustswap.wtf)",
+    },
+  });
+  if (!response.ok) {
+    throw new Error(`Blockscout token list failed with ${response.status}`);
+  }
+
+  return (await response.json()) as {
+    items?: BlockscoutTokenItem[];
+    next_page_params?: Record<string, unknown> | null;
+  };
+}
+
+async function fetchDexScreenerPairs(addresses: Address[]) {
+  if (addresses.length === 0) return [];
+
+  const response = await fetch(`https://api.dexscreener.com/tokens/v1/base/${addresses.join(",")}`, {
+    headers: {
+      Accept: "application/json",
+      "User-Agent": "DustSwap/1.0 (+https://app.dustswap.wtf)",
+    },
+  });
+  if (!response.ok) {
+    throw new Error(`DexScreener token liquidity failed with ${response.status}`);
+  }
+
+  return (await response.json()) as DexScreenerPair[];
+}
+
+function getPairTokenAddresses(pair: DexScreenerPair) {
+  return [
+    pair.baseToken?.address,
+    pair.quoteToken?.address,
+  ]
+    .filter((address): address is string => Boolean(address && isAddress(address)))
+    .map((address) => normalizeAddress(address).toLowerCase());
+}
+
+function parsePositiveNumber(value: unknown) {
+  const parsed = Number(value || 0);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+}
+
+export async function syncWhitelistFromBlockscoutDexScreener(args: {
+  maxPages: number;
+  maxTokens: number;
+  minLiquidityUSD: number;
+  replaceActive?: boolean;
+  delayMs?: number;
+}) {
+  const candidates = new Map<string, TokenWhitelistRow>();
+  let nextPageParams: Record<string, unknown> | null | undefined;
+  let pagesScanned = 0;
+
+  for (let page = 1; page <= args.maxPages; page++) {
+    const payload = await fetchBlockscoutTokenPage(nextPageParams || undefined);
+    pagesScanned = page;
+
+    for (const item of payload.items || []) {
+      const rawAddress = item.address_hash || item.address;
+      if (!rawAddress || !isAddress(rawAddress)) continue;
+      if (String(item.type || "").toUpperCase() !== "ERC-20") continue;
+      if (String(item.reputation || "").toLowerCase() === "spam") continue;
+
+      const address = normalizeAddress(rawAddress);
+      const decimals = Number(item.decimals ?? 18);
+      const symbol = String(item.symbol || "TOKEN").slice(0, 32);
+      candidates.set(address.toLowerCase(), {
+        address,
+        symbol,
+        name: String(item.name || symbol || "Token").slice(0, 120),
+        decimals: Number.isFinite(decimals) ? decimals : 18,
+        logo_uri: item.icon_url || null,
+        liquidity_usd: Math.max(
+          parsePositiveNumber(item.volume_24h),
+          parsePositiveNumber(item.circulating_market_cap),
+        ),
+        source: "blockscout:tokens",
+      });
+    }
+
+    nextPageParams = payload.next_page_params;
+    if (!nextPageParams || candidates.size >= args.maxTokens * 3) break;
+    if (args.delayMs) await sleep(args.delayMs);
+  }
+
+  const candidateRows = Array.from(candidates.values());
+  const bestByToken = new Map<string, TokenWhitelistRow>();
+  let pairsScanned = 0;
+  const batchSize = 30;
+
+  for (let i = 0; i < candidateRows.length; i += batchSize) {
+    const batch = candidateRows.slice(i, i + batchSize);
+    const tokenByAddress = new Map(batch.map((token) => [token.address.toLowerCase(), token]));
+    const pairs = await fetchDexScreenerPairs(batch.map((token) => token.address as Address));
+    pairsScanned += pairs.length;
+
+    for (const pair of pairs) {
+      if (String(pair.chainId || "").toLowerCase() !== "base") continue;
+      const dexSource = getDexScreenerDexSource(pair);
+      if (!dexSource) continue;
+
+      const liquidityUSD = parsePositiveNumber(pair.liquidity?.usd);
+      if (liquidityUSD < args.minLiquidityUSD) continue;
+
+      for (const tokenAddress of getPairTokenAddresses(pair)) {
+        const token = tokenByAddress.get(tokenAddress);
+        if (!token) continue;
+
+        const existing = bestByToken.get(tokenAddress);
+        if (existing && Number(existing.liquidity_usd || 0) >= liquidityUSD) continue;
+
+        bestByToken.set(tokenAddress, {
+          ...token,
+          logo_uri: token.logo_uri || pair.info?.imageUrl || null,
+          liquidity_usd: liquidityUSD,
+          source: `dexscreener:${dexSource}:${pair.pairAddress || "unknown"}`,
+        });
+      }
+    }
+
+    if (args.delayMs && i + batchSize < candidateRows.length) {
+      await sleep(args.delayMs);
+    }
+  }
+
+  const rows = Array.from(bestByToken.values())
+    .sort((a, b) => Number(b.liquidity_usd || 0) - Number(a.liquidity_usd || 0))
+    .slice(0, args.maxTokens);
+
+  if (args.replaceActive) {
+    const { error } = await supabase
+      .from("tokens")
+      .update({
+        is_active: false,
+        last_checked: new Date().toISOString(),
+      })
+      .eq("chain_id", BASE_CHAIN_ID)
+      .like("source", "dexscreener:%");
+    if (error) throw new Error(error.message);
+  }
+
+  for (let i = 0; i < rows.length; i += 500) {
+    const chunk = rows.slice(i, i + 500).map((row) => ({
+      address: row.address,
+      symbol: row.symbol,
+      name: row.name,
+      decimals: row.decimals,
+      logo_uri: row.logo_uri,
+      chain_id: BASE_CHAIN_ID,
+      is_active: true,
+      source: row.source,
+      liquidity_usd: row.liquidity_usd,
+      last_checked: new Date().toISOString(),
+    }));
+
+    const { error } = await supabase.from("tokens").upsert(chunk, {
+      onConflict: "address",
+    });
+    if (error) throw new Error(error.message);
+  }
+
+  return {
+    pagesScanned,
+    candidatesConsidered: candidateRows.length,
+    pairsScanned,
+    tokensWithLiquidity: bestByToken.size,
+    tokensUpserted: rows.length,
+  };
+}
+
 export async function syncWhitelistFromGeckoTerminal(args: {
   startPage?: number;
   maxPages: number;
@@ -1570,6 +1802,45 @@ dustsweepRoutes.post("/admin/sync-whitelist", async (c) => {
   } catch (error) {
     console.error("[dustsweep/admin/sync-whitelist] Error:", error);
     return c.json(errorJson((error as Error).message || "Failed to sync whitelist"), 500);
+  }
+});
+
+dustsweepRoutes.post("/admin/sync-whitelist-blockscout", async (c) => {
+  const expected = process.env.DUST_SWEEP_ADMIN_TOKEN || process.env.QUEST_ADMIN_TOKEN;
+  if (!expected || c.req.header("x-admin-token") !== expected) {
+    return c.json(errorJson("Unauthorized"), 401);
+  }
+
+  const body: {
+    maxPages?: number;
+    maxTokens?: number;
+    minLiquidityUSD?: number;
+    replaceActive?: boolean;
+    delayMs?: number;
+  } = await c.req.json<{
+    maxPages?: number;
+    maxTokens?: number;
+    minLiquidityUSD?: number;
+    replaceActive?: boolean;
+    delayMs?: number;
+  }>().catch(() => ({}));
+
+  try {
+    const result = await syncWhitelistFromBlockscoutDexScreener({
+      maxPages: Math.max(1, Math.min(500, Number(body.maxPages || 120))),
+      maxTokens: Math.max(1, Math.min(5000, Number(body.maxTokens || 4000))),
+      minLiquidityUSD: Math.max(0, Number(body.minLiquidityUSD ?? MIN_WL_LIQUIDITY_USD)),
+      replaceActive: Boolean(body.replaceActive),
+      delayMs: Math.max(
+        0,
+        Math.min(5000, Number(body.delayMs ?? process.env.DUST_SWEEP_BLOCKSCOUT_SYNC_DELAY_MS ?? 0)),
+      ),
+    });
+
+    return c.json({ success: true, ...result });
+  } catch (error) {
+    console.error("[dustsweep/admin/sync-whitelist-blockscout] Error:", error);
+    return c.json(errorJson((error as Error).message || "Failed to sync Blockscout whitelist"), 500);
   }
 });
 
