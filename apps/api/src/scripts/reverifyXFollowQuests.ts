@@ -30,6 +30,7 @@ type UserRow = {
 
 const DEFAULT_SLUGS = ["founderonx", "follow-dustswap-on-x"];
 const PAGE_SIZE = 1000;
+const UPDATE_BATCH_SIZE = 500;
 const FOLLOWER_PAGE_LOG_INTERVAL = 25;
 
 function normalizeLegacyUsername(value: unknown) {
@@ -289,6 +290,24 @@ function isSourceInFollowerSet(
   return Boolean(username && followerSet.usernames.has(username));
 }
 
+async function bulkUpdateProgress(
+  ids: number[],
+  updates: Record<string, unknown>,
+  label: string
+) {
+  for (let index = 0; index < ids.length; index += UPDATE_BATCH_SIZE) {
+    const batch = ids.slice(index, index + UPDATE_BATCH_SIZE);
+    const { error } = await supabase
+      .from("quest_progress")
+      .update(updates)
+      .in("id", batch);
+
+    if (error) {
+      throw new Error(`Bulk update ${label}: ${error.message}`);
+    }
+  }
+}
+
 async function main() {
   const { dryRun, force, followersList, limit } = getArgs();
   const slugs = getSlugs();
@@ -374,6 +393,10 @@ async function main() {
     }
   }
 
+  const followerListKeptIds: number[] = [];
+  const followerListReopenedIds: number[] = [];
+  const followerListVerifiedAt = new Date().toISOString();
+
   for (const progress of progressRows) {
     const quest = questsById.get(progress.quest_id);
     const user = usersById.get(progress.user_id);
@@ -422,6 +445,10 @@ async function main() {
 
       if (followCheck.verified) {
         stats.kept += 1;
+        if (followersList) {
+          followerListKeptIds.push(progress.id);
+          continue;
+        }
         if (!dryRun) {
           const { error } = await supabase
             .from("quest_progress")
@@ -452,6 +479,10 @@ async function main() {
       }
 
       stats.reopened += 1;
+      if (followersList) {
+        followerListReopenedIds.push(progress.id);
+        continue;
+      }
       if (!dryRun) {
         const { error } = await supabase
           .from("quest_progress")
@@ -488,6 +519,32 @@ async function main() {
         `Failed to reverify ${quest.slug} for ${user.address}: ${(error as Error).message}`
       );
     }
+  }
+
+  if (followersList && !dryRun) {
+    await bulkUpdateProgress(
+      followerListKeptIds,
+      {
+        verified_by_api: true,
+        verified_at: followerListVerifiedAt,
+        updated_at: followerListVerifiedAt,
+      },
+      "kept follower-list progress"
+    );
+    await bulkUpdateProgress(
+      followerListReopenedIds,
+      {
+        status: "not_started",
+        progress: 0,
+        completed_at: null,
+        verified_by_api: false,
+        verified_at: null,
+        opened_at: null,
+        next_verification_at: null,
+        updated_at: followerListVerifiedAt,
+      },
+      "reopened follower-list progress"
+    );
   }
 
   if (!dryRun) {
