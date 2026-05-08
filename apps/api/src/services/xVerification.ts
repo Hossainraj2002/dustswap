@@ -52,6 +52,14 @@ export type GetXTweet = {
   twitterUrl?: string | null;
 };
 
+export type GetXFollower = {
+  id?: string | null;
+  userName?: string | null;
+  username?: string | null;
+  name?: string | null;
+  profilePicture?: string | null;
+};
+
 const GETX_API_BASE = (process.env.GETX_API_BASE || "https://api.getxapi.com").replace(/\/+$/, "");
 const GETX_TIMEOUT_MS = Math.min(
   20_000,
@@ -314,6 +322,35 @@ export class XVerificationService {
         return payload.data;
       }
     );
+  }
+
+  async getFollowersPage(username: string, cursor?: string | null) {
+    const normalizedUsername = normalizeXUsername(username);
+    const payload = await this.requestGetX<{
+      data?: {
+        followers?: GetXFollower[];
+        has_more?: boolean;
+        next_cursor?: string | null;
+        user_count?: number;
+      };
+      followers?: GetXFollower[];
+      has_more?: boolean;
+      next_cursor?: string | null;
+      user_count?: number;
+    }>("/twitter/user/followers", {
+      query: {
+        userName: normalizedUsername,
+        ...(cursor ? { cursor } : {}),
+      },
+    });
+
+    const body = payload.data || payload;
+    return {
+      followers: Array.isArray(body.followers) ? body.followers : [],
+      hasMore: body.has_more === true,
+      nextCursor: typeof body.next_cursor === "string" ? body.next_cursor : null,
+      userCount: typeof body.user_count === "number" ? body.user_count : null,
+    };
   }
 
   async resolveUser(input: { userId?: string | null; username?: string | null }) {

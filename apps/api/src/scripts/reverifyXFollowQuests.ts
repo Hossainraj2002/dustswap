@@ -29,6 +29,8 @@ type UserRow = {
 };
 
 const DEFAULT_SLUGS = ["founderonx", "follow-dustswap-on-x"];
+const PAGE_SIZE = 1000;
+const FOLLOWER_PAGE_LOG_INTERVAL = 25;
 
 function normalizeLegacyUsername(value: unknown) {
   const username = String(value || "").trim().replace(/^@+/, "");
@@ -70,10 +72,15 @@ function getSourceXRef(account: XSocialAccountRecord | null) {
 }
 
 function getArgs() {
-  const args = new Set(process.argv.slice(2));
+  const rawArgs = process.argv.slice(2);
+  const args = new Set(rawArgs);
+  const limitArg = rawArgs.find((arg) => arg.startsWith("--limit="));
+  const limit = limitArg ? Number(limitArg.split("=")[1]) : null;
   return {
     dryRun: args.has("--dry-run"),
     force: args.has("--force"),
+    followersList: args.has("--followers-list") || args.has("--bulk-followers"),
+    limit: Number.isInteger(limit) && Number(limit) > 0 ? Number(limit) : null,
   };
 }
 
@@ -146,10 +153,149 @@ async function markRun(key: string, metadata: Record<string, unknown>) {
   }
 }
 
+async function fetchAllCompletedProgress(questIds: string[], limit?: number | null) {
+  const rows: ProgressRow[] = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const to = limit
+      ? Math.min(from + PAGE_SIZE - 1, limit - 1)
+      : from + PAGE_SIZE - 1;
+    const { data, error } = await supabase
+      .from("quest_progress")
+      .select("id, quest_id, user_id, cycle_key, metadata")
+      .in("quest_id", questIds)
+      .not("completed_at", "is", null)
+      .range(from, to);
+
+    if (error) {
+      throw new Error(`Load completed follow progress: ${error.message}`);
+    }
+
+    rows.push(...((data || []) as ProgressRow[]));
+    if (!data || data.length < PAGE_SIZE || (limit && rows.length >= limit)) {
+      return limit ? rows.slice(0, limit) : rows;
+    }
+  }
+}
+
+async function fetchRowsByUserIds<T extends { user_id?: number; id?: number }>(
+  table: string,
+  select: string,
+  userIds: number[],
+  extra?: (query: any) => any
+) {
+  const rows: T[] = [];
+  for (let index = 0; index < userIds.length; index += PAGE_SIZE) {
+    const slice = userIds.slice(index, index + PAGE_SIZE);
+    let query = supabase.from(table).select(select).in("user_id", slice);
+    if (extra) {
+      query = extra(query);
+    }
+    const { data, error } = await query;
+    if (error) {
+      throw new Error(`Load ${table}: ${error.message}`);
+    }
+    rows.push(...((data || []) as unknown as T[]));
+  }
+  return rows;
+}
+
+async function fetchUsersByIds(userIds: number[]) {
+  const rows: UserRow[] = [];
+  for (let index = 0; index < userIds.length; index += PAGE_SIZE) {
+    const slice = userIds.slice(index, index + PAGE_SIZE);
+    const { data, error } = await supabase
+      .from("users")
+      .select("id, address")
+      .in("id", slice);
+
+    if (error) {
+      throw new Error(`Load users: ${error.message}`);
+    }
+    rows.push(...((data || []) as UserRow[]));
+  }
+  return rows;
+}
+
+function followerKey(value: unknown) {
+  return String(value || "").trim().replace(/^@+/, "").toLowerCase();
+}
+
+async function buildFollowerSetForQuest(quest: QuestRow) {
+  const target = getTargetFromQuest(quest);
+  const targetUser =
+    target.username
+      ? {
+          id: target.userId || null,
+          userName: target.username,
+        }
+      : target.userId
+        ? await xVerificationService.getUserById(target.userId)
+        : null;
+
+  if (!targetUser?.userName) {
+    throw new Error(`Quest ${quest.slug} target needs a username for follower-list mode`);
+  }
+
+  const usernames = new Set<string>();
+  const userIds = new Set<string>();
+  let cursor: string | null = null;
+  let pages = 0;
+
+  do {
+    pages += 1;
+    const page = await xVerificationService.getFollowersPage(targetUser.userName, cursor);
+    for (const follower of page.followers) {
+      const id = String(follower.id || "").trim();
+      const username = followerKey(follower.userName || follower.username);
+      if (/^\d+$/.test(id)) {
+        userIds.add(id);
+      }
+      if (username) {
+        usernames.add(username);
+      }
+    }
+
+    cursor = page.nextCursor;
+    if (pages === 1 || pages % FOLLOWER_PAGE_LOG_INTERVAL === 0 || !page.hasMore) {
+      console.log(
+        `[followers-list] ${quest.slug}: pages=${pages}, followers_loaded=${Math.max(
+          usernames.size,
+          userIds.size
+        )}`
+      );
+    }
+  } while (cursor);
+
+  return {
+    target,
+    targetUser,
+    usernames,
+    userIds,
+    pages,
+  };
+}
+
+function isSourceInFollowerSet(
+  sourceX: ReturnType<typeof getSourceXRef>,
+  followerSet: Awaited<ReturnType<typeof buildFollowerSetForQuest>>
+) {
+  if (!sourceX) {
+    return false;
+  }
+  if (sourceX.userId && followerSet.userIds.has(sourceX.userId)) {
+    return true;
+  }
+  const username = followerKey(sourceX.username);
+  return Boolean(username && followerSet.usernames.has(username));
+}
+
 async function main() {
-  const { dryRun, force } = getArgs();
+  const { dryRun, force, followersList, limit } = getArgs();
   const slugs = getSlugs();
-  const runKey = process.env.X_FOLLOW_REVERIFY_RUN_KEY || `x-follow-reverify:${slugs.join("|")}`;
+  const runMode = followersList ? "followers-list" : "relationship";
+  const runKey =
+    process.env.X_FOLLOW_REVERIFY_RUN_KEY ||
+    `x-follow-reverify:${runMode}:${slugs.join("|")}`;
 
   if (!dryRun && !force) {
     const existingRun = await getRun(runKey);
@@ -176,39 +322,23 @@ async function main() {
     return;
   }
 
-  const { data: progressData, error: progressError } = await supabase
-    .from("quest_progress")
-    .select("id, quest_id, user_id, cycle_key, metadata")
-    .in(
-      "quest_id",
-      quests.map((quest) => quest.id)
-    )
-    .not("completed_at", "is", null);
-
-  if (progressError) {
-    throw new Error(`Load completed follow progress: ${progressError.message}`);
-  }
-
-  const progressRows = (progressData || []) as ProgressRow[];
+  const progressRows = await fetchAllCompletedProgress(
+    quests.map((quest) => quest.id),
+    limit
+  );
   const userIds = [...new Set(progressRows.map((row) => row.user_id))];
 
-  const [{ data: userData, error: userError }, { data: accountData, error: accountError }] =
-    await Promise.all([
-      userIds.length
-        ? supabase.from("users").select("id, address").in("id", userIds)
-        : Promise.resolve({ data: [], error: null }),
-      userIds.length
-        ? supabase.from("social_accounts").select("*").eq("platform", "x").in("user_id", userIds)
-        : Promise.resolve({ data: [], error: null }),
-    ]);
-
-  if (userError) {
-    throw new Error(`Load users: ${userError.message}`);
-  }
-
-  if (accountError) {
-    throw new Error(`Load X accounts: ${accountError.message}`);
-  }
+  const [userData, accountData] = userIds.length
+    ? await Promise.all([
+        fetchUsersByIds(userIds),
+        fetchRowsByUserIds<XSocialAccountRecord>(
+          "social_accounts",
+          "*",
+          userIds,
+          (query) => query.eq("platform", "x")
+        ),
+      ])
+    : [[], []];
 
   const questsById = new Map(quests.map((quest) => [quest.id, quest]));
   const usersById = new Map((userData || []).map((row) => [Number((row as UserRow).id), row as UserRow]));
@@ -224,7 +354,25 @@ async function main() {
     skippedMissingUser: 0,
     skippedTargetError: 0,
     errors: 0,
+    followerPages: 0,
   };
+
+  const followerSetsByQuestId = new Map<
+    string,
+    Awaited<ReturnType<typeof buildFollowerSetForQuest>>
+  >();
+  if (followersList) {
+    for (const quest of quests) {
+      try {
+        const followerSet = await buildFollowerSetForQuest(quest);
+        followerSetsByQuestId.set(quest.id, followerSet);
+        stats.followerPages += followerSet.pages;
+      } catch (error) {
+        stats.skippedTargetError += 1;
+        console.warn((error as Error).message);
+      }
+    }
+  }
 
   for (const progress of progressRows) {
     const quest = questsById.get(progress.quest_id);
@@ -254,7 +402,23 @@ async function main() {
     try {
       stats.checked += 1;
       const verifiedAt = new Date().toISOString();
-      const followCheck = await xVerificationService.checkFollowRelationship(sourceX, target);
+      const followerSet = followersList ? followerSetsByQuestId.get(quest.id) : null;
+      const followCheck = followerSet
+        ? {
+            verified: isSourceInFollowerSet(sourceX, followerSet),
+            sourceUser: {
+              id: sourceX.userId || "",
+              userName: sourceX.username || "",
+            },
+            targetUser: {
+              id: followerSet.target.userId || followerSet.targetUser.id || "",
+              userName: followerSet.targetUser.userName,
+            },
+            raw: {
+              verificationMode: "followers-list",
+            },
+          }
+        : await xVerificationService.checkFollowRelationship(sourceX, target);
 
       if (followCheck.verified) {
         stats.kept += 1;
@@ -329,12 +493,13 @@ async function main() {
   if (!dryRun) {
     await markRun(runKey, {
       slugs,
+      mode: runMode,
       stats,
       ranAt: new Date().toISOString(),
     });
   }
 
-  console.log(JSON.stringify({ dryRun, runKey, slugs, stats }, null, 2));
+  console.log(JSON.stringify({ dryRun, runKey, slugs, mode: runMode, limit, stats }, null, 2));
 }
 
 main().catch((error) => {
