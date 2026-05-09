@@ -213,7 +213,7 @@ export default function DustSweepPage() {
             </div>
           ) : null}
 
-          <div className="hidden sm:block">
+          <div>
             <SweepButton
               visualState={buttonState}
               onClick={() => void sweep.executeSweep()}
@@ -221,16 +221,6 @@ export default function DustSweepPage() {
             />
           </div>
         </main>
-
-        <div className="fixed inset-x-0 bottom-0 z-40 border-t border-slate-200 bg-white/95 p-3 pb-[calc(12px+env(safe-area-inset-bottom))] shadow-[0_-18px_44px_rgba(148,163,184,0.18)] backdrop-blur sm:hidden">
-          <div className="mx-auto max-w-[520px]">
-            <SweepButton
-              visualState={buttonState}
-              onClick={() => void sweep.executeSweep()}
-              txHash={sweep.txHash}
-            />
-          </div>
-        </div>
       </div>
     </div>
   );

@@ -183,7 +183,34 @@ function capabilitySupported(value: unknown) {
   if (value && typeof value === "object" && "supported" in value) {
     return capabilitySupported((value as { supported?: unknown }).supported);
   }
+  if (value && typeof value === "object" && "status" in value) {
+    return capabilitySupported((value as { status?: unknown }).status);
+  }
   return false;
+}
+
+function getAtomicCapability(chainCapabilities: Record<string, unknown> | null | undefined) {
+  return chainCapabilities?.atomic ?? chainCapabilities?.atomicBatch ?? null;
+}
+
+function getBrowserWalletRequester() {
+  if (typeof window === "undefined") return null;
+  const ethereum = (window as Window & {
+    ethereum?: {
+      request?: (args: { method: string; params?: unknown[] }) => Promise<unknown>;
+      providers?: Array<{ request?: (args: { method: string; params?: unknown[] }) => Promise<unknown> }>;
+    };
+  }).ethereum;
+
+  if (ethereum?.request) {
+    return ethereum.request.bind(ethereum);
+  }
+
+  const provider = ethereum?.providers?.find(
+    (item: { request?: (args: { method: string; params?: unknown[] }) => Promise<unknown> }) =>
+      typeof item.request === "function",
+  );
+  return provider?.request ? provider.request.bind(provider) : null;
 }
 
 function isFinishedCallStatus(status: unknown) {
@@ -423,12 +450,18 @@ export function useDustSweep(): UseDustSweepReturn {
     const requester = walletWithCalls.request as
       | ((args: { method: string; params?: unknown[] }) => Promise<unknown>)
       | undefined;
+    const transportRequester = (walletClient as unknown as {
+      transport?: {
+        request?: (args: { method: string; params?: unknown[] }) => Promise<unknown>;
+      };
+    })?.transport?.request;
+    const rawRequester = requester || transportRequester || getBrowserWalletRequester();
     const accountAddress = walletWithCalls.account?.address || address;
 
     try {
       const capabilitiesResult =
-        requester && accountAddress
-          ? ((await requester({
+        rawRequester && accountAddress
+          ? ((await rawRequester({
               method: "wallet_getCapabilities",
               params: [accountAddress],
             })) as Record<string, Record<string, unknown>> | null)
@@ -438,14 +471,8 @@ export function useDustSweep(): UseDustSweepReturn {
             ([candidate]) => candidate.toLowerCase() === toHexChainId(base.id).toLowerCase(),
           )?.[1]
         : null;
-
-      if (
-        chainCapabilities &&
-        !capabilitySupported(chainCapabilities.atomicBatch) &&
-        !walletStatus.isCoinbaseSmartWallet
-      ) {
-        return false;
-      }
+      const atomicRequired =
+        walletStatus.isCoinbaseSmartWallet || capabilitySupported(getAtomicCapability(chainCapabilities));
 
       if (!walletWithCalls.sendCalls || !walletWithCalls.waitForCallsStatus) {
         throw new Error("viem sendCalls unavailable");
@@ -455,6 +482,7 @@ export function useDustSweep(): UseDustSweepReturn {
         calls,
         chain: base,
         account: address,
+        atomicRequired,
         ...(walletStatus.isCoinbaseSmartWallet && process.env.NEXT_PUBLIC_PAYMASTER_URL
           ? { capabilities: buildBasePaymasterCapabilities() }
           : {}),
@@ -485,24 +513,46 @@ export function useDustSweep(): UseDustSweepReturn {
       console.warn("DustSweep approval batch failed, falling back to single approval transactions.", batchError);
     }
 
-    if (!requester || !accountAddress) {
+    if (!rawRequester || !accountAddress) {
       return false;
     }
 
     try {
+      const capabilitiesResult = (await rawRequester({
+        method: "wallet_getCapabilities",
+        params: [accountAddress],
+      }).catch(() => null)) as Record<string, Record<string, unknown>> | null;
+      const chainCapabilities = capabilitiesResult
+        ? Object.entries(capabilitiesResult).find(
+            ([candidate]) => candidate.toLowerCase() === toHexChainId(base.id).toLowerCase(),
+          )?.[1]
+        : null;
+      const atomicRequired =
+        walletStatus.isCoinbaseSmartWallet || capabilitySupported(getAtomicCapability(chainCapabilities));
       const rawCalls = calls.map((call) => ({
         to: call.to,
         value: "0x0",
         data: appendBuilderCodeToData(call.data),
       }));
-      const sendCallsResult = await requester({
+      const sendCallsResult = await rawRequester({
         method: "wallet_sendCalls",
         params: [
           {
             version: "2.0.0",
             chainId: toHexChainId(base.id),
             from: accountAddress,
+            atomicRequired,
             calls: rawCalls,
+            ...(walletStatus.isCoinbaseSmartWallet && process.env.NEXT_PUBLIC_PAYMASTER_URL
+              ? {
+                  capabilities: {
+                    paymasterService: {
+                      url: process.env.NEXT_PUBLIC_PAYMASTER_URL,
+                      optional: true,
+                    },
+                  },
+                }
+              : {}),
           },
         ],
       });
@@ -512,7 +562,7 @@ export function useDustSweep(): UseDustSweepReturn {
       }
 
       for (let attempt = 0; attempt < 90; attempt += 1) {
-        const status = await requester({
+        const status = await rawRequester({
           method: "wallet_getCallsStatus",
           params: [callId],
         });
@@ -570,6 +620,12 @@ export function useDustSweep(): UseDustSweepReturn {
 
     const batched = await sendApprovalBatch(approvalRequirements);
     if (batched) return;
+
+    if (approvalRequirements.length > 1) {
+      throw new Error(
+        "Batch approval is unavailable from this wallet session. Reconnect Rabby/TokenPocket and try again, or select one token.",
+      );
+    }
 
     const paymasterUrl = process.env.NEXT_PUBLIC_PAYMASTER_URL;
     for (const requirement of approvalRequirements) {
