@@ -3,12 +3,12 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAccount, usePublicClient, useWalletClient } from "wagmi";
 import { base } from "viem/chains";
-import { encodeFunctionData, erc20Abi, type Address, type Hex } from "viem";
+import { encodeFunctionData, erc20Abi, maxUint256, type Address, type Hex } from "viem";
 import { useTokenBalances } from "@/hooks/useTokenBalances";
 import { useWalletWhitelist } from "@/hooks/useWalletWhitelist";
 import { PERMIT2_ADDRESS, buildPermit2TypedData, getPermit2SignatureErrorMessage } from "@/lib/permit2";
 import { encodeDustSweepPermit2Calldata, parseDustSweepError } from "@/lib/dustsweep-router";
-import { DATA_SUFFIX, appendBuilderCodeToData } from "@/lib/builderCode";
+import { DATA_SUFFIX } from "@/lib/builderCode";
 import { buildBasePaymasterCapabilities } from "@/lib/paymaster";
 import { USDC_ADDRESS, WETH_ADDRESS } from "@/lib/tokens";
 import {
@@ -82,8 +82,6 @@ export type UseDustSweepReturn = {
   resetSweepState: () => void;
 };
 
-const APPROVAL_BUFFER_BPS = 100n;
-const BPS_DENOMINATOR = 10_000n;
 const USDT_ADDRESS = "0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2" as Address;
 
 function isSameAddress(a?: string | null, b?: string | null) {
@@ -135,101 +133,8 @@ function uniqueApprovalRequirements(routes: DustSweepQuoteResponse["routes"]) {
   return Array.from(byToken.values());
 }
 
-function bufferedApprovalAmount(amount: bigint) {
-  const extra = (amount * APPROVAL_BUFFER_BPS + BPS_DENOMINATOR - 1n) / BPS_DENOMINATOR;
-  return amount + extra;
-}
-
 function requiresApprovalReset(token: Address) {
   return token.toLowerCase() === USDT_ADDRESS.toLowerCase();
-}
-
-function isTxHash(value: unknown): value is Hex {
-  return typeof value === "string" && /^0x[a-fA-F0-9]{64}$/.test(value);
-}
-
-function toHexChainId(chainId: number) {
-  return `0x${chainId.toString(16)}`;
-}
-
-function resolveSendCallsId(result: unknown) {
-  if (typeof result === "string" && result.trim()) {
-    return result;
-  }
-
-  if (result && typeof result === "object" && "id" in result) {
-    const value = (result as { id?: unknown }).id;
-    if (typeof value === "string" && value.trim()) {
-      return value;
-    }
-  }
-
-  if (result && typeof result === "object" && "batchId" in result) {
-    const value = (result as { batchId?: unknown }).batchId;
-    if (typeof value === "string" && value.trim()) {
-      return value;
-    }
-  }
-
-  return null;
-}
-
-function capabilitySupported(value: unknown) {
-  if (value === true) return true;
-  if (typeof value === "string") {
-    const normalized = value.toLowerCase();
-    return normalized === "supported" || normalized === "ready";
-  }
-  if (value && typeof value === "object" && "supported" in value) {
-    return capabilitySupported((value as { supported?: unknown }).supported);
-  }
-  if (value && typeof value === "object" && "status" in value) {
-    return capabilitySupported((value as { status?: unknown }).status);
-  }
-  return false;
-}
-
-function getAtomicCapability(chainCapabilities: Record<string, unknown> | null | undefined) {
-  return chainCapabilities?.atomic ?? chainCapabilities?.atomicBatch ?? null;
-}
-
-function getBrowserWalletRequester() {
-  if (typeof window === "undefined") return null;
-  const ethereum = (window as Window & {
-    ethereum?: {
-      request?: (args: { method: string; params?: unknown[] }) => Promise<unknown>;
-      providers?: Array<{ request?: (args: { method: string; params?: unknown[] }) => Promise<unknown> }>;
-    };
-  }).ethereum;
-
-  if (ethereum?.request) {
-    return ethereum.request.bind(ethereum);
-  }
-
-  const provider = ethereum?.providers?.find(
-    (item: { request?: (args: { method: string; params?: unknown[] }) => Promise<unknown> }) =>
-      typeof item.request === "function",
-  );
-  return provider?.request ? provider.request.bind(provider) : null;
-}
-
-function isFinishedCallStatus(status: unknown) {
-  if (typeof status === "number") return status >= 200 && status < 300;
-  const normalized = String(status || "").toLowerCase();
-  return normalized === "success" || normalized === "confirmed" || normalized === "complete";
-}
-
-function isFailedCallStatus(status: unknown) {
-  if (typeof status === "number") return status >= 400;
-  const normalized = String(status || "").toLowerCase();
-  return normalized === "failed" || normalized === "reverted" || normalized === "error";
-}
-
-function getReceiptHashFromCallStatus(status: unknown): Hex | null {
-  if (!status || typeof status !== "object") return null;
-  const receipts = (status as { receipts?: Array<{ transactionHash?: unknown }> }).receipts;
-  const hash = receipts?.find((receipt) => isTxHash(receipt?.transactionHash))?.transactionHash;
-  return isTxHash(hash) ? hash : null;
 }
 
 export function useDustSweep(): UseDustSweepReturn {
@@ -397,201 +302,6 @@ export function useDustSweep(): UseDustSweepReturn {
     return receipt;
   }, [publicClient]);
 
-  const sendApprovalBatch = useCallback(async (requirements: ApprovalRequirement[]) => {
-    const walletWithCalls = walletClient as typeof walletClient & {
-      account?: { address?: Address };
-      request?: (args: { method: string; params?: unknown[] }) => Promise<unknown>;
-      sendCalls?: (args: unknown) => Promise<unknown>;
-      waitForCallsStatus?: (args: unknown) => Promise<{
-        receipts?: Array<{ transactionHash?: unknown }>;
-      }>;
-    };
-
-    if (!walletWithCalls?.sendCalls || !walletWithCalls.waitForCallsStatus) {
-      // Some injected wallets expose EIP-5792 only through raw request().
-      // Keep going so Rabby/TokenPocket-style batching gets a chance.
-    }
-
-    const calls = requirements.flatMap((requirement) => {
-      const approvalCall = {
-        to: requirement.token,
-        value: 0n,
-        dataSuffix: DATA_SUFFIX,
-        data: encodeFunctionData({
-          abi: erc20Abi,
-          functionName: "approve",
-          args: [PERMIT2_ADDRESS, requirement.approvalAmount],
-        }),
-      };
-
-      if (!requirement.resetFirst) {
-        return [approvalCall];
-      }
-
-      return [
-        {
-          to: requirement.token,
-          value: 0n,
-          dataSuffix: DATA_SUFFIX,
-          data: encodeFunctionData({
-            abi: erc20Abi,
-            functionName: "approve",
-            args: [PERMIT2_ADDRESS, 0n],
-          }),
-        },
-        approvalCall,
-      ];
-    });
-
-    if (calls.length <= 1) {
-      return false;
-    }
-
-    const requester = walletWithCalls.request as
-      | ((args: { method: string; params?: unknown[] }) => Promise<unknown>)
-      | undefined;
-    const transportRequester = (walletClient as unknown as {
-      transport?: {
-        request?: (args: { method: string; params?: unknown[] }) => Promise<unknown>;
-      };
-    })?.transport?.request;
-    const rawRequester = requester || transportRequester || getBrowserWalletRequester();
-    const accountAddress = walletWithCalls.account?.address || address;
-
-    try {
-      const capabilitiesResult =
-        rawRequester && accountAddress
-          ? ((await rawRequester({
-              method: "wallet_getCapabilities",
-              params: [accountAddress],
-            })) as Record<string, Record<string, unknown>> | null)
-          : null;
-      const chainCapabilities = capabilitiesResult
-        ? Object.entries(capabilitiesResult).find(
-            ([candidate]) => candidate.toLowerCase() === toHexChainId(base.id).toLowerCase(),
-          )?.[1]
-        : null;
-      const atomicRequired =
-        walletStatus.isCoinbaseSmartWallet || capabilitySupported(getAtomicCapability(chainCapabilities));
-
-      if (!walletWithCalls.sendCalls || !walletWithCalls.waitForCallsStatus) {
-        throw new Error("viem sendCalls unavailable");
-      }
-
-      const sendCallsResult = await walletWithCalls.sendCalls({
-        calls,
-        chain: base,
-        account: address,
-        atomicRequired,
-        ...(walletStatus.isCoinbaseSmartWallet && process.env.NEXT_PUBLIC_PAYMASTER_URL
-          ? { capabilities: buildBasePaymasterCapabilities() }
-          : {}),
-      });
-      const callId = resolveSendCallsId(sendCallsResult);
-      if (!callId) {
-        throw new Error("wallet_sendCalls did not return an id");
-      }
-
-      const status = await walletWithCalls.waitForCallsStatus({
-        id: callId,
-        throwOnFailure: true,
-        timeout: 180_000,
-      });
-      const receiptHash = status.receipts?.find((receipt) => isTxHash(receipt?.transactionHash))
-        ?.transactionHash;
-
-      if (receiptHash) {
-        await waitForSuccessfulTransaction(receiptHash);
-      }
-
-      return true;
-    } catch (batchError) {
-      if (isRejectedByUser(batchError)) {
-        throw batchError;
-      }
-
-      console.warn("DustSweep approval batch failed, falling back to single approval transactions.", batchError);
-    }
-
-    if (!rawRequester || !accountAddress) {
-      return false;
-    }
-
-    try {
-      const capabilitiesResult = (await rawRequester({
-        method: "wallet_getCapabilities",
-        params: [accountAddress],
-      }).catch(() => null)) as Record<string, Record<string, unknown>> | null;
-      const chainCapabilities = capabilitiesResult
-        ? Object.entries(capabilitiesResult).find(
-            ([candidate]) => candidate.toLowerCase() === toHexChainId(base.id).toLowerCase(),
-          )?.[1]
-        : null;
-      const atomicRequired =
-        walletStatus.isCoinbaseSmartWallet || capabilitySupported(getAtomicCapability(chainCapabilities));
-      const rawCalls = calls.map((call) => ({
-        to: call.to,
-        value: "0x0",
-        data: appendBuilderCodeToData(call.data),
-      }));
-      const sendCallsResult = await rawRequester({
-        method: "wallet_sendCalls",
-        params: [
-          {
-            version: "2.0.0",
-            chainId: toHexChainId(base.id),
-            from: accountAddress,
-            atomicRequired,
-            calls: rawCalls,
-            ...(walletStatus.isCoinbaseSmartWallet && process.env.NEXT_PUBLIC_PAYMASTER_URL
-              ? {
-                  capabilities: {
-                    paymasterService: {
-                      url: process.env.NEXT_PUBLIC_PAYMASTER_URL,
-                      optional: true,
-                    },
-                  },
-                }
-              : {}),
-          },
-        ],
-      });
-      const callId = resolveSendCallsId(sendCallsResult);
-      if (!callId) {
-        throw new Error("wallet_sendCalls did not return an id");
-      }
-
-      for (let attempt = 0; attempt < 90; attempt += 1) {
-        const status = await rawRequester({
-          method: "wallet_getCallsStatus",
-          params: [callId],
-        });
-        const receiptHash = getReceiptHashFromCallStatus(status);
-        if (receiptHash) {
-          await waitForSuccessfulTransaction(receiptHash);
-          return true;
-        }
-        const statusValue = (status as { status?: unknown } | null)?.status;
-        if (isFinishedCallStatus(statusValue)) {
-          return true;
-        }
-        if (isFailedCallStatus(statusValue)) {
-          throw new Error("Approval batch failed");
-        }
-        await new Promise((resolve) => window.setTimeout(resolve, 2_000));
-      }
-
-      throw new Error("Approval batch timed out");
-    } catch (rawBatchError) {
-      if (isRejectedByUser(rawBatchError)) {
-        throw rawBatchError;
-      }
-
-      console.warn("DustSweep raw approval batch failed, falling back to single approval transactions.", rawBatchError);
-      return false;
-    }
-  }, [address, waitForSuccessfulTransaction, walletClient, walletStatus.isCoinbaseSmartWallet]);
-
   const ensurePermit2Approvals = useCallback(async (routes: DustSweepQuoteResponse["routes"]) => {
     if (!address || !walletClient) return;
 
@@ -611,21 +321,12 @@ export function useDustSweep(): UseDustSweepReturn {
       approvalRequirements.push({
         ...requirement,
         allowance,
-        approvalAmount: bufferedApprovalAmount(requirement.amount),
+        approvalAmount: maxUint256,
         resetFirst: allowance > 0n && requiresApprovalReset(requirement.token),
       });
     }
 
     if (approvalRequirements.length === 0) return;
-
-    const batched = await sendApprovalBatch(approvalRequirements);
-    if (batched) return;
-
-    if (approvalRequirements.length > 1) {
-      throw new Error(
-        "Batch approval is unavailable from this wallet session. Reconnect Rabby/TokenPocket and try again, or select one token.",
-      );
-    }
 
     const paymasterUrl = process.env.NEXT_PUBLIC_PAYMASTER_URL;
     for (const requirement of approvalRequirements) {
@@ -666,7 +367,6 @@ export function useDustSweep(): UseDustSweepReturn {
   }, [
     address,
     publicClient,
-    sendApprovalBatch,
     waitForSuccessfulTransaction,
     walletClient,
     walletStatus.isCoinbaseSmartWallet,
