@@ -674,6 +674,15 @@ function firstRow<T>(rows: T[] | null | undefined) {
   return rows?.[0] ?? null;
 }
 
+function isSupabaseUniqueViolation(error: { code?: string; message?: string } | null | undefined) {
+  return (
+    error?.code === "23505" ||
+    String(error?.message || "")
+      .toLowerCase()
+      .includes("duplicate key")
+  );
+}
+
 function calculateEthWeiFromUsd(usdAmount: number, ethPriceUsd: number) {
   const usdScaled = BigInt(Math.round(usdAmount * PRICE_SCALE));
   const ethPriceScaled = BigInt(Math.round(ethPriceUsd * PRICE_SCALE));
@@ -3473,7 +3482,7 @@ export class PointsEngine {
     const checkInDate = getUtcDayKey(now);
     const nowIso = now.toISOString();
 
-    await supabase.from("check_ins").insert({
+    const { error: checkInInsertError } = await supabase.from("check_ins").insert({
       user_id: user.id,
       check_in_date: checkInDate,
       points_earned: pointsAwarded,
@@ -3485,7 +3494,15 @@ export class PointsEngine {
       price_snapshot_date: payment.priceDate,
     });
 
-    await supabase.from("point_events").insert({
+    if (checkInInsertError) {
+      if (isSupabaseUniqueViolation(checkInInsertError)) {
+        throw new Error("Already checked in today");
+      }
+
+      throw new Error(`Record check-in: ${checkInInsertError.message}`);
+    }
+
+    const { error: pointEventInsertError } = await supabase.from("point_events").insert({
       user_id: user.id,
       action: "daily_check_in",
       points: CFG.CHECK_IN,
@@ -3509,6 +3526,10 @@ export class PointsEngine {
       season: 1,
     });
 
+    if (pointEventInsertError) {
+      throw new Error(`Record check-in points: ${pointEventInsertError.message}`);
+    }
+
     const nextUser = {
       ...user,
       current_streak: nextStreak,
@@ -3517,7 +3538,7 @@ export class PointsEngine {
       total_points: user.total_points + pointsAwarded,
     } as UserRecord;
 
-    await supabase
+    const { error: userUpdateError } = await supabase
       .from("users")
       .update({
         current_streak: nextUser.current_streak,
@@ -3527,6 +3548,10 @@ export class PointsEngine {
         updated_at: nowIso,
       })
       .eq("id", user.id);
+
+    if (userUpdateError) {
+      throw new Error(`Update check-in balance: ${userUpdateError.message}`);
+    }
 
     await this.awardReferralCommission(
       {

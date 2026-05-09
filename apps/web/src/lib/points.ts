@@ -419,6 +419,7 @@ export async function performDailyCheckIn(input: {
     PointsBalance & {
       points: number;
       pointsAwarded: number;
+      alreadyCheckedIn?: boolean;
       paymentAsset: "eth" | "usdc";
       paymentAmountUsd: number;
       unlockedBoostPercent: number;

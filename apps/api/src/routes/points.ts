@@ -38,6 +38,34 @@ function maintenanceUnavailable(c: Context) {
   return c.json({ success: false, error: MAINTENANCE_ERROR_MESSAGE }, 503);
 }
 
+function isAlreadyCompletedCheckInMessage(message: string) {
+  const normalized = message.toLowerCase();
+
+  return (
+    normalized.includes("already checked in today") ||
+    normalized.includes("already checked today") ||
+    normalized.includes("check-in transaction has already been used") ||
+    normalized.includes("that check-in transaction has already been used")
+  );
+}
+
+async function alreadyCompletedCheckInResponse(c: Context, address: string) {
+  const balance = await pointsEngine.getBalance(address);
+
+  if (!balance.checkedInToday) {
+    return null;
+  }
+
+  return c.json({
+    success: true,
+    alreadyCheckedIn: true,
+    points: 0,
+    pointsAwarded: 0,
+    unlockedBoostPercent: balance.boostPercent,
+    ...balance,
+  });
+}
+
 function getRequestIp(c: Context) {
   const forwarded = c.req.header("x-forwarded-for");
   if (forwarded) {
@@ -361,6 +389,17 @@ pointsRoutes.post("/check-in", async (c) => {
     return c.json({ success: true, ...result });
   } catch (e: unknown) {
     const msg = (e as Error).message;
+    if (isAlreadyCompletedCheckInMessage(msg)) {
+      const idempotentResponse = await alreadyCompletedCheckInResponse(
+        c,
+        body.address
+      ).catch(() => null);
+
+      if (idempotentResponse) {
+        return idempotentResponse;
+      }
+    }
+
     return c.json(
       { success: false, error: msg },
       msg === "Already checked in today" ? 400 : 500
