@@ -13,7 +13,7 @@ export type UnavailableReason =
   | "NOT_WHITELISTED"
   | "BELOW_THRESHOLD";
 
-export type SweepStep = "idle" | "signing" | "pending" | "success" | "error";
+export type SweepStep = "idle" | "approving" | "signing" | "pending" | "success" | "error";
 
 export type WalletSupportTier = "tier1" | "tier2" | "blocked" | "unknown";
 
@@ -140,6 +140,7 @@ export type SweepButtonVisualState =
   | { state: "disabled"; label: "Select output token" }
   | { state: "ready"; label: "Sweep Now" }
   | { state: "loading"; label: "Getting best route..." }
+  | { state: "approving"; label: "Approve tokens..." }
   | { state: "signing"; label: "Sign in wallet..." }
   | { state: "pending"; label: "Sweeping..." }
   | { state: "success"; label: "Swept! View on Basescan" }

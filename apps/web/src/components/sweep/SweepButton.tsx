@@ -26,7 +26,11 @@ export function SweepButton({
   txHash: Hex | null;
 }) {
   const disabled = visualState.state === "disabled" || visualState.state === "loading";
-  const isBusy = visualState.state === "loading" || visualState.state === "signing" || visualState.state === "pending";
+  const isBusy =
+    visualState.state === "loading" ||
+    visualState.state === "approving" ||
+    visualState.state === "signing" ||
+    visualState.state === "pending";
   const isSuccess = visualState.state === "success" && txHash;
 
   if (isSuccess) {

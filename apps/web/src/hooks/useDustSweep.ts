@@ -3,10 +3,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAccount, usePublicClient, useWalletClient } from "wagmi";
 import { base } from "viem/chains";
-import { type Address, type Hex } from "viem";
+import { encodeFunctionData, erc20Abi, maxUint256, type Address, type Hex } from "viem";
 import { useTokenBalances } from "@/hooks/useTokenBalances";
 import { useWalletWhitelist } from "@/hooks/useWalletWhitelist";
-import { buildPermit2TypedData, getPermit2SignatureErrorMessage } from "@/lib/permit2";
+import { PERMIT2_ADDRESS, buildPermit2TypedData, getPermit2SignatureErrorMessage } from "@/lib/permit2";
 import { encodeDustSweepPermit2Calldata, parseDustSweepError } from "@/lib/dustsweep-router";
 import { DATA_SUFFIX } from "@/lib/builderCode";
 import { buildBasePaymasterCapabilities } from "@/lib/paymaster";
@@ -92,6 +92,35 @@ function normalizeQuotePayload(payload: unknown): DustSweepQuoteResponse {
   }
 
   return data as DustSweepQuoteResponse;
+}
+
+function isRejectedByUser(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error || "");
+  const lowered = message.toLowerCase();
+  return (
+    lowered.includes("user rejected") ||
+    lowered.includes("rejected") ||
+    lowered.includes("denied") ||
+    lowered.includes("cancel")
+  );
+}
+
+function uniqueApprovalRequirements(routes: DustSweepQuoteResponse["routes"]) {
+  const byToken = new Map<string, { token: Address; amount: bigint }>();
+
+  for (const route of routes) {
+    const amount = BigInt(route.amountIn || "0");
+    if (amount <= 0n) continue;
+
+    const key = route.tokenIn.toLowerCase();
+    const current = byToken.get(key);
+    byToken.set(key, {
+      token: route.tokenIn,
+      amount: (current?.amount || 0n) + amount,
+    });
+  }
+
+  return Array.from(byToken.values());
 }
 
 export function useDustSweep(): UseDustSweepReturn {
@@ -281,11 +310,64 @@ export function useDustSweep(): UseDustSweepReturn {
       }
     }
 
+    let currentStep: SweepStep = "approving";
     setIsSweeping(true);
-    setSweepStep("signing");
+    setSweepStep(currentStep);
     setError(null);
 
     try {
+      const approvalRequirements = uniqueApprovalRequirements(quote.routes);
+      for (const requirement of approvalRequirements) {
+        const allowance = (await publicClient.readContract({
+          address: requirement.token,
+          abi: erc20Abi,
+          functionName: "allowance",
+          args: [address, PERMIT2_ADDRESS],
+        })) as bigint;
+
+        if (allowance >= requirement.amount) {
+          continue;
+        }
+
+        const paymasterUrl = process.env.NEXT_PUBLIC_PAYMASTER_URL;
+        const txBase = {
+          account: address,
+          chain: base,
+          to: requirement.token,
+          dataSuffix: DATA_SUFFIX,
+          ...(walletStatus.isCoinbaseSmartWallet && paymasterUrl
+            ? {
+                capabilities: buildBasePaymasterCapabilities(),
+              }
+            : {}),
+        };
+
+        if (allowance > 0n) {
+          const resetHash = (await walletClient.sendTransaction({
+            ...txBase,
+            data: encodeFunctionData({
+              abi: erc20Abi,
+              functionName: "approve",
+              args: [PERMIT2_ADDRESS, 0n],
+            }),
+          } as never)) as Hex;
+          await publicClient.waitForTransactionReceipt({ hash: resetHash });
+        }
+
+        const approvalHash = (await walletClient.sendTransaction({
+          ...txBase,
+          data: encodeFunctionData({
+            abi: erc20Abi,
+            functionName: "approve",
+            args: [PERMIT2_ADDRESS, maxUint256],
+          }),
+        } as never)) as Hex;
+        await publicClient.waitForTransactionReceipt({ hash: approvalHash });
+      }
+
+      currentStep = "signing";
+      setSweepStep(currentStep);
+
       const response = await fetch("/api/dustsweep/build-tx", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -329,7 +411,8 @@ export function useDustSweep(): UseDustSweepReturn {
         throw new Error(getPermit2SignatureErrorMessage(signatureError));
       }
 
-      setSweepStep("pending");
+      currentStep = "pending";
+      setSweepStep(currentStep);
       const fullCalldata = encodeDustSweepPermit2Calldata({
         routes: quote.routes,
         tokenOut: tokenOut.address,
@@ -375,9 +458,13 @@ export function useDustSweep(): UseDustSweepReturn {
       return { txHash: hash };
     } catch (sweepError) {
       const message =
-        sweepError instanceof Error
-          ? parseDustSweepError(sweepError)
-          : "Transaction failed";
+        isRejectedByUser(sweepError)
+          ? currentStep === "approving"
+            ? "Approval cancelled"
+            : "Transaction cancelled"
+          : sweepError instanceof Error
+            ? parseDustSweepError(sweepError)
+            : "Transaction failed";
       setError(message);
       setSweepStep("error");
       return null;

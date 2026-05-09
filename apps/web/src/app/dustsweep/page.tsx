@@ -30,6 +30,7 @@ function getSweepButtonState(args: {
 }): SweepButtonVisualState {
   if (args.sweepStep === "success") return { state: "success", label: "Swept! View on Basescan" };
   if (args.sweepStep === "error") return { state: "error", label: "Try again" };
+  if (args.sweepStep === "approving") return { state: "approving", label: "Approve tokens..." };
   if (args.sweepStep === "signing") return { state: "signing", label: "Sign in wallet..." };
   if (args.sweepStep === "pending") return { state: "pending", label: "Sweeping..." };
   if (args.selectedCount === 0) return { state: "disabled", label: "Select tokens" };

@@ -102,7 +102,10 @@ export function parseDustSweepError(error: unknown) {
   if (lower.includes("toomanytokens")) return "DustSweep can sweep up to 50 tokens in one batch.";
   if (lower.includes("zerotokens")) return "Select at least one token to sweep.";
   if (lower.includes("permitlengthmismatch")) return "Permit data did not match the selected tokens.";
+  if (lower.includes("permit2 approval required")) return "Approve the selected tokens and try again.";
+  if (lower.includes("transfer_from_failed")) return "Permit2 could not pull one token. Refresh balances, approve tokens, and try again.";
   if (lower.includes("transfer amount exceeds balance")) return "One token balance changed. Refresh and try again.";
+  if (lower.includes("token balance changed")) return "One token balance changed. Refresh and try again.";
   if (lower.includes("user rejected") || lower.includes("rejected")) return "Transaction cancelled";
 
   return raw || "Transaction failed";

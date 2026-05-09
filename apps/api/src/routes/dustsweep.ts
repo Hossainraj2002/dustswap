@@ -295,6 +295,16 @@ type TokenWhitelistRow = {
   source?: string | null;
 };
 
+type TokenListToken = {
+  chainId?: number;
+  address?: string;
+  symbol?: string;
+  name?: string;
+  decimals?: number;
+  logoURI?: string;
+  logo_uri?: string;
+};
+
 type DustSweepRoute = {
   tokenIn: Address;
   amountIn: string;
@@ -317,8 +327,8 @@ function getFeeBps() {
   return Number.isFinite(parsed) ? parsed : 200;
 }
 
-function errorJson(message: string) {
-  return { success: false, error: message };
+function errorJson(message: string, extra?: Record<string, unknown>) {
+  return { success: false, error: message, ...(extra || {}) };
 }
 
 function normalizeAddress(value: string) {
@@ -1264,6 +1274,81 @@ async function readErc20Balance(token: Address, holder: Address) {
   }) as bigint;
 }
 
+async function readErc20Allowance(token: Address, owner: Address, spender: Address) {
+  const data = encodeFunctionData({
+    abi: erc20Abi,
+    functionName: "allowance",
+    args: [owner, spender],
+  });
+  const result = await callContract(token, data);
+  return decodeFunctionResult({
+    abi: erc20Abi,
+    functionName: "allowance",
+    data: result,
+  }) as bigint;
+}
+
+async function findStaleRouteBalances(userAddress: Address, routes: DustSweepRoute[]) {
+  const stale: Array<{
+    token: Address;
+    required: string;
+    balance: string;
+  }> = [];
+
+  for (const route of routes) {
+    const amountIn = BigInt(route.amountIn || "0");
+    if (amountIn <= 0n) continue;
+
+    const balance = await readErc20Balance(route.tokenIn, userAddress);
+    if (balance < amountIn) {
+      stale.push({
+        token: route.tokenIn,
+        required: amountIn.toString(),
+        balance: balance.toString(),
+      });
+    }
+  }
+
+  return stale;
+}
+
+async function findMissingPermit2Approvals(userAddress: Address, routes: DustSweepRoute[]) {
+  const requiredByToken = new Map<string, { token: Address; amount: bigint }>();
+
+  for (const route of routes) {
+    const amount = BigInt(route.amountIn || "0");
+    if (amount <= 0n) continue;
+
+    const key = route.tokenIn.toLowerCase();
+    const current = requiredByToken.get(key);
+    requiredByToken.set(key, {
+      token: route.tokenIn,
+      amount: (current?.amount || 0n) + amount,
+    });
+  }
+
+  const approvals: Array<{
+    token: Address;
+    required: string;
+    allowance: string;
+    spender: Address;
+  }> = [];
+
+  for (const item of requiredByToken.values()) {
+    const allowance = await readErc20Allowance(item.token, userAddress, PERMIT2_ADDRESS);
+    if (allowance < item.amount) {
+      approvals.push({
+        token: item.token,
+        required: item.amount.toString(),
+        allowance: allowance.toString(),
+        spender: PERMIT2_ADDRESS,
+      });
+    }
+  }
+
+  return approvals;
+}
+
 async function readErc20Metadata(token: Address) {
   const fallbackSymbol = `${token.slice(0, 6)}...${token.slice(-4)}`;
   const [symbolResult, nameResult, decimalsResult] = await Promise.allSettled([
@@ -1525,6 +1610,19 @@ function getAllowedGeckoDexIds() {
   );
 }
 
+function getDefaultTokenListUrls() {
+  const configured = String(process.env.DUST_SWEEP_TOKEN_LIST_URLS || "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+
+  return Array.from(new Set([
+    "https://tokens.uniswap.org/",
+    "https://raw.githubusercontent.com/baseswapfi/default-token-list/main/build/baseswap-default.tokenlist.json",
+    ...configured,
+  ]));
+}
+
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -1760,6 +1858,167 @@ export async function syncWhitelistFromBlockscoutDexScreener(args: {
     dexScreenerErrors,
     tokensWithLiquidity: bestByToken.size,
     tokensUpserted: rows.length,
+  };
+}
+
+async function fetchTokenListRows(url: string) {
+  const response = await fetch(url, {
+    headers: {
+      Accept: "application/json",
+      "User-Agent": "DustSwap/1.0 (+https://app.dustswap.wtf)",
+    },
+  });
+  if (!response.ok) {
+    throw new Error(`Token list ${url} failed with ${response.status}`);
+  }
+
+  const payload = (await response.json()) as {
+    name?: string;
+    tokens?: TokenListToken[];
+  } | TokenListToken[];
+  const tokens = Array.isArray(payload) ? payload : payload.tokens || [];
+  const sourceName = Array.isArray(payload)
+    ? new URL(url).hostname
+    : sanitizeDbText(payload.name, new URL(url).hostname, 80);
+  const rows: TokenWhitelistRow[] = [];
+
+  for (const token of tokens) {
+    if (Number(token.chainId) !== BASE_CHAIN_ID || !token.address || !isAddress(token.address)) {
+      continue;
+    }
+
+    const address = normalizeAddress(token.address);
+    const fallbackSymbol = `${address.slice(0, 6)}...${address.slice(-4)}`;
+    rows.push({
+      address,
+      symbol: sanitizeDbText(token.symbol, fallbackSymbol, 32),
+      name: sanitizeDbText(token.name, token.symbol || fallbackSymbol, 120),
+      decimals: Number.isFinite(Number(token.decimals)) ? Number(token.decimals) : 18,
+      logo_uri: token.logoURI || token.logo_uri || null,
+      liquidity_usd: 0,
+      source: `token-list:${sourceName}`,
+    });
+  }
+
+  return rows;
+}
+
+export async function syncWhitelistFromTokenLists(args: {
+  urls?: string[];
+  maxTokens: number;
+  minLiquidityUSD: number;
+  replaceActive?: boolean;
+  delayMs?: number;
+}) {
+  const candidateByAddress = new Map<string, TokenWhitelistRow>();
+  const urls = Array.from(new Set(args.urls?.length ? args.urls : getDefaultTokenListUrls()));
+  const listErrors: string[] = [];
+
+  for (const url of urls) {
+    try {
+      const rows = await fetchTokenListRows(url);
+      for (const row of rows) {
+        const key = row.address.toLowerCase();
+        const existing = candidateByAddress.get(key);
+        candidateByAddress.set(key, {
+          ...row,
+          logo_uri: existing?.logo_uri || row.logo_uri || null,
+          source: existing?.source ? `${existing.source},${row.source}` : row.source,
+        });
+      }
+    } catch (error) {
+      if (listErrors.length < 12) {
+        listErrors.push(`${url}: ${(error as Error).message}`);
+      }
+    }
+
+    if (args.delayMs) await sleep(args.delayMs);
+  }
+
+  const candidateRows = Array.from(candidateByAddress.values());
+  const bestByToken = new Map<string, TokenWhitelistRow>();
+  let pairsScanned = 0;
+  const dexScreenerErrors: string[] = [];
+  const batchSize = 30;
+
+  for (let i = 0; i < candidateRows.length; i += batchSize) {
+    const batch = candidateRows.slice(i, i + batchSize);
+    const tokenByAddress = new Map(batch.map((token) => [token.address.toLowerCase(), token]));
+    const pairs = await fetchDexScreenerPairs(batch.map((token) => token.address as Address)).catch((error) => {
+      if (dexScreenerErrors.length < 12) {
+        dexScreenerErrors.push(`batch ${i}-${i + batch.length - 1}: ${(error as Error).message}`);
+      }
+      return [];
+    });
+    pairsScanned += pairs.length;
+
+    for (const pair of pairs) {
+      if (String(pair.chainId || "").toLowerCase() !== "base") continue;
+      const dexSource = getDexScreenerDexSource(pair);
+      if (!dexSource) continue;
+
+      const liquidityUSD = parsePositiveNumber(pair.liquidity?.usd);
+      if (liquidityUSD < args.minLiquidityUSD) continue;
+
+      for (const tokenAddress of getPairTokenAddresses(pair)) {
+        const token = tokenByAddress.get(tokenAddress);
+        if (!token) continue;
+
+        const existing = bestByToken.get(tokenAddress);
+        if (existing && Number(existing.liquidity_usd || 0) >= liquidityUSD) continue;
+
+        bestByToken.set(tokenAddress, {
+          ...token,
+          logo_uri: token.logo_uri || pair.info?.imageUrl || null,
+          liquidity_usd: liquidityUSD,
+          source: `${token.source || "token-list"}:${dexSource}:${pair.pairAddress || "unknown"}`,
+        });
+      }
+    }
+
+    if (args.delayMs && i + batchSize < candidateRows.length) {
+      await sleep(args.delayMs);
+    }
+  }
+
+  const rows = Array.from(bestByToken.values())
+    .sort((a, b) => Number(b.liquidity_usd || 0) - Number(a.liquidity_usd || 0))
+    .slice(0, args.maxTokens);
+
+  if (args.replaceActive) {
+    const { error } = await supabase
+      .from("tokens")
+      .update({
+        is_active: false,
+        last_checked: new Date().toISOString(),
+      })
+      .eq("chain_id", BASE_CHAIN_ID)
+      .like("source", "token-list:%");
+    if (error) throw new Error(error.message);
+  }
+
+  let tokensWritten = 0;
+  let tokensSkipped = 0;
+  const upsertErrors: string[] = [];
+
+  for (let i = 0; i < rows.length; i += 500) {
+    const result = await upsertTokenRows(rows.slice(i, i + 500));
+    tokensWritten += result.written;
+    tokensSkipped += result.skipped;
+    upsertErrors.push(...result.errors);
+  }
+
+  return {
+    urlsScanned: urls,
+    listErrors,
+    candidatesConsidered: candidateRows.length,
+    pairsScanned,
+    dexScreenerErrors,
+    tokensWithLiquidity: bestByToken.size,
+    tokensUpserted: rows.length,
+    tokensWritten,
+    tokensSkipped,
+    upsertErrors: upsertErrors.slice(0, 12),
   };
 }
 
@@ -2135,6 +2394,47 @@ dustsweepRoutes.post("/admin/sync-whitelist-blockscout", async (c) => {
   }
 });
 
+dustsweepRoutes.post("/admin/sync-whitelist-token-lists", async (c) => {
+  const expected = process.env.DUST_SWEEP_ADMIN_TOKEN || process.env.QUEST_ADMIN_TOKEN;
+  if (!expected || c.req.header("x-admin-token") !== expected) {
+    return c.json(errorJson("Unauthorized"), 401);
+  }
+
+  const body: {
+    urls?: string[];
+    maxTokens?: number;
+    minLiquidityUSD?: number;
+    replaceActive?: boolean;
+    delayMs?: number;
+  } = await c.req.json<{
+    urls?: string[];
+    maxTokens?: number;
+    minLiquidityUSD?: number;
+    replaceActive?: boolean;
+    delayMs?: number;
+  }>().catch(() => ({}));
+
+  try {
+    const result = await syncWhitelistFromTokenLists({
+      urls: Array.isArray(body.urls)
+        ? body.urls.filter((url) => typeof url === "string" && url.startsWith("https://")).slice(0, 20)
+        : undefined,
+      maxTokens: Math.max(1, Math.min(50_000, Number(body.maxTokens || 4000))),
+      minLiquidityUSD: Math.max(0, Number(body.minLiquidityUSD ?? MIN_WL_LIQUIDITY_USD)),
+      replaceActive: Boolean(body.replaceActive),
+      delayMs: Math.max(
+        0,
+        Math.min(5000, Number(body.delayMs ?? process.env.DUST_SWEEP_TOKEN_LIST_SYNC_DELAY_MS ?? 150)),
+      ),
+    });
+
+    return c.json({ success: true, ...result });
+  } catch (error) {
+    console.error("[dustsweep/admin/sync-whitelist-token-lists] Error:", error);
+    return c.json(errorJson((error as Error).message || "Failed to sync token-list whitelist"), 500);
+  }
+});
+
 dustsweepRoutes.post("/admin/sync-whitelist-onchain", async (c) => {
   const expected = process.env.DUST_SWEEP_ADMIN_TOKEN || process.env.QUEST_ADMIN_TOKEN;
   if (!expected || c.req.header("x-admin-token") !== expected) {
@@ -2353,7 +2653,13 @@ dustsweepRoutes.post("/quote", async (c) => {
   const slippageBps = Math.max(1, Math.min(3000, Number(body.slippageBps || 50)));
   const outputDecimals = tokenOut.toLowerCase() === USDC_ADDRESS.toLowerCase() ? 6 : 18;
   const routes: DustSweepRoute[] = [];
+  const staleBalances: Array<{
+    token: Address;
+    required: string;
+    balance: string;
+  }> = [];
   const whitelist = await loadWhitelist();
+  const userAddress = normalizeAddress(body.userAddress);
 
   for (let i = 0; i < body.tokenIns.length; i++) {
     const rawTokenIn = body.tokenIns[i];
@@ -2370,6 +2676,16 @@ dustsweepRoutes.post("/quote", async (c) => {
     }
     if (amountIn <= 0n) continue;
 
+    const liveBalance = await readErc20Balance(tokenIn, userAddress);
+    if (liveBalance < amountIn) {
+      staleBalances.push({
+        token: tokenIn,
+        required: amountIn.toString(),
+        balance: liveBalance.toString(),
+      });
+      continue;
+    }
+
     const best = await getBestQuote(tokenIn, tokenOut, amountIn, slippageBps);
     if (!best) continue;
 
@@ -2385,6 +2701,16 @@ dustsweepRoutes.post("/quote", async (c) => {
       priceImpactBps: best.priceImpactBps ?? 43,
       poolFee: best.poolFee,
     });
+  }
+
+  if (staleBalances.length > 0) {
+    return c.json(
+      errorJson("Token balance changed. Refresh balances and try again.", {
+        code: "STALE_TOKEN_BALANCE",
+        staleBalances,
+      }),
+      409,
+    );
   }
 
   if (routes.length === 0) {
@@ -2427,20 +2753,70 @@ dustsweepRoutes.post("/build-tx", async (c) => {
     userAddress?: string;
   }>();
 
-  if (!body.routes?.length || !body.tokenOut || !body.receiver || !body.deadline || !body.permit2Nonce) {
-    return c.json(errorJson("routes, tokenOut, receiver, deadline, and permit2Nonce are required"), 400);
+  if (!body.routes?.length || !body.tokenOut || !body.receiver || !body.deadline || !body.permit2Nonce || !body.userAddress) {
+    return c.json(errorJson("routes, tokenOut, receiver, deadline, permit2Nonce, and userAddress are required"), 400);
   }
-  if (!isAddress(body.tokenOut) || !isAddress(body.receiver)) {
-    return c.json(errorJson("Invalid tokenOut or receiver"), 400);
+  if (body.routes.length > 50) {
+    return c.json(errorJson("Maximum 50 tokens per sweep"), 400);
+  }
+  if (!isAddress(body.tokenOut) || !isAddress(body.receiver) || !isAddress(body.userAddress)) {
+    return c.json(errorJson("Invalid tokenOut, receiver, or userAddress"), 400);
+  }
+  if (Number(body.deadline) <= Math.floor(Date.now() / 1000)) {
+    return c.json(errorJson("Deadline expired. Refresh quote and try again.", { code: "DEADLINE_EXPIRED" }), 409);
   }
   if (!isAddress(DUST_SWEEP_ROUTER_ADDRESS)) {
     return c.json(errorJson("DustSweep router address is not configured"), 500);
   }
 
-  const routes = body.routes.map((route) => ({
-    ...route,
-    tokenIn: normalizeAddress(route.tokenIn),
-  }));
+  let routes: DustSweepRoute[];
+  try {
+    routes = body.routes.map((route) => ({
+      ...route,
+      tokenIn: normalizeAddress(route.tokenIn),
+      amountIn: BigInt(route.amountIn).toString(),
+      amountOutMin: BigInt(route.amountOutMin).toString(),
+      dexData: route.dexData,
+    }));
+  } catch {
+    return c.json(errorJson("Invalid route payload"), 400);
+  }
+
+  if (
+    routes.some(
+      (route) =>
+        BigInt(route.amountIn) <= 0n ||
+        BigInt(route.amountOutMin) <= 0n ||
+        !route.dexData ||
+        !String(route.dexData).startsWith("0x"),
+    )
+  ) {
+    return c.json(errorJson("Invalid route payload"), 400);
+  }
+
+  const userAddress = normalizeAddress(body.userAddress);
+  const staleBalances = await findStaleRouteBalances(userAddress, routes);
+  if (staleBalances.length > 0) {
+    return c.json(
+      errorJson("Token balance changed. Refresh balances and try again.", {
+        code: "STALE_TOKEN_BALANCE",
+        staleBalances,
+      }),
+      409,
+    );
+  }
+
+  const missingApprovals = await findMissingPermit2Approvals(userAddress, routes);
+  if (missingApprovals.length > 0) {
+    return c.json(
+      errorJson("Permit2 approval required before sweep.", {
+        code: "PERMIT2_APPROVAL_REQUIRED",
+        approvals: missingApprovals,
+      }),
+      409,
+    );
+  }
+
   const sweepRoutes = routes.map((route) => ({
     tokenIn: route.tokenIn,
     amountIn: BigInt(route.amountIn),
