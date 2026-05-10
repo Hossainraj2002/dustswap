@@ -14,6 +14,11 @@ import { base } from "viem/chains";
 import { getPaymentStatus } from "@base-org/account/payment";
 import { supabase } from "./supabase";
 import {
+  getBaseRpcEndpoints,
+  getRotatingBaseRpcEndpoint,
+  type BaseRpcEndpoint,
+} from "../utils/baseRpc";
+import {
   footprintAirdropService,
   type FootprintLookupResult,
   type FootprintLookupSource,
@@ -143,6 +148,74 @@ const baseClient = createPublicClient({
   chain: base,
   transport: http(BASE_RPC_URL),
 });
+
+type BasePublicClient = typeof baseClient;
+
+function isSameBaseRpcEndpoint(a: BaseRpcEndpoint, b: BaseRpcEndpoint) {
+  return (
+    a.url === b.url &&
+    JSON.stringify(a.headers || {}) === JSON.stringify(b.headers || {})
+  );
+}
+
+function getOrderedBaseRpcEndpoints() {
+  const firstEndpoint = getRotatingBaseRpcEndpoint();
+  return [
+    firstEndpoint,
+    ...getBaseRpcEndpoints().filter(
+      (endpoint) => !isSameBaseRpcEndpoint(endpoint, firstEndpoint)
+    ),
+  ];
+}
+
+async function readFromBaseRpc<T>(
+  operation: (client: BasePublicClient) => Promise<T>,
+  description: string
+) {
+  let lastError: Error | null = null;
+
+  for (const endpoint of getOrderedBaseRpcEndpoints()) {
+    const client = createPublicClient({
+      chain: base,
+      transport: http(endpoint.url, {
+        fetchOptions: endpoint.headers
+          ? {
+              headers: endpoint.headers,
+            }
+          : undefined,
+      }),
+    });
+
+    try {
+      return await operation(client);
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+    }
+  }
+
+  throw new Error(`${description}: ${lastError?.message || "Base RPC request failed"}`);
+}
+
+function getBaseTransaction(hash: `0x${string}`) {
+  return readFromBaseRpc(
+    (client) => client.getTransaction({ hash }),
+    "Load Base transaction"
+  );
+}
+
+function getBaseTransactionReceipt(hash: `0x${string}`) {
+  return readFromBaseRpc(
+    (client) => client.getTransactionReceipt({ hash }),
+    "Load Base transaction receipt"
+  );
+}
+
+function getBaseBlock(blockNumber: bigint) {
+  return readFromBaseRpc(
+    (client) => client.getBlock({ blockNumber }),
+    "Load Base block"
+  );
+}
 
 type UserRecord = {
   id: number;
@@ -2993,7 +3066,7 @@ export class PointsEngine {
 
   private verifySmartWalletEthPayment(
     normalizedAddress: string,
-    transaction: Awaited<ReturnType<typeof baseClient.getTransaction>>,
+    transaction: Awaited<ReturnType<typeof getBaseTransaction>>,
     requiredWei: bigint,
     recipientAddress: string
   ) {
@@ -3090,8 +3163,8 @@ export class PointsEngine {
     }
 
     const [transaction, receipt] = await Promise.all([
-      baseClient.getTransaction({ hash: txHash as `0x${string}` }),
-      baseClient.getTransactionReceipt({ hash: txHash as `0x${string}` }),
+      getBaseTransaction(txHash as `0x${string}`),
+      getBaseTransactionReceipt(txHash as `0x${string}`),
     ]);
 
     if (receipt.status !== "success") {
@@ -3264,10 +3337,8 @@ export class PointsEngine {
   }
 
   private async ensureTransactionMinedToday(txHash: string, now = new Date()) {
-    const receipt = await baseClient.getTransactionReceipt({
-      hash: txHash as `0x${string}`,
-    });
-    const block = await baseClient.getBlock({ blockNumber: receipt.blockNumber });
+    const receipt = await getBaseTransactionReceipt(txHash as `0x${string}`);
+    const block = await getBaseBlock(receipt.blockNumber);
     const minedAtMs = Number(block.timestamp) * 1000;
 
     if (!Number.isFinite(minedAtMs)) {
@@ -3337,7 +3408,7 @@ export class PointsEngine {
 
   private verifySmartWalletSpinCall(
     normalizedAddress: string,
-    transaction: Awaited<ReturnType<typeof baseClient.getTransaction>>
+    transaction: Awaited<ReturnType<typeof getBaseTransaction>>
   ) {
     const spinContractAddress = this.getConfiguredSpinContractAddress();
 
@@ -3403,8 +3474,8 @@ export class PointsEngine {
   private async verifySpinTransaction(normalizedAddress: string, txHash: string) {
     const spinContractAddress = this.getConfiguredSpinContractAddress();
     const [transaction, receipt] = await Promise.all([
-      baseClient.getTransaction({ hash: txHash as `0x${string}` }),
-      baseClient.getTransactionReceipt({ hash: txHash as `0x${string}` }),
+      getBaseTransaction(txHash as `0x${string}`),
+      getBaseTransactionReceipt(txHash as `0x${string}`),
     ]);
 
     if (receipt.status !== "success") {

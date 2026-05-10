@@ -78,17 +78,6 @@ function getErrorMessage(error: unknown) {
   return String(error ?? "Unknown error");
 }
 
-function isAlreadyCompletedCheckInError(error: unknown) {
-  const message = getErrorMessage(error).toLowerCase();
-
-  return (
-    message.includes("already checked in today") ||
-    message.includes("already checked today") ||
-    message.includes("check-in transaction has already been used") ||
-    message.includes("that check-in transaction has already been used")
-  );
-}
-
 function shortAddress(address: string) {
   return `${address.slice(0, 6)}...${address.slice(-4)}`;
 }
@@ -825,12 +814,8 @@ function ProfilePageContent() {
         throw new Error(result.error || "Onchain check-in failed");
       }
 
-      const alreadyCheckedIn = Boolean(
-        (result as { alreadyCheckedIn?: boolean }).alreadyCheckedIn
-      );
-      const baseSuccessMessage = alreadyCheckedIn
-        ? "Daily check-in is already complete."
-        : balance.checkInConfig.usdTarget <= 0
+      const baseSuccessMessage =
+        balance.checkInConfig.usdTarget <= 0
           ? "Onchain check-in complete."
           : asset === "usdc"
             ? `Onchain check-in complete with ${balance.checkInConfig.usdcAmount} USDC.`
@@ -878,23 +863,13 @@ function ProfilePageContent() {
       });
     } catch (error) {
       console.error(error);
-
-      if (isAlreadyCompletedCheckInError(error)) {
-        clearPointsSummaryCache(address);
-        await fetchProfileData({ force: true, silent: true });
-        emitDataInvalidation(["leaderboard", "points"], "check-in-reconciled");
-        setToast({
-          kind: "success",
-          message: "Daily check-in is already complete.",
-        });
-        return;
-      }
-
       setToast({
         kind: "error",
-        message: usesBasePayForCheckIn
-          ? getErrorMessage(error) || "Base Pay check-in failed. Try again."
-          : "Check-in transaction failed. Try again.",
+        message:
+          getErrorMessage(error) ||
+          (usesBasePayForCheckIn
+            ? "Base Pay check-in failed. Try again."
+            : "Check-in transaction failed. Try again."),
       });
     } finally {
       setCheckInStage("idle");
@@ -905,7 +880,6 @@ function ProfilePageContent() {
     balance,
     isOnBase,
     isSwitchingToBase,
-    fetchProfileData,
     pendingReferralCode,
     promptSwitchToBase,
     referral?.hasReferrer,

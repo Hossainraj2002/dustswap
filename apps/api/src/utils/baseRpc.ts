@@ -1,9 +1,15 @@
 const BASE_PUBLIC_RPC_URL = "https://mainnet.base.org";
+const BASE_CHAIN_ID = 8453;
 const DEFAULT_ROTATION_CALLS = 100;
 
 let activeIndex = 0;
 let activeCalls = 0;
 let requestId = 1;
+
+export type BaseRpcEndpoint = {
+  url: string;
+  headers?: Record<string, string>;
+};
 
 function splitEnv(value?: string) {
   return String(value || "")
@@ -25,7 +31,25 @@ function getRotationCalls() {
   return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : DEFAULT_ROTATION_CALLS;
 }
 
-export function getBaseRpcUrls() {
+function shouldUsePublicFallback() {
+  return process.env.BASE_RPC_PUBLIC_FALLBACK !== "0";
+}
+
+function getBlockscoutRpcEndpoints(): BaseRpcEndpoint[] {
+  const keys = unique([
+    ...splitEnv(process.env.BLOCKSCOUT_API_KEYS),
+    ...splitEnv(process.env.BLOCKSCOUT_API_KEY),
+  ]);
+
+  return keys.map((key) => ({
+    url: `https://api.blockscout.com/${BASE_CHAIN_ID}/json-rpc`,
+    headers: {
+      Authorization: `Bearer ${key}`,
+    },
+  }));
+}
+
+export function getBaseRpcEndpoints(): BaseRpcEndpoint[] {
   const explicitUrls = [
     ...splitEnv(process.env.ALCHEMY_BASE_RPC_URLS),
     ...splitEnv(process.env.BASE_RPC_URLS),
@@ -40,40 +64,53 @@ export function getBaseRpcUrls() {
   const alchemyUrls = alchemyKeys.map(
     (key) => `https://base-mainnet.g.alchemy.com/v2/${key}`,
   );
-  const urls = unique([...explicitUrls, ...alchemyUrls].filter(isHttpsUrl));
+  const endpoints: BaseRpcEndpoint[] = unique([...explicitUrls, ...alchemyUrls].filter(isHttpsUrl))
+    .map((url) => ({ url }));
+  const withBlockscout = [...endpoints, ...getBlockscoutRpcEndpoints()];
+  const withPublicFallback = shouldUsePublicFallback()
+    ? [...withBlockscout, { url: BASE_PUBLIC_RPC_URL }]
+    : withBlockscout;
 
-  return urls.length > 0 ? urls : [BASE_PUBLIC_RPC_URL];
+  return withPublicFallback.length > 0 ? withPublicFallback : [{ url: BASE_PUBLIC_RPC_URL }];
 }
 
-export function getRotatingBaseRpcUrl() {
-  const urls = getBaseRpcUrls();
-  if (urls.length === 1) return urls[0];
+export function getBaseRpcUrls() {
+  return getBaseRpcEndpoints().map((endpoint) => endpoint.url);
+}
 
-  const url = urls[activeIndex % urls.length];
+export function getRotatingBaseRpcEndpoint() {
+  const endpoints = getBaseRpcEndpoints();
+  if (endpoints.length === 1) return endpoints[0];
+
+  const endpoint = endpoints[activeIndex % endpoints.length];
   activeCalls += 1;
 
   if (activeCalls >= getRotationCalls()) {
     activeCalls = 0;
-    activeIndex = (activeIndex + 1) % urls.length;
+    activeIndex = (activeIndex + 1) % endpoints.length;
   }
 
-  return url;
+  return endpoint;
+}
+
+export function getRotatingBaseRpcUrl() {
+  return getRotatingBaseRpcEndpoint().url;
 }
 
 function orderedRpcUrls() {
-  const urls = getBaseRpcUrls();
-  const first = getRotatingBaseRpcUrl();
-  return [first, ...urls.filter((url) => url !== first)];
+  const endpoints = getBaseRpcEndpoints();
+  const first = getRotatingBaseRpcEndpoint();
+  return [first, ...endpoints.filter((endpoint) => endpoint !== first)];
 }
 
 export async function baseRpcRequest<T>(method: string, params: unknown[]): Promise<T> {
   let lastError: Error | null = null;
 
-  for (const url of orderedRpcUrls()) {
+  for (const endpoint of orderedRpcUrls()) {
     try {
-      const response = await fetch(url, {
+      const response = await fetch(endpoint.url, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...endpoint.headers },
         body: JSON.stringify({
           jsonrpc: "2.0",
           id: requestId++,
