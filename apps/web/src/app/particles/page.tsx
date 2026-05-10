@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { useAccount } from 'wagmi';
-import { buildPublicApiUrl } from '@/lib/apiBase';
+import { buildPublicApiUrl, publicApiFetch } from '@/lib/apiBase';
 
 interface Balance {
   totalPoints:   number;
@@ -31,7 +31,7 @@ export default function ParticlesPage() {
   }, [address]);
 
   const fetchLeaderboard = useCallback(async () => {
-    const res = await fetch(buildPublicApiUrl('/api/leaderboard'));
+    const res = await publicApiFetch(buildPublicApiUrl('/api/leaderboard'));
     const data = await res.json();
     if (data.success) setLeaderboard(data.leaderboard);
   }, []);

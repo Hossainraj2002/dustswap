@@ -1,5 +1,9 @@
 import type { Hex } from "viem";
-import { buildPublicApiUrl, getPublicApiOrigin } from "@/lib/apiBase";
+import {
+  buildPublicApiUrl,
+  getPublicApiOrigin,
+  publicApiFetch,
+} from "@/lib/apiBase";
 
 export type ProfileSettingsAction = "save-profile" | "pfp-upload-url";
 
@@ -307,7 +311,7 @@ export async function requestPfpUploadUrl(input: {
   signature: Hex;
   file: File;
 }) {
-  const response = await fetch(getProfileSettingsApiUrl("/pfp-upload-url"), {
+  const response = await publicApiFetch(getProfileSettingsApiUrl("/pfp-upload-url"), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -362,7 +366,7 @@ export async function saveProfileSettings(input: {
   pfpStorageKey?: string | null;
   xUsername?: string | null;
 }) {
-  const response = await fetch(getProfileSettingsApiUrl("/"), {
+  const response = await publicApiFetch(getProfileSettingsApiUrl("/"), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",

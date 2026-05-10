@@ -12,7 +12,7 @@ import { useState, useCallback, useEffect } from 'react';
 import { useAccount, useBalance } from 'wagmi';
 import { formatUnits, type Address } from 'viem';
 import type { Token } from '../types/swap';
-import { buildPublicApiUrl } from '@/lib/apiBase';
+import { buildPublicApiUrl, publicApiFetch } from '@/lib/apiBase';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -248,7 +248,7 @@ export function useUserTokens() {
 
       // Call our backend API to get token balances
       try {
-        const response = await fetch(buildPublicApiUrl(`/api/tokens/balances?address=${address}`), {
+        const response = await publicApiFetch(buildPublicApiUrl(`/api/tokens/balances?address=${address}`), {
           signal: AbortSignal.timeout(10000)
         });
 
@@ -456,7 +456,7 @@ export function useTokenSearch() {
 
     try {
       // Search via our backend API
-      const response = await fetch(
+      const response = await publicApiFetch(
         buildPublicApiUrl(`/api/tokens/search?q=${encodeURIComponent(query)}`)
       );
 

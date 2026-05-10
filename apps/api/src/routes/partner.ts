@@ -3,18 +3,9 @@ import {
   PartnerProgramError,
   partnerProgramService,
 } from "../services/partnerProgram";
+import { isMaintenanceBlocking, maintenanceUnavailable } from "../utils/maintenance";
 
 const partnerRoutes = new Hono();
-const MAINTENANCE_ERROR_MESSAGE =
-  "DustSwap is under maintenance. Please try again soon.";
-
-function isMaintenanceModeEnabled() {
-  return process.env.MAINTENANCE_MODE === "1";
-}
-
-function maintenanceUnavailable(c: Context) {
-  return c.json({ success: false, error: MAINTENANCE_ERROR_MESSAGE }, 503);
-}
 
 function getRequestIp(c: Context) {
   const forwarded = c.req.header("x-forwarded-for");
@@ -72,7 +63,7 @@ function getErrorPayload(error: unknown) {
 }
 
 partnerRoutes.get("/dashboard", async (c) => {
-  if (isMaintenanceModeEnabled()) {
+  if (await isMaintenanceBlocking(c)) {
     return maintenanceUnavailable(c);
   }
 
@@ -91,7 +82,7 @@ partnerRoutes.get("/dashboard", async (c) => {
 });
 
 partnerRoutes.get("/history", async (c) => {
-  if (isMaintenanceModeEnabled()) {
+  if (await isMaintenanceBlocking(c)) {
     return maintenanceUnavailable(c);
   }
 
@@ -110,7 +101,7 @@ partnerRoutes.get("/history", async (c) => {
 });
 
 partnerRoutes.post("/join", async (c) => {
-  if (isMaintenanceModeEnabled()) {
+  if (await isMaintenanceBlocking(c)) {
     return maintenanceUnavailable(c);
   }
 

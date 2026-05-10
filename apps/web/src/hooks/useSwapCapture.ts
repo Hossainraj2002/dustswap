@@ -5,7 +5,7 @@ import { useConnection } from "wagmi";
 import { appendBuilderCodeToData } from "@/lib/builderCode";
 import { isErc20ApproveCall, isOpenOceanRouterAddress } from "@/lib/paymaster";
 import { emitDataInvalidation } from "@/lib/clientEvents";
-import { buildPublicApiUrl } from "@/lib/apiBase";
+import { buildPublicApiUrl, publicApiFetch } from "@/lib/apiBase";
 import { clearPointsSummaryCache } from "@/lib/points";
 import { BASE_CHAIN_ID } from "@/lib/tokens";
 import { isSupportedSwapCaptureChainId } from "@/config/swapChains";
@@ -517,7 +517,7 @@ function getProviderCandidates(
 }
 
 async function postSwapRecord(item: CaptureQueueItem) {
-  const response = await fetch(buildPublicApiUrl("/api/swaps/record"), {
+  const response = await publicApiFetch(buildPublicApiUrl("/api/swaps/record"), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",

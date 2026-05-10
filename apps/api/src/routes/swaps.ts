@@ -1,4 +1,4 @@
-import { Hono, type Context } from "hono";
+import { Hono } from "hono";
 import { isAddress } from "viem";
 import {
   getCurrentDayKey,
@@ -13,18 +13,9 @@ import {
 } from "../services/swapRecorder";
 import { pointsEngine } from "../services/pointsEngine";
 import { questEngine } from "../services/questEngine";
+import { isMaintenanceBlocking, maintenanceUnavailable } from "../utils/maintenance";
 
 const swapsRoutes = new Hono();
-const MAINTENANCE_ERROR_MESSAGE =
-  "DustSwap is under maintenance. Please try again soon.";
-
-function isMaintenanceModeEnabled() {
-  return process.env.MAINTENANCE_MODE === "1";
-}
-
-function maintenanceUnavailable(c: Context) {
-  return c.json({ success: false, error: MAINTENANCE_ERROR_MESSAGE }, 503);
-}
 
 function normalizeAddress(address: string) {
   return address.toLowerCase();
@@ -35,7 +26,7 @@ function isTxHash(value: string) {
 }
 
 swapsRoutes.post("/record", async (c) => {
-  if (isMaintenanceModeEnabled()) {
+  if (await isMaintenanceBlocking(c)) {
     return maintenanceUnavailable(c);
   }
 

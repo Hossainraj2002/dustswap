@@ -1,4 +1,4 @@
-import { Hono, type Context } from "hono";
+import { Hono } from "hono";
 import {
   questEngine,
   type AdminQuestInput,
@@ -8,18 +8,10 @@ import {
 import { pointsEngine } from "../services/pointsEngine";
 import { runtimeCache } from "../utils/runtimeCache";
 import { DiscordVerificationError } from "../services/discordVerification";
+import { isMaintenanceBlocking, maintenanceUnavailable } from "../utils/maintenance";
+import { isAllowedAppOrigin } from "../config/appOrigins";
 
 const questsRoutes = new Hono();
-const MAINTENANCE_ERROR_MESSAGE =
-  "DustSwap is under maintenance. Please try again soon.";
-
-function isMaintenanceModeEnabled() {
-  return process.env.MAINTENANCE_MODE === "1";
-}
-
-function maintenanceUnavailable(c: Context) {
-  return c.json({ success: false, error: MAINTENANCE_ERROR_MESSAGE }, 503);
-}
 
 function getAdminToken() {
   const token = process.env.QUEST_ADMIN_TOKEN;
@@ -40,13 +32,35 @@ function assertAdmin(c: any) {
   return null;
 }
 
-function getDiscordRedirectBase() {
+function getDiscordRedirectBase(returnTo?: string | null) {
   const fallback = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+  let fallbackUrl: URL;
   try {
-    return new URL("/quests", fallback);
+    fallbackUrl = new URL("/quests", fallback);
   } catch {
-    return new URL("/quests", fallback);
+    fallbackUrl = new URL("/quests", "http://localhost:3000");
   }
+
+  if (returnTo) {
+    try {
+      const redirectUrl = new URL(returnTo, fallbackUrl);
+      if (isAllowedAppOrigin(redirectUrl.origin)) {
+        return redirectUrl;
+      }
+    } catch {
+      return fallbackUrl;
+    }
+  }
+
+  return fallbackUrl;
+}
+
+function getDiscordCallbackReturnTo(error: unknown) {
+  const returnTo =
+    error && typeof error === "object"
+      ? (error as { returnTo?: unknown }).returnTo
+      : null;
+  return typeof returnTo === "string" ? returnTo : null;
 }
 
 function getDiscordErrorPayload(error: unknown) {
@@ -77,7 +91,7 @@ function getDiscordErrorPayload(error: unknown) {
 }
 
 questsRoutes.get("/", async (c) => {
-  if (isMaintenanceModeEnabled()) {
+  if (await isMaintenanceBlocking(c)) {
     return maintenanceUnavailable(c);
   }
 
@@ -198,7 +212,7 @@ questsRoutes.delete("/admin/:id", async (c) => {
 });
 
 questsRoutes.post("/x/username", async (c) => {
-  if (isMaintenanceModeEnabled()) {
+  if (await isMaintenanceBlocking(c)) {
     return maintenanceUnavailable(c);
   }
 
@@ -212,7 +226,7 @@ questsRoutes.post("/x/username", async (c) => {
 });
 
 questsRoutes.get("/x/account", async (c) => {
-  if (isMaintenanceModeEnabled()) {
+  if (await isMaintenanceBlocking(c)) {
     return maintenanceUnavailable(c);
   }
 
@@ -233,7 +247,7 @@ questsRoutes.get("/x/account", async (c) => {
 });
 
 questsRoutes.post("/x/connect", async (c) => {
-  if (isMaintenanceModeEnabled()) {
+  if (await isMaintenanceBlocking(c)) {
     return maintenanceUnavailable(c);
   }
 
@@ -260,7 +274,7 @@ questsRoutes.get("/x/connect", async (c) => {
 });
 
 questsRoutes.post("/x/disconnect", async (c) => {
-  if (isMaintenanceModeEnabled()) {
+  if (await isMaintenanceBlocking(c)) {
     return maintenanceUnavailable(c);
   }
 
@@ -300,7 +314,7 @@ questsRoutes.get("/x/callback", async (c) => {
 });
 
 questsRoutes.get("/discord/connect", async (c) => {
-  if (isMaintenanceModeEnabled()) {
+  if (await isMaintenanceBlocking(c)) {
     return maintenanceUnavailable(c);
   }
 
@@ -314,7 +328,7 @@ questsRoutes.get("/discord/connect", async (c) => {
     const authUrl = await questEngine.createDiscordAuthUrl(input);
     return c.redirect(authUrl, 302);
   } catch (error) {
-    const redirectUrl = getDiscordRedirectBase();
+    const redirectUrl = getDiscordRedirectBase(c.req.query("returnTo"));
     redirectUrl.searchParams.set("discord_linked", "0");
     redirectUrl.searchParams.set(
       "discord_error",
@@ -347,7 +361,7 @@ questsRoutes.get("/discord/callback", async (c) => {
     );
     return c.redirect(redirectUrl.toString(), 302);
   } catch (error) {
-    const redirectUrl = getDiscordRedirectBase();
+    const redirectUrl = getDiscordRedirectBase(getDiscordCallbackReturnTo(error));
     redirectUrl.searchParams.set("discord_linked", "0");
     redirectUrl.searchParams.set(
       "discord_error",
@@ -360,7 +374,7 @@ questsRoutes.get("/discord/callback", async (c) => {
 });
 
 questsRoutes.post("/discord/verify", async (c) => {
-  if (isMaintenanceModeEnabled()) {
+  if (await isMaintenanceBlocking(c)) {
     return maintenanceUnavailable(c);
   }
 
@@ -450,7 +464,7 @@ questsRoutes.post("/activities/swap/sync", async (c) => {
 });
 
 questsRoutes.post("/:id/start", async (c) => {
-  if (isMaintenanceModeEnabled()) {
+  if (await isMaintenanceBlocking(c)) {
     return maintenanceUnavailable(c);
   }
 

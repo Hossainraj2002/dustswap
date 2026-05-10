@@ -1,5 +1,5 @@
 import type { Hex } from "viem";
-import { buildPublicApiUrl } from "@/lib/apiBase";
+import { buildPublicApiUrl, publicApiFetch } from "@/lib/apiBase";
 
 const PARTNER_JOIN_STATEMENT = "DustSwap Partner Program Join";
 
@@ -170,7 +170,7 @@ export function buildPartnerJoinMessage(address: string) {
 export async function fetchPartnerDashboard(address: string) {
   const url = new URL(getPartnerApiUrl("/dashboard"));
   url.searchParams.set("address", address);
-  const response = await fetch(url.toString(), {
+  const response = await publicApiFetch(url.toString(), {
     headers: {
       "Content-Type": "application/json",
     },
@@ -183,7 +183,7 @@ export async function fetchPartnerDashboard(address: string) {
 export async function fetchPartnerHistory(address: string) {
   const url = new URL(getPartnerApiUrl("/history"));
   url.searchParams.set("address", address);
-  const response = await fetch(url.toString(), {
+  const response = await publicApiFetch(url.toString(), {
     headers: {
       "Content-Type": "application/json",
     },
@@ -198,7 +198,7 @@ export async function joinPartnerProgram(input: {
   message: string;
   signature: Hex;
 }) {
-  const response = await fetch(getPartnerApiUrl("/join"), {
+  const response = await publicApiFetch(getPartnerApiUrl("/join"), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -218,7 +218,7 @@ export async function fetchPartnerAdminLeaderboard(
     url.searchParams.set("search", search.trim());
   }
 
-  const response = await fetch(url.toString(), {
+  const response = await publicApiFetch(url.toString(), {
     headers: {
       "Content-Type": "application/json",
       "x-admin-token": adminToken,
@@ -237,7 +237,7 @@ export async function savePartnerAdminMember(
     isAdmin?: boolean;
   }
 ) {
-  const response = await fetch(getPartnerApiUrl("/admin/members"), {
+  const response = await publicApiFetch(getPartnerApiUrl("/admin/members"), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -253,7 +253,7 @@ export async function fetchPartnerAdminMember(
   adminToken: string,
   address: string
 ) {
-  const response = await fetch(
+  const response = await publicApiFetch(
     getPartnerApiUrl(`/admin/members/${encodeURIComponent(address)}`),
     {
       headers: {
@@ -277,7 +277,7 @@ export async function markPartnerDistributionPaid(
     paidNotes?: string | null;
   }
 ) {
-  const response = await fetch(getPartnerApiUrl("/admin/distributions/mark-paid"), {
+  const response = await publicApiFetch(getPartnerApiUrl("/admin/distributions/mark-paid"), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",

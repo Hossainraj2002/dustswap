@@ -1,5 +1,5 @@
 import type { Address, Hex } from "viem";
-import { buildPublicApiUrl } from "@/lib/apiBase";
+import { buildPublicApiUrl, publicApiFetch } from "@/lib/apiBase";
 
 const SIWE_SESSION_STORAGE_KEY = "dustswap:siwe-session";
 const SIWE_VERIFY_RECENT_TTL_MS = 15_000;
@@ -100,7 +100,7 @@ export async function requestSiweNonce() {
     return nonceRequestInFlight;
   }
 
-  const request = fetch(buildPublicApiUrl("/api/auth/siwe/nonce"), {
+  const request = publicApiFetch(buildPublicApiUrl("/api/auth/siwe/nonce"), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -155,7 +155,7 @@ export async function verifySiweSession(input: {
     return inflight;
   }
 
-  const request = fetch(buildPublicApiUrl("/api/auth/siwe/verify"), {
+  const request = publicApiFetch(buildPublicApiUrl("/api/auth/siwe/verify"), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",

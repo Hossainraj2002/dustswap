@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { maintenanceBypassHeadersFromRequest } from '@/lib/maintenanceForward';
 
 const DEFAULT_API_URL = "http://localhost:3001";
 
@@ -43,10 +44,12 @@ export async function GET(request: Request) {
        return NextResponse.json({ error: 'User not found' }, { status: 404 });
     }
 
+    const maintHeaders = await maintenanceBypassHeadersFromRequest(request);
     await fetch(getPointsApiUrl("/profile-cache"), {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
+        ...maintHeaders,
       },
       body: JSON.stringify({
         address,

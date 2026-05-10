@@ -527,6 +527,24 @@ function getDefaultReturnTo() {
   return new URL("/quests", appUrl).toString();
 }
 
+class DiscordOAuthCallbackError extends DiscordVerificationError {
+  readonly returnTo: string;
+
+  constructor(error: unknown, returnTo: string) {
+    if (error instanceof DiscordVerificationError) {
+      super(error.code, error.message, error.status, error.retryAfterSeconds);
+    } else {
+      super(
+        "DISCORD_OAUTH_EXCHANGE_FAILED",
+        (error as Error).message || "Discord connection failed. Please try again.",
+        400
+      );
+    }
+
+    this.returnTo = returnTo;
+  }
+}
+
 function normalizeReturnTo(returnTo?: string | null) {
   const fallback = getDefaultReturnTo();
   if (!returnTo) {
@@ -1950,110 +1968,114 @@ export class QuestEngine {
 
   async handleDiscordCallback(code: string, state: string) {
     const payload = await this.consumeDiscordOAuthState(state);
-    const tokenJson = await discordVerificationService.exchangeCodeForToken(code);
-    const discordUser = await discordVerificationService.fetchCurrentUser(
-      tokenJson.access_token
-    );
-    const connectedAt = new Date().toISOString();
-    const avatarUrl = buildDiscordAvatarUrl(discordUser);
-    const displayName = discordUser.global_name || discordUser.username || null;
-    const guildId = getDiscordGuildId();
+    try {
+      const tokenJson = await discordVerificationService.exchangeCodeForToken(code);
+      const discordUser = await discordVerificationService.fetchCurrentUser(
+        tokenJson.access_token
+      );
+      const connectedAt = new Date().toISOString();
+      const avatarUrl = buildDiscordAvatarUrl(discordUser);
+      const displayName = discordUser.global_name || discordUser.username || null;
+      const guildId = getDiscordGuildId();
 
-    const { data: existingDiscordUser, error: existingDiscordUserError } =
-      await supabase
+      const { data: existingDiscordUser, error: existingDiscordUserError } =
+        await supabase
+          .from("social_accounts")
+          .select("user_id")
+          .eq("platform", "discord")
+          .eq("platform_user_id", discordUser.id)
+          .maybeSingle();
+
+      if (existingDiscordUserError) {
+        throw new Error(
+          `Failed to check linked Discord account: ${existingDiscordUserError.message}`
+        );
+      }
+
+      if (
+        existingDiscordUser &&
+        Number((existingDiscordUser as { user_id: number }).user_id) !== payload.userId
+      ) {
+        throw new Error("That Discord account is already linked to another wallet.");
+      }
+
+      const { error } = await supabase
         .from("social_accounts")
-        .select("user_id")
-        .eq("platform", "discord")
-        .eq("platform_user_id", discordUser.id)
-        .maybeSingle();
-
-    if (existingDiscordUserError) {
-      throw new Error(
-        `Failed to check linked Discord account: ${existingDiscordUserError.message}`
-      );
-    }
-
-    if (
-      existingDiscordUser &&
-      Number((existingDiscordUser as { user_id: number }).user_id) !== payload.userId
-    ) {
-      throw new Error("That Discord account is already linked to another wallet.");
-    }
-
-    const { error } = await supabase
-      .from("social_accounts")
-      .upsert(
-        {
-          user_id: payload.userId,
-          platform: "discord",
-          platform_user_id: discordUser.id,
-          username: discordUser.username,
-          display_name: displayName,
-          profile_image_url: avatarUrl,
-          access_token: null,
-          refresh_token: null,
-          scope: tokenJson.scope || DISCORD_SCOPES.join(" "),
-          token_expires_at: null,
-          metadata: {
-            source: "discord_oauth",
-            connectedAt,
-            verifiedAt: null,
-            guildId,
-            joined: false,
-            pending: null,
-            roles: [],
-          },
-          updated_at: connectedAt,
-        },
-        {
-          onConflict: "user_id,platform",
-        }
-      );
-
-    if (error) {
-      throw new Error(`Failed to save Discord account: ${error.message}`);
-    }
-
-    const discordUsernameForProfile = String(displayName || discordUser.username || "")
-      .replace(/[\u0000-\u001f\u007f]/g, "")
-      .trim()
-      .slice(0, 40);
-
-    if (discordUsernameForProfile.length >= 2) {
-      const { error: profileError } = await supabase
-        .from("user_profiles")
         .upsert(
           {
             user_id: payload.userId,
-            discord_username: discordUsernameForProfile,
+            platform: "discord",
+            platform_user_id: discordUser.id,
+            username: discordUser.username,
+            display_name: displayName,
+            profile_image_url: avatarUrl,
+            access_token: null,
+            refresh_token: null,
+            scope: tokenJson.scope || DISCORD_SCOPES.join(" "),
+            token_expires_at: null,
+            metadata: {
+              source: "discord_oauth",
+              connectedAt,
+              verifiedAt: null,
+              guildId,
+              joined: false,
+              pending: null,
+              roles: [],
+            },
             updated_at: connectedAt,
           },
           {
-            onConflict: "user_id",
+            onConflict: "user_id,platform",
           }
         );
 
-      if (profileError) {
-        if (isMissingUserProfilesTableError(profileError)) {
-          console.warn(
-            `[Discord OAuth] user_profiles table is not available yet: ${profileError.message}`
+      if (error) {
+        throw new Error(`Failed to save Discord account: ${error.message}`);
+      }
+
+      const discordUsernameForProfile = String(displayName || discordUser.username || "")
+        .replace(/[\u0000-\u001f\u007f]/g, "")
+        .trim()
+        .slice(0, 40);
+
+      if (discordUsernameForProfile.length >= 2) {
+        const { error: profileError } = await supabase
+          .from("user_profiles")
+          .upsert(
+            {
+              user_id: payload.userId,
+              discord_username: discordUsernameForProfile,
+              updated_at: connectedAt,
+            },
+            {
+              onConflict: "user_id",
+            }
           );
-        } else {
-          throw new Error(`Failed to save Discord profile display: ${profileError.message}`);
+
+        if (profileError) {
+          if (isMissingUserProfilesTableError(profileError)) {
+            console.warn(
+              `[Discord OAuth] user_profiles table is not available yet: ${profileError.message}`
+            );
+          } else {
+            throw new Error(`Failed to save Discord profile display: ${profileError.message}`);
+          }
         }
       }
+
+      this.invalidateQuestBoardCache(payload.address);
+      pointsEngine.invalidateUserReadCaches(payload.address);
+
+      return {
+        address: payload.address,
+        returnTo: payload.returnTo,
+        username: discordUser.username,
+        displayName,
+        discordUserId: discordUser.id,
+      };
+    } catch (error) {
+      throw new DiscordOAuthCallbackError(error, payload.returnTo);
     }
-
-    this.invalidateQuestBoardCache(payload.address);
-    pointsEngine.invalidateUserReadCaches(payload.address);
-
-    return {
-      address: payload.address,
-      returnTo: payload.returnTo,
-      username: discordUser.username,
-      displayName,
-      discordUserId: discordUser.id,
-    };
   }
 
   async disconnectXAccount(input: XAccountAuthInput) {

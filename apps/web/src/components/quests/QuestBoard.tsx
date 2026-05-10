@@ -94,6 +94,26 @@ function getDiscordVerifyMessage(error?: string | null) {
   return "Discord verification is temporarily unavailable.";
 }
 
+function getDiscordConnectMessage(error?: string | null) {
+  if (!error) {
+    return "Discord connection failed. Please try again.";
+  }
+
+  if (error === "DISCORD_OAUTH_STATE_INVALID") {
+    return "Discord connection expired. Please try again.";
+  }
+
+  if (error === "DISCORD_OAUTH_EXCHANGE_FAILED") {
+    return "Discord connection failed. Check the Discord app secret and redirect URL in Railway.";
+  }
+
+  if (error === "DISCORD_NOT_CONFIGURED") {
+    return "Discord is not configured on the API server.";
+  }
+
+  return getDiscordVerifyMessage(error);
+}
+
 function getPostRequirementHint(quest: QuestItem) {
   const ruleTokens = Array.isArray(quest.rules.requiredAnyOf)
     ? quest.rules.requiredAnyOf
@@ -439,6 +459,75 @@ export function QuestBoard() {
     });
   }, [loadBoard]);
 
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const handleDiscordOAuthMessage = (event: MessageEvent) => {
+      if (event.origin !== window.location.origin) {
+        return;
+      }
+
+      const payload = event.data as {
+        type?: string;
+        success?: boolean;
+        error?: string | null;
+        username?: string | null;
+      };
+
+      if (payload?.type !== "dustswap:discord-oauth") {
+        return;
+      }
+
+      setIsConnectingDiscord(false);
+      if (payload.success) {
+        setMessage(
+          payload.username
+            ? `Discord connected as ${payload.username}.`
+            : "Discord connected."
+        );
+        emitDataInvalidation(["quests", "profile"], "discord-connected");
+        void loadBoard({ silent: true });
+        return;
+      }
+
+      setError(getDiscordConnectMessage(payload.error));
+      void loadBoard({ silent: true });
+    };
+
+    window.addEventListener("message", handleDiscordOAuthMessage);
+    return () => window.removeEventListener("message", handleDiscordOAuthMessage);
+  }, [loadBoard]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const params = new URLSearchParams(window.location.search);
+    const linked = params.get("discord_linked");
+    const errorParam = params.get("discord_error");
+    const username = params.get("discord_username");
+    if (!linked && !errorParam) {
+      return;
+    }
+
+    if (linked === "1") {
+      setMessage(username ? `Discord connected as ${username}.` : "Discord connected.");
+      emitDataInvalidation(["quests", "profile"], "discord-connected");
+      void loadBoard({ silent: true });
+    } else {
+      setError(getDiscordConnectMessage(errorParam));
+    }
+
+    params.delete("discord_linked");
+    params.delete("discord_error");
+    params.delete("discord_username");
+    const nextUrl = `${window.location.pathname}${params.toString() ? `?${params.toString()}` : ""}${window.location.hash}`;
+    window.history.replaceState({}, "", nextUrl);
+  }, [loadBoard]);
+
   const linkedXAccount = board?.linkedAccounts?.x;
   const isXConnected = linkedXAccount?.connected === true;
   const savedXUsername = formatXUsernameDisplay(linkedXAccount?.username);
@@ -625,7 +714,7 @@ export function QuestBoard() {
     }
   }
 
-  async function handleConnectDiscord(returnPath = "/quests") {
+  async function handleConnectDiscord() {
     if (!address) {
       setError("Connect your wallet first");
       return;
@@ -639,17 +728,42 @@ export function QuestBoard() {
     setMessage(null);
     setIsConnectingDiscord(true);
 
+    const popup =
+      typeof window !== "undefined"
+        ? window.open(
+            "about:blank",
+            "dustswap-discord-oauth",
+            "popup=yes,width=540,height=760,left=120,top=80"
+          )
+        : null;
+
+    if (!popup) {
+      setIsConnectingDiscord(false);
+      setError("Allow pop-ups for DustSwap, then try Connect Discord again.");
+      return;
+    }
+
+    let popupCheckId: number | null = window.setInterval(() => {
+      if (popup.closed) {
+        if (popupCheckId !== null) {
+          window.clearInterval(popupCheckId);
+          popupCheckId = null;
+        }
+        setIsConnectingDiscord(false);
+      }
+    }, 600);
+
     try {
       const returnTo =
         typeof window !== "undefined"
-          ? new URL(returnPath, window.location.origin).toString()
-          : returnPath;
+          ? new URL("/discord/oauth-complete", window.location.origin).toString()
+          : "/discord/oauth-complete";
       const messageToSign = buildDiscordAccountMessage(address, "connect-discord");
       const signature = (await signMessageAsync({
         message: messageToSign,
       })) as Hex;
 
-      window.location.assign(
+      popup.location.assign(
         getDiscordConnectUrl({
           address,
           message: messageToSign,
@@ -658,6 +772,10 @@ export function QuestBoard() {
         })
       );
     } catch (connectError) {
+      popup.close();
+      if (popupCheckId !== null) {
+        window.clearInterval(popupCheckId);
+      }
       setError(getDisplayError(connectError));
       setIsConnectingDiscord(false);
     }
@@ -670,7 +788,7 @@ export function QuestBoard() {
     }
 
     if (!isDiscordConnected) {
-      await handleConnectDiscord("/quests");
+      await handleConnectDiscord();
       return;
     }
 
@@ -974,7 +1092,7 @@ export function QuestBoard() {
               {!isDiscordConnected ? (
                 <button
                   type="button"
-                  onClick={() => void handleConnectDiscord("/quests")}
+                  onClick={() => void handleConnectDiscord()}
                   disabled={isConnectingDiscord}
                   className="w-full rounded-2xl bg-sky-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-40"
                 >

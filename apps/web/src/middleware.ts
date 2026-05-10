@@ -1,9 +1,14 @@
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
+import {
+  MAINTENANCE_BYPASS_COOKIE_NAME,
+  maintenanceBypassConfigured,
+  verifyMaintenanceBypassToken,
+} from "@/lib/maintenanceBypassToken";
 
 const PUBLIC_FILE = /\.[^/]+$/;
 
-export function middleware(request: NextRequest) {
+export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   if (process.env.MAINTENANCE_MODE !== "1") {
@@ -19,6 +24,15 @@ export function middleware(request: NextRequest) {
     pathname === "/sitemap.xml"
   ) {
     return NextResponse.next();
+  }
+
+  const secret = process.env.MAINTENANCE_BYPASS_SECRET;
+  if (maintenanceBypassConfigured(secret)) {
+    const cookieToken = request.cookies.get(MAINTENANCE_BYPASS_COOKIE_NAME)?.value;
+    const verified = await verifyMaintenanceBypassToken(cookieToken, secret);
+    if (verified.ok) {
+      return NextResponse.next();
+    }
   }
 
   const url = request.nextUrl.clone();

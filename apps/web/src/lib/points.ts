@@ -1,5 +1,5 @@
 import type { SpinRewardKey, SpinRewardKind } from "@/lib/spin";
-import { buildPublicApiUrl } from "@/lib/apiBase";
+import { buildPublicApiUrl, publicApiFetch } from "@/lib/apiBase";
 import { isTerminalReferralError } from "@/lib/referrals";
 
 async function parseJson<T>(response: Response): Promise<T> {
@@ -214,7 +214,7 @@ export function getPointsApiUrl(path = "") {
 }
 
 export async function fetchPointsBalance(address: string) {
-  const response = await fetch(getPointsApiUrl(`/${address}`), {
+  const response = await publicApiFetch(getPointsApiUrl(`/${address}`), {
     headers: {
       "Content-Type": "application/json",
     },
@@ -243,7 +243,7 @@ export async function fetchPointsSummary(
     }
   }
 
-  const request = fetch(getPointsApiUrl(`/${address}/summary`), {
+  const request = publicApiFetch(getPointsApiUrl(`/${address}/summary`), {
     headers: {
       "Content-Type": "application/json",
     },
@@ -269,7 +269,7 @@ export async function fetchPointsSummary(
 }
 
 export async function fetchUserStats(address: string) {
-  const response = await fetch(getPointsApiUrl(`/${address}/stats`), {
+  const response = await publicApiFetch(getPointsApiUrl(`/${address}/stats`), {
     headers: {
       "Content-Type": "application/json",
     },
@@ -280,7 +280,7 @@ export async function fetchUserStats(address: string) {
 }
 
 export async function fetchReferralStats(address: string) {
-  const response = await fetch(getPointsApiUrl(`/${address}/referrals`), {
+  const response = await publicApiFetch(getPointsApiUrl(`/${address}/referrals`), {
     headers: {
       "Content-Type": "application/json",
     },
@@ -291,7 +291,7 @@ export async function fetchReferralStats(address: string) {
 }
 
 export async function previewReferralCode(address: string, referralCode: string) {
-  const response = await fetch(getPointsApiUrl("/referral/preview"), {
+  const response = await publicApiFetch(getPointsApiUrl("/referral/preview"), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -325,7 +325,7 @@ export async function applyReferralCode(address: string, referralCode: string) {
     return inflight;
   }
 
-  const request = fetch(getPointsApiUrl("/referral/apply"), {
+  const request = publicApiFetch(getPointsApiUrl("/referral/apply"), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -360,7 +360,7 @@ export async function applyReferralCode(address: string, referralCode: string) {
 }
 
 export async function fetchLeaderboard(limit = 50) {
-  const response = await fetch(getPointsApiUrl(`/leaderboard?limit=${limit}`), {
+  const response = await publicApiFetch(getPointsApiUrl(`/leaderboard?limit=${limit}`), {
     headers: {
       "Content-Type": "application/json",
     },
@@ -392,7 +392,7 @@ export async function fetchLeaderboardHub(
     searchParams.set("viewer", viewerAddress);
   }
 
-  const response = await fetch(getPointsApiUrl(`/leaderboards?${searchParams.toString()}`), {
+  const response = await publicApiFetch(getPointsApiUrl(`/leaderboards?${searchParams.toString()}`), {
     headers: {
       "Content-Type": "application/json",
     },
@@ -407,7 +407,7 @@ export async function performDailyCheckIn(input: {
   txHash: string;
   asset: "eth" | "usdc";
 }) {
-  const response = await fetch(getPointsApiUrl("/check-in"), {
+  const response = await publicApiFetch(getPointsApiUrl("/check-in"), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -427,7 +427,7 @@ export async function performDailyCheckIn(input: {
 }
 
 export async function resetBrokenStreak(address: string) {
-  const response = await fetch(getPointsApiUrl("/check-in/reset"), {
+  const response = await publicApiFetch(getPointsApiUrl("/check-in/reset"), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -448,7 +448,7 @@ export async function saveBrokenStreak(input: {
   txHash: string;
   asset: "eth" | "usdc";
 }) {
-  const response = await fetch(getPointsApiUrl("/check-in/save"), {
+  const response = await publicApiFetch(getPointsApiUrl("/check-in/save"), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -467,7 +467,7 @@ export async function saveBrokenStreak(input: {
 }
 
 export async function performSpin(input: { address: string; txHash: string }) {
-  const response = await fetch(getPointsApiUrl("/spin"), {
+  const response = await publicApiFetch(getPointsApiUrl("/spin"), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -487,7 +487,7 @@ export async function performSpin(input: { address: string; txHash: string }) {
 }
 
 export async function fetchSpinHistory(address: string) {
-  const response = await fetch(getPointsApiUrl(`/${address}/spin-history`), {
+  const response = await publicApiFetch(getPointsApiUrl(`/${address}/spin-history`), {
     headers: {
       "Content-Type": "application/json",
     },
@@ -510,7 +510,7 @@ export type PointHistoryEntry = {
 };
 
 export async function fetchPointHistory(address: string, limit = 50) {
-  const response = await fetch(getPointsApiUrl(`/history?address=${address}&limit=${limit}`), {
+  const response = await publicApiFetch(getPointsApiUrl(`/history?address=${address}&limit=${limit}`), {
     headers: {
       "Content-Type": "application/json",
     },

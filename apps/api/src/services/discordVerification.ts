@@ -235,6 +235,18 @@ export class DiscordVerificationService {
     });
 
     if (!response.ok) {
+      const payload = await parseJsonSafely(response);
+      console.warn("[Discord OAuth] Token exchange failed", {
+        status: response.status,
+        error:
+          payload && typeof payload === "object"
+            ? (payload as { error?: unknown }).error
+            : null,
+        errorDescription:
+          payload && typeof payload === "object"
+            ? (payload as { error_description?: unknown }).error_description
+            : null,
+      });
       throw new DiscordVerificationError(
         "DISCORD_OAUTH_EXCHANGE_FAILED",
         "Discord connection failed. Please try again.",

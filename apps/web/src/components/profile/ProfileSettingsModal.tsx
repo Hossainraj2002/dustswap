@@ -86,6 +86,26 @@ function getDiscordVerifyMessage(error?: string | null) {
   return "Discord verification is temporarily unavailable.";
 }
 
+function getDiscordConnectMessage(error?: string | null) {
+  if (!error) {
+    return "Discord connection failed. Please try again.";
+  }
+
+  if (error === "DISCORD_OAUTH_STATE_INVALID") {
+    return "Discord connection expired. Please try again.";
+  }
+
+  if (error === "DISCORD_OAUTH_EXCHANGE_FAILED") {
+    return "Discord connection failed. Check the Discord app secret and redirect URL in Railway.";
+  }
+
+  if (error === "DISCORD_NOT_CONFIGURED") {
+    return "Discord is not configured on the API server.";
+  }
+
+  return getDiscordVerifyMessage(error);
+}
+
 export function ProfileSettingsModal({
   open,
   address,
@@ -174,6 +194,49 @@ export function ProfileSettingsModal({
       }
     };
   }, [previewUrl]);
+
+  useEffect(() => {
+    if (!open || !address) {
+      return;
+    }
+
+    const handleDiscordOAuthMessage = (event: MessageEvent) => {
+      if (event.origin !== window.location.origin) {
+        return;
+      }
+
+      const payload = event.data as {
+        type?: string;
+        success?: boolean;
+        error?: string | null;
+        username?: string | null;
+      };
+
+      if (payload?.type !== "dustswap:discord-oauth") {
+        return;
+      }
+
+      setDiscordActionState("idle");
+      if (!payload.success) {
+        setFieldError(getDiscordConnectMessage(payload.error));
+        return;
+      }
+
+      setStatusMessage(
+        payload.username
+          ? `Discord connected as ${payload.username}.`
+          : "Discord connected."
+      );
+      void fetchProfileSettings(address)
+        .then(onSaved)
+        .catch((error) =>
+          setFieldError((error as Error).message || "Failed to refresh profile.")
+        );
+    };
+
+    window.addEventListener("message", handleDiscordOAuthMessage);
+    return () => window.removeEventListener("message", handleDiscordOAuthMessage);
+  }, [address, onSaved, open]);
 
   const validationMessage = useMemo(() => {
     return (
@@ -332,6 +395,31 @@ export function ProfileSettingsModal({
     setStatusMessage(null);
     setDiscordActionState("connecting");
 
+    const popup =
+      typeof window !== "undefined"
+        ? window.open(
+            "about:blank",
+            "dustswap-discord-oauth",
+            "popup=yes,width=540,height=760,left=120,top=80"
+          )
+        : null;
+
+    if (!popup) {
+      setFieldError("Allow pop-ups for DustSwap, then try Connect Discord again.");
+      setDiscordActionState("idle");
+      return;
+    }
+
+    let popupCheckId: number | null = window.setInterval(() => {
+      if (popup.closed) {
+        if (popupCheckId !== null) {
+          window.clearInterval(popupCheckId);
+          popupCheckId = null;
+        }
+        setDiscordActionState("idle");
+      }
+    }, 600);
+
     try {
       const messageToSign = buildDiscordAccountMessage(address, "connect-discord");
       const signature = (await signMessageAsync({
@@ -339,10 +427,10 @@ export function ProfileSettingsModal({
       })) as Hex;
       const returnTo =
         typeof window !== "undefined"
-          ? new URL("/profile", window.location.origin).toString()
+          ? new URL("/discord/oauth-complete", window.location.origin).toString()
           : "/profile";
 
-      window.location.assign(
+      popup.location.assign(
         getDiscordConnectUrl({
           address,
           message: messageToSign,
@@ -351,6 +439,10 @@ export function ProfileSettingsModal({
         })
       );
     } catch (error) {
+      popup.close();
+      if (popupCheckId !== null) {
+        window.clearInterval(popupCheckId);
+      }
       setFieldError((error as Error).message || "Failed to connect Discord.");
       setDiscordActionState("idle");
     }

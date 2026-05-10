@@ -4,7 +4,7 @@ import type {
   AdminQuestInput,
   QuestBoardResponse,
 } from "@/types/quests";
-import { buildPublicApiUrl } from "@/lib/apiBase";
+import { buildPublicApiUrl, publicApiFetch } from "@/lib/apiBase";
 import type { Hex } from "viem";
 
 const SAVE_X_USERNAME_RECENT_TTL_MS = 15_000;
@@ -155,7 +155,7 @@ export async function fetchQuestBoard(address?: string) {
     url.searchParams.set("address", address);
   }
 
-  const response = await fetch(url.toString(), {
+  const response = await publicApiFetch(url.toString(), {
     headers: {
       "Content-Type": "application/json",
     },
@@ -169,7 +169,7 @@ export async function fetchXAccount(address: string) {
   const url = new URL(getQuestsApiUrl("/x/account"));
   url.searchParams.set("address", address);
 
-  const response = await fetch(url.toString(), {
+  const response = await publicApiFetch(url.toString(), {
     headers: {
       "Content-Type": "application/json",
     },
@@ -189,7 +189,7 @@ export async function createXConnectUrl(input: {
   signature: Hex;
   returnTo?: string;
 }) {
-  const response = await fetch(getQuestsApiUrl("/x/connect"), {
+  const response = await publicApiFetch(getQuestsApiUrl("/x/connect"), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -209,7 +209,7 @@ export async function disconnectXAccount(input: {
   message: string;
   signature: Hex;
 }) {
-  const response = await fetch(getQuestsApiUrl("/x/disconnect"), {
+  const response = await publicApiFetch(getQuestsApiUrl("/x/disconnect"), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -241,7 +241,7 @@ export async function startQuest(questId: string, address: string) {
     return inflight;
   }
 
-  const request = fetch(getQuestsApiUrl(`/${questId}/start`), {
+  const request = publicApiFetch(getQuestsApiUrl(`/${questId}/start`), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -276,7 +276,7 @@ export async function startQuest(questId: string, address: string) {
 }
 
 export async function verifyDelayQuest(questId: string, address: string) {
-  const response = await fetch(getQuestsApiUrl(`/${questId}/verify-delay`), {
+  const response = await publicApiFetch(getQuestsApiUrl(`/${questId}/verify-delay`), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -299,7 +299,7 @@ export async function verifyXPost(
   address: string,
   postUrl: string
 ) {
-  const response = await fetch(getQuestsApiUrl(`/${questId}/verify-x-post`), {
+  const response = await publicApiFetch(getQuestsApiUrl(`/${questId}/verify-x-post`), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -319,7 +319,7 @@ export async function verifyDiscordJoin(input: {
   address: string;
   questId?: string | null;
 }) {
-  const response = await fetch(getQuestsApiUrl("/discord/verify"), {
+  const response = await publicApiFetch(getQuestsApiUrl("/discord/verify"), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -358,7 +358,7 @@ export async function recordSwapQuestActivity(input: {
   outputToken?: string | null;
   metadata?: Record<string, unknown>;
 }) {
-  const response = await fetch(getQuestsApiUrl("/activities/swap"), {
+  const response = await publicApiFetch(getQuestsApiUrl("/activities/swap"), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -377,7 +377,7 @@ export async function syncSwapQuestActivity(
   address: string,
   options?: { force?: boolean }
 ) {
-  const response = await fetch(getQuestsApiUrl("/activities/swap/sync"), {
+  const response = await publicApiFetch(getQuestsApiUrl("/activities/swap/sync"), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -410,7 +410,7 @@ export async function saveXUsername(address: string, username: string) {
     return inflight;
   }
 
-  const request = fetch(getQuestsApiUrl("/x/username"), {
+  const request = publicApiFetch(getQuestsApiUrl("/x/username"), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -443,7 +443,7 @@ export async function saveXUsername(address: string, username: string) {
 }
 
 export async function fetchAdminQuests(adminToken: string) {
-  const response = await fetch(getQuestsApiUrl("/admin"), {
+  const response = await publicApiFetch(getQuestsApiUrl("/admin"), {
     headers: {
       "Content-Type": "application/json",
       "x-admin-token": adminToken,
@@ -462,7 +462,7 @@ export async function fetchAdminCampaignWhitelist(
   adminToken: string,
   campaignKey: string
 ) {
-  const response = await fetch(
+  const response = await publicApiFetch(
     getQuestsApiUrl(`/admin/campaigns/${encodeURIComponent(campaignKey)}/whitelist`),
     {
       headers: {
@@ -489,7 +489,7 @@ export async function fetchAdminCampaignWhitelist(
 }
 
 export async function saveAdminQuest(adminToken: string, input: AdminQuestInput) {
-  const response = await fetch(getQuestsApiUrl("/admin"), {
+  const response = await publicApiFetch(getQuestsApiUrl("/admin"), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -514,7 +514,7 @@ export async function grantAdminManualPoints(
     source?: string;
   }
 ) {
-  const response = await fetch(getQuestsApiUrl("/admin/manual-points"), {
+  const response = await publicApiFetch(getQuestsApiUrl("/admin/manual-points"), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -531,7 +531,7 @@ export async function grantAdminManualPoints(
 }
 
 export async function deleteAdminQuest(adminToken: string, id: string) {
-  const response = await fetch(getQuestsApiUrl(`/admin/${id}`), {
+  const response = await publicApiFetch(getQuestsApiUrl(`/admin/${id}`), {
     method: "DELETE",
     headers: {
       "Content-Type": "application/json",

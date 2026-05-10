@@ -4,10 +4,9 @@
 import { Hono, type Context } from "hono";
 import { pointsEngine } from "../services/pointsEngine";
 import { runtimeCache } from "../utils/runtimeCache";
+import { isMaintenanceBlocking, maintenanceUnavailable } from "../utils/maintenance";
 
 const pointsRoutes = new Hono();
-const MAINTENANCE_ERROR_MESSAGE =
-  "DustSwap is under maintenance. Please try again soon.";
 const FOOTPRINT_AIRDROP_IP_WINDOW_MS = parsePositiveIntegerEnv(
   "FOOTPRINT_AIRDROP_IP_WINDOW_MS",
   10 * 60 * 1000
@@ -28,14 +27,6 @@ const FOOTPRINT_AIRDROP_ADDRESS_LIMIT = parsePositiveIntegerEnv(
 function parsePositiveIntegerEnv(name: string, fallback: number) {
   const parsed = Number.parseInt(process.env[name] || "", 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
-}
-
-function isMaintenanceModeEnabled() {
-  return process.env.MAINTENANCE_MODE === "1";
-}
-
-function maintenanceUnavailable(c: Context) {
-  return c.json({ success: false, error: MAINTENANCE_ERROR_MESSAGE }, 503);
 }
 
 function getRequestIp(c: Context) {
@@ -85,7 +76,7 @@ function consumeFootprintAirdropLimits(c: Context, address: string) {
 
 // GET /api/points/leaderboards
 pointsRoutes.get("/leaderboards", async (c) => {
-  if (isMaintenanceModeEnabled()) {
+  if (await isMaintenanceBlocking(c)) {
     return maintenanceUnavailable(c);
   }
 
@@ -142,7 +133,7 @@ pointsRoutes.post("/profile-cache", async (c) => {
 
 // POST /api/points/airdrop/lookup
 pointsRoutes.post("/airdrop/lookup", async (c) => {
-  if (isMaintenanceModeEnabled()) {
+  if (await isMaintenanceBlocking(c)) {
     return maintenanceUnavailable(c);
   }
 
@@ -178,7 +169,7 @@ pointsRoutes.post("/airdrop/lookup", async (c) => {
 
 // POST /api/points/airdrop/claim
 pointsRoutes.post("/airdrop/claim", async (c) => {
-  if (isMaintenanceModeEnabled()) {
+  if (await isMaintenanceBlocking(c)) {
     return maintenanceUnavailable(c);
   }
 
@@ -221,7 +212,7 @@ pointsRoutes.post("/airdrop/claim", async (c) => {
 
 // POST /api/points/airdrop/verify-follow
 pointsRoutes.post("/airdrop/verify-follow", async (c) => {
-  if (isMaintenanceModeEnabled()) {
+  if (await isMaintenanceBlocking(c)) {
     return maintenanceUnavailable(c);
   }
 
@@ -271,7 +262,7 @@ pointsRoutes.post("/spin", async (c) => {
 
 // GET /api/points/:address/summary
 pointsRoutes.get("/:address/summary", async (c) => {
-  if (isMaintenanceModeEnabled()) {
+  if (await isMaintenanceBlocking(c)) {
     return maintenanceUnavailable(c);
   }
 
@@ -285,7 +276,7 @@ pointsRoutes.get("/:address/summary", async (c) => {
 
 // GET /api/points/history
 pointsRoutes.get("/history", async (c) => {
-  if (isMaintenanceModeEnabled()) {
+  if (await isMaintenanceBlocking(c)) {
     return maintenanceUnavailable(c);
   }
 
@@ -532,7 +523,7 @@ pointsRoutes.get("/leaderboard", async (c) => {
 
 // POST /api/points/referral/apply
 pointsRoutes.post("/referral/apply", async (c) => {
-  if (isMaintenanceModeEnabled()) {
+  if (await isMaintenanceBlocking(c)) {
     return maintenanceUnavailable(c);
   }
 

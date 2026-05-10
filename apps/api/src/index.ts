@@ -28,7 +28,12 @@ app.use(
   cors({
     origin: (origin) => isAllowedAppOrigin(origin),
     allowMethods: ["GET", "POST", "DELETE", "OPTIONS"],
-    allowHeaders: ["Content-Type", "Authorization", "x-admin-token"],
+    allowHeaders: [
+      "Content-Type",
+      "Authorization",
+      "x-admin-token",
+      "X-Dustswap-Maintenance-Bypass",
+    ],
     maxAge: 86400,
   })
 );

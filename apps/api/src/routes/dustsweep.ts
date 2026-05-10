@@ -20,8 +20,16 @@ import { supabase } from "../services/supabase";
 import { pointsEngine } from "../services/pointsEngine";
 import { runtimeCache } from "../utils/runtimeCache";
 import { baseRpcRequest } from "../utils/baseRpc";
+import { isMaintenanceBlocking, maintenanceUnavailable } from "../utils/maintenance";
 
 const dustsweepRoutes = new Hono();
+
+dustsweepRoutes.use("*", async (c, next) => {
+  if (await isMaintenanceBlocking(c)) {
+    return maintenanceUnavailable(c);
+  }
+  return next();
+});
 
 const BASE_CHAIN_ID = 8453;
 const USDC_ADDRESS = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" as Address;

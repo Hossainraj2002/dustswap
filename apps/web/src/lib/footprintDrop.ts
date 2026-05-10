@@ -1,3 +1,4 @@
+import { publicApiFetch } from "@/lib/apiBase";
 import { getPointsApiUrl } from "@/lib/points";
 
 export type FootprintDropSource = "saved_leaderboard" | "blockscout";
@@ -46,7 +47,7 @@ async function parseJson<T>(response: Response) {
 }
 
 export async function lookupFootprintDrop(address: string) {
-  const response = await fetch(getPointsApiUrl("/airdrop/lookup"), {
+  const response = await publicApiFetch(getPointsApiUrl("/airdrop/lookup"), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -72,7 +73,7 @@ export async function claimFootprintDrop(
         txHash?: string;
       }
 ) {
-  const response = await fetch(getPointsApiUrl("/airdrop/claim"), {
+  const response = await publicApiFetch(getPointsApiUrl("/airdrop/claim"), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -101,7 +102,7 @@ export async function verifyFootprintFollow(input: {
   address: string;
   taskKey: string;
 }) {
-  const response = await fetch(getPointsApiUrl("/airdrop/verify-follow"), {
+  const response = await publicApiFetch(getPointsApiUrl("/airdrop/verify-follow"), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
