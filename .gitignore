@@ -2,6 +2,7 @@
 .env
 .env.local
 .env.*
+.env.migration
 .env.production
 .env.development
 apps/api/.env
@@ -11,6 +12,10 @@ apps/*/.env.local
 apps/*/.env.*
 !.env.example
 !apps/*/.env.example
+*.dump
+*.sql.gz
+backup/
+db-backups/
 
 # Dependencies
 node_modules/
