@@ -146,6 +146,7 @@ export function ProfileSettingsModal({
   const [discordActionState, setDiscordActionState] = useState<
     "idle" | "connecting" | "verifying"
   >("idle");
+  const [pendingDiscordAuthUrl, setPendingDiscordAuthUrl] = useState<string | null>(null);
 
   const initialPreviewUrl =
     profile?.custom.pfpUrl || profile?.fallback.pfpUrl || "";
@@ -217,6 +218,7 @@ export function ProfileSettingsModal({
       }
 
       setDiscordActionState("idle");
+      setPendingDiscordAuthUrl(null);
       if (!payload.success) {
         setFieldError(getDiscordConnectMessage(payload.error));
         return;
@@ -392,33 +394,9 @@ export function ProfileSettingsModal({
     }
 
     setFieldError(null);
-    setStatusMessage(null);
+    setStatusMessage("Approve the wallet signature first. Discord will open after that.");
     setDiscordActionState("connecting");
-
-    const popup =
-      typeof window !== "undefined"
-        ? window.open(
-            "about:blank",
-            "dustswap-discord-oauth",
-            "popup=yes,width=540,height=760,left=120,top=80"
-          )
-        : null;
-
-    if (!popup) {
-      setFieldError("Allow pop-ups for DustSwap, then try Connect Discord again.");
-      setDiscordActionState("idle");
-      return;
-    }
-
-    let popupCheckId: number | null = window.setInterval(() => {
-      if (popup.closed) {
-        if (popupCheckId !== null) {
-          window.clearInterval(popupCheckId);
-          popupCheckId = null;
-        }
-        setDiscordActionState("idle");
-      }
-    }, 600);
+    setPendingDiscordAuthUrl(null);
 
     try {
       const messageToSign = buildDiscordAccountMessage(address, "connect-discord");
@@ -429,23 +407,57 @@ export function ProfileSettingsModal({
         typeof window !== "undefined"
           ? new URL("/discord/oauth-complete", window.location.origin).toString()
           : "/profile";
+      const authUrl = getDiscordConnectUrl({
+        address,
+        message: messageToSign,
+        signature,
+        returnTo,
+      });
+      const authWindow =
+        typeof window !== "undefined"
+          ? window.open(authUrl, "dustswap-discord-oauth")
+          : null;
 
-      popup.location.assign(
-        getDiscordConnectUrl({
-          address,
-          message: messageToSign,
-          signature,
-          returnTo,
-        })
-      );
-    } catch (error) {
-      popup.close();
-      if (popupCheckId !== null) {
-        window.clearInterval(popupCheckId);
+      if (!authWindow) {
+        setPendingDiscordAuthUrl(authUrl);
+        setStatusMessage("Wallet approved. Click Open Discord Authorization to continue.");
+        setDiscordActionState("idle");
+        return;
       }
+
+      setStatusMessage("Finish Discord authorization in the new window.");
+      const authWindowCheckId = window.setInterval(() => {
+        if (authWindow.closed) {
+          window.clearInterval(authWindowCheckId);
+          setDiscordActionState("idle");
+        }
+      }, 600);
+    } catch (error) {
       setFieldError((error as Error).message || "Failed to connect Discord.");
       setDiscordActionState("idle");
     }
+  }
+
+  function handleOpenPendingDiscordAuth() {
+    if (!pendingDiscordAuthUrl || typeof window === "undefined") {
+      return;
+    }
+
+    const authWindow = window.open(pendingDiscordAuthUrl, "dustswap-discord-oauth");
+    if (!authWindow) {
+      setFieldError("Your browser blocked the Discord window. Allow pop-ups for DustSwap and try again.");
+      return;
+    }
+
+    setFieldError(null);
+    setStatusMessage("Finish Discord authorization in the new window.");
+    setDiscordActionState("connecting");
+    const authWindowCheckId = window.setInterval(() => {
+      if (authWindow.closed) {
+        window.clearInterval(authWindowCheckId);
+        setDiscordActionState("idle");
+      }
+    }, 600);
   }
 
   async function handleVerifyDiscord() {
@@ -710,6 +722,15 @@ export function ProfileSettingsModal({
                       ? "Reconnect Discord"
                       : "Connect Discord"}
                 </button>
+                {pendingDiscordAuthUrl ? (
+                  <button
+                    type="button"
+                    onClick={handleOpenPendingDiscordAuth}
+                    className="min-h-[40px] w-full rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-bold text-slate-700 transition hover:bg-slate-50"
+                  >
+                    Open Discord Authorization
+                  </button>
+                ) : null}
 
                 {discordAccount?.connected && discordAccount.joined !== true ? (
                   <div className="grid gap-2 sm:grid-cols-2">

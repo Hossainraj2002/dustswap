@@ -387,6 +387,7 @@ export function QuestBoard() {
     useState<PostVerificationFailureState>({});
   const [isConnectingX, setIsConnectingX] = useState(false);
   const [isConnectingDiscord, setIsConnectingDiscord] = useState(false);
+  const [pendingDiscordAuthUrl, setPendingDiscordAuthUrl] = useState<string | null>(null);
 
   const loadBoard = useCallback(
     async (options?: { silent?: boolean }) => {
@@ -481,6 +482,7 @@ export function QuestBoard() {
       }
 
       setIsConnectingDiscord(false);
+      setPendingDiscordAuthUrl(null);
       if (payload.success) {
         setMessage(
           payload.username
@@ -514,6 +516,7 @@ export function QuestBoard() {
     }
 
     if (linked === "1") {
+      setPendingDiscordAuthUrl(null);
       setMessage(username ? `Discord connected as ${username}.` : "Discord connected.");
       emitDataInvalidation(["quests", "profile"], "discord-connected");
       void loadBoard({ silent: true });
@@ -725,33 +728,9 @@ export function QuestBoard() {
     }
 
     setError(null);
-    setMessage(null);
+    setMessage("Approve the wallet signature first. Discord will open after that.");
     setIsConnectingDiscord(true);
-
-    const popup =
-      typeof window !== "undefined"
-        ? window.open(
-            "about:blank",
-            "dustswap-discord-oauth",
-            "popup=yes,width=540,height=760,left=120,top=80"
-          )
-        : null;
-
-    if (!popup) {
-      setIsConnectingDiscord(false);
-      setError("Allow pop-ups for DustSwap, then try Connect Discord again.");
-      return;
-    }
-
-    let popupCheckId: number | null = window.setInterval(() => {
-      if (popup.closed) {
-        if (popupCheckId !== null) {
-          window.clearInterval(popupCheckId);
-          popupCheckId = null;
-        }
-        setIsConnectingDiscord(false);
-      }
-    }, 600);
+    setPendingDiscordAuthUrl(null);
 
     try {
       const returnTo =
@@ -763,22 +742,57 @@ export function QuestBoard() {
         message: messageToSign,
       })) as Hex;
 
-      popup.location.assign(
-        getDiscordConnectUrl({
-          address,
-          message: messageToSign,
-          signature,
-          returnTo,
-        })
-      );
-    } catch (connectError) {
-      popup.close();
-      if (popupCheckId !== null) {
-        window.clearInterval(popupCheckId);
+      const authUrl = getDiscordConnectUrl({
+        address,
+        message: messageToSign,
+        signature,
+        returnTo,
+      });
+      const authWindow =
+        typeof window !== "undefined"
+          ? window.open(authUrl, "dustswap-discord-oauth")
+          : null;
+
+      if (!authWindow) {
+        setPendingDiscordAuthUrl(authUrl);
+        setMessage("Wallet approved. Click Open Discord Authorization to continue.");
+        setIsConnectingDiscord(false);
+        return;
       }
+
+      setMessage("Finish Discord authorization in the new window.");
+      const authWindowCheckId = window.setInterval(() => {
+        if (authWindow.closed) {
+          window.clearInterval(authWindowCheckId);
+          setIsConnectingDiscord(false);
+        }
+      }, 600);
+    } catch (connectError) {
       setError(getDisplayError(connectError));
       setIsConnectingDiscord(false);
     }
+  }
+
+  function handleOpenPendingDiscordAuth() {
+    if (!pendingDiscordAuthUrl || typeof window === "undefined") {
+      return;
+    }
+
+    const authWindow = window.open(pendingDiscordAuthUrl, "dustswap-discord-oauth");
+    if (!authWindow) {
+      setError("Your browser blocked the Discord window. Allow pop-ups for DustSwap and try again.");
+      return;
+    }
+
+    setError(null);
+    setMessage("Finish Discord authorization in the new window.");
+    setIsConnectingDiscord(true);
+    const authWindowCheckId = window.setInterval(() => {
+      if (authWindow.closed) {
+        window.clearInterval(authWindowCheckId);
+        setIsConnectingDiscord(false);
+      }
+    }, 600);
   }
 
   async function handleVerifyDiscordJoin(quest: QuestItem) {
@@ -1090,14 +1104,25 @@ export function QuestBoard() {
               ) : null}
 
               {!isDiscordConnected ? (
-                <button
-                  type="button"
-                  onClick={() => void handleConnectDiscord()}
-                  disabled={isConnectingDiscord}
-                  className="w-full rounded-2xl bg-sky-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-40"
-                >
-                  {isConnectingDiscord ? "Connecting..." : "Connect Discord"}
-                </button>
+                <>
+                  <button
+                    type="button"
+                    onClick={() => void handleConnectDiscord()}
+                    disabled={isConnectingDiscord}
+                    className="w-full rounded-2xl bg-sky-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    {isConnectingDiscord ? "Connecting..." : "Connect Discord"}
+                  </button>
+                  {pendingDiscordAuthUrl ? (
+                    <button
+                      type="button"
+                      onClick={handleOpenPendingDiscordAuth}
+                      className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-900 transition hover:bg-slate-100"
+                    >
+                      Open Discord Authorization
+                    </button>
+                  ) : null}
+                </>
               ) : (
                 <div className="grid gap-2">
                   {!isDone && !isDiscordJoined ? (
