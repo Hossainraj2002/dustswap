@@ -1,9 +1,10 @@
 export type QuestCategory = "social" | "onchain";
 export type QuestCampaignKey = "general" | "cofounder_pass";
-export type QuestPlatform = "x" | "base" | "dustswap";
+export type QuestPlatform = "x" | "base" | "dustswap" | "discord";
 export type QuestActionType =
   | "swap_volume"
   | "swap_count"
+  | "join_discord"
   | "like"
   | "post"
   | "follow"
@@ -13,6 +14,7 @@ export type QuestActionType =
 export type QuestVerificationType =
   | "swap_volume"
   | "x_post_link"
+  | "discord_guild_member"
   | "delay_gate"
   | "delay_gate_retry";
 export type QuestProgressWindow = "once" | "daily" | "weekly";
@@ -85,11 +87,18 @@ export type QuestBoardResponse = {
       username?: string;
       platformUserId?: string;
       xUserId?: string | null;
+      discordUserId?: string | null;
       displayName?: string;
       profileImageUrl?: string;
       connected?: boolean;
       connectedAt?: string | null;
       legacyManual?: boolean;
+      joined?: boolean;
+      pending?: boolean | null;
+      joinedAt?: string | null;
+      verifiedAt?: string | null;
+      guildId?: string | null;
+      roles?: string[];
     }
   >;
   campaigns: Record<string, QuestCampaignSummary>;

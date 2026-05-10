@@ -5,11 +5,14 @@ import { startTransition, useCallback, useEffect, useMemo, useState } from "reac
 import { useAccount, useSignMessage } from "wagmi";
 import type { Hex } from "viem";
 import {
+  buildDiscordAccountMessage,
   buildXAccountMessage,
   createXConnectUrl,
   fetchQuestBoard,
+  getDiscordConnectUrl,
   syncSwapQuestActivity,
   startQuest,
+  verifyDiscordJoin,
   verifyDelayQuest,
   verifyXPost,
 } from "@/lib/quests";
@@ -57,6 +60,38 @@ function formatXUsernameDisplay(value?: string | null) {
   }
 
   return value.startsWith("@") ? value : `@${value}`;
+}
+
+function formatDiscordName(input?: {
+  displayName?: string | null;
+  username?: string | null;
+}) {
+  return input?.displayName || input?.username || "Discord connected";
+}
+
+function getDiscordInviteUrl(quest?: QuestItem | null) {
+  return (
+    process.env.NEXT_PUBLIC_DISCORD_INVITE_URL ||
+    quest?.ctaUrl ||
+    (typeof quest?.rules.externalUrl === "string" ? quest.rules.externalUrl : "") ||
+    ""
+  );
+}
+
+function getDiscordVerifyMessage(error?: string | null) {
+  if (error === "DISCORD_NOT_CONNECTED") {
+    return "Connect Discord first.";
+  }
+
+  if (error === "DISCORD_USER_NOT_IN_GUILD") {
+    return "Join our Discord, then verify again.";
+  }
+
+  if (error === "DISCORD_RATE_LIMITED") {
+    return "Verification is rate limited. Try again shortly.";
+  }
+
+  return "Discord verification is temporarily unavailable.";
 }
 
 function getPostRequirementHint(quest: QuestItem) {
@@ -331,6 +366,7 @@ export function QuestBoard() {
   const [postVerificationFailures, setPostVerificationFailures] =
     useState<PostVerificationFailureState>({});
   const [isConnectingX, setIsConnectingX] = useState(false);
+  const [isConnectingDiscord, setIsConnectingDiscord] = useState(false);
 
   const loadBoard = useCallback(
     async (options?: { silent?: boolean }) => {
@@ -406,6 +442,10 @@ export function QuestBoard() {
   const linkedXAccount = board?.linkedAccounts?.x;
   const isXConnected = linkedXAccount?.connected === true;
   const savedXUsername = formatXUsernameDisplay(linkedXAccount?.username);
+  const linkedDiscordAccount = board?.linkedAccounts?.discord;
+  const isDiscordConnected = linkedDiscordAccount?.connected === true;
+  const isDiscordJoined = linkedDiscordAccount?.joined === true;
+  const discordDisplayName = formatDiscordName(linkedDiscordAccount);
 
   const visibleQuests = useMemo(() => {
     return (board?.quests || []).filter(
@@ -585,6 +625,82 @@ export function QuestBoard() {
     }
   }
 
+  async function handleConnectDiscord(returnPath = "/quests") {
+    if (!address) {
+      setError("Connect your wallet first");
+      return;
+    }
+
+    if (isConnectingDiscord) {
+      return;
+    }
+
+    setError(null);
+    setMessage(null);
+    setIsConnectingDiscord(true);
+
+    try {
+      const returnTo =
+        typeof window !== "undefined"
+          ? new URL(returnPath, window.location.origin).toString()
+          : returnPath;
+      const messageToSign = buildDiscordAccountMessage(address, "connect-discord");
+      const signature = (await signMessageAsync({
+        message: messageToSign,
+      })) as Hex;
+
+      window.location.assign(
+        getDiscordConnectUrl({
+          address,
+          message: messageToSign,
+          signature,
+          returnTo,
+        })
+      );
+    } catch (connectError) {
+      setError(getDisplayError(connectError));
+      setIsConnectingDiscord(false);
+    }
+  }
+
+  async function handleVerifyDiscordJoin(quest: QuestItem) {
+    if (!address) {
+      setError("Connect your wallet first");
+      return;
+    }
+
+    if (!isDiscordConnected) {
+      await handleConnectDiscord("/quests");
+      return;
+    }
+
+    setPending((current) => ({ ...current, [quest.id]: true }));
+    setError(null);
+    setMessage(null);
+
+    try {
+      const response = await verifyDiscordJoin({
+        address,
+        questId: quest.id,
+      });
+
+      if (!response.success) {
+        throw new Error(response.message || getDiscordVerifyMessage(response.error));
+      }
+
+      clearPointsSummaryCache(address);
+      refreshWithMessage(
+        `Discord verified. You earned ${formatPoints(response.awardedPoints || 0)}.`,
+        "discord-join-verified"
+      );
+      emitDataInvalidation(["leaderboard", "points", "profile"], "discord-join-verified");
+    } catch (verifyError) {
+      setError(getDisplayError(verifyError));
+    } finally {
+      setPending((current) => ({ ...current, [quest.id]: false }));
+    }
+  }
+
   async function handleDelayQuestStart(quest: QuestItem) {
     if (!address) {
       setError("Connect your wallet first");
@@ -735,9 +851,15 @@ export function QuestBoard() {
       quest.progress?.nextVerificationAt &&
       new Date(quest.progress.nextVerificationAt).getTime() <= Date.now();
     const isXQuest = quest.platform === "x";
+    const isDiscordQuest =
+      quest.platform === "discord" ||
+      quest.actionType === "join_discord" ||
+      quest.verificationType === "discord_guild_member";
     const xLocked = isXQuest && !isXConnected;
+    const discordLocked = isDiscordQuest && !isDiscordConnected;
     const isReplyQuest = isXQuest && quest.actionType === "reply";
     const isPostLinkQuest = quest.verificationType === "x_post_link" || isReplyQuest;
+    const discordInviteUrl = getDiscordInviteUrl(quest);
     const postRequirementHint = getPostRequirementHint(quest);
     const showPostRequirementHint =
       !xLocked &&
@@ -747,6 +869,8 @@ export function QuestBoard() {
     const primaryLabel =
       xLocked && quest.actionType !== "follow"
         ? "Connect X"
+        : discordLocked
+          ? "Connect Discord"
         : quest.ctaLabel || (quest.category === "onchain" ? "Open Swap" : "Open Task");
 
     return (
@@ -815,6 +939,77 @@ export function QuestBoard() {
               >
                 {isRefreshing ? "Checking" : "Verify"}
               </button>
+            </div>
+          </div>
+        ) : isDiscordQuest ? (
+          <div className="rounded-[20px] border border-slate-200/80 bg-white/88 p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.55)]">
+            <div className="space-y-3">
+              {isDiscordConnected ? (
+                <div className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2.5">
+                  {linkedDiscordAccount?.profileImageUrl ? (
+                    <img
+                      src={linkedDiscordAccount.profileImageUrl}
+                      alt="Connected Discord profile"
+                      className="h-10 w-10 rounded-full border border-white object-cover"
+                      referrerPolicy="no-referrer"
+                    />
+                  ) : (
+                    <div className="flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-white text-xs font-black text-slate-500">
+                      D
+                    </div>
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-semibold text-slate-950">
+                      {discordDisplayName}
+                    </p>
+                    <p className="text-[11px] font-medium text-slate-500">
+                      {isDone || isDiscordJoined
+                        ? "Joined Discord verified"
+                        : "Not joined yet"}
+                    </p>
+                  </div>
+                </div>
+              ) : null}
+
+              {!isDiscordConnected ? (
+                <button
+                  type="button"
+                  onClick={() => void handleConnectDiscord("/quests")}
+                  disabled={isConnectingDiscord}
+                  className="w-full rounded-2xl bg-sky-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  {isConnectingDiscord ? "Connecting..." : "Connect Discord"}
+                </button>
+              ) : (
+                <div className="grid gap-2">
+                  {!isDone && !isDiscordJoined ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (discordInviteUrl) {
+                          openExternal(discordInviteUrl);
+                        }
+                      }}
+                      disabled={!discordInviteUrl}
+                      className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-900 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      Join Discord
+                    </button>
+                  ) : null}
+                  <button
+                    type="button"
+                    onClick={() => void handleVerifyDiscordJoin(quest)}
+                    disabled={isPending || isDone || isConnectingDiscord}
+                    className="w-full rounded-2xl bg-sky-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    {isDone
+                      ? "Verified"
+                      : isPending
+                        ? "Checking..."
+                        : "Verify Join"}
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         ) : isPostLinkQuest ? (
@@ -988,9 +1183,13 @@ export function QuestBoard() {
                     </button>
                   </div>
                 ) : (
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="grid grid-cols-3 gap-2">
                     <InfoChip label="Completed" value={completedCount.toLocaleString()} />
                     <InfoChip label="X Account" value={savedXUsername} />
+                    <InfoChip
+                      label="Discord"
+                      value={isDiscordConnected ? discordDisplayName : "Not connected"}
+                    />
                   </div>
                 )}
               </div>
@@ -1002,6 +1201,10 @@ export function QuestBoard() {
               <InfoChip
                 label="X Account"
                 value={savedXUsername ? `${savedXUsername} (legacy)` : "Not connected"}
+              />
+              <InfoChip
+                label="Discord"
+                value={isDiscordConnected ? discordDisplayName : "Not connected"}
               />
             </div>
             ) : null}

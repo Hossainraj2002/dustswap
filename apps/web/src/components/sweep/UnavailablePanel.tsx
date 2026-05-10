@@ -6,6 +6,8 @@ import { type UnavailableToken } from "@/types/dustsweep";
 function reasonText(reason: UnavailableToken["reason"]) {
   if (reason === "NO_LIQUIDITY") return "No liquidity";
   if (reason === "NOT_WHITELISTED") return "Not whitelisted";
+  if (reason === "BALANCE_CHANGED") return "Balance changed";
+  if (reason === "QUOTE_FAILED") return "Quote failed";
   return "Below threshold";
 }
 

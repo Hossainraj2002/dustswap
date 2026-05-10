@@ -10,6 +10,7 @@ import type { Hex } from "viem";
 const SAVE_X_USERNAME_RECENT_TTL_MS = 15_000;
 const START_QUEST_RECENT_TTL_MS = 15_000;
 const X_ACCOUNT_STATEMENT = "DustSwap X Account Connection";
+const DISCORD_ACCOUNT_STATEMENT = "DustSwap Discord Account Connection";
 const saveXUsernameRecent = new Map<
   string,
   {
@@ -98,6 +99,7 @@ function createNonce() {
 }
 
 export type XAccountAction = "connect-x" | "disconnect-x";
+export type DiscordAccountAction = "connect-discord";
 
 export function buildXAccountMessage(address: string, action: XAccountAction) {
   const domain =
@@ -111,6 +113,40 @@ export function buildXAccountMessage(address: string, action: XAccountAction) {
     `Nonce: ${createNonce()}`,
     `Domain: ${domain}`,
   ].join("\n");
+}
+
+export function buildDiscordAccountMessage(
+  address: string,
+  action: DiscordAccountAction = "connect-discord"
+) {
+  const domain =
+    typeof window !== "undefined" ? window.location.host : "localhost:3000";
+
+  return [
+    DISCORD_ACCOUNT_STATEMENT,
+    `Address: ${address}`,
+    `Action: ${action}`,
+    `Timestamp: ${new Date().toISOString()}`,
+    `Nonce: ${createNonce()}`,
+    `Domain: ${domain}`,
+  ].join("\n");
+}
+
+export function getDiscordConnectUrl(input: {
+  address: string;
+  message: string;
+  signature: Hex;
+  returnTo?: string;
+}) {
+  const url = new URL(getQuestsApiUrl("/discord/connect"));
+  url.searchParams.set("address", input.address);
+  url.searchParams.set("message", input.message);
+  url.searchParams.set("signature", input.signature);
+  if (input.returnTo) {
+    url.searchParams.set("returnTo", input.returnTo);
+  }
+
+  return url.toString();
 }
 
 export async function fetchQuestBoard(address?: string) {
@@ -276,6 +312,36 @@ export async function verifyXPost(
     status?: string;
     awardedPoints?: number;
     error?: string;
+  }>(response);
+}
+
+export async function verifyDiscordJoin(input: {
+  address: string;
+  questId?: string | null;
+}) {
+  const response = await fetch(getQuestsApiUrl("/discord/verify"), {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(input),
+  });
+
+  return parseJson<{
+    success: boolean;
+    status?: string;
+    connected?: boolean;
+    joined?: boolean;
+    pending?: boolean | null;
+    memberPresent?: boolean;
+    awardedPoints?: number;
+    username?: string | null;
+    displayName?: string | null;
+    profileImageUrl?: string | null;
+    verifiedAt?: string | null;
+    error?: string;
+    message?: string;
+    retryAfterSeconds?: number;
   }>(response);
 }
 

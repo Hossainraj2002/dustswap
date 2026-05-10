@@ -18,6 +18,7 @@ import {
   type SweepStep,
   type SwappableToken,
   type Token,
+  type UnavailableReason,
   type UnavailableToken,
 } from "@/types/dustsweep";
 
@@ -137,6 +138,17 @@ function requiresApprovalReset(token: Address) {
   return token.toLowerCase() === USDT_ADDRESS.toLowerCase();
 }
 
+function mergeUnavailableTokens(current: UnavailableToken[], additions: UnavailableToken[]) {
+  const byAddress = new Map<string, UnavailableToken>();
+  for (const token of current) {
+    byAddress.set(token.address.toLowerCase(), token);
+  }
+  for (const token of additions) {
+    byAddress.set(token.address.toLowerCase(), token);
+  }
+  return Array.from(byAddress.values());
+}
+
 export function useDustSweep(): UseDustSweepReturn {
   const { address, isConnected } = useAccount();
   const { data: walletClient } = useWalletClient();
@@ -228,6 +240,28 @@ export function useDustSweep(): UseDustSweepReturn {
       const payload = await response.json().catch(() => null);
 
       if (!response.ok) {
+        const skippedTokens =
+          payload && typeof payload === "object" && Array.isArray((payload as { skippedTokens?: unknown }).skippedTokens)
+            ? ((payload as { skippedTokens: Array<{ token?: string; reason?: UnavailableReason }> }).skippedTokens)
+            : [];
+        const skippedByAddress = new Map(
+          skippedTokens
+            .filter((item) => item.token)
+            .map((item) => [String(item.token).toLowerCase(), item.reason || "NO_LIQUIDITY" as UnavailableReason]),
+        );
+        const failedTokens = selectedTokens
+          .filter((token) => skippedByAddress.has(token.address.toLowerCase()))
+          .map((token) => ({
+            ...token,
+            reason: skippedByAddress.get(token.address.toLowerCase()) || "NO_LIQUIDITY" as UnavailableReason,
+          }));
+        if (failedTokens.length > 0) {
+          setUnavailableTokens((current) => mergeUnavailableTokens(current, failedTokens));
+          setSelectedTokens((current) =>
+            current.filter((token) => !skippedByAddress.has(token.address.toLowerCase())),
+          );
+        }
+
         const message =
           payload && typeof payload === "object" && "error" in payload
             ? String((payload as { error?: unknown }).error)
@@ -235,7 +269,29 @@ export function useDustSweep(): UseDustSweepReturn {
         throw new Error(message);
       }
 
-      setQuote(normalizeQuotePayload(payload));
+      const nextQuote = normalizeQuotePayload(payload);
+      const routedAddresses = new Set(nextQuote.routes.map((route) => route.tokenIn.toLowerCase()));
+      const skippedByAddress = new Map(
+        (nextQuote.skippedTokens || []).map((item) => [
+          item.token.toLowerCase(),
+          item.reason,
+        ]),
+      );
+      const failedTokens = selectedTokens
+        .filter((token) => !routedAddresses.has(token.address.toLowerCase()))
+        .map((token) => ({
+          ...token,
+          reason: skippedByAddress.get(token.address.toLowerCase()) || "NO_LIQUIDITY" as UnavailableReason,
+        }));
+
+      if (failedTokens.length > 0) {
+        setUnavailableTokens((current) => mergeUnavailableTokens(current, failedTokens));
+        setSelectedTokens((current) =>
+          current.filter((token) => routedAddresses.has(token.address.toLowerCase())),
+        );
+      }
+
+      setQuote(nextQuote);
     } catch (quoteFetchError) {
       const message =
         quoteFetchError instanceof Error

@@ -1,8 +1,16 @@
 # Environment variables — NEVER commit these!
 .env
 .env.local
+.env.*
 .env.production
 .env.development
+apps/api/.env
+apps/web/.env.local
+apps/*/.env
+apps/*/.env.local
+apps/*/.env.*
+!.env.example
+!apps/*/.env.example
 
 # Dependencies
 node_modules/

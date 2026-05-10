@@ -10,16 +10,19 @@ import {
   requestPfpUploadUrl,
   saveProfileSettings,
   uploadPfpFile,
-  validateDiscordUsername,
   validateDisplayName,
   validatePfpFile,
   validateProfileUsername,
+  fetchProfileSettings,
   type ProfileSettingsResponse,
 } from "@/lib/profileSettings";
 import {
+  buildDiscordAccountMessage,
   buildXAccountMessage,
   createXConnectUrl,
   disconnectXAccount,
+  getDiscordConnectUrl,
+  verifyDiscordJoin,
 } from "@/lib/quests";
 
 type ProfileSettingsModalProps = {
@@ -47,6 +50,42 @@ function formatFileSize(bytes: number) {
   return `${Math.max(1, Math.round(bytes / 1024))} KB`;
 }
 
+function getDiscordDisplayName(
+  account?: ProfileSettingsResponse["profile"]["discordAccount"]
+) {
+  return account?.displayName || account?.username || "Discord connected";
+}
+
+function getDiscordStatusLabel(
+  account?: ProfileSettingsResponse["profile"]["discordAccount"]
+) {
+  if (!account?.connected) {
+    return "Not connected";
+  }
+
+  if (account.joined === true) {
+    return "Joined Discord verified";
+  }
+
+  return "Not joined yet";
+}
+
+function getDiscordVerifyMessage(error?: string | null) {
+  if (error === "DISCORD_NOT_CONNECTED") {
+    return "Connect Discord first.";
+  }
+
+  if (error === "DISCORD_USER_NOT_IN_GUILD") {
+    return "Join our Discord, then verify again.";
+  }
+
+  if (error === "DISCORD_RATE_LIMITED") {
+    return "Verification is rate limited. Try again shortly.";
+  }
+
+  return "Discord verification is temporarily unavailable.";
+}
+
 export function ProfileSettingsModal({
   open,
   address,
@@ -59,6 +98,8 @@ export function ProfileSettingsModal({
 }: ProfileSettingsModalProps) {
   const { signMessageAsync } = useSignMessage();
   const profile = profileSettings?.profile;
+  const discordAccount = profile?.discordAccount;
+  const discordInviteUrl = process.env.NEXT_PUBLIC_DISCORD_INVITE_URL || "";
   const uploadAvailable =
     profileSettings?.capabilities.pfpUploadAvailable ?? false;
   const missingR2EnvVars = profileSettings?.capabilities.missingR2EnvVars ?? [];
@@ -76,13 +117,15 @@ export function ProfileSettingsModal({
         "Profile settings did not load from the API. Check NEXT_PUBLIC_API_URL and API CORS.";
   const [username, setUsername] = useState("");
   const [displayName, setDisplayName] = useState("");
-  const [discordUsername, setDiscordUsername] = useState("");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState("");
   const [fieldError, setFieldError] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [xActionState, setXActionState] = useState<"idle" | "connecting" | "disconnecting">("idle");
+  const [discordActionState, setDiscordActionState] = useState<
+    "idle" | "connecting" | "verifying"
+  >("idle");
 
   const initialPreviewUrl =
     profile?.custom.pfpUrl || profile?.fallback.pfpUrl || "";
@@ -103,7 +146,6 @@ export function ProfileSettingsModal({
     setDisplayName(
       profile?.custom.displayName || profile?.fallback.displayName || ""
     );
-    setDiscordUsername(profile?.custom.discordUsername || "");
     setSelectedFile(null);
     setPreviewUrl("");
     setFieldError(null);
@@ -136,10 +178,9 @@ export function ProfileSettingsModal({
   const validationMessage = useMemo(() => {
     return (
       validateProfileUsername(username) ||
-      validateDisplayName(displayName) ||
-      validateDiscordUsername(discordUsername)
+      validateDisplayName(displayName)
     );
-  }, [discordUsername, displayName, username]);
+  }, [displayName, username]);
 
   if (!open) {
     return null;
@@ -233,7 +274,6 @@ export function ProfileSettingsModal({
         signature: saveSignature,
         username: normalizeProfileUsername(username),
         displayName: normalizeDisplayName(displayName),
-        discordUsername: normalizeDisplayName(discordUsername),
         pfpUrl,
         pfpStorageKey,
       });
@@ -281,6 +321,72 @@ export function ProfileSettingsModal({
       setFieldError((error as Error).message || "Failed to connect X.");
       setXActionState("idle");
     }
+  }
+
+  async function handleConnectDiscord() {
+    if (!address || !profileSettings || discordActionState !== "idle") {
+      return;
+    }
+
+    setFieldError(null);
+    setStatusMessage(null);
+    setDiscordActionState("connecting");
+
+    try {
+      const messageToSign = buildDiscordAccountMessage(address, "connect-discord");
+      const signature = (await signMessageAsync({
+        message: messageToSign,
+      })) as Hex;
+      const returnTo =
+        typeof window !== "undefined"
+          ? new URL("/profile", window.location.origin).toString()
+          : "/profile";
+
+      window.location.assign(
+        getDiscordConnectUrl({
+          address,
+          message: messageToSign,
+          signature,
+          returnTo,
+        })
+      );
+    } catch (error) {
+      setFieldError((error as Error).message || "Failed to connect Discord.");
+      setDiscordActionState("idle");
+    }
+  }
+
+  async function handleVerifyDiscord() {
+    if (!address || !profileSettings || discordActionState !== "idle") {
+      return;
+    }
+
+    setFieldError(null);
+    setStatusMessage(null);
+    setDiscordActionState("verifying");
+
+    try {
+      const response = await verifyDiscordJoin({ address });
+      if (!response.success) {
+        throw new Error(response.message || getDiscordVerifyMessage(response.error));
+      }
+
+      setStatusMessage("Discord join verified.");
+      const refreshed = await fetchProfileSettings(address);
+      onSaved(refreshed);
+    } catch (error) {
+      setFieldError((error as Error).message || "Failed to verify Discord.");
+    } finally {
+      setDiscordActionState("idle");
+    }
+  }
+
+  function openDiscordInvite() {
+    if (!discordInviteUrl || typeof window === "undefined") {
+      return;
+    }
+
+    window.open(discordInviteUrl, "_blank", "noopener,noreferrer");
   }
 
   async function handleDisconnectX() {
@@ -470,22 +576,71 @@ export function ProfileSettingsModal({
               />
             </label>
 
-            <label className="grid gap-1.5">
-              <span className="text-xs font-bold text-slate-600">
-                Discord username
-              </span>
-              <input
-                value={discordUsername}
-                onChange={(event) => {
-                  setDiscordUsername(event.target.value);
-                  setFieldError(null);
-                }}
-                placeholder="name#0000 or name"
-                maxLength={40}
-                disabled={isSaving}
-                className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-950 outline-none transition placeholder:text-slate-400 focus:border-sky-300 focus:ring-2 focus:ring-sky-100 disabled:cursor-not-allowed disabled:opacity-60"
-              />
-            </label>
+            <div className="rounded-2xl border border-slate-200 bg-white p-3">
+              <div className="flex items-center gap-3">
+                {discordAccount?.profileImageUrl ? (
+                  <img
+                    src={discordAccount.profileImageUrl}
+                    alt="Connected Discord profile"
+                    className="h-11 w-11 shrink-0 rounded-full border border-slate-100 object-cover"
+                    referrerPolicy="no-referrer"
+                  />
+                ) : (
+                  <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-slate-50 text-xs font-black text-slate-500">
+                    D
+                  </div>
+                )}
+                <div className="min-w-0 flex-1">
+                  <p className="text-xs font-bold text-slate-600">Discord</p>
+                  <p className="mt-1 truncate text-sm font-semibold text-slate-950">
+                    {discordAccount?.connected
+                      ? getDiscordDisplayName(discordAccount)
+                      : profile?.discordUsername
+                        ? `Legacy saved: ${profile.discordUsername}`
+                        : "Not connected"}
+                  </p>
+                  <p className="mt-0.5 text-[11px] font-medium text-slate-500">
+                    {getDiscordStatusLabel(discordAccount)}
+                  </p>
+                </div>
+              </div>
+
+              <div className="mt-3 grid gap-2">
+                <button
+                  type="button"
+                  onClick={() => void handleConnectDiscord()}
+                  disabled={isSaving || discordActionState !== "idle" || !address}
+                  className="min-h-[40px] w-full rounded-full bg-[#0052ff] px-4 py-2 text-xs font-black text-white transition hover:bg-[#0047db] disabled:cursor-not-allowed disabled:bg-slate-300"
+                >
+                  {discordActionState === "connecting"
+                    ? "Connecting..."
+                    : discordAccount?.connected
+                      ? "Reconnect Discord"
+                      : "Connect Discord"}
+                </button>
+
+                {discordAccount?.connected && discordAccount.joined !== true ? (
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    <button
+                      type="button"
+                      onClick={openDiscordInvite}
+                      disabled={isSaving || !discordInviteUrl}
+                      className="min-h-[40px] rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-bold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      Join Discord
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void handleVerifyDiscord()}
+                      disabled={isSaving || discordActionState !== "idle" || !address}
+                      className="min-h-[40px] rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-bold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {discordActionState === "verifying" ? "Checking..." : "Verify Join"}
+                    </button>
+                  </div>
+                ) : null}
+              </div>
+            </div>
 
             <div className="rounded-2xl border border-slate-200 bg-white p-3">
               <div className="flex items-center gap-3">

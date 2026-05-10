@@ -11,7 +11,9 @@ export type DustSweepDexName =
 export type UnavailableReason =
   | "NO_LIQUIDITY"
   | "NOT_WHITELISTED"
-  | "BELOW_THRESHOLD";
+  | "BELOW_THRESHOLD"
+  | "BALANCE_CHANGED"
+  | "QUOTE_FAILED";
 
 export type SweepStep = "idle" | "approving" | "signing" | "pending" | "success" | "error";
 
@@ -72,6 +74,11 @@ export type DustSweepQuoteRequest = {
 
 export type DustSweepQuoteResponse = {
   routes: DustSweepRoute[];
+  skippedTokens?: {
+    token: Address;
+    reason: UnavailableReason;
+    message?: string;
+  }[];
   totalEstimatedOut: string;
   totalEstimatedOutUSD: number;
   feeAmountUSD: number;

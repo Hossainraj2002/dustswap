@@ -2,10 +2,12 @@ import { Hono, type Context } from "hono";
 import {
   questEngine,
   type AdminQuestInput,
+  type DiscordAccountAuthInput,
   type XAccountAuthInput,
 } from "../services/questEngine";
 import { pointsEngine } from "../services/pointsEngine";
 import { runtimeCache } from "../utils/runtimeCache";
+import { DiscordVerificationError } from "../services/discordVerification";
 
 const questsRoutes = new Hono();
 const MAINTENANCE_ERROR_MESSAGE =
@@ -36,6 +38,42 @@ function assertAdmin(c: any) {
   }
 
   return null;
+}
+
+function getDiscordRedirectBase() {
+  const fallback = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+  try {
+    return new URL("/quests", fallback);
+  } catch {
+    return new URL("/quests", fallback);
+  }
+}
+
+function getDiscordErrorPayload(error: unknown) {
+  if (error instanceof DiscordVerificationError) {
+    return {
+      status: error.status as 200 | 400 | 429 | 503,
+      body: {
+        success: false,
+        connected: error.code !== "DISCORD_NOT_CONNECTED",
+        joined: false,
+        error: error.code,
+        message: error.message,
+        retryAfterSeconds: error.retryAfterSeconds,
+      },
+    };
+  }
+
+  return {
+    status: 400 as const,
+    body: {
+      success: false,
+      connected: false,
+      joined: false,
+      error: "DISCORD_VERIFY_FAILED",
+      message: (error as Error).message || "Discord verification failed",
+    },
+  };
 }
 
 questsRoutes.get("/", async (c) => {
@@ -258,6 +296,92 @@ questsRoutes.get("/x/callback", async (c) => {
     redirectUrl.searchParams.set("x_linked", "0");
     redirectUrl.searchParams.set("x_error", (error as Error).message);
     return c.redirect(redirectUrl.toString(), 302);
+  }
+});
+
+questsRoutes.get("/discord/connect", async (c) => {
+  if (isMaintenanceModeEnabled()) {
+    return maintenanceUnavailable(c);
+  }
+
+  try {
+    const input: DiscordAccountAuthInput = {
+      address: c.req.query("address"),
+      message: c.req.query("message"),
+      signature: c.req.query("signature") as DiscordAccountAuthInput["signature"],
+      returnTo: c.req.query("returnTo"),
+    };
+    const authUrl = await questEngine.createDiscordAuthUrl(input);
+    return c.redirect(authUrl, 302);
+  } catch (error) {
+    const redirectUrl = getDiscordRedirectBase();
+    redirectUrl.searchParams.set("discord_linked", "0");
+    redirectUrl.searchParams.set(
+      "discord_error",
+      error instanceof DiscordVerificationError
+        ? error.code
+        : "DISCORD_OAUTH_STATE_INVALID"
+    );
+    return c.redirect(redirectUrl.toString(), 302);
+  }
+});
+
+questsRoutes.get("/discord/callback", async (c) => {
+  const code = c.req.query("code");
+  const state = c.req.query("state");
+
+  if (!code || !state) {
+    const redirectUrl = getDiscordRedirectBase();
+    redirectUrl.searchParams.set("discord_linked", "0");
+    redirectUrl.searchParams.set("discord_error", "DISCORD_OAUTH_STATE_INVALID");
+    return c.redirect(redirectUrl.toString(), 302);
+  }
+
+  try {
+    const result = await questEngine.handleDiscordCallback(code, state);
+    const redirectUrl = new URL(result.returnTo);
+    redirectUrl.searchParams.set("discord_linked", "1");
+    redirectUrl.searchParams.set(
+      "discord_username",
+      result.displayName || result.username
+    );
+    return c.redirect(redirectUrl.toString(), 302);
+  } catch (error) {
+    const redirectUrl = getDiscordRedirectBase();
+    redirectUrl.searchParams.set("discord_linked", "0");
+    redirectUrl.searchParams.set(
+      "discord_error",
+      error instanceof DiscordVerificationError
+        ? error.code
+        : "DISCORD_OAUTH_EXCHANGE_FAILED"
+    );
+    return c.redirect(redirectUrl.toString(), 302);
+  }
+});
+
+questsRoutes.post("/discord/verify", async (c) => {
+  if (isMaintenanceModeEnabled()) {
+    return maintenanceUnavailable(c);
+  }
+
+  try {
+    const body = (await c.req.json()) as {
+      address?: string;
+      questId?: string | null;
+    };
+
+    if (!body.address) {
+      return c.json({ success: false, error: "address is required" }, 400);
+    }
+
+    const data = await questEngine.verifyDiscordGuildMembership(
+      body.address,
+      body.questId
+    );
+    return c.json(data);
+  } catch (error) {
+    const payload = getDiscordErrorPayload(error);
+    return c.json(payload.body, payload.status);
   }
 });
 

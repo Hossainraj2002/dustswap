@@ -44,6 +44,14 @@ function isSwapQuest(form: AdminQuestInput) {
   return form.actionType === "swap_volume" || form.actionType === "swap_count";
 }
 
+function isDiscordQuest(form: AdminQuestInput) {
+  return (
+    form.platform === "discord" ||
+    form.actionType === "join_discord" ||
+    form.verificationType === "discord_guild_member"
+  );
+}
+
 function isOnchainSwapForm(form: AdminQuestInput) {
   return (
     isSwapQuest(form) ||
@@ -116,6 +124,19 @@ function applySwapQuestDefaults(form: AdminQuestInput): AdminQuestInput {
   };
 }
 
+function applyDiscordQuestDefaults(form: AdminQuestInput): AdminQuestInput {
+  return {
+    ...form,
+    category: "social",
+    platform: "discord",
+    actionType: "join_discord",
+    verificationType: "discord_guild_member",
+    targetValue: form.targetValue || 1,
+    ctaLabel: form.ctaLabel || "Join Discord",
+    ctaUrl: form.ctaUrl || "",
+  };
+}
+
 function formatSwapQuestRuleSummary(rules: Record<string, any>) {
   const chainValue = getRuleChainValue(rules) as SwapQuestChainOption;
   const tokenAddress = getRuleTokenAddress(rules);
@@ -155,6 +176,12 @@ const EMPTY_FORM: AdminQuestInput = {
 };
 
 function getRulesExample(form: AdminQuestInput) {
+  if (isDiscordQuest(form)) {
+    return `{
+  "source": "discord_guild_member"
+}`;
+  }
+
   if (form.platform === "x" && form.actionType === "reply") {
     return `{
   "requiredAnyOf": ["@dustswaponbase", "#dustswaponbase"]
@@ -204,6 +231,13 @@ function getRulesExample(form: AdminQuestInput) {
 }
 
 function getVerificationGuide(form: AdminQuestInput) {
+  if (isDiscordQuest(form)) {
+    return {
+      recommended: "discord_guild_member",
+      text: "Discord join quests: use discord_guild_member. The backend checks the connected Discord OAuth user against your server with the backend-only bot token.",
+    };
+  }
+
   if (form.actionType === "swap_volume" || form.actionType === "swap_count") {
     return {
       recommended: "swap_volume",
@@ -256,6 +290,7 @@ function getVerificationOptionLabel(option: string) {
   const labels: Record<string, string> = {
     swap_volume: "swap_volume - swap progress",
     x_post_link: "x_post_link - post or reply link",
+    discord_guild_member: "discord_guild_member - Discord server member",
     delay_gate: "delay_gate - open CTA / follow / repost",
     delay_gate_retry: "delay_gate_retry - retry visit flow",
   };
@@ -419,7 +454,11 @@ export default function AdminQuestsPage() {
 
     try {
       const parsedRules = rulesText.trim() ? JSON.parse(rulesText) : {};
-      const normalizedForm = isSwapQuest(form) ? applySwapQuestDefaults(form) : form;
+      const normalizedForm = isSwapQuest(form)
+        ? applySwapQuestDefaults(form)
+        : isDiscordQuest(form)
+          ? applyDiscordQuestDefaults(form)
+          : form;
       const response = await saveAdminQuest(adminToken, {
         ...normalizedForm,
         rewardPoints: Number(normalizedForm.rewardPoints || 0),
@@ -631,8 +670,8 @@ export default function AdminQuestsPage() {
                 {
                   key: "platform",
                   label: "Platform",
-                  help: "Main place where the task happens, such as X, Base App, or DustSwap.",
-                  options: ["x", "base", "dustswap"],
+                  help: "Main place where the task happens, such as X, Discord, Base App, or DustSwap.",
+                  options: ["x", "discord", "base", "dustswap"],
                 },
                 {
                   key: "actionType",
@@ -641,6 +680,7 @@ export default function AdminQuestsPage() {
                   options: [
                     "swap_volume",
                     "swap_count",
+                    "join_discord",
                     "like",
                     "post",
                     "follow",
@@ -652,8 +692,8 @@ export default function AdminQuestsPage() {
                 {
                   key: "verificationType",
                   label: "Verification",
-                  help: "Defines how the backend confirms completion. swap_volume reads swap progress. x_post_link verifies pasted post or reply links with GetX. X follow tasks use GetX follow checks. X repost tasks move to daily review after the CTA is opened.",
-                  options: ["swap_volume", "x_post_link", "delay_gate", "delay_gate_retry"],
+                  help: "Defines how the backend confirms completion. swap_volume reads swap progress. x_post_link verifies pasted post or reply links with GetX. discord_guild_member checks Discord server membership with the backend bot token.",
+                  options: ["swap_volume", "x_post_link", "discord_guild_member", "delay_gate", "delay_gate_retry"],
                 },
                 {
                   key: "progressWindow",
@@ -685,6 +725,15 @@ export default function AdminQuestsPage() {
                           (nextValue === "swap_volume" || nextValue === "swap_count")
                         ) {
                           return applySwapQuestDefaults(next as AdminQuestInput);
+                        }
+
+                        if (
+                          (field.key === "platform" && nextValue === "discord") ||
+                          (field.key === "actionType" && nextValue === "join_discord") ||
+                          (field.key === "verificationType" &&
+                            nextValue === "discord_guild_member")
+                        ) {
+                          return applyDiscordQuestDefaults(next as AdminQuestInput);
                         }
 
                         if (field.key === "category" && nextValue === "onchain") {
@@ -911,6 +960,7 @@ export default function AdminQuestsPage() {
                 <code className="ml-1">targetXUserId</code> or <code>targetXUsername</code> identifies the account for GetX follow checks.
                 <code className="ml-1">Reply tasks</code> use the CTA URL as the parent post and verify the pasted reply link.
                 <code className="ml-1">Repost tasks</code> use the CTA URL and move opened tasks into daily review.
+                <code className="ml-1">Discord join tasks</code> use <code>discord_guild_member</code> and never require bot secrets in admin.
                 <code className="ml-1">requiredAnyOf</code> means the post only needs one of those allowed X mentions or hashtags.
                 <code className="ml-1">x_post_link</code> also checks that the tweet author ID matches the connected X account.
                 <code className="ml-1">externalUrl</code> is the page users open.

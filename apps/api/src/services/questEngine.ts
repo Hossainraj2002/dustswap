@@ -19,13 +19,24 @@ import {
   xVerificationService,
   type XSocialAccountRecord,
 } from "./xVerification";
+import {
+  buildDiscordAvatarUrl,
+  discordVerificationService,
+  getDiscordClientId,
+  getDiscordGuildId,
+  getDiscordRedirectUri,
+  toDiscordAccountSummary,
+  DiscordVerificationError,
+  type DiscordSocialAccountRecord,
+} from "./discordVerification";
 
 type QuestCategory = "social" | "onchain";
 type QuestCampaignKey = "general" | "cofounder_pass";
-type QuestPlatform = "x" | "base" | "dustswap";
+type QuestPlatform = "x" | "base" | "dustswap" | "discord";
 type QuestActionType =
   | "swap_volume"
   | "swap_count"
+  | "join_discord"
   | "like"
   | "post"
   | "follow"
@@ -35,6 +46,7 @@ type QuestActionType =
 type QuestVerificationType =
   | "swap_volume"
   | "x_post_link"
+  | "discord_guild_member"
   | "delay_gate"
   | "delay_gate_retry";
 type QuestProgressWindow = "once" | "daily" | "weekly";
@@ -189,6 +201,8 @@ export type XAccountAuthInput = {
   returnTo?: string | null;
 };
 
+export type DiscordAccountAuthInput = XAccountAuthInput;
+
 type OpenOceanWalletTransaction = {
   txHash?: string;
   tradeTime?: string;
@@ -206,6 +220,10 @@ const X_OAUTH_STATE_CACHE_TTL_MS = 10 * 60 * 1000;
 const X_STORE_OAUTH_TOKENS = ["1", "true", "yes", "on"].includes(
   String(process.env.X_STORE_OAUTH_TOKENS || "").trim().toLowerCase()
 );
+const DISCORD_SCOPES = ["identify"];
+const DISCORD_ACCOUNT_STATEMENT = "DustSwap Discord Account Connection";
+const DISCORD_OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
+const DISCORD_OAUTH_STATE_CACHE_TTL_MS = 10 * 60 * 1000;
 const OPENOCEAN_API_BASE =
   process.env.OPENOCEAN_API_BASE || "https://open-api.openocean.finance/v3";
 const OPENOCEAN_SWAP_SYNC_PAGE_SIZE = Math.min(
@@ -500,6 +518,10 @@ function getOAuthStateCacheKey(stateHash: string) {
   return `x-oauth-state:${stateHash}`;
 }
 
+function getDiscordOAuthStateCacheKey(stateHash: string) {
+  return `discord-oauth-state:${stateHash}`;
+}
+
 function getDefaultReturnTo() {
   const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
   return new URL("/quests", appUrl).toString();
@@ -528,6 +550,34 @@ function parseXAccountMessage(message: string) {
   const lines = message.split(/\r?\n/).map((line) => line.trim());
   if (lines[0] !== X_ACCOUNT_STATEMENT) {
     throw new Error("Invalid X connection message");
+  }
+
+  const fields = new Map<string, string>();
+  for (const line of lines.slice(1)) {
+    const separator = line.indexOf(":");
+    if (separator <= 0) {
+      continue;
+    }
+
+    fields.set(
+      line.slice(0, separator).trim().toLowerCase(),
+      line.slice(separator + 1).trim()
+    );
+  }
+
+  return {
+    address: fields.get("address") || "",
+    action: fields.get("action") || "",
+    timestamp: fields.get("timestamp") || "",
+    nonce: fields.get("nonce") || "",
+    domain: fields.get("domain") || "",
+  };
+}
+
+function parseDiscordAccountMessage(message: string) {
+  const lines = message.split(/\r?\n/).map((line) => line.trim());
+  if (lines[0] !== DISCORD_ACCOUNT_STATEMENT) {
+    throw new Error("Invalid Discord connection message");
   }
 
   const fields = new Map<string, string>();
@@ -598,6 +648,20 @@ function normalizeHashtagValue(input: string) {
 
 function normalizeAddress(address: string) {
   return address.toLowerCase();
+}
+
+function isMissingUserProfilesTableError(error: { code?: string; message?: string } | null) {
+  if (!error) {
+    return false;
+  }
+
+  const message = String(error.message || "").toLowerCase();
+  return (
+    error.code === "42P01" ||
+    error.code === "PGRST205" ||
+    (error.code === "PGRST204" && message.includes("discord_username")) ||
+    (message.includes("user_profiles") && message.includes("schema cache"))
+  );
 }
 
 function getNormalizedLinkedXKeys(account: SocialAccountRecord) {
@@ -1098,6 +1162,74 @@ export class QuestEngine {
     return normalizedAddress;
   }
 
+  private async assertAuthenticatedDiscordAccountAction(
+    input: DiscordAccountAuthInput,
+    expectedAction: "connect-discord"
+  ) {
+    if (!input.address || !input.message || !input.signature) {
+      throw new Error("address, message, and signature are required");
+    }
+
+    if (!isAddress(input.address)) {
+      throw new Error("A valid wallet address is required");
+    }
+
+    const normalizedAddress = getAddress(input.address).toLowerCase();
+    const parsed = parseDiscordAccountMessage(input.message);
+    const messageAddress = getAddress(parsed.address).toLowerCase();
+
+    if (messageAddress !== normalizedAddress) {
+      throw new Error("Discord connection signature address mismatch");
+    }
+
+    if (parsed.action !== expectedAction) {
+      throw new Error("Invalid Discord connection action");
+    }
+
+    if (!parsed.domain || !isAllowedAppDomain(parsed.domain)) {
+      throw new Error("Unexpected Discord connection domain");
+    }
+
+    if (!parsed.nonce || parsed.nonce.length < 8 || parsed.nonce.length > 128) {
+      throw new Error("Invalid Discord connection nonce");
+    }
+
+    const timestampMs = Date.parse(parsed.timestamp);
+    if (!Number.isFinite(timestampMs)) {
+      throw new Error("Invalid Discord connection timestamp");
+    }
+
+    const now = Date.now();
+    if (now - timestampMs > 5 * 60 * 1000) {
+      throw new Error("Expired Discord connection signature");
+    }
+
+    if (timestampMs - now > 60 * 1000) {
+      throw new Error("Invalid Discord connection timestamp");
+    }
+
+    const replayKey = `discord-account:replay:${createHash("sha256")
+      .update(`${input.message}|${input.signature.toLowerCase()}`)
+      .digest("hex")}`;
+
+    if (runtimeCache.get(replayKey)) {
+      throw new Error("Discord connection signature was already used");
+    }
+
+    const valid = await publicClient.verifyMessage({
+      address: normalizedAddress as `0x${string}`,
+      message: input.message,
+      signature: input.signature,
+    });
+
+    if (!valid) {
+      throw new Error("Invalid Discord connection signature");
+    }
+
+    runtimeCache.set(replayKey, true, 5 * 60 * 1000);
+    return normalizedAddress;
+  }
+
   private async storeXOAuthState(args: {
     state: string;
     userId: number;
@@ -1205,6 +1337,125 @@ export class QuestEngine {
     };
   }
 
+  private async storeDiscordOAuthState(args: {
+    state: string;
+    userId: number;
+    address: string;
+    returnTo: string;
+  }) {
+    const stateHash = hashOAuthState(args.state);
+    const expiresAt = new Date(Date.now() + DISCORD_OAUTH_STATE_TTL_MS).toISOString();
+    const cached = {
+      userId: args.userId,
+      address: args.address,
+      returnTo: args.returnTo,
+      codeVerifier: "",
+      expiresAt,
+    };
+
+    try {
+      const { error } = await supabase.from("oauth_states").insert({
+        state_hash: stateHash,
+        platform: "discord",
+        user_id: args.userId,
+        wallet_address: args.address,
+        return_to: args.returnTo,
+        code_verifier: "",
+        expires_at: expiresAt,
+      });
+
+      if (error) {
+        throw new Error(error.message);
+      }
+    } catch (error) {
+      console.warn("[Discord OAuth] Falling back to runtime OAuth state cache:", error);
+      runtimeCache.set(
+        getDiscordOAuthStateCacheKey(stateHash),
+        cached,
+        DISCORD_OAUTH_STATE_CACHE_TTL_MS
+      );
+    }
+  }
+
+  private async consumeDiscordOAuthState(state: string) {
+    const stateHash = hashOAuthState(state);
+    const cacheKey = getDiscordOAuthStateCacheKey(stateHash);
+    const cached = runtimeCache.get<{
+      userId: number;
+      address: string;
+      returnTo: string;
+      expiresAt: string;
+    }>(cacheKey);
+
+    if (cached) {
+      runtimeCache.invalidate(cacheKey);
+      if (Date.now() > new Date(cached.expiresAt).getTime()) {
+        throw new DiscordVerificationError(
+          "DISCORD_OAUTH_STATE_INVALID",
+          "Discord auth session expired. Please try again.",
+          400
+        );
+      }
+
+      return cached;
+    }
+
+    const { data, error } = await supabase
+      .from("oauth_states")
+      .select("*")
+      .eq("state_hash", stateHash)
+      .eq("platform", "discord")
+      .is("consumed_at", null)
+      .maybeSingle();
+
+    if (error) {
+      throw new Error(`Failed to load Discord auth state: ${error.message}`);
+    }
+
+    const row = data as
+      | {
+          user_id: number;
+          wallet_address: string;
+          return_to: string;
+          expires_at: string;
+        }
+      | null;
+
+    if (!row) {
+      throw new DiscordVerificationError(
+        "DISCORD_OAUTH_STATE_INVALID",
+        "Invalid or already used Discord auth state.",
+        400
+      );
+    }
+
+    if (Date.now() > new Date(row.expires_at).getTime()) {
+      throw new DiscordVerificationError(
+        "DISCORD_OAUTH_STATE_INVALID",
+        "Discord auth session expired. Please try again.",
+        400
+      );
+    }
+
+    const { error: consumeError } = await supabase
+      .from("oauth_states")
+      .update({ consumed_at: new Date().toISOString() })
+      .eq("state_hash", stateHash)
+      .eq("platform", "discord")
+      .is("consumed_at", null);
+
+    if (consumeError) {
+      throw new Error(`Failed to consume Discord auth state: ${consumeError.message}`);
+    }
+
+    return {
+      userId: Number(row.user_id),
+      address: normalizeAddress(row.wallet_address),
+      returnTo: normalizeReturnTo(row.return_to),
+      expiresAt: row.expires_at,
+    };
+  }
+
   async getQuestBoard(address?: string) {
     const normalizedAddress = address ? normalizeAddress(address) : null;
     const cacheKey = this.getQuestBoardCacheKey(normalizedAddress);
@@ -1257,6 +1508,10 @@ export class QuestEngine {
               account.platform,
               account.platform === "x"
                 ? toXAccountSummary(account as unknown as XSocialAccountRecord)
+                : account.platform === "discord"
+                  ? toDiscordAccountSummary(
+                      account as unknown as DiscordSocialAccountRecord
+                    )
                 : {
                     username: account.username,
                     platformUserId: account.platform_user_id,
@@ -1665,6 +1920,142 @@ export class QuestEngine {
     };
   }
 
+  async createDiscordAuthUrl(input: DiscordAccountAuthInput) {
+    const normalizedAddress = await this.assertAuthenticatedDiscordAccountAction(
+      input,
+      "connect-discord"
+    );
+    const returnTo = normalizeReturnTo(input.returnTo);
+    const user = await pointsEngine.getOrCreate(normalizedAddress);
+    const clientId = getDiscordClientId();
+    const redirectUri = getDiscordRedirectUri();
+
+    const state = randomBytes(32).toString("base64url");
+    await this.storeDiscordOAuthState({
+      state,
+      userId: user.id,
+      address: normalizedAddress,
+      returnTo,
+    });
+
+    const url = new URL("https://discord.com/oauth2/authorize");
+    url.searchParams.set("response_type", "code");
+    url.searchParams.set("client_id", clientId);
+    url.searchParams.set("redirect_uri", redirectUri);
+    url.searchParams.set("scope", DISCORD_SCOPES.join(" "));
+    url.searchParams.set("state", state);
+
+    return url.toString();
+  }
+
+  async handleDiscordCallback(code: string, state: string) {
+    const payload = await this.consumeDiscordOAuthState(state);
+    const tokenJson = await discordVerificationService.exchangeCodeForToken(code);
+    const discordUser = await discordVerificationService.fetchCurrentUser(
+      tokenJson.access_token
+    );
+    const connectedAt = new Date().toISOString();
+    const avatarUrl = buildDiscordAvatarUrl(discordUser);
+    const displayName = discordUser.global_name || discordUser.username || null;
+    const guildId = getDiscordGuildId();
+
+    const { data: existingDiscordUser, error: existingDiscordUserError } =
+      await supabase
+        .from("social_accounts")
+        .select("user_id")
+        .eq("platform", "discord")
+        .eq("platform_user_id", discordUser.id)
+        .maybeSingle();
+
+    if (existingDiscordUserError) {
+      throw new Error(
+        `Failed to check linked Discord account: ${existingDiscordUserError.message}`
+      );
+    }
+
+    if (
+      existingDiscordUser &&
+      Number((existingDiscordUser as { user_id: number }).user_id) !== payload.userId
+    ) {
+      throw new Error("That Discord account is already linked to another wallet.");
+    }
+
+    const { error } = await supabase
+      .from("social_accounts")
+      .upsert(
+        {
+          user_id: payload.userId,
+          platform: "discord",
+          platform_user_id: discordUser.id,
+          username: discordUser.username,
+          display_name: displayName,
+          profile_image_url: avatarUrl,
+          access_token: null,
+          refresh_token: null,
+          scope: tokenJson.scope || DISCORD_SCOPES.join(" "),
+          token_expires_at: null,
+          metadata: {
+            source: "discord_oauth",
+            connectedAt,
+            verifiedAt: null,
+            guildId,
+            joined: false,
+            pending: null,
+            roles: [],
+          },
+          updated_at: connectedAt,
+        },
+        {
+          onConflict: "user_id,platform",
+        }
+      );
+
+    if (error) {
+      throw new Error(`Failed to save Discord account: ${error.message}`);
+    }
+
+    const discordUsernameForProfile = String(displayName || discordUser.username || "")
+      .replace(/[\u0000-\u001f\u007f]/g, "")
+      .trim()
+      .slice(0, 40);
+
+    if (discordUsernameForProfile.length >= 2) {
+      const { error: profileError } = await supabase
+        .from("user_profiles")
+        .upsert(
+          {
+            user_id: payload.userId,
+            discord_username: discordUsernameForProfile,
+            updated_at: connectedAt,
+          },
+          {
+            onConflict: "user_id",
+          }
+        );
+
+      if (profileError) {
+        if (isMissingUserProfilesTableError(profileError)) {
+          console.warn(
+            `[Discord OAuth] user_profiles table is not available yet: ${profileError.message}`
+          );
+        } else {
+          throw new Error(`Failed to save Discord profile display: ${profileError.message}`);
+        }
+      }
+    }
+
+    this.invalidateQuestBoardCache(payload.address);
+    pointsEngine.invalidateUserReadCaches(payload.address);
+
+    return {
+      address: payload.address,
+      returnTo: payload.returnTo,
+      username: discordUser.username,
+      displayName,
+      discordUserId: discordUser.id,
+    };
+  }
+
   async disconnectXAccount(input: XAccountAuthInput) {
     const normalizedAddress = await this.assertAuthenticatedXAccountAction(
       input,
@@ -1745,6 +2136,197 @@ export class QuestEngine {
       success: true,
       disconnected: true,
       account: null,
+    } as const;
+  }
+
+  async verifyDiscordGuildMembership(address: string, questId?: string | null) {
+    if (!isAddress(address)) {
+      throw new Error("A valid wallet address is required");
+    }
+
+    const normalizedAddress = normalizeAddress(address);
+    const user = await pointsEngine.getOrCreate(normalizedAddress);
+    const account = await discordVerificationService.requireConnectedAccount(user.id);
+    const membership = await discordVerificationService.checkGuildMembership(
+      account.platform_user_id
+    );
+
+    await discordVerificationService.updateMembershipMetadata(account, membership);
+
+    const baseResult = {
+      connected: true,
+      discordUserId: account.platform_user_id,
+      username: account.username,
+      displayName: account.display_name,
+      profileImageUrl: account.profile_image_url,
+      joined: membership.joined,
+      pending: membership.pending,
+      memberPresent: membership.memberPresent,
+      roles: membership.roles,
+      joinedAt: membership.joinedAt,
+      verifiedAt: membership.verifiedAt,
+    };
+
+    if (!questId) {
+      this.invalidateQuestBoardCache(normalizedAddress);
+      return {
+        success: membership.joined,
+        ...baseResult,
+        ...(membership.joined
+          ? {}
+          : {
+              error: "DISCORD_USER_NOT_IN_GUILD",
+            }),
+      } as const;
+    }
+
+    const quest = await this.getQuestById(questId);
+    if (
+      quest.platform !== "discord" ||
+      quest.action_type !== "join_discord" ||
+      quest.verification_type !== "discord_guild_member"
+    ) {
+      throw new Error("This quest is not a Discord join verification task");
+    }
+
+    const nowIso = membership.verifiedAt;
+    const cycleKey = getCycleKey(quest.progress_window, getNow());
+    let progress = await this.getProgress(user.id, quest.id, cycleKey);
+
+    if (!progress) {
+      progress = await this.upsertProgress({
+        userId: user.id,
+        quest,
+        cycleKey,
+        updates: {
+          status: "in_progress",
+          progress: 0,
+          target_value: quest.target_value,
+          opened_at: nowIso,
+          next_verification_at: nowIso,
+          verified_by_api: false,
+          verified_at: nowIso,
+        },
+      });
+    }
+
+    if (progress.completed_at) {
+      this.invalidateQuestBoardCache(normalizedAddress);
+      return {
+        success: true,
+        status: "completed",
+        awardedPoints: 0,
+        ...baseResult,
+        joined: true,
+      } as const;
+    }
+
+    if (!membership.memberPresent || !membership.joined) {
+      const updated = await this.upsertProgress({
+        userId: user.id,
+        quest,
+        cycleKey,
+        existing: progress,
+        updates: {
+          status: "in_progress",
+          progress: 0,
+          target_value: quest.target_value,
+          verification_attempts: progress.verification_attempts + 1,
+          verified_by_api: false,
+          verified_at: nowIso,
+          metadata: {
+            ...(progress.metadata || {}),
+            verificationType: quest.verification_type,
+            verification_provider: "discord_bot",
+            discord_user_id: account.platform_user_id,
+            guild_id: membership.guildId,
+            member_present: membership.memberPresent,
+            joined: membership.joined,
+            pending: membership.pending,
+            verified_by_api: false,
+            verified_at: nowIso,
+          },
+        },
+      });
+
+      await this.logVerificationAttempt(
+        user.id,
+        quest.id,
+        cycleKey,
+        "failed",
+        {
+          verificationType: quest.verification_type,
+          actionType: quest.action_type,
+          discordUserId: account.platform_user_id,
+          guildId: membership.guildId,
+        },
+        {
+          memberPresent: membership.memberPresent,
+          joined: membership.joined,
+          pending: membership.pending,
+          attempts: updated.verification_attempts,
+        }
+      );
+
+      this.invalidateQuestBoardCache(normalizedAddress);
+      return {
+        success: false,
+        status: membership.pending ? "pending" : "not_joined",
+        ...baseResult,
+        joined: false,
+        error: "DISCORD_USER_NOT_IN_GUILD",
+      } as const;
+    }
+
+    const completed = await this.completeQuest(
+      user.id,
+      normalizedAddress,
+      quest,
+      cycleKey,
+      {
+        verificationType: quest.verification_type,
+        verification_provider: "discord_bot",
+        verified_by_api: true,
+        verified_at: nowIso,
+        discord_user_id: account.platform_user_id,
+        discord_username: account.username,
+        guild_id: membership.guildId,
+        joined: true,
+        pending: false,
+        joined_at: membership.joinedAt,
+        role_count: membership.roles.length,
+      }
+    );
+
+    await this.logVerificationAttempt(
+      user.id,
+      quest.id,
+      cycleKey,
+      "completed",
+      {
+        verificationType: quest.verification_type,
+        actionType: quest.action_type,
+        discordUserId: account.platform_user_id,
+        guildId: membership.guildId,
+      },
+      {
+        verifiedByApi: true,
+        joined: true,
+        pending: false,
+        rewardedPoints: completed.awardedPoints,
+      }
+    );
+
+    this.invalidateQuestBoardCache(normalizedAddress);
+    pointsEngine.invalidateUserReadCaches(normalizedAddress);
+
+    return {
+      success: true,
+      status: "completed",
+      awardedPoints: completed.awardedPoints,
+      ...baseResult,
+      joined: true,
+      pending: false,
     } as const;
   }
 

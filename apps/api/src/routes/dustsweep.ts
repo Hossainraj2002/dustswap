@@ -322,6 +322,12 @@ type QuoteCandidate = Omit<DustSweepRoute, "priceImpactBps"> & {
   priceImpactBps?: number;
 };
 
+type QuoteSkippedToken = {
+  token: Address;
+  reason: "NO_LIQUIDITY" | "NOT_WHITELISTED" | "BELOW_THRESHOLD" | "BALANCE_CHANGED" | "QUOTE_FAILED";
+  message?: string;
+};
+
 function getFeeBps() {
   const parsed = Number(process.env.DUST_SWEEP_FEE_BPS || "200");
   return Number.isFinite(parsed) ? parsed : 200;
@@ -2653,11 +2659,7 @@ dustsweepRoutes.post("/quote", async (c) => {
   const slippageBps = Math.max(1, Math.min(3000, Number(body.slippageBps || 50)));
   const outputDecimals = tokenOut.toLowerCase() === USDC_ADDRESS.toLowerCase() ? 6 : 18;
   const routes: DustSweepRoute[] = [];
-  const staleBalances: Array<{
-    token: Address;
-    required: string;
-    balance: string;
-  }> = [];
+  const skippedTokens: QuoteSkippedToken[] = [];
   const whitelist = await loadWhitelist();
   const userAddress = normalizeAddress(body.userAddress);
 
@@ -2666,7 +2668,14 @@ dustsweepRoutes.post("/quote", async (c) => {
     if (!isAddress(rawTokenIn)) continue;
     const tokenIn = normalizeAddress(rawTokenIn);
     if (tokenIn.toLowerCase() === tokenOut.toLowerCase()) continue;
-    if (!whitelist.has(tokenIn.toLowerCase())) continue;
+    if (!whitelist.has(tokenIn.toLowerCase())) {
+      skippedTokens.push({
+        token: tokenIn,
+        reason: "NOT_WHITELISTED",
+        message: "Token is not whitelisted for DustSweep.",
+      });
+      continue;
+    }
 
     let amountIn: bigint;
     try {
@@ -2674,20 +2683,49 @@ dustsweepRoutes.post("/quote", async (c) => {
     } catch {
       continue;
     }
-    if (amountIn <= 0n) continue;
-
-    const liveBalance = await readErc20Balance(tokenIn, userAddress);
-    if (liveBalance < amountIn) {
-      staleBalances.push({
+    if (amountIn <= 0n) {
+      skippedTokens.push({
         token: tokenIn,
-        required: amountIn.toString(),
-        balance: liveBalance.toString(),
+        reason: "BELOW_THRESHOLD",
+        message: "Token balance is too small to quote.",
       });
       continue;
     }
 
-    const best = await getBestQuote(tokenIn, tokenOut, amountIn, slippageBps);
-    if (!best) continue;
+    const liveBalance = await readErc20Balance(tokenIn, userAddress);
+    if (liveBalance < amountIn) {
+      skippedTokens.push({
+        token: tokenIn,
+        reason: "BALANCE_CHANGED",
+        message: "Token balance changed. Refresh balances before sweeping this token.",
+      });
+      continue;
+    }
+
+    let best: QuoteCandidate | null = null;
+    try {
+      best = await getBestQuote(tokenIn, tokenOut, amountIn, slippageBps);
+    } catch (error) {
+      console.warn("[dustsweep/quote] quote source failed", {
+        tokenIn,
+        tokenOut,
+        message: error instanceof Error ? error.message : String(error),
+      });
+      skippedTokens.push({
+        token: tokenIn,
+        reason: "QUOTE_FAILED",
+        message: "Quote source failed for this token.",
+      });
+      continue;
+    }
+    if (!best) {
+      skippedTokens.push({
+        token: tokenIn,
+        reason: "NO_LIQUIDITY",
+        message: "No route found for this token.",
+      });
+      continue;
+    }
 
     const amountOutMin = (best.amountOut * BigInt(10_000 - slippageBps)) / 10_000n;
     routes.push({
@@ -2703,18 +2741,14 @@ dustsweepRoutes.post("/quote", async (c) => {
     });
   }
 
-  if (staleBalances.length > 0) {
-    return c.json(
-      errorJson("Token balance changed. Refresh balances and try again.", {
-        code: "STALE_TOKEN_BALANCE",
-        staleBalances,
-      }),
-      409,
-    );
-  }
-
   if (routes.length === 0) {
-    return c.json(errorJson("No swappable route found for the selected tokens"), 400);
+    return c.json(
+      errorJson("No swappable route found for the selected tokens", {
+        code: "NO_SWAPPABLE_ROUTES",
+        skippedTokens,
+      }),
+      400,
+    );
   }
 
   const totalEstimatedOut = routes.reduce(
@@ -2732,6 +2766,7 @@ dustsweepRoutes.post("/quote", async (c) => {
 
   return c.json({
     routes,
+    skippedTokens,
     totalEstimatedOut: totalEstimatedOut.toString(),
     totalEstimatedOutUSD: Math.round(totalEstimatedOutUSD * 100) / 100,
     feeAmountUSD: Math.round(feeAmountUSD * 10000) / 10000,

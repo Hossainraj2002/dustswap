@@ -17,6 +17,21 @@ export type ProfileSettingsProfile = {
   xConnected: boolean;
   xConnectedAt: string | null;
   xLegacyManual: boolean;
+  discordAccount: {
+    username?: string | null;
+    platformUserId?: string | null;
+    discordUserId?: string | null;
+    displayName?: string | null;
+    profileImageUrl?: string | null;
+    connected?: boolean;
+    connectedAt?: string | null;
+    guildId?: string | null;
+    joined?: boolean;
+    pending?: boolean | null;
+    joinedAt?: string | null;
+    verifiedAt?: string | null;
+    roles?: string[];
+  } | null;
   source: "custom" | "fallback" | "wallet";
   custom: {
     username: string | null;

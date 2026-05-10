@@ -14,6 +14,10 @@ import { supabase } from "./supabase";
 import { isAllowedAppDomain } from "../config/appOrigins";
 import { runtimeCache } from "../utils/runtimeCache";
 import { toXAccountSummary, type XSocialAccountRecord } from "./xVerification";
+import {
+  toDiscordAccountSummary,
+  type DiscordSocialAccountRecord,
+} from "./discordVerification";
 
 const PROFILE_SIGNATURE_TTL_MS = 5 * 60 * 1000;
 const PROFILE_SIGNATURE_FUTURE_SKEW_MS = 60 * 1000;
@@ -73,6 +77,7 @@ export type ProfileSettingsResponse = {
   xConnected: boolean;
   xConnectedAt: string | null;
   xLegacyManual: boolean;
+  discordAccount: ReturnType<typeof toDiscordAccountSummary>;
   source: "custom" | "fallback" | "wallet";
   custom: {
     username: string | null;
@@ -372,6 +377,7 @@ function buildProfileResponse(args: {
   custom: UserProfileRecord | null;
   fallback: SocialAccountRecord | null;
   xAccount: SocialAccountRecord | null;
+  discordAccount: SocialAccountRecord | null;
 }): ProfileSettingsResponse {
   const custom = args.custom;
   const fallback = args.fallback;
@@ -390,6 +396,9 @@ function buildProfileResponse(args: {
     fallback?.username ||
     null;
   const xSummary = toXAccountSummary(args.xAccount as XSocialAccountRecord | null);
+  const discordSummary = toDiscordAccountSummary(
+    args.discordAccount as DiscordSocialAccountRecord | null
+  );
 
   return {
     address: args.address,
@@ -405,6 +414,7 @@ function buildProfileResponse(args: {
     xConnected: xSummary?.connected === true,
     xConnectedAt: xSummary?.connectedAt || null,
     xLegacyManual: xSummary?.legacyManual === true,
+    discordAccount: discordSummary,
     source: customHasDisplayValue ? "custom" : fallbackHasDisplayValue ? "fallback" : "wallet",
     custom: {
       username: custom?.username || null,
@@ -442,6 +452,7 @@ export class ProfileSettingsService {
     let custom: UserProfileRecord | null = null;
     let fallback: SocialAccountRecord | null = null;
     let xAccount: SocialAccountRecord | null = null;
+    let discordAccount: SocialAccountRecord | null = null;
 
     if (user) {
       const [
@@ -455,7 +466,7 @@ export class ProfileSettingsService {
             "id, user_id, platform_user_id, username, display_name, profile_image_url, metadata, updated_at, platform"
           )
           .eq("user_id", user.id)
-          .in("platform", ["farcaster", "x"]),
+          .in("platform", ["farcaster", "x", "discord"]),
       ]);
 
       if (customError) {
@@ -482,6 +493,7 @@ export class ProfileSettingsService {
       const socialRows = (socialData ?? []) as Array<SocialAccountRecord & { platform: string }>;
       fallback = socialRows.find((row) => row.platform === "farcaster") ?? null;
       xAccount = socialRows.find((row) => row.platform === "x") ?? null;
+      discordAccount = socialRows.find((row) => row.platform === "discord") ?? null;
     }
 
     const r2Status = getR2ConfigStatus();
@@ -493,6 +505,7 @@ export class ProfileSettingsService {
         custom,
         fallback,
         xAccount,
+        discordAccount,
       }),
       capabilities: {
         pfpUploadAvailable: r2Status.available,
