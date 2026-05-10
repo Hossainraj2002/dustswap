@@ -7,6 +7,7 @@ import {
 } from "pg";
 
 const PG_DATE_OID = 1082;
+const PG_INT8_OID = 20;
 const PG_TIMESTAMP_OID = 1114;
 const PG_TIMESTAMPTZ_OID = 1184;
 
@@ -14,8 +15,17 @@ function normalizePgDateTimeText(value: string) {
   return value.includes(" ") ? value.replace(" ", "T") : value;
 }
 
+function parsePgInt8(value: string) {
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed)) {
+    throw new Error(`PostgreSQL BIGINT exceeds JavaScript safe integer range: ${value}`);
+  }
+  return parsed;
+}
+
 // Supabase returned date/time columns as strings. Keep that shape so the app does
 // not receive timezone-shifted Date objects from node-postgres.
+types.setTypeParser(PG_INT8_OID, parsePgInt8);
 types.setTypeParser(PG_DATE_OID, (value) => value);
 types.setTypeParser(PG_TIMESTAMP_OID, normalizePgDateTimeText);
 types.setTypeParser(PG_TIMESTAMPTZ_OID, normalizePgDateTimeText);

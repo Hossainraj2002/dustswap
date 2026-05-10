@@ -257,6 +257,24 @@ type CachedFarcasterProfile = {
   updatedAt: string | null;
 };
 
+function normalizeUserRecord(row: Partial<UserRecord> | null): UserRecord | null {
+  if (!row) {
+    return null;
+  }
+
+  return {
+    id: Number(row.id || 0),
+    address: String(row.address || "").toLowerCase(),
+    referral_code: String(row.referral_code || ""),
+    referred_by: row.referred_by == null ? null : Number(row.referred_by),
+    total_points: Number(row.total_points || 0),
+    current_streak: Number(row.current_streak || 0),
+    longest_streak: Number(row.longest_streak || 0),
+    last_check_in: row.last_check_in || null,
+    spin_tickets: row.spin_tickets == null ? 0 : Number(row.spin_tickets),
+  };
+}
+
 function isMissingUserProfilesTable(error: { code?: string; message?: string } | null) {
   if (!error) {
     return false;
@@ -927,7 +945,7 @@ export class PointsEngine {
       throw new Error(`Load existing user: ${error.message}`);
     }
 
-    return (data as UserRecord | null) ?? null;
+    return normalizeUserRecord((data as Partial<UserRecord> | null) ?? null);
   }
 
   private async ensureReferralCode(user: UserRecord) {
@@ -1561,7 +1579,7 @@ export class PointsEngine {
       throw new Error(`Load existing user: ${error.message}`);
     }
 
-    return (data as UserRecord | null) ?? null;
+    return normalizeUserRecord((data as Partial<UserRecord> | null) ?? null);
   }
 
   private async getReadOnlyEthPriceSnapshot(date = new Date()) {
