@@ -16,7 +16,7 @@ import {
   type Address,
   type Hex,
 } from "viem";
-import { supabase } from "../services/supabase";
+import { postgresDb } from "../services/postgres";
 import { pointsEngine } from "../services/pointsEngine";
 import { runtimeCache } from "../utils/runtimeCache";
 import { baseRpcRequest } from "../utils/baseRpc";
@@ -378,7 +378,7 @@ async function loadWhitelist() {
   try {
     const pageSize = 1000;
     for (let from = 0; ; from += pageSize) {
-      const { data, error } = await supabase
+      const { data, error } = await postgresDb
         .from("tokens")
         .select("address,symbol,name,decimals,logo_uri,liquidity_usd,source")
         .eq("chain_id", BASE_CHAIN_ID)
@@ -449,7 +449,7 @@ async function fetchTokenPrices(addresses: Address[]) {
 async function getCachedTokenResult(address: Address) {
   try {
     const cutoff = new Date(Date.now() - 60_000).toISOString();
-    const { data, error } = await supabase
+    const { data, error } = await postgresDb
       .from("dustsweep_token_cache")
       .select("payload,updated_at")
       .eq("address", address.toLowerCase())
@@ -468,7 +468,7 @@ async function getCachedTokenResult(address: Address) {
 
 async function setCachedTokenResult(address: Address, payload: unknown) {
   try {
-    await supabase.from("dustsweep_token_cache").upsert(
+    await postgresDb.from("dustsweep_token_cache").upsert(
       {
         address: address.toLowerCase(),
         payload,
@@ -1439,7 +1439,7 @@ async function upsertTokenRows(rows: TokenWhitelistRow[]): Promise<TokenUpsertRe
   if (rows.length === 0) return { written: 0, skipped: 0, errors: [] };
 
   const payload = rows.map(toTokenUpsertRow);
-  const { error } = await supabase.from("tokens").upsert(payload, {
+  const { error } = await postgresDb.from("tokens").upsert(payload, {
     onConflict: "address",
   });
 
@@ -1550,7 +1550,7 @@ export async function syncWhitelistFromOnchainDexes(args: {
   }
 
   if (args.replaceActive) {
-    const { error } = await supabase
+    const { error } = await postgresDb
       .from("tokens")
       .update({
         is_active: false,
@@ -1568,7 +1568,7 @@ export async function syncWhitelistFromOnchainDexes(args: {
   for (let i = 0; i < rows.length; i += 500) {
     const chunkRows = rows.slice(i, i + 500);
     const existingByAddress = new Map<string, number>();
-    const { data: existingRows } = await supabase
+    const { data: existingRows } = await postgresDb
       .from("tokens")
       .select("address,liquidity_usd")
       .in("address", chunkRows.map((row) => row.address));
@@ -1834,7 +1834,7 @@ export async function syncWhitelistFromBlockscoutDexScreener(args: {
     .slice(0, args.maxTokens);
 
   if (args.replaceActive) {
-    const { error } = await supabase
+    const { error } = await postgresDb
       .from("tokens")
       .update({
         is_active: false,
@@ -1859,7 +1859,7 @@ export async function syncWhitelistFromBlockscoutDexScreener(args: {
       last_checked: new Date().toISOString(),
     }));
 
-    const { error } = await supabase.from("tokens").upsert(chunk, {
+    const { error } = await postgresDb.from("tokens").upsert(chunk, {
       onConflict: "address",
     });
     if (error) throw new Error(error.message);
@@ -2000,7 +2000,7 @@ export async function syncWhitelistFromTokenLists(args: {
     .slice(0, args.maxTokens);
 
   if (args.replaceActive) {
-    const { error } = await supabase
+    const { error } = await postgresDb
       .from("tokens")
       .update({
         is_active: false,
@@ -2123,7 +2123,7 @@ export async function syncWhitelistFromPoolEventsDexScreener(args: {
     .slice(0, args.maxTokens);
 
   if (args.replaceActive) {
-    const { error } = await supabase
+    const { error } = await postgresDb
       .from("tokens")
       .update({
         is_active: false,
@@ -2141,7 +2141,7 @@ export async function syncWhitelistFromPoolEventsDexScreener(args: {
   for (let i = 0; i < rows.length; i += 500) {
     const chunkRows = rows.slice(i, i + 500);
     const existingByAddress = new Map<string, number>();
-    const { data: existingRows } = await supabase
+    const { data: existingRows } = await postgresDb
       .from("tokens")
       .select("address,liquidity_usd")
       .in("address", chunkRows.map((row) => row.address));
@@ -2239,7 +2239,7 @@ export async function syncWhitelistFromGeckoTerminal(args: {
     .slice(0, args.maxTokens);
 
   if (args.replaceActive) {
-    const { error } = await supabase
+    const { error } = await postgresDb
       .from("tokens")
       .update({
         is_active: false,
@@ -2264,7 +2264,7 @@ export async function syncWhitelistFromGeckoTerminal(args: {
       last_checked: new Date().toISOString(),
     }));
 
-    const { error } = await supabase.from("tokens").upsert(chunk, {
+    const { error } = await postgresDb.from("tokens").upsert(chunk, {
       onConflict: "address",
     });
     if (error) throw new Error(error.message);
@@ -2328,7 +2328,7 @@ dustsweepRoutes.get("/admin/token-counts", async (c) => {
 
   try {
     const countFor = async (sourceLike?: string) => {
-      let query = supabase
+      let query = postgresDb
         .from("tokens")
         .select("id", { count: "exact", head: true })
         .eq("chain_id", BASE_CHAIN_ID)
@@ -2926,7 +2926,7 @@ dustsweepRoutes.post("/record-sweep", async (c) => {
 
   let sweepCount = 0;
   try {
-    await supabase.from("sweeps").upsert(
+    await postgresDb.from("sweeps").upsert(
       {
         user_address: userAddress.toLowerCase(),
         tx_hash: body.txHash.toLowerCase(),
@@ -2937,7 +2937,7 @@ dustsweepRoutes.post("/record-sweep", async (c) => {
       { onConflict: "tx_hash" },
     );
 
-    const { count } = await supabase
+    const { count } = await postgresDb
       .from("sweeps")
       .select("id", { count: "exact", head: true })
       .eq("user_address", userAddress.toLowerCase());

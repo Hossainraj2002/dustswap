@@ -12,7 +12,7 @@ import {
 } from "viem";
 import { base } from "viem/chains";
 import { getPaymentStatus } from "@base-org/account/payment";
-import { supabase } from "./supabase";
+import { postgresDb } from "./postgres";
 import {
   getBaseRpcEndpoints,
   getRotatingBaseRpcEndpoint,
@@ -747,7 +747,7 @@ function firstRow<T>(rows: T[] | null | undefined) {
   return rows?.[0] ?? null;
 }
 
-function isSupabaseUniqueViolation(error: { code?: string; message?: string } | null | undefined) {
+function isPostgresUniqueViolation(error: { code?: string; message?: string } | null | undefined) {
   return (
     error?.code === "23505" ||
     String(error?.message || "")
@@ -917,7 +917,7 @@ export class PointsEngine {
   }
 
   private async loadUserByNormalizedAddress(normalizedAddress: string) {
-    const { data, error } = await supabase
+    const { data, error } = await postgresDb
       .from("users")
       .select("*")
       .eq("address", normalizedAddress)
@@ -943,7 +943,7 @@ export class PointsEngine {
         return existing;
       }
 
-      const { error } = await supabase
+      const { error } = await postgresDb
         .from("users")
         .update({
           referral_code: genCode(),
@@ -984,7 +984,7 @@ export class PointsEngine {
     let lastError: Error | null = null;
 
     for (let attempt = 0; attempt < USER_CREATE_MAX_ATTEMPTS; attempt += 1) {
-      const { error } = await supabase.from("users").upsert(
+      const { error } = await postgresDb.from("users").upsert(
         {
           address: normalizedAddress,
           referral_code: genCode(),
@@ -1177,7 +1177,7 @@ export class PointsEngine {
   }
 
   private async getLatestEthPriceSnapshot() {
-    const { data, error } = await supabase
+    const { data, error } = await postgresDb
       .from("daily_asset_prices")
       .select("*")
       .eq("asset_symbol", "ETH")
@@ -1198,7 +1198,7 @@ export class PointsEngine {
       throw new Error("Could not resolve a UTC date for the ETH price snapshot");
     }
 
-    const { data, error } = await supabase
+    const { data, error } = await postgresDb
       .from("daily_asset_prices")
       .select("*")
       .eq("asset_symbol", "ETH")
@@ -1214,7 +1214,7 @@ export class PointsEngine {
       source: string,
       metadata: Record<string, unknown>
     ) => {
-      const { data: inserted, error: upsertError } = await supabase
+      const { data: inserted, error: upsertError } = await postgresDb
         .from("daily_asset_prices")
         .upsert(
           {
@@ -1326,7 +1326,7 @@ export class PointsEngine {
   }
 
   private async buildBalance(user: UserRecord) {
-    const { count } = await supabase
+    const { count } = await postgresDb
       .from("users")
       .select("*", { count: "exact", head: true })
       .gt("total_points", user.total_points);
@@ -1405,14 +1405,14 @@ export class PointsEngine {
     }
 
     const [socialResult, customResult] = await Promise.all([
-      supabase
+      postgresDb
         .from("social_accounts")
         .select(
           "user_id, platform_user_id, username, display_name, profile_image_url, updated_at"
         )
         .eq("platform", "farcaster")
         .in("user_id", uniqueUserIds),
-      supabase
+      postgresDb
         .from("user_profiles")
         .select("user_id, username, display_name, pfp_url, updated_at")
         .in("user_id", uniqueUserIds),
@@ -1483,7 +1483,7 @@ export class PointsEngine {
       return users;
     }
 
-    const { data, error } = await supabase
+    const { data, error } = await postgresDb
       .from("users")
       .select("id, address, total_points")
       .in("id", uniqueUserIds);
@@ -1506,7 +1506,7 @@ export class PointsEngine {
   }
 
   private async getSweepStatsByUserId(userId: number) {
-    const { data, error } = await supabase.rpc("get_user_sweep_stats", {
+    const { data, error } = await postgresDb.rpc("get_user_sweep_stats", {
       p_user_id: userId,
     });
 
@@ -1523,7 +1523,7 @@ export class PointsEngine {
   }
 
   private async getReferralStatsByUserId(userId: number) {
-    const { data, error } = await supabase.rpc("get_user_referral_stats", {
+    const { data, error } = await postgresDb.rpc("get_user_referral_stats", {
       p_user_id: userId,
     });
 
@@ -1540,7 +1540,7 @@ export class PointsEngine {
 
   private async findExistingUser(address: string) {
     const normalizedAddress = this.normalizeStoredAddress(address);
-    const { data, error } = await supabase
+    const { data, error } = await postgresDb
       .from("users")
       .select("*")
       .eq("address", normalizedAddress)
@@ -1559,7 +1559,7 @@ export class PointsEngine {
       throw new Error("Could not resolve a UTC date for the ETH price snapshot");
     }
 
-    const { data, error } = await supabase
+    const { data, error } = await postgresDb
       .from("daily_asset_prices")
       .select("*")
       .eq("asset_symbol", "ETH")
@@ -1667,7 +1667,7 @@ export class PointsEngine {
   }
 
   private async getExistingFootprintClaimByUserId(userId: number) {
-    const { data, error } = await supabase
+    const { data, error } = await postgresDb
       .from("point_events")
       .select("id, points, total_awarded, metadata, created_at")
       .eq("user_id", userId)
@@ -1693,7 +1693,7 @@ export class PointsEngine {
   }
 
   private async getExistingPointEventByUserIdAndAction(userId: number, action: string) {
-    const { data, error } = await supabase
+    const { data, error } = await postgresDb
       .from("point_events")
       .select("id, points, total_awarded, metadata, created_at")
       .eq("user_id", userId)
@@ -1710,7 +1710,7 @@ export class PointsEngine {
   }
 
   private async getReferralSignupEventByRefereeId(referrerId: number, refereeId: number) {
-    const { data, error } = await supabase
+    const { data, error } = await postgresDb
       .from("point_events")
       .select("id, points, total_awarded, metadata, created_at")
       .eq("user_id", referrerId)
@@ -1728,7 +1728,7 @@ export class PointsEngine {
   }
 
   private async getReferralLedgerByRefereeId(refereeId: number) {
-    const { data, error } = await supabase
+    const { data, error } = await postgresDb
       .from("referrals")
       .select("referrer_id, referee_id, referrer_earned, referee_first_sweep, created_at")
       .eq("referee_id", refereeId)
@@ -1794,7 +1794,7 @@ export class PointsEngine {
   }
 
   private async getPointsOverview() {
-    const { count, error: countError } = await supabase
+    const { count, error: countError } = await postgresDb
       .from("users")
       .select("id", { count: "exact", head: true })
       .or(LEADERBOARD_FALLBACK_USER_FILTER);
@@ -1803,7 +1803,7 @@ export class PointsEngine {
       throw new Error(`Load points overview count: ${countError.message}`);
     }
 
-    const { data, error } = await supabase.rpc("get_points_overview");
+    const { data, error } = await postgresDb.rpc("get_points_overview");
     if (error && !this.isMissingRpcFunctionError(error.message, "get_points_overview")) {
       throw new Error(`Load points overview: ${error.message}`);
     }
@@ -1821,7 +1821,7 @@ export class PointsEngine {
   }
 
   private async getParticlePointLeaderboardPage(offset: number, limit: number) {
-    const { data, error } = await supabase.rpc("get_particle_point_leaderboard_page", {
+    const { data, error } = await postgresDb.rpc("get_particle_point_leaderboard_page", {
       p_limit: limit,
       p_offset: offset,
     });
@@ -1845,7 +1845,7 @@ export class PointsEngine {
   }
 
   private async getParticlePointLeaderboardViewer(userId: number) {
-    const { data, error } = await supabase.rpc("get_particle_point_leaderboard_viewer", {
+    const { data, error } = await postgresDb.rpc("get_particle_point_leaderboard_viewer", {
       p_user_id: userId,
     });
 
@@ -1910,7 +1910,7 @@ export class PointsEngine {
   }
 
   private async getReferralLeaderboardSnapshotMeta() {
-    const { data, error } = await supabase
+    const { data, error } = await postgresDb
       .from("referral_leaderboard_snapshot_meta")
       .select("refreshed_at, total_entries")
       .eq("singleton", 1)
@@ -1928,7 +1928,7 @@ export class PointsEngine {
   }
 
   private async refreshReferralLeaderboardSnapshot() {
-    const { data, error } = await supabase.rpc("refresh_referral_leaderboard_snapshot");
+    const { data, error } = await postgresDb.rpc("refresh_referral_leaderboard_snapshot");
 
     if (error) {
       if (
@@ -1989,7 +1989,7 @@ export class PointsEngine {
   }
 
   private async getReferralLeaderboardSnapshotPage(offset: number, limit: number) {
-    const { data, error } = await supabase
+    const { data, error } = await postgresDb
       .from("referral_leaderboard_snapshot_entries")
       .select("rank, user_id, address, total_points, referral_points, referred_users")
       .order("rank", { ascending: true })
@@ -2017,7 +2017,7 @@ export class PointsEngine {
   }
 
   private async getReferralLeaderboardSnapshotViewer(userId: number) {
-    const { data, error } = await supabase
+    const { data, error } = await postgresDb
       .from("referral_leaderboard_snapshot_entries")
       .select("rank, user_id, address, total_points, referral_points, referred_users")
       .eq("user_id", userId)
@@ -2064,7 +2064,7 @@ export class PointsEngine {
   private async getFallbackTotalParticlePoints() {
     const pointRows = await this.fetchAllPages<Pick<UserRecord, "total_points">>(
       async (from, to) =>
-        supabase
+        postgresDb
           .from("users")
           .select("total_points")
           .gt("total_points", 0)
@@ -2078,7 +2078,7 @@ export class PointsEngine {
   }
 
   private async getFallbackParticlePointLeaderboardPage(offset: number, limit: number) {
-    const { data, error } = await supabase
+    const { data, error } = await postgresDb
       .from("users")
       .select("id, address, total_points, current_streak, last_check_in, spin_tickets")
       .or(LEADERBOARD_FALLBACK_USER_FILTER)
@@ -2101,7 +2101,7 @@ export class PointsEngine {
   }
 
   private async getFallbackParticlePointLeaderboardViewer(userId: number) {
-    const { data: userData, error: userError } = await supabase
+    const { data: userData, error: userError } = await postgresDb
       .from("users")
       .select("id, address, total_points, current_streak, last_check_in, spin_tickets")
       .eq("id", userId)
@@ -2116,7 +2116,7 @@ export class PointsEngine {
       return null;
     }
 
-    const { count, error: rankError } = await supabase
+    const { count, error: rankError } = await postgresDb
       .from("users")
       .select("id", { count: "exact", head: true })
       .or(LEADERBOARD_FALLBACK_USER_FILTER)
@@ -2139,7 +2139,7 @@ export class PointsEngine {
   private async getFallbackReferralLeaderboardEntries() {
     const referralRows = await this.fetchAllPages<ReferralReferrerRow>(
       async (from, to) =>
-        supabase
+        postgresDb
           .from("referrals")
           .select("referrer_id")
           .not("referrer_id", "is", null)
@@ -2166,7 +2166,7 @@ export class PointsEngine {
       this.fetchUsersByIds(userIds),
       this.fetchAllPages<ReferralPointEventRow>(
         async (from, to) =>
-          supabase
+          postgresDb
             .from("point_events")
             .select("user_id, total_awarded")
             .in("action", ["referral_commission", "referral_new_user"])
@@ -2239,7 +2239,7 @@ export class PointsEngine {
   }
 
   private async getLiveReferralLeaderboardPage(offset: number, limit: number) {
-    const { data, error } = await supabase.rpc("get_referral_leaderboard_page", {
+    const { data, error } = await postgresDb.rpc("get_referral_leaderboard_page", {
       p_limit: limit,
       p_offset: offset,
     });
@@ -2269,7 +2269,7 @@ export class PointsEngine {
   }
 
   private async getLiveReferralLeaderboardCount() {
-    const { data, error } = await supabase.rpc("get_referral_leaderboard_count");
+    const { data, error } = await postgresDb.rpc("get_referral_leaderboard_count");
 
     if (error) {
       if (
@@ -2287,7 +2287,7 @@ export class PointsEngine {
   }
 
   private async getLiveReferralLeaderboardViewer(userId: number) {
-    const { data, error } = await supabase.rpc("get_referral_leaderboard_viewer", {
+    const { data, error } = await postgresDb.rpc("get_referral_leaderboard_viewer", {
       p_user_id: userId,
     });
 
@@ -2324,7 +2324,7 @@ export class PointsEngine {
   }
 
   private async getVolumeLeaderboardPage(offset: number, limit: number) {
-    const { data, error } = await supabase.rpc("get_volume_leaderboard_page", {
+    const { data, error } = await postgresDb.rpc("get_volume_leaderboard_page", {
       p_limit: limit,
       p_offset: offset,
     });
@@ -2345,7 +2345,7 @@ export class PointsEngine {
   }
 
   private async getVolumeLeaderboardViewer(userId: number) {
-    const { data, error } = await supabase.rpc("get_volume_leaderboard_viewer", {
+    const { data, error } = await postgresDb.rpc("get_volume_leaderboard_viewer", {
       p_user_id: userId,
     });
 
@@ -2416,7 +2416,7 @@ export class PointsEngine {
       return;
     }
 
-    const { error } = await supabase
+    const { error } = await postgresDb
       .from("social_accounts")
       .upsert(
         {
@@ -2453,7 +2453,7 @@ export class PointsEngine {
     const safePointsAwarded = Math.max(0, Number(pointsAwarded || 0));
     const shouldMarkFirstSweep = Boolean(options?.markFirstSweep);
 
-    const { error: ensureError } = await supabase.from("referrals").upsert(
+    const { error: ensureError } = await postgresDb.from("referrals").upsert(
       {
         referrer_id: referrerId,
         referee_id: refereeId,
@@ -2471,7 +2471,7 @@ export class PointsEngine {
     }
 
     for (let attempt = 0; attempt < REFERRAL_LEDGER_UPDATE_MAX_ATTEMPTS; attempt += 1) {
-      const { data: existingReferral, error: loadError } = await supabase
+      const { data: existingReferral, error: loadError } = await postgresDb
         .from("referrals")
         .select("id, referrer_id, referrer_earned, referee_first_sweep")
         .eq("referee_id", refereeId)
@@ -2498,7 +2498,7 @@ export class PointsEngine {
         return;
       }
 
-      const { data: updatedReferral, error: updateError } = await supabase
+      const { data: updatedReferral, error: updateError } = await postgresDb
         .from("referrals")
         .update({
           referrer_earned: nextEarned,
@@ -2533,7 +2533,7 @@ export class PointsEngine {
       return;
     }
 
-    const { error: ensureError } = await supabase.from("referrals").upsert(
+    const { error: ensureError } = await postgresDb.from("referrals").upsert(
       {
         referrer_id: referrerId,
         referee_id: refereeId,
@@ -2551,7 +2551,7 @@ export class PointsEngine {
     }
 
     for (let attempt = 0; attempt < REFERRAL_LEDGER_UPDATE_MAX_ATTEMPTS; attempt += 1) {
-      const { data: existingReferral, error: loadError } = await supabase
+      const { data: existingReferral, error: loadError } = await postgresDb
         .from("referrals")
         .select("referrer_id, referrer_earned")
         .eq("referee_id", refereeId)
@@ -2574,7 +2574,7 @@ export class PointsEngine {
         return;
       }
 
-      const { data: updatedReferral, error: updateError } = await supabase
+      const { data: updatedReferral, error: updateError } = await postgresDb
         .from("referrals")
         .update({
           referrer_earned: safeMinimum,
@@ -2602,7 +2602,7 @@ export class PointsEngine {
     referrer: Pick<UserRecord, "id" | "address">,
     normalizedCode: string
   ) {
-    const { error: ledgerError } = await supabase.from("referrals").upsert(
+    const { error: ledgerError } = await postgresDb.from("referrals").upsert(
       {
         referrer_id: referrer.id,
         referee_id: user.id,
@@ -2702,7 +2702,7 @@ export class PointsEngine {
       return 0;
     }
 
-    const { data: referrer } = await supabase
+    const { data: referrer } = await postgresDb
       .from("users")
       .select("id, address")
       .eq("id", sourceUser.referred_by)
@@ -2765,7 +2765,7 @@ export class PointsEngine {
     const multiplier = 1 + boostPercent / 100;
     const totalAwarded = Math.max(0, Math.floor(pts * multiplier));
 
-    await supabase.from("point_events").insert({
+    await postgresDb.from("point_events").insert({
       user_id: user.id,
       action,
       points: pts,
@@ -2780,7 +2780,7 @@ export class PointsEngine {
       season: 1,
     });
 
-    await supabase
+    await postgresDb
       .from("users")
       .update({
         total_points: user.total_points + totalAwarded,
@@ -2868,7 +2868,7 @@ export class PointsEngine {
 
     const requestSignature = buildAdminPointGrantSignature(entries, note);
     const totalRequestedPoints = entries.reduce((sum, entry) => sum + entry.points, 0);
-    const { data: existingEvents, error: existingEventsError } = await supabase
+    const { data: existingEvents, error: existingEventsError } = await postgresDb
       .from("point_events")
       .select("user_id, points, total_awarded, metadata, created_at")
       .eq("action", ADMIN_POINT_GRANT_ACTION)
@@ -3009,7 +3009,7 @@ export class PointsEngine {
   private async todayBasePoints(address: string, action: string): Promise<number> {
     const user = await this.getOrCreate(address);
     const start = getUtcStartOfDay();
-    const { data } = await supabase
+    const { data } = await postgresDb
       .from("point_events")
       .select("points")
       .eq("user_id", user.id)
@@ -3321,7 +3321,7 @@ export class PointsEngine {
   }
 
   private async ensureTransactionHashUnusedForCheckIn(txHash: string) {
-    const { data, error } = await supabase
+    const { data, error } = await postgresDb
       .from("check_ins")
       .select("id")
       .eq("payment_tx_hash", txHash)
@@ -3359,7 +3359,7 @@ export class PointsEngine {
   }
 
   private async adjustSpinTickets(userId: number, delta: number) {
-    const { data, error } = await supabase.rpc("adjust_spin_tickets", {
+    const { data, error } = await postgresDb.rpc("adjust_spin_tickets", {
       p_user_id: userId,
       p_delta: delta,
     });
@@ -3553,7 +3553,7 @@ export class PointsEngine {
     const checkInDate = getUtcDayKey(now);
     const nowIso = now.toISOString();
 
-    const { error: checkInInsertError } = await supabase.from("check_ins").insert({
+    const { error: checkInInsertError } = await postgresDb.from("check_ins").insert({
       user_id: user.id,
       check_in_date: checkInDate,
       points_earned: pointsAwarded,
@@ -3566,14 +3566,14 @@ export class PointsEngine {
     });
 
     if (checkInInsertError) {
-      if (isSupabaseUniqueViolation(checkInInsertError)) {
+      if (isPostgresUniqueViolation(checkInInsertError)) {
         throw new Error("Already checked in today");
       }
 
       throw new Error(`Record check-in: ${checkInInsertError.message}`);
     }
 
-    const { error: pointEventInsertError } = await supabase.from("point_events").insert({
+    const { error: pointEventInsertError } = await postgresDb.from("point_events").insert({
       user_id: user.id,
       action: "daily_check_in",
       points: CFG.CHECK_IN,
@@ -3609,7 +3609,7 @@ export class PointsEngine {
       total_points: user.total_points + pointsAwarded,
     } as UserRecord;
 
-    const { error: userUpdateError } = await supabase
+    const { error: userUpdateError } = await postgresDb
       .from("users")
       .update({
         current_streak: nextUser.current_streak,
@@ -3668,7 +3668,7 @@ export class PointsEngine {
       current_streak: 0,
     } as UserRecord;
 
-    await supabase
+    await postgresDb
       .from("users")
       .update({
         current_streak: 0,
@@ -3697,7 +3697,7 @@ export class PointsEngine {
       throw new Error("No broken streak is available to restore");
     }
 
-    const { data: existingRecovery } = await supabase
+    const { data: existingRecovery } = await postgresDb
       .from("streak_recovery_events")
       .select("id")
       .eq("tx_hash", txHash)
@@ -3719,7 +3719,7 @@ export class PointsEngine {
     const restoredLastCheckIn = getYesterdayUtcDate(new Date());
     restoredLastCheckIn.setUTCHours(23, 59, 59, 999);
 
-    await supabase.from("streak_recovery_events").insert({
+    await postgresDb.from("streak_recovery_events").insert({
       user_id: user.id,
       tx_hash: txHash,
       asset_symbol: payment.asset.toUpperCase(),
@@ -3740,7 +3740,7 @@ export class PointsEngine {
     } as UserRecord;
 
     if (restoredCheckInDate) {
-      await supabase.from("check_ins").upsert(
+      await postgresDb.from("check_ins").upsert(
         {
           user_id: user.id,
           check_in_date: restoredCheckInDate,
@@ -3758,7 +3758,7 @@ export class PointsEngine {
       );
     }
 
-    await supabase
+    await postgresDb
       .from("users")
       .update({
         current_streak: nextUser.current_streak,
@@ -3787,7 +3787,7 @@ export class PointsEngine {
       throw new Error("You don't have any ticket to spin right now");
     }
 
-    const { data: existingSpin } = await supabase
+    const { data: existingSpin } = await postgresDb
       .from("spin_history")
       .select("id")
       .eq("tx_hash", txHash)
@@ -3801,7 +3801,7 @@ export class PointsEngine {
     const remainingTickets = await this.adjustSpinTickets(user.id, -CFG.SPIN_TICKET_COST);
     const reward = pickSpinReward();
 
-    const { error: historyError } = await supabase.from("spin_history").insert({
+    const { error: historyError } = await postgresDb.from("spin_history").insert({
       user_id: user.id,
       tx_hash: txHash,
       reward_key: reward.key,
@@ -3858,7 +3858,7 @@ export class PointsEngine {
           spin_tickets: remainingTickets,
         } as UserRecord;
       } catch (error) {
-        await supabase
+        await postgresDb
           .from("spin_history")
           .update({ status: "reward_failed" })
           .eq("tx_hash", txHash);
@@ -3892,7 +3892,7 @@ export class PointsEngine {
       };
     }
 
-    const { data, error } = await supabase
+    const { data, error } = await postgresDb
       .from("spin_history")
       .select(
         "id, tx_hash, reward_key, reward_label, reward_type, reward_amount, reward_points, reward_probability, ticket_cost, execution_type, status, created_at"
@@ -3991,7 +3991,7 @@ export class PointsEngine {
       throw new Error("Swap transaction id required");
     }
 
-    const { data: existingHistory, error: historyLookupError } = await supabase
+    const { data: existingHistory, error: historyLookupError } = await postgresDb
       .from("sweep_history")
       .select("points_earned")
       .eq("tx_hash", historyKey)
@@ -4023,7 +4023,7 @@ export class PointsEngine {
           })
         : { totalAwarded: 0 };
 
-    const { error } = await supabase.from("sweep_history").insert({
+    const { error } = await postgresDb.from("sweep_history").insert({
       user_id: user.id,
       tx_hash: historyKey,
       chain_id: resolvedChainId,
@@ -4074,7 +4074,7 @@ export class PointsEngine {
     userId: number,
     taskKey: FootprintFollowTaskKey
   ) {
-    const { data, error } = await supabase
+    const { data, error } = await postgresDb
       .from("footprint_social_verifications")
       .select("*")
       .eq("user_id", userId)
@@ -4152,7 +4152,7 @@ export class PointsEngine {
       updated_at: checkedAt,
     };
 
-    const { error } = await supabase
+    const { error } = await postgresDb
       .from("footprint_social_verifications")
       .upsert(row, {
         onConflict: "user_id,task_key,platform",
@@ -4388,7 +4388,7 @@ export class PointsEngine {
       return [];
     }
 
-    const { data, error } = await supabase
+    const { data, error } = await postgresDb
       .from("point_events")
       .select("id, action, points, metadata, created_at")
       .eq("user_id", user.id)
@@ -4418,7 +4418,7 @@ export class PointsEngine {
         .join(" ");
     };
 
-    return (data || []).map((row) => {
+    return (data || []).map((row: any) => {
       let label = formatAction(row.action);
       if (row.action === "quest_completion" && row.metadata?.questTitle) {
         label = String(row.metadata.questTitle);
@@ -4645,7 +4645,7 @@ export class PointsEngine {
       return { valid: false, normalizedCode, message: "You have already applied a referral code." };
     }
 
-    const { data: referrer } = await supabase
+    const { data: referrer } = await postgresDb
       .from("users")
       .select("id, address")
       .eq("referral_code", normalizedCode)
@@ -4723,7 +4723,7 @@ export class PointsEngine {
       };
     }
 
-    const { data: referrer, error: referrerError } = await supabase
+    const { data: referrer, error: referrerError } = await postgresDb
       .from("users")
       .select("id, address")
       .eq("referral_code", normalizedCode)
@@ -4778,7 +4778,7 @@ export class PointsEngine {
       return this.getDeferredReferralApplyResult();
     }
 
-    const { data: linkedUser, error: linkError } = await supabase
+    const { data: linkedUser, error: linkError } = await postgresDb
       .from("users")
       .update({
         referred_by: Number((referrer as { id: number }).id),

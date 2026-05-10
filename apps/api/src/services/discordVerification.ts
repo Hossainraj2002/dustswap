@@ -1,5 +1,5 @@
 import { runtimeCache } from "../utils/runtimeCache";
-import { supabase } from "./supabase";
+import { postgresDb } from "./postgres";
 
 export type DiscordSocialAccountRecord = {
   id: number;
@@ -295,7 +295,7 @@ export class DiscordVerificationService {
   }
 
   async getAccountSummary(userId: number) {
-    const { data, error } = await supabase
+    const { data, error } = await postgresDb
       .from("social_accounts")
       .select("*")
       .eq("user_id", userId)
@@ -312,7 +312,7 @@ export class DiscordVerificationService {
   }
 
   async requireConnectedAccount(userId: number) {
-    const { data, error } = await supabase
+    const { data, error } = await postgresDb
       .from("social_accounts")
       .select("*")
       .eq("user_id", userId)
@@ -457,7 +457,7 @@ export class DiscordVerificationService {
       verifiedAt: membership.verifiedAt,
     };
 
-    const { error } = await supabase
+    const { error } = await postgresDb
       .from("social_accounts")
       .update({
         metadata: nextMetadata,

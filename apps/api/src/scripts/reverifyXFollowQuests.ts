@@ -1,7 +1,7 @@
 import dotenv from "dotenv";
 dotenv.config();
 
-import { supabase } from "../services/supabase";
+import { postgresDb } from "../services/postgres";
 import {
   getConnectedXUserId,
   xVerificationService,
@@ -130,7 +130,7 @@ function getTargetFromQuest(quest: QuestRow) {
 }
 
 async function getRun(key: string) {
-  const { data, error } = await supabase
+  const { data, error } = await postgresDb
     .from("app_migration_runs")
     .select("key, ran_at")
     .eq("key", key)
@@ -144,7 +144,7 @@ async function getRun(key: string) {
 }
 
 async function markRun(key: string, metadata: Record<string, unknown>) {
-  const { error } = await supabase.from("app_migration_runs").insert({
+  const { error } = await postgresDb.from("app_migration_runs").insert({
     key,
     metadata,
   });
@@ -160,7 +160,7 @@ async function fetchAllCompletedProgress(questIds: string[], limit?: number | nu
     const to = limit
       ? Math.min(from + PAGE_SIZE - 1, limit - 1)
       : from + PAGE_SIZE - 1;
-    const { data, error } = await supabase
+    const { data, error } = await postgresDb
       .from("quest_progress")
       .select("id, quest_id, user_id, cycle_key, metadata")
       .in("quest_id", questIds)
@@ -187,7 +187,7 @@ async function fetchRowsByUserIds<T extends { user_id?: number; id?: number }>(
   const rows: T[] = [];
   for (let index = 0; index < userIds.length; index += PAGE_SIZE) {
     const slice = userIds.slice(index, index + PAGE_SIZE);
-    let query = supabase.from(table).select(select).in("user_id", slice);
+    let query = postgresDb.from(table).select(select).in("user_id", slice);
     if (extra) {
       query = extra(query);
     }
@@ -204,7 +204,7 @@ async function fetchUsersByIds(userIds: number[]) {
   const rows: UserRow[] = [];
   for (let index = 0; index < userIds.length; index += PAGE_SIZE) {
     const slice = userIds.slice(index, index + PAGE_SIZE);
-    const { data, error } = await supabase
+    const { data, error } = await postgresDb
       .from("users")
       .select("id, address")
       .in("id", slice);
@@ -297,7 +297,7 @@ async function bulkUpdateProgress(
 ) {
   for (let index = 0; index < ids.length; index += UPDATE_BATCH_SIZE) {
     const batch = ids.slice(index, index + UPDATE_BATCH_SIZE);
-    const { error } = await supabase
+    const { error } = await postgresDb
       .from("quest_progress")
       .update(updates)
       .in("id", batch);
@@ -324,7 +324,7 @@ async function main() {
     }
   }
 
-  const { data: questsData, error: questsError } = await supabase
+  const { data: questsData, error: questsError } = await postgresDb
     .from("quests")
     .select("id, slug, title, rules")
     .in("slug", slugs)
@@ -450,7 +450,7 @@ async function main() {
           continue;
         }
         if (!dryRun) {
-          const { error } = await supabase
+          const { error } = await postgresDb
             .from("quest_progress")
             .update({
               verified_by_api: true,
@@ -484,7 +484,7 @@ async function main() {
         continue;
       }
       if (!dryRun) {
-        const { error } = await supabase
+        const { error } = await postgresDb
           .from("quest_progress")
           .update({
             status: "not_started",

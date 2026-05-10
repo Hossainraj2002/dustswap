@@ -16,7 +16,8 @@ import { dustsweepRoutes } from "./routes/dustsweep";
 import { pointsEngine } from "./services/pointsEngine";
 import tokens from "./routes/tokens";
 import { getAllowedAppOrigins, isAllowedAppOrigin } from "./config/appOrigins";
-import { getSupabaseDiagnostics } from "./services/supabase";
+import { getDatabaseDiagnostics } from "./services/postgres";
+import { testDbConnection } from "./lib/db";
 
 const app = new Hono();
 const allowedOrigins = getAllowedAppOrigins();
@@ -48,6 +49,25 @@ app.route("/api/swaps", swapsRoutes);
 app.route("/api/dustsweep", dustsweepRoutes);
 
 pointsEngine.startReferralLeaderboardSnapshotScheduler();
+
+app.get("/health/db", async (c) => {
+  const startedAt = Date.now();
+  try {
+    await testDbConnection();
+    return c.json({
+      status: "ok",
+      latency_ms: Date.now() - startedAt,
+    });
+  } catch (error) {
+    return c.json(
+      {
+        status: "error",
+        message: error instanceof Error ? error.message : "Database check failed",
+      },
+      500
+    );
+  }
+});
 
 app.get("/", (c) => {
   return c.json({
@@ -120,11 +140,22 @@ serve({ fetch: app.fetch, port }, () => {
   console.log(
     `[DustSwap API] ONCHAINKIT_API_KEY: ${apiKey ? `${apiKey.slice(0, 8)}...${apiKey.slice(-4)} (loaded)` : "NOT SET"}`
   );
-  const supabase = getSupabaseDiagnostics();
+  const db = getDatabaseDiagnostics();
   console.log(
-    `[DustSwap API] SUPABASE: urlRef=${supabase.urlRef}, keyEnv=${supabase.loadedEnv}, keyType=${supabase.keyType}`
+    `[DustSwap API] DB: urlRef=${db.urlRef}, env=${db.loadedEnv}, driver=${db.keyType}`
   );
   console.log(`[DustSwap API] APP_ORIGINS: ${allowedOrigins.join(", ")}`);
+  testDbConnection()
+    .then((latencyMs) => {
+      console.log(`[DustSwap API] DB connected successfully (${latencyMs}ms)`);
+    })
+    .catch((error) => {
+      console.error(
+        `[DustSwap API] DB connection failed: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
+    });
 });
 
 export default app;

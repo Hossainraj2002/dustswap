@@ -10,7 +10,7 @@ import {
 } from "viem";
 import { base } from "viem/chains";
 import { pointsEngine } from "./pointsEngine";
-import { supabase } from "./supabase";
+import { postgresDb } from "./postgres";
 import { isAllowedAppDomain } from "../config/appOrigins";
 import { runtimeCache } from "../utils/runtimeCache";
 import { toXAccountSummary, type XSocialAccountRecord } from "./xVerification";
@@ -438,7 +438,7 @@ export class ProfileSettingsService {
 
   async getProfileSettings(address: string) {
     const normalizedAddress = normalizeAddress(address);
-    const { data: userData, error: userError } = await supabase
+    const { data: userData, error: userError } = await postgresDb
       .from("users")
       .select("id, address")
       .eq("address", normalizedAddress)
@@ -459,8 +459,8 @@ export class ProfileSettingsService {
         { data: customData, error: customError },
         { data: socialData, error: socialError },
       ] = await Promise.all([
-        supabase.from("user_profiles").select("*").eq("user_id", user.id).maybeSingle(),
-        supabase
+        postgresDb.from("user_profiles").select("*").eq("user_id", user.id).maybeSingle(),
+        postgresDb
           .from("social_accounts")
           .select(
             "id, user_id, platform_user_id, username, display_name, profile_image_url, metadata, updated_at, platform"
@@ -699,7 +699,7 @@ export class ProfileSettingsService {
     }
 
     const user = await pointsEngine.getOrCreate(auth.address);
-    const { data: existingProfile, error: existingProfileError } = await supabase
+    const { data: existingProfile, error: existingProfileError } = await postgresDb
       .from("user_profiles")
       .select("*")
       .eq("user_id", user.id)
@@ -726,7 +726,7 @@ export class ProfileSettingsService {
       updated_at: new Date().toISOString(),
     };
 
-    const { error: upsertError } = await supabase
+    const { error: upsertError } = await postgresDb
       .from("user_profiles")
       .upsert(profilePayload, {
         onConflict: "user_id",

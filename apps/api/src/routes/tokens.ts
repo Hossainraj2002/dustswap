@@ -3,12 +3,6 @@
 
 import { Hono } from "hono";
 import { getAddress, formatUnits, parseUnits, encodeFunctionData, encodePacked, erc20Abi, concat } from "viem";
-import { createConfig } from '@lifi/sdk';
-
-// Initialize LI.FI SDK
-createConfig({
-  integrator: 'DustSwap',
-});
 
 const tokens = new Hono();
 

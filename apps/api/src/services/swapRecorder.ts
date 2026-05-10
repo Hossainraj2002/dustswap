@@ -15,7 +15,7 @@ import {
   isSupportedSwapChainId,
 } from "../config/swapChains";
 import { pointsEngine } from "./pointsEngine";
-import { supabase } from "./supabase";
+import { postgresDb } from "./postgres";
 
 const COINGECKO_API_KEY = process.env.COINGECKO_API_KEY || "";
 const OPENOCEAN_API_BASE =
@@ -113,7 +113,7 @@ type DailyAssetPriceRow = {
   metadata: Record<string, unknown> | null;
 };
 
-type SupabaseErrorLike = {
+type DbErrorLike = {
   code?: string;
   message?: string;
   details?: string | null;
@@ -338,7 +338,7 @@ function getPriceCacheKey(chainId: number, address: string, dayKey: string) {
   return `${chainId}:${getAssetPriceKey(address)}:${dayKey}`;
 }
 
-function isMissingTokenPriceCacheTable(error: SupabaseErrorLike | null | undefined) {
+function isMissingTokenPriceCacheTable(error: DbErrorLike | null | undefined) {
   const message = `${error?.message || ""} ${error?.details || ""}`.toLowerCase();
   return (
     error?.code === "42P01" ||
@@ -347,7 +347,7 @@ function isMissingTokenPriceCacheTable(error: SupabaseErrorLike | null | undefin
   );
 }
 
-function isMissingChainAwareConflict(error: SupabaseErrorLike | null | undefined) {
+function isMissingChainAwareConflict(error: DbErrorLike | null | undefined) {
   const message = `${error?.message || ""} ${error?.details || ""}`.toLowerCase();
   return (
     error?.code === "42P10" ||
@@ -471,7 +471,7 @@ function calculateUsdAmountScaled(
 
 async function getExistingSwap(txHash: string, chainId?: number | null) {
   if (Number.isFinite(chainId)) {
-    const { data: chainData, error: chainError } = await supabase
+    const { data: chainData, error: chainError } = await postgresDb
       .from("swap_transactions")
       .select("tx_hash, amount_usd, day_key, week_key")
       .eq("tx_hash", txHash)
@@ -490,7 +490,7 @@ async function getExistingSwap(txHash: string, chainId?: number | null) {
     return null;
   }
 
-  const { data, error } = await supabase
+  const { data, error } = await postgresDb
     .from("swap_transactions")
     .select("tx_hash, amount_usd, day_key, week_key")
     .eq("tx_hash", txHash)
@@ -505,7 +505,7 @@ async function getExistingSwap(txHash: string, chainId?: number | null) {
 }
 
 async function getUserByAddress(address: string) {
-  const { data, error } = await supabase
+  const { data, error } = await postgresDb
     .from("users")
     .select("id")
     .eq("address", normalizeAddress(address))
@@ -878,7 +878,7 @@ async function getCachedDailyPrice(
     return cached;
   }
 
-  const { data: tokenPriceData, error: tokenPriceError } = await supabase
+  const { data: tokenPriceData, error: tokenPriceError } = await postgresDb
     .from(TOKEN_PRICE_CACHE_TABLE)
     .select("price_usd, source, metadata")
     .eq("chain_id", chainConfig.id)
@@ -886,7 +886,7 @@ async function getCachedDailyPrice(
     .eq("price_date", dayKey)
     .maybeSingle();
 
-  if (tokenPriceError && !isMissingTokenPriceCacheTable(tokenPriceError as SupabaseErrorLike)) {
+  if (tokenPriceError && !isMissingTokenPriceCacheTable(tokenPriceError as DbErrorLike)) {
     throw new Error(`Load token-address price cache: ${tokenPriceError.message}`);
   }
 
@@ -910,7 +910,7 @@ async function getCachedDailyPrice(
     return null;
   }
 
-  const { data, error } = await supabase
+  const { data, error } = await postgresDb
     .from("daily_asset_prices")
     .select("price_usd, source, metadata")
     .eq("asset_symbol", dbKey)
@@ -944,7 +944,7 @@ async function getLatestCachedPrice(chainConfig: SwapChainConfig, address: strin
   const assetKey = getAssetPriceKey(address);
   const dbKey = getAssetPriceDbKey(address, chainConfig);
 
-  const { data: tokenPriceData, error: tokenPriceError } = await supabase
+  const { data: tokenPriceData, error: tokenPriceError } = await postgresDb
     .from(TOKEN_PRICE_CACHE_TABLE)
     .select("price_usd, source, metadata")
     .eq("chain_id", chainConfig.id)
@@ -953,7 +953,7 @@ async function getLatestCachedPrice(chainConfig: SwapChainConfig, address: strin
     .limit(1)
     .maybeSingle();
 
-  if (tokenPriceError && !isMissingTokenPriceCacheTable(tokenPriceError as SupabaseErrorLike)) {
+  if (tokenPriceError && !isMissingTokenPriceCacheTable(tokenPriceError as DbErrorLike)) {
     throw new Error(`Load fallback token-address price: ${tokenPriceError.message}`);
   }
 
@@ -973,7 +973,7 @@ async function getLatestCachedPrice(chainConfig: SwapChainConfig, address: strin
     return null;
   }
 
-  const { data, error } = await supabase
+  const { data, error } = await postgresDb
     .from("daily_asset_prices")
     .select("price_usd, source, metadata")
     .eq("asset_symbol", dbKey)
@@ -1097,13 +1097,13 @@ async function getTokenPriceUsd(
     };
 
     let tokenPriceCacheAvailable = true;
-    const { error: tokenPriceError } = await supabase.from(TOKEN_PRICE_CACHE_TABLE).upsert(
+    const { error: tokenPriceError } = await postgresDb.from(TOKEN_PRICE_CACHE_TABLE).upsert(
       tokenPricePayload,
       { onConflict: "chain_id,token_address,price_date" }
     );
 
     if (tokenPriceError) {
-      if (isMissingTokenPriceCacheTable(tokenPriceError as SupabaseErrorLike)) {
+      if (isMissingTokenPriceCacheTable(tokenPriceError as DbErrorLike)) {
         tokenPriceCacheAvailable = false;
       } else {
         throw new Error(`Store token-address price cache: ${tokenPriceError.message}`);
@@ -1111,7 +1111,7 @@ async function getTokenPriceUsd(
     }
 
     if (!tokenPriceCacheAvailable && dbKey) {
-      const { error } = await supabase.from("daily_asset_prices").upsert(
+      const { error } = await postgresDb.from("daily_asset_prices").upsert(
         {
           asset_symbol: dbKey,
           price_date: dayKey,
@@ -1193,7 +1193,7 @@ async function upsertDailyVolumeFallback(
   weekKey: string,
   amountUsd: string
 ) {
-  const { data, error } = await supabase
+  const { data, error } = await postgresDb
     .from("user_volume_daily")
     .select("total_usd, swap_count")
     .eq("user_id", userId)
@@ -1209,7 +1209,7 @@ async function upsertDailyVolumeFallback(
     parseScaledDecimal(existing?.total_usd, USD_SCALE) + parseScaledDecimal(amountUsd, USD_SCALE);
   const nextSwapCount = Number(existing?.swap_count || 0) + 1;
 
-  const { error: upsertError } = await supabase.from("user_volume_daily").upsert(
+  const { error: upsertError } = await postgresDb.from("user_volume_daily").upsert(
     {
       user_id: userId,
       address: normalizeAddress(address),
@@ -1234,7 +1234,7 @@ async function upsertDailyVolume(
   weekKey: string,
   amountUsd: string
 ) {
-  const { error } = await supabase.rpc("upsert_daily_volume", {
+  const { error } = await postgresDb.rpc("upsert_daily_volume", {
     p_user_id: userId,
     p_address: normalizeAddress(address),
     p_day_key: dayKey,
@@ -1255,7 +1255,7 @@ async function upsertAlltimeVolume(
   occurredAt: string,
   amountUsd: string
 ) {
-  const { data, error } = await supabase
+  const { data, error } = await postgresDb
     .from("user_volume_alltime")
     .select("total_usd, swap_count, first_swap_at, last_swap_at")
     .eq("user_id", userId)
@@ -1277,7 +1277,7 @@ async function upsertAlltimeVolume(
       ? previousLastSwapAt.toISOString()
       : occurredAt;
 
-  const { error: upsertError } = await supabase.from("user_volume_alltime").upsert(
+  const { error: upsertError } = await postgresDb.from("user_volume_alltime").upsert(
     {
       user_id: userId,
       address: normalizeAddress(address),
@@ -1324,13 +1324,13 @@ async function mirrorSwapToActivityEvents(args: {
     },
   };
 
-  const { error } = await supabase.from("activity_events").upsert(
+  const { error } = await postgresDb.from("activity_events").upsert(
     payload,
     { onConflict: "chain_id,tx_hash,event_type,source" }
   );
 
-  if (error && isMissingChainAwareConflict(error as SupabaseErrorLike)) {
-    const { error: fallbackError } = await supabase.from("activity_events").upsert(
+  if (error && isMissingChainAwareConflict(error as DbErrorLike)) {
+    const { error: fallbackError } = await postgresDb.from("activity_events").upsert(
       payload,
       { onConflict: "tx_hash,event_type,source" }
     );
@@ -1348,13 +1348,13 @@ async function mirrorSwapToActivityEvents(args: {
 }
 
 async function upsertSwapTransaction(payload: Record<string, unknown>) {
-  const { error } = await supabase.from("swap_transactions").upsert(
+  const { error } = await postgresDb.from("swap_transactions").upsert(
     payload,
     { onConflict: "chain_id,tx_hash" }
   );
 
-  if (error && isMissingChainAwareConflict(error as SupabaseErrorLike)) {
-    const { error: fallbackError } = await supabase.from("swap_transactions").upsert(
+  if (error && isMissingChainAwareConflict(error as DbErrorLike)) {
+    const { error: fallbackError } = await postgresDb.from("swap_transactions").upsert(
       payload,
       { onConflict: "tx_hash" }
     );
@@ -1381,7 +1381,7 @@ async function mirrorSwapToSweepHistory(args: {
   returnAmount: bigint;
   amountUsd: string;
 }) {
-  const { data, error } = await supabase
+  const { data, error } = await postgresDb
     .from("sweep_history")
     .select("id")
     .eq("tx_hash", args.txHash)
@@ -1418,7 +1418,7 @@ async function mirrorSwapToSweepHistory(args: {
 
   const existing = (data as SweepHistoryRow | null) ?? null;
   if (existing?.id) {
-    const { error: updateError } = await supabase
+    const { error: updateError } = await postgresDb
       .from("sweep_history")
       .update(payload)
       .eq("id", existing.id);
@@ -1430,7 +1430,7 @@ async function mirrorSwapToSweepHistory(args: {
     return;
   }
 
-  const { error: insertError } = await supabase.from("sweep_history").insert(payload);
+  const { error: insertError } = await postgresDb.from("sweep_history").insert(payload);
   if (insertError) {
     throw new Error(`Insert sweep_history swap mirror: ${insertError.message}`);
   }
@@ -1641,7 +1641,7 @@ export async function recordSwap(input: {
 }
 
 export async function getUserDailyVolume(userId: number, dayKey: string): Promise<VolumeSummary> {
-  const { data, error } = await supabase
+  const { data, error } = await postgresDb
     .from("user_volume_daily")
     .select("total_usd, swap_count")
     .eq("user_id", userId)
@@ -1660,7 +1660,7 @@ export async function getUserDailyVolume(userId: number, dayKey: string): Promis
 }
 
 export async function getUserWeeklyVolume(userId: number, weekKey: string): Promise<VolumeSummary> {
-  const { data, error } = await supabase
+  const { data, error } = await postgresDb
     .from("user_volume_daily")
     .select("total_usd, swap_count")
     .eq("user_id", userId)
@@ -1680,7 +1680,7 @@ export async function getUserWeeklyVolume(userId: number, weekKey: string): Prom
 }
 
 export async function getUserAlltimeVolume(userId: number): Promise<VolumeSummary> {
-  const { data, error } = await supabase
+  const { data, error } = await postgresDb
     .from("user_volume_alltime")
     .select("total_usd, swap_count")
     .eq("user_id", userId)
@@ -1698,7 +1698,7 @@ export async function getUserAlltimeVolume(userId: number): Promise<VolumeSummar
 }
 
 export async function getSwapHistory(address: string, limit: number, offset: number) {
-  const { data, error, count } = await supabase
+  const { data, error, count } = await postgresDb
     .from("swap_transactions")
     .select("*", { count: "exact" })
     .eq("address", normalizeAddress(address))

@@ -9,7 +9,7 @@ import {
 import { base } from "viem/chains";
 import { pointsEngine } from "./pointsEngine";
 import { recordSwap } from "./swapRecorder";
-import { supabase } from "./supabase";
+import { postgresDb } from "./postgres";
 import { runtimeCache } from "../utils/runtimeCache";
 import { isAllowedAppDomain, isAllowedAppOrigin } from "../config/appOrigins";
 import {
@@ -959,7 +959,7 @@ export class QuestEngine {
   >();
 
   async listAdminQuests() {
-    const { data, error } = await supabase
+    const { data, error } = await postgresDb
       .from("quests")
       .select("*")
       .order("sort_order", { ascending: true })
@@ -998,7 +998,7 @@ export class QuestEngine {
       updated_at: new Date().toISOString(),
     };
 
-    const { data, error } = await supabase
+    const { data, error } = await postgresDb
       .from("quests")
       .upsert(payload, {
         onConflict: "slug",
@@ -1016,7 +1016,7 @@ export class QuestEngine {
 
   async listCampaignWhitelist(campaignKey: string) {
     const normalizedCampaignKey = normalizeCampaignKey(campaignKey);
-    const { data, error } = await supabase
+    const { data, error } = await postgresDb
       .from("quest_campaign_whitelist")
       .select("*")
       .eq("campaign_key", normalizedCampaignKey)
@@ -1030,7 +1030,7 @@ export class QuestEngine {
   }
 
   async deleteQuest(id: string) {
-    const { error } = await supabase.from("quests").delete().eq("id", id);
+    const { error } = await postgresDb.from("quests").delete().eq("id", id);
 
     if (error) {
       throw new Error(`Failed to delete quest: ${error.message}`);
@@ -1099,7 +1099,7 @@ export class QuestEngine {
 
   private async getExistingUserId(address: string) {
     const normalizedAddress = normalizeAddress(address);
-    const { data, error } = await supabase
+    const { data, error } = await postgresDb
       .from("users")
       .select("id")
       .eq("address", normalizedAddress)
@@ -1266,7 +1266,7 @@ export class QuestEngine {
     };
 
     try {
-      const { error } = await supabase.from("oauth_states").insert({
+      const { error } = await postgresDb.from("oauth_states").insert({
         state_hash: stateHash,
         platform: "x",
         user_id: args.userId,
@@ -1305,7 +1305,7 @@ export class QuestEngine {
       return cached;
     }
 
-    const { data, error } = await supabase
+    const { data, error } = await postgresDb
       .from("oauth_states")
       .select("*")
       .eq("state_hash", stateHash)
@@ -1335,7 +1335,7 @@ export class QuestEngine {
       throw new Error("X auth session expired, please try again");
     }
 
-    const { error: consumeError } = await supabase
+    const { error: consumeError } = await postgresDb
       .from("oauth_states")
       .update({ consumed_at: new Date().toISOString() })
       .eq("state_hash", stateHash)
@@ -1372,7 +1372,7 @@ export class QuestEngine {
     };
 
     try {
-      const { error } = await supabase.from("oauth_states").insert({
+      const { error } = await postgresDb.from("oauth_states").insert({
         state_hash: stateHash,
         platform: "discord",
         user_id: args.userId,
@@ -1418,7 +1418,7 @@ export class QuestEngine {
       return cached;
     }
 
-    const { data, error } = await supabase
+    const { data, error } = await postgresDb
       .from("oauth_states")
       .select("*")
       .eq("state_hash", stateHash)
@@ -1455,7 +1455,7 @@ export class QuestEngine {
       );
     }
 
-    const { error: consumeError } = await supabase
+    const { error: consumeError } = await postgresDb
       .from("oauth_states")
       .update({ consumed_at: new Date().toISOString() })
       .eq("state_hash", stateHash)
@@ -1480,7 +1480,7 @@ export class QuestEngine {
 
     return runtimeCache.getOrSet(cacheKey, QUEST_BOARD_CACHE_TTL_MS, async () => {
       const now = getNow();
-      const { data: questsData, error: questsError } = await supabase
+      const { data: questsData, error: questsError } = await postgresDb
         .from("quests")
         .select("*")
         .order("sort_order", { ascending: true })
@@ -1504,9 +1504,9 @@ export class QuestEngine {
         if (userId) {
           const [{ data: socialData, error: socialError }, { data: progressRows, error: progressError }, { data: whitelistRows, error: whitelistError }] =
             await Promise.all([
-              supabase.from("social_accounts").select("*").eq("user_id", userId),
-              supabase.from("quest_progress").select("*").eq("user_id", userId),
-              supabase.from("quest_campaign_whitelist").select("*").eq("user_id", userId),
+              postgresDb.from("social_accounts").select("*").eq("user_id", userId),
+              postgresDb.from("quest_progress").select("*").eq("user_id", userId),
+              postgresDb.from("quest_campaign_whitelist").select("*").eq("user_id", userId),
             ]);
 
           if (socialError) {
@@ -1694,7 +1694,7 @@ export class QuestEngine {
       normalizedUsername.key
     );
     const user = await pointsEngine.getOrCreate(normalizedAddress);
-    const { data: existingAccount, error: existingAccountError } = await supabase
+    const { data: existingAccount, error: existingAccountError } = await postgresDb
       .from("social_accounts")
       .select("user_id, platform, platform_user_id, username")
       .eq("user_id", user.id)
@@ -1718,7 +1718,7 @@ export class QuestEngine {
       }
     }
 
-    const { data: existingUsername, error: existingUsernameError } = await supabase
+    const { data: existingUsername, error: existingUsernameError } = await postgresDb
       .from("social_accounts")
       .select("user_id")
       .eq("platform", "x")
@@ -1733,7 +1733,7 @@ export class QuestEngine {
       throw new Error("That X username is already linked to another wallet");
     }
 
-    const { error } = await supabase.from("social_accounts").upsert(
+    const { error } = await postgresDb.from("social_accounts").upsert(
       {
         user_id: user.id,
         platform: "x",
@@ -1876,7 +1876,7 @@ export class QuestEngine {
     const normalizedUsername = normalizeXUsernameInput(meJson.data.username);
     const connectedAt = new Date().toISOString();
 
-    const { error } = await supabase
+    const { error } = await postgresDb
       .from("social_accounts")
       .upsert(
         {
@@ -1910,7 +1910,7 @@ export class QuestEngine {
       throw new Error(`Failed to save X account: ${error.message}`);
     }
 
-    const { error: userUpdateError } = await supabase
+    const { error: userUpdateError } = await postgresDb
       .from("users")
       .update({
         x_user_id: meJson.data.id,
@@ -1979,7 +1979,7 @@ export class QuestEngine {
       const guildId = getDiscordGuildId();
 
       const { data: existingDiscordUser, error: existingDiscordUserError } =
-        await supabase
+        await postgresDb
           .from("social_accounts")
           .select("user_id")
           .eq("platform", "discord")
@@ -1999,7 +1999,7 @@ export class QuestEngine {
         throw new Error("That Discord account is already linked to another wallet.");
       }
 
-      const { error } = await supabase
+      const { error } = await postgresDb
         .from("social_accounts")
         .upsert(
           {
@@ -2039,7 +2039,7 @@ export class QuestEngine {
         .slice(0, 40);
 
       if (discordUsernameForProfile.length >= 2) {
-        const { error: profileError } = await supabase
+        const { error: profileError } = await postgresDb
           .from("user_profiles")
           .upsert(
             {
@@ -2092,7 +2092,7 @@ export class QuestEngine {
       } as const;
     }
 
-    const { data: accountData, error: accountError } = await supabase
+    const { data: accountData, error: accountError } = await postgresDb
       .from("social_accounts")
       .select("*")
       .eq("user_id", userId)
@@ -2112,7 +2112,7 @@ export class QuestEngine {
         account.metadata && typeof account.metadata === "object" && !Array.isArray(account.metadata)
           ? account.metadata
           : {};
-      const { error } = await supabase
+      const { error } = await postgresDb
         .from("social_accounts")
         .update({
           platform_user_id: `disconnected:${userId}:${Date.now()}`,
@@ -2136,7 +2136,7 @@ export class QuestEngine {
       }
     }
 
-    const { error: userUpdateError } = await supabase
+    const { error: userUpdateError } = await postgresDb
       .from("users")
       .update({
         x_user_id: null,
@@ -2923,7 +2923,7 @@ export class QuestEngine {
     progressId: number,
     metadata: Record<string, unknown> = {}
   ) {
-    const { data: progressRow, error: progressError } = await supabase
+    const { data: progressRow, error: progressError } = await postgresDb
       .from("quest_progress")
       .select("*")
       .eq("id", progressId)
@@ -2949,7 +2949,7 @@ export class QuestEngine {
       };
     }
 
-    const { data: questRow, error: questError } = await supabase
+    const { data: questRow, error: questError } = await postgresDb
       .from("quests")
       .select("*")
       .eq("id", progress.quest_id)
@@ -2964,7 +2964,7 @@ export class QuestEngine {
       throw new Error("Only X repost quests can be completed from pending review");
     }
 
-    const { data: userRow, error: userError } = await supabase
+    const { data: userRow, error: userError } = await postgresDb
       .from("users")
       .select("id, address")
       .eq("id", progress.user_id)
@@ -3152,7 +3152,7 @@ export class QuestEngine {
   }
 
   private async getKnownSwapAmounts(userId: number, chainId?: number) {
-    let query = supabase
+    let query = postgresDb
       .from("swap_transactions")
       .select("chain_id, tx_hash, amount_usd")
       .eq("user_id", userId);
@@ -3168,7 +3168,7 @@ export class QuestEngine {
     }
 
     return new Map(
-      (data ?? []).map((row) => [
+      (data ?? []).map((row: any) => [
         getSwapTransactionKey(
           Number((row as { chain_id: number }).chain_id),
           String((row as { tx_hash: string }).tx_hash)
@@ -3183,7 +3183,7 @@ export class QuestEngine {
     address: string,
     referenceDates: Date[] = [getNow()]
   ) {
-    const { data: questsData, error: questsError } = await supabase
+    const { data: questsData, error: questsError } = await postgresDb
       .from("quests")
       .select("*")
       .eq("category", "onchain")
@@ -3247,7 +3247,7 @@ export class QuestEngine {
     }
 
     const now = getNow();
-    const { data: questsData, error: questsError } = await supabase
+    const { data: questsData, error: questsError } = await postgresDb
       .from("quests")
       .select("*")
       .eq("campaign_key", normalizedCampaignKey)
@@ -3266,7 +3266,7 @@ export class QuestEngine {
       return new Map<string, QuestCampaignWhitelistRecord>();
     }
 
-    const { data: progressRows, error: progressError } = await supabase
+    const { data: progressRows, error: progressError } = await postgresDb
       .from("quest_progress")
       .select("*")
       .eq("user_id", userId)
@@ -3314,7 +3314,7 @@ export class QuestEngine {
       return new Map<string, QuestCampaignWhitelistRecord>();
     }
 
-    const { data, error } = await supabase
+    const { data, error } = await postgresDb
       .from("quest_campaign_whitelist")
       .select("*")
       .eq("user_id", userId)
@@ -3345,7 +3345,7 @@ export class QuestEngine {
         completedQuests >= campaignQuests.length &&
         !whitelistByKey.has(campaignKey)
       ) {
-        const { data: whitelistRow, error: whitelistError } = await supabase
+        const { data: whitelistRow, error: whitelistError } = await postgresDb
           .from("quest_campaign_whitelist")
           .upsert(
             {
@@ -3434,7 +3434,7 @@ export class QuestEngine {
   }
 
   private async assertLinkedSocialAccount(userId: number, platform: QuestPlatform) {
-    const { data, error } = await supabase
+    const { data, error } = await postgresDb
       .from("social_accounts")
       .select("*")
       .eq("user_id", userId)
@@ -3472,7 +3472,7 @@ export class QuestEngine {
     const tokenFilter = getQuestTokenFilter(rules);
     const source = String(rules.source || "dustswap_swap");
 
-    let query = supabase
+    let query = postgresDb
       .from("swap_transactions")
       .select(
         "amount_usd, chain_id, src_token_address, dst_token_address, metadata"
@@ -3675,7 +3675,7 @@ export class QuestEngine {
   }
 
   private async getQuestById(id: string) {
-    const { data, error } = await supabase
+    const { data, error } = await postgresDb
       .from("quests")
       .select("*")
       .eq("id", id)
@@ -3694,7 +3694,7 @@ export class QuestEngine {
   }
 
   private async getProgress(userId: number, questId: string, cycleKey: string) {
-    const { data, error } = await supabase
+    const { data, error } = await postgresDb
       .from("quest_progress")
       .select("*")
       .eq("user_id", userId)
@@ -3742,7 +3742,7 @@ export class QuestEngine {
       ...args.updates,
     };
 
-    const { data, error } = await supabase
+    const { data, error } = await postgresDb
       .from("quest_progress")
       .upsert(payload, {
         onConflict: "user_id,quest_id,cycle_key",
@@ -3765,7 +3765,7 @@ export class QuestEngine {
     requestPayload: Record<string, unknown>,
     responsePayload: Record<string, unknown>
   ) {
-    await supabase.from("quest_verification_logs").insert({
+    await postgresDb.from("quest_verification_logs").insert({
       user_id: userId,
       quest_id: questId,
       cycle_key: cycleKey,

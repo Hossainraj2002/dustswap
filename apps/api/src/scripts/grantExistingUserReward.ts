@@ -2,7 +2,7 @@ import "dotenv/config";
 
 import { getAddress } from "viem";
 import { pointsEngine } from "../services/pointsEngine";
-import { supabase } from "../services/supabase";
+import { postgresDb } from "../services/postgres";
 
 const CAMPAIGN_ACTION = "existing_user_reward_apr_2026";
 const CAMPAIGN_NAME = "Existing user reward";
@@ -49,7 +49,7 @@ Apply:
 Options:
   --apply                 Writes point events and updates user totals
   --cutoff=<ISO>          Only users created at or before this timestamp are eligible
-  --page-size=<number>    Pagination size for Supabase reads (default: ${DEFAULT_PAGE_SIZE})
+  --page-size=<number>    Pagination size for database reads (default: ${DEFAULT_PAGE_SIZE})
   --concurrency=<number>  Parallel award workers during apply (default: ${DEFAULT_CONCURRENCY})
   --help                  Show this message
 `);
@@ -129,7 +129,7 @@ async function loadEligibleUsers(cutoffIso: string, pageSize: number) {
   const rows: EligibleUserRow[] = [];
 
   for (let from = 0; ; from += pageSize) {
-    const { data, error } = await supabase
+    const { data, error } = await postgresDb
       .from("users")
       .select("id, address, total_points, created_at")
       .gte("total_points", MIN_EXISTING_POINTS)
@@ -163,7 +163,7 @@ async function loadAlreadyAwardedUserIds(pageSize: number) {
   const userIds = new Set<number>();
 
   for (let from = 0; ; from += pageSize) {
-    const { data, error } = await supabase
+    const { data, error } = await postgresDb
       .from("point_events")
       .select("user_id")
       .eq("action", CAMPAIGN_ACTION)

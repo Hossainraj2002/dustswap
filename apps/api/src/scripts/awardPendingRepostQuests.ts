@@ -2,7 +2,7 @@ import dotenv from "dotenv";
 dotenv.config();
 
 import { questEngine } from "../services/questEngine";
-import { supabase } from "../services/supabase";
+import { postgresDb } from "../services/postgres";
 
 type QuestRow = {
   id: string;
@@ -52,7 +52,7 @@ function getConfiguredSlugs(cliSlugs: string[] | null) {
 }
 
 async function fetchRepostQuests(slugs: string[]) {
-  let query = supabase
+  let query = postgresDb
     .from("quests")
     .select("id, slug, title")
     .eq("platform", "x")
@@ -75,7 +75,7 @@ async function fetchPendingRows(questIds: string[], limit: number | null) {
 
   for (let from = 0; ; from += PAGE_SIZE) {
     const to = limit ? Math.min(from + PAGE_SIZE - 1, limit - 1) : from + PAGE_SIZE - 1;
-    const { data, error } = await supabase
+    const { data, error } = await postgresDb
       .from("quest_progress")
       .select("id, quest_id, user_id, cycle_key")
       .in("quest_id", questIds)
@@ -96,7 +96,7 @@ async function fetchPendingRows(questIds: string[], limit: number | null) {
 }
 
 async function logReviewCompletion(row: PendingProgressRow, quest: QuestRow, awardedPoints: number) {
-  const { error } = await supabase.from("quest_verification_logs").insert({
+  const { error } = await postgresDb.from("quest_verification_logs").insert({
     user_id: row.user_id,
     quest_id: row.quest_id,
     cycle_key: row.cycle_key,

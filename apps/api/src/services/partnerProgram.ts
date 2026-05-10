@@ -4,7 +4,7 @@ import { base } from "viem/chains";
 import { isAllowedAppDomain } from "../config/appOrigins";
 import { runtimeCache } from "../utils/runtimeCache";
 import { pointsEngine } from "./pointsEngine";
-import { supabase } from "./supabase";
+import { postgresDb } from "./postgres";
 
 const PARTNER_JOIN_STATEMENT = "DustSwap Partner Program Join";
 const BASE_RPC_URL =
@@ -356,7 +356,7 @@ function weekComparatorDescending(a: { weekStartUtc: string }, b: { weekStartUtc
 
 export class PartnerProgramService {
   private async loadUserById(userId: number) {
-    const { data, error } = await supabase
+    const { data, error } = await postgresDb
       .from("users")
       .select("id, address, referral_code")
       .eq("id", userId)
@@ -374,7 +374,7 @@ export class PartnerProgramService {
       return new Map<number, UserRow>();
     }
 
-    const { data, error } = await supabase
+    const { data, error } = await postgresDb
       .from("users")
       .select("id, address, referral_code")
       .in("id", userIds);
@@ -397,7 +397,7 @@ export class PartnerProgramService {
 
   private async findMemberByAddress(address: string) {
     const normalizedAddress = normalizeAddress(address);
-    const { data, error } = await supabase
+    const { data, error } = await postgresDb
       .from("partner_program_members")
       .select("*")
       .eq("wallet_address", normalizedAddress)
@@ -411,7 +411,7 @@ export class PartnerProgramService {
   }
 
   private async loadAllMembers() {
-    const { data, error } = await supabase
+    const { data, error } = await postgresDb
       .from("partner_program_members")
       .select("*")
       .order("whitelisted_at", { ascending: false });
@@ -428,7 +428,7 @@ export class PartnerProgramService {
       return new Map<number, ReferralCountRow>();
     }
 
-    const { data, error } = await supabase
+    const { data, error } = await postgresDb
       .from("partner_program_member_referral_counts")
       .select("*")
       .in("partner_member_id", memberIds);
@@ -449,7 +449,7 @@ export class PartnerProgramService {
       return new Map<number, AlltimeMetricRow>();
     }
 
-    const { data, error } = await supabase
+    const { data, error } = await postgresDb
       .from("partner_program_member_alltime_metrics")
       .select("*")
       .in("partner_member_id", memberIds);
@@ -470,7 +470,7 @@ export class PartnerProgramService {
       return [] as WeeklyMetricRow[];
     }
 
-    let query = supabase
+    let query = postgresDb
       .from("partner_program_member_weekly_metrics")
       .select("*")
       .in("partner_member_id", memberIds);
@@ -493,7 +493,7 @@ export class PartnerProgramService {
       return [] as DistributionRow[];
     }
 
-    const { data, error } = await supabase
+    const { data, error } = await postgresDb
       .from("partner_reward_distributions")
       .select("*")
       .in("partner_member_id", memberIds)
@@ -507,7 +507,7 @@ export class PartnerProgramService {
   }
 
   private async loadReferredUsers(memberId: number) {
-    const { data, error } = await supabase
+    const { data, error } = await postgresDb
       .from("partner_program_referred_users")
       .select("*")
       .eq("partner_member_id", memberId)
@@ -521,7 +521,7 @@ export class PartnerProgramService {
   }
 
   private async loadReferredUserAlltimeMetrics(memberId: number) {
-    const { data, error } = await supabase
+    const { data, error } = await postgresDb
       .from("partner_program_referred_user_alltime_metrics")
       .select("*")
       .eq("partner_member_id", memberId);
@@ -539,7 +539,7 @@ export class PartnerProgramService {
   }
 
   private async loadReferredUserWeeklyMetrics(memberId: number, weekStartUtc: string) {
-    const { data, error } = await supabase
+    const { data, error } = await postgresDb
       .from("partner_program_referred_user_weekly_metrics")
       .select("*")
       .eq("partner_member_id", memberId)
@@ -887,7 +887,7 @@ export class PartnerProgramService {
     }
 
     const joinedAt = new Date().toISOString();
-    const { error } = await supabase
+    const { error } = await postgresDb
       .from("partner_program_members")
       .update({
         status: "joined",
@@ -1017,7 +1017,7 @@ export class PartnerProgramService {
     const nowIso = new Date().toISOString();
 
     if (!existing) {
-      const { data: created, error: createError } = await supabase
+      const { data: created, error: createError } = await postgresDb
         .from("partner_program_members")
         .insert({
           user_id: user.id,
@@ -1041,7 +1041,7 @@ export class PartnerProgramService {
         throw new Error("Create partner member: failed to load created row.");
       }
 
-      const { error: historyError } = await supabase
+      const { error: historyError } = await postgresDb
         .from("partner_fee_share_history")
         .insert({
           partner_member_id: Number((created as MemberRow).id),
@@ -1061,7 +1061,7 @@ export class PartnerProgramService {
     const currentFeeSharePercent = toNumber(existing.current_fee_share_percent);
     const feeChanged = currentFeeSharePercent !== feeSharePercent;
 
-    const { error: memberUpdateError } = await supabase
+    const { error: memberUpdateError } = await postgresDb
       .from("partner_program_members")
       .update({
         current_fee_share_percent: feeSharePercent,
@@ -1075,7 +1075,7 @@ export class PartnerProgramService {
     }
 
     if (feeChanged) {
-      const { error: closeError } = await supabase
+      const { error: closeError } = await postgresDb
         .from("partner_fee_share_history")
         .update({
           ended_at: nowIso,
@@ -1088,7 +1088,7 @@ export class PartnerProgramService {
         throw new Error(`Close partner fee history: ${closeError.message}`);
       }
 
-      const { error: insertError } = await supabase
+      const { error: insertError } = await postgresDb
         .from("partner_fee_share_history")
         .insert({
           partner_member_id: existing.id,
@@ -1102,7 +1102,7 @@ export class PartnerProgramService {
         throw new Error(`Insert partner fee history: ${insertError.message}`);
       }
     } else {
-      const { data: activeHistory, error: activeHistoryError } = await supabase
+      const { data: activeHistory, error: activeHistoryError } = await postgresDb
         .from("partner_fee_share_history")
         .select("id")
         .eq("partner_member_id", existing.id)
@@ -1114,7 +1114,7 @@ export class PartnerProgramService {
       }
 
       if (!activeHistory) {
-        const { error: insertError } = await supabase
+        const { error: insertError } = await postgresDb
           .from("partner_fee_share_history")
           .insert({
             partner_member_id: existing.id,
@@ -1212,7 +1212,7 @@ export class PartnerProgramService {
       throw new PartnerProgramError("Partner member not found.", 404);
     }
 
-    const { data: weeklyData, error: weeklyError } = await supabase
+    const { data: weeklyData, error: weeklyError } = await postgresDb
       .from("partner_program_member_weekly_metrics")
       .select("*")
       .eq("partner_member_id", member.id)
@@ -1236,7 +1236,7 @@ export class PartnerProgramService {
       referralCounts.get(Number(member.id))?.referred_users_total
     );
     const paidAt = new Date().toISOString();
-    const { error: upsertError } = await supabase
+    const { error: upsertError } = await postgresDb
       .from("partner_reward_distributions")
       .upsert(
         {

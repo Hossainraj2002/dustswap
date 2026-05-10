@@ -1,6 +1,6 @@
 import { createHash } from "crypto";
 import { runtimeCache } from "../utils/runtimeCache";
-import { supabase } from "./supabase";
+import { postgresDb } from "./postgres";
 
 export type XSocialAccountRecord = {
   id: number;
@@ -188,7 +188,7 @@ export function toXAccountSummary(account: XSocialAccountRecord | null) {
 
 export class XVerificationService {
   async requireConnectedAccount(userId: number) {
-    const { data, error } = await supabase
+    const { data, error } = await postgresDb
       .from("social_accounts")
       .select("*")
       .eq("user_id", userId)
@@ -225,7 +225,7 @@ export class XVerificationService {
   }
 
   async getAccountSummary(userId: number) {
-    const { data, error } = await supabase
+    const { data, error } = await postgresDb
       .from("social_accounts")
       .select("*")
       .eq("user_id", userId)
