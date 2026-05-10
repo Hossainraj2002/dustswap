@@ -298,6 +298,16 @@ function normalizeTokenMatch(value: unknown) {
     : "input_or_output";
 }
 
+function normalizeQuestRecord(row: QuestRecord): QuestRecord {
+  return {
+    ...row,
+    reward_points: toNumber(row.reward_points),
+    target_value: toNumber(row.target_value, 1),
+    sort_order: toNumber(row.sort_order),
+    rules: safeRules(row.rules),
+  };
+}
+
 function getQuestTokenFilter(rules: QuestRules) {
   const rulesRecord = rules as QuestRules & { token?: unknown };
   const tokenRule =
@@ -969,7 +979,7 @@ export class QuestEngine {
       throw new Error(`Failed to load quests: ${error.message}`);
     }
 
-    return (data ?? []) as QuestRecord[];
+    return ((data ?? []) as QuestRecord[]).map((row) => normalizeQuestRecord(row));
   }
 
   async saveQuest(input: AdminQuestInput) {
@@ -1011,7 +1021,7 @@ export class QuestEngine {
     }
 
     this.invalidateQuestBoardCache();
-    return data as QuestRecord;
+    return normalizeQuestRecord(data as QuestRecord);
   }
 
   async listCampaignWhitelist(campaignKey: string) {
@@ -1556,7 +1566,8 @@ export class QuestEngine {
         }
       }
 
-      const questItems = quests.map((quest) => {
+      const questItems = quests.map((questRow) => {
+        const quest = normalizeQuestRecord(questRow);
         const cycleKey = getCycleKey(quest.progress_window, now);
         const progress = progressByKey.get(`${quest.id}:${cycleKey}`) ?? null;
 
@@ -1572,8 +1583,8 @@ export class QuestEngine {
           verificationType: quest.verification_type,
           progressWindow: quest.progress_window,
           rewardKind: quest.reward_kind,
-          rewardPoints: quest.reward_points,
-          targetValue: quest.target_value,
+          rewardPoints: toNumber(quest.reward_points),
+          targetValue: toNumber(quest.target_value, 1),
           ctaLabel: quest.cta_label,
           ctaUrl: quest.cta_url,
           rules: safeRules(quest.rules),
@@ -1581,9 +1592,9 @@ export class QuestEngine {
           progress: progress
             ? {
                 status: progress.status,
-                value: progress.progress,
-                targetValue: progress.target_value,
-                verificationAttempts: progress.verification_attempts,
+                value: toNumber(progress.progress),
+                targetValue: toNumber(progress.target_value, 1),
+                verificationAttempts: toNumber(progress.verification_attempts),
                 nextVerificationAt: progress.next_verification_at,
                 openedAt: progress.opened_at,
                 completedAt: progress.completed_at,

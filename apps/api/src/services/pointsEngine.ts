@@ -1325,14 +1325,25 @@ export class PointsEngine {
     };
   }
 
-  private async buildBalance(user: UserRecord) {
-    const { count } = await postgresDb
-      .from("users")
-      .select("*", { count: "exact", head: true })
-      .gt("total_points", user.total_points);
+  private async buildBalance(
+    user: UserRecord,
+    options?: {
+      readOnlyPrice?: boolean;
+    }
+  ) {
+    const [rankResult, priceSnapshot] = await Promise.all([
+      postgresDb
+        .from("users")
+        .select("*", { count: "exact", head: true })
+        .gt("total_points", user.total_points),
+      options?.readOnlyPrice
+        ? this.getReadOnlyEthPriceSnapshot()
+        : Promise.resolve<DailyAssetPriceRecord | undefined>(undefined),
+    ]);
 
     return this.buildBalancePayload(user, {
-      rank: (count ?? 0) + 1,
+      rank: (rankResult.count ?? 0) + 1,
+      priceSnapshot,
     });
   }
 
@@ -1804,7 +1815,7 @@ export class PointsEngine {
     }
 
     const { data, error } = await postgresDb.rpc("get_points_overview");
-    if (error && !this.isMissingRpcFunctionError(error.message, "get_points_overview")) {
+    if (error && !this.isMissingRpcFunctionError(error, "get_points_overview")) {
       throw new Error(`Load points overview: ${error.message}`);
     }
 
@@ -1827,7 +1838,7 @@ export class PointsEngine {
     });
 
     if (error) {
-      if (this.isMissingRpcFunctionError(error.message, "get_particle_point_leaderboard_page")) {
+      if (this.isMissingRpcFunctionError(error, "get_particle_point_leaderboard_page")) {
         return this.getFallbackParticlePointLeaderboardPage(offset, limit);
       }
 
@@ -1850,7 +1861,7 @@ export class PointsEngine {
     });
 
     if (error) {
-      if (this.isMissingRpcFunctionError(error.message, "get_particle_point_leaderboard_viewer")) {
+      if (this.isMissingRpcFunctionError(error, "get_particle_point_leaderboard_viewer")) {
         return this.getFallbackParticlePointLeaderboardViewer(userId);
       }
 
@@ -1872,16 +1883,36 @@ export class PointsEngine {
     } satisfies ParticlePointLeaderboardEntryRow;
   }
 
-  private isMissingRpcFunctionError(message?: string | null, functionName?: string) {
-    const normalized = String(message || "").toLowerCase();
-    if (
-      !normalized.includes("could not find the function public.") ||
-      !normalized.includes("schema cache")
-    ) {
+  private isMissingRpcFunctionError(
+    errorLike?:
+      | {
+          code?: string;
+          message?: string | null;
+          details?: string | null;
+          hint?: string | null;
+        }
+      | string
+      | null,
+    functionName?: string
+  ) {
+    const code = typeof errorLike === "string" ? undefined : errorLike?.code;
+    const normalized = String(
+      typeof errorLike === "string"
+        ? errorLike
+        : `${errorLike?.message || ""} ${errorLike?.details || ""} ${errorLike?.hint || ""}`
+    ).toLowerCase();
+
+    if (functionName && !normalized.includes(functionName.toLowerCase())) {
       return false;
     }
 
-    return functionName ? normalized.includes(functionName.toLowerCase()) : true;
+    return (
+      code === "42883" ||
+      normalized.includes("undefined function") ||
+      (normalized.includes("function public.") && normalized.includes("does not exist")) ||
+      (normalized.includes("could not find the function public.") &&
+        normalized.includes("schema cache"))
+    );
   }
 
   private isStatementTimeoutError(message?: string | null) {
@@ -1932,7 +1963,7 @@ export class PointsEngine {
 
     if (error) {
       if (
-        this.isMissingRpcFunctionError(error.message, "refresh_referral_leaderboard_snapshot") ||
+        this.isMissingRpcFunctionError(error, "refresh_referral_leaderboard_snapshot") ||
         this.isMissingRelationError(error)
       ) {
         return null;
@@ -2246,7 +2277,7 @@ export class PointsEngine {
 
     if (error) {
       if (
-        this.isMissingRpcFunctionError(error.message, "get_referral_leaderboard_page") ||
+        this.isMissingRpcFunctionError(error, "get_referral_leaderboard_page") ||
         this.isStatementTimeoutError(error.message)
       ) {
         return this.getFallbackReferralLeaderboardPage(offset, limit);
@@ -2273,7 +2304,7 @@ export class PointsEngine {
 
     if (error) {
       if (
-        this.isMissingRpcFunctionError(error.message, "get_referral_leaderboard_count") ||
+        this.isMissingRpcFunctionError(error, "get_referral_leaderboard_count") ||
         this.isStatementTimeoutError(error.message)
       ) {
         return this.getFallbackReferralLeaderboardCount();
@@ -2293,7 +2324,7 @@ export class PointsEngine {
 
     if (error) {
       if (
-        this.isMissingRpcFunctionError(error.message, "get_referral_leaderboard_viewer") ||
+        this.isMissingRpcFunctionError(error, "get_referral_leaderboard_viewer") ||
         this.isStatementTimeoutError(error.message)
       ) {
         return this.getFallbackReferralLeaderboardViewer(userId);
@@ -4058,7 +4089,9 @@ export class PointsEngine {
       return this.buildDefaultBalance(address);
     }
 
-    return this.buildBalance(user);
+    return this.buildBalance(user, {
+      readOnlyPrice: true,
+    });
   }
 
   private normalizeFootprintFollowTask(taskKey?: string | null): FootprintFollowTaskKey {
@@ -4329,7 +4362,9 @@ export class PointsEngine {
       }
 
       const [balance, stats, referral] = await Promise.all([
-        this.buildBalance(user),
+        this.buildBalance(user, {
+          readOnlyPrice: true,
+        }),
         this.getSweepStatsByUserId(user.id),
         this.getReferralStatsByUserId(user.id),
       ]);

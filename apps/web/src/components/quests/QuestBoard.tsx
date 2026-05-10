@@ -256,23 +256,30 @@ function formatEndCountdown(endsAt: string) {
 }
 
 function formatGoalValue(quest: QuestItem) {
+  const targetValue = Number(quest.targetValue || 0);
+  const formattedTarget = targetValue.toLocaleString(undefined, {
+    maximumFractionDigits: Number.isInteger(targetValue) ? 0 : 6,
+  });
+
   if (quest.actionType === "swap_volume") {
-    return `$${quest.targetValue.toLocaleString()}`;
+    return `$${formattedTarget}`;
   }
 
   if (quest.actionType === "swap_count") {
-    return `${quest.targetValue.toLocaleString()} swaps`;
+    return `${formattedTarget} swaps`;
   }
 
   return "1 action";
 }
 
 function formatProgressValue(quest: QuestItem, value: number) {
+  const numericValue = Number(value || 0);
+
   if (quest.actionType === "swap_count") {
-    return value.toLocaleString();
+    return numericValue.toLocaleString();
   }
 
-  return `$${value.toLocaleString(undefined, {
+  return `$${numericValue.toLocaleString(undefined, {
     maximumFractionDigits: 2,
   })}`;
 }

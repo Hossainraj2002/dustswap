@@ -67,7 +67,7 @@ type WeeklyMetricRow = {
   partner_member_id: number | string;
   partner_user_id: number | string;
   partner_wallet_address: string;
-  week_start_utc: string;
+  week_start_utc: string | Date;
   traded_users_total: number | string | null;
   swap_count_total: number | string | null;
   qualifying_volume_usd: number | string | null;
@@ -82,8 +82,8 @@ type WeeklyMetricRow = {
 type DistributionRow = {
   id: number | string;
   partner_member_id: number | string;
-  week_start_utc: string;
-  week_end_utc: string;
+  week_start_utc: string | Date;
+  week_end_utc: string | Date;
   qualifying_volume_usd: number | string | null;
   protocol_fee_usd: number | string | null;
   reward_usd: number | string | null;
@@ -130,7 +130,7 @@ type ReferredUserWeeklyMetricRow = {
   partner_user_id: number | string;
   referee_user_id: number | string;
   referee_address: string;
-  week_start_utc: string;
+  week_start_utc: string | Date;
   swap_count_total: number | string | null;
   qualifying_volume_usd: number | string | null;
   reward_usd: number | string | null;
@@ -211,6 +211,28 @@ function toNumber(value: number | string | null | undefined) {
 function toDateKey(value: string | Date) {
   const date = value instanceof Date ? value : new Date(value);
   return date.toISOString().slice(0, 10);
+}
+
+function normalizeDateOnlyValue(value: string | Date | null | undefined) {
+  if (!value) {
+    return "";
+  }
+
+  if (value instanceof Date) {
+    return value.toISOString().slice(0, 10);
+  }
+
+  const normalized = String(value).trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(normalized)) {
+    return normalized;
+  }
+
+  const parsed = new Date(normalized);
+  if (Number.isNaN(parsed.getTime())) {
+    return normalized;
+  }
+
+  return parsed.toISOString().slice(0, 10);
 }
 
 function addUtcDays(dateKey: string, days: number) {
@@ -485,7 +507,10 @@ export class PartnerProgramService {
       throw new Error(`Load partner weekly metrics: ${error.message}`);
     }
 
-    return (data ?? []) as WeeklyMetricRow[];
+    return ((data ?? []) as WeeklyMetricRow[]).map((row) => ({
+      ...row,
+      week_start_utc: normalizeDateOnlyValue(row.week_start_utc),
+    }));
   }
 
   private async loadDistributions(memberIds: number[]) {
@@ -503,7 +528,11 @@ export class PartnerProgramService {
       throw new Error(`Load partner distributions: ${error.message}`);
     }
 
-    return (data ?? []) as DistributionRow[];
+    return ((data ?? []) as DistributionRow[]).map((row) => ({
+      ...row,
+      week_start_utc: normalizeDateOnlyValue(row.week_start_utc),
+      week_end_utc: normalizeDateOnlyValue(row.week_end_utc),
+    }));
   }
 
   private async loadReferredUsers(memberId: number) {
@@ -551,7 +580,10 @@ export class PartnerProgramService {
 
     const rows = new Map<number, ReferredUserWeeklyMetricRow>();
     for (const row of (data ?? []) as ReferredUserWeeklyMetricRow[]) {
-      rows.set(Number(row.referee_user_id), row);
+      rows.set(Number(row.referee_user_id), {
+        ...row,
+        week_start_utc: normalizeDateOnlyValue(row.week_start_utc),
+      });
     }
 
     return rows;
@@ -595,7 +627,7 @@ export class PartnerProgramService {
     let unpaidClosedWeeks = 0;
 
     for (const weekly of closedWeekly) {
-      const weekStartUtc = String(weekly.week_start_utc);
+      const weekStartUtc = normalizeDateOnlyValue(weekly.week_start_utc);
       const rewardUsd = toNumber(weekly.reward_usd);
       const distribution = distributions.get(weekStartUtc);
 
@@ -634,11 +666,13 @@ export class PartnerProgramService {
   }) {
     return options.closedWeeklyMetrics
       .map<PartnerHistoryRowPayload>((weekly) => {
-        const weekStartUtc = String(weekly.week_start_utc);
+        const weekStartUtc = normalizeDateOnlyValue(weekly.week_start_utc);
         const distribution = options.distributionsByWeekStart.get(weekStartUtc);
         return {
           weekStartUtc,
-          weekEndUtc: distribution?.week_end_utc || addUtcDays(weekStartUtc, 7),
+          weekEndUtc: distribution?.week_end_utc
+            ? normalizeDateOnlyValue(distribution.week_end_utc)
+            : addUtcDays(weekStartUtc, 7),
           qualifyingVolumeUsd:
             distribution?.qualifying_volume_usd != null
               ? toNumber(distribution.qualifying_volume_usd)
@@ -705,7 +739,7 @@ export class PartnerProgramService {
 
     const currentWeekMetrics = new Map<number, WeeklyMetricRow>();
     for (const row of currentWeekRows) {
-      if (String(row.week_start_utc) === currentWeekStartUtc) {
+      if (normalizeDateOnlyValue(row.week_start_utc) === currentWeekStartUtc) {
         currentWeekMetrics.set(Number(row.partner_member_id), row);
       }
     }
@@ -722,7 +756,7 @@ export class PartnerProgramService {
     for (const row of distributions) {
       const key = Number(row.partner_member_id);
       const list = distributionsByMember.get(key) ?? new Map<string, DistributionRow>();
-      list.set(String(row.week_start_utc), row);
+      list.set(normalizeDateOnlyValue(row.week_start_utc), row);
       distributionsByMember.set(key, list);
     }
 
@@ -926,7 +960,7 @@ export class PartnerProgramService {
 
     const currentWeekMetrics = new Map<number, WeeklyMetricRow>();
     for (const row of weeklyMetrics) {
-      if (String(row.week_start_utc) === currentWeekStartUtc) {
+      if (normalizeDateOnlyValue(row.week_start_utc) === currentWeekStartUtc) {
         currentWeekMetrics.set(Number(row.partner_member_id), row);
       }
     }
@@ -943,7 +977,7 @@ export class PartnerProgramService {
     for (const row of distributions) {
       const key = Number(row.partner_member_id);
       const list = distributionsByMember.get(key) ?? new Map<string, DistributionRow>();
-      list.set(String(row.week_start_utc), row);
+      list.set(normalizeDateOnlyValue(row.week_start_utc), row);
       distributionsByMember.set(key, list);
     }
 
