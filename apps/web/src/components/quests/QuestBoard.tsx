@@ -234,12 +234,20 @@ function formatResetCountdown(windowType: QuestItem["progressWindow"]) {
 }
 
 function formatEndCountdown(endsAt: string) {
-  const diff = new Date(endsAt).getTime() - Date.now();
+  const endMs = new Date(endsAt).getTime();
+  if (Number.isNaN(endMs)) {
+    return "Open";
+  }
+
+  const diff = endMs - Date.now();
   if (diff <= 0) {
     return "Ending";
   }
 
   const totalMinutes = Math.ceil(diff / 60000);
+  if (!Number.isFinite(totalMinutes) || totalMinutes < 0) {
+    return "Open";
+  }
   const days = Math.floor(totalMinutes / (60 * 24));
   const hours = Math.floor((totalMinutes % (60 * 24)) / 60);
   const minutes = totalMinutes % 60;

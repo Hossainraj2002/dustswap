@@ -40,6 +40,14 @@ function toIsoOrNull(value: string) {
   return value ? new Date(value).toISOString() : null;
 }
 
+function formatAdminQuestInstant(value: string | null | undefined) {
+  if (!value) {
+    return "—";
+  }
+  const d = new Date(value);
+  return Number.isNaN(d.getTime()) ? "Invalid date (fix in DB or re-save)" : d.toLocaleString();
+}
+
 function isSwapQuest(form: AdminQuestInput) {
   return form.actionType === "swap_volume" || form.actionType === "swap_count";
 }
@@ -1023,12 +1031,12 @@ export default function AdminQuestsPage() {
                           ) : null}
                           {quest.starts_at ? (
                             <p className="mt-1 text-xs text-gray-500">
-                              Opens {new Date(quest.starts_at).toLocaleString()}
+                              Opens {formatAdminQuestInstant(quest.starts_at)}
                             </p>
                           ) : null}
                           {quest.ends_at ? (
                             <p className="mt-1 text-xs text-gray-500">
-                              Closes {new Date(quest.ends_at).toLocaleString()}
+                              Closes {formatAdminQuestInstant(quest.ends_at)}
                             </p>
                           ) : null}
                         </div>

@@ -305,6 +305,8 @@ function normalizeQuestRecord(row: QuestRecord): QuestRecord {
     target_value: toNumber(row.target_value, 1),
     sort_order: toNumber(row.sort_order),
     rules: safeRules(row.rules),
+    starts_at: normalizeQuestTimestamp((row as { starts_at?: unknown }).starts_at),
+    ends_at: normalizeQuestTimestamp((row as { ends_at?: unknown }).ends_at),
   };
 }
 
@@ -496,16 +498,77 @@ function getWindowBounds(windowType: QuestProgressWindow, date = getNow()) {
   return null;
 }
 
+/** Max representable instant for open-ended quests (swap filter upper bound). */
+const QUEST_SWAP_OPEN_END_MS = 8640000000000000;
+
+function normalizeQuestTimestamp(value: unknown): string | null {
+  if (value == null || value === "") {
+    return null;
+  }
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value.toISOString();
+  }
+  if (typeof value === "number" && Number.isFinite(value)) {
+    const d = new Date(value);
+    return Number.isNaN(d.getTime()) ? null : d.toISOString();
+  }
+  const s = String(value).trim();
+  if (!s) {
+    return null;
+  }
+  const d = new Date(s);
+  return Number.isNaN(d.getTime()) ? null : d.toISOString();
+}
+
+function parseQuestInstant(value: string | null | undefined): Date | null {
+  if (value == null || value === "") {
+    return null;
+  }
+  const d = new Date(value);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+/**
+ * Intersection of progress window (daily/weekly) with quest starts_at / ends_at.
+ * For `once`, uses full quest window only (from starts_at or epoch through ends_at or max date).
+ */
+function getQuestSwapOccurredBounds(
+  quest: QuestRecord,
+  referenceDate: Date
+): { start: Date; end: Date } {
+  const cycleBounds = getWindowBounds(quest.progress_window, referenceDate);
+  const questStart = parseQuestInstant(quest.starts_at);
+  const questEnd = parseQuestInstant(quest.ends_at);
+
+  if (cycleBounds) {
+    let startMs = cycleBounds.start.getTime();
+    let endMs = cycleBounds.end.getTime();
+    if (questStart) {
+      startMs = Math.max(startMs, questStart.getTime());
+    }
+    if (questEnd) {
+      endMs = Math.min(endMs, questEnd.getTime());
+    }
+    return { start: new Date(startMs), end: new Date(endMs) };
+  }
+
+  const start = questStart ?? new Date(0);
+  const end = questEnd ?? new Date(QUEST_SWAP_OPEN_END_MS);
+  return { start, end };
+}
+
 function isQuestLive(quest: QuestRecord, now = getNow()) {
   if (!quest.is_active || quest.status !== "published") {
     return false;
   }
 
-  if (quest.starts_at && new Date(quest.starts_at) > now) {
+  const start = parseQuestInstant(quest.starts_at);
+  if (start && start > now) {
     return false;
   }
 
-  if (quest.ends_at && new Date(quest.ends_at) < now) {
+  const end = parseQuestInstant(quest.ends_at);
+  if (end && end < now) {
     return false;
   }
 
@@ -1002,8 +1065,8 @@ export class QuestEngine {
       status: input.status || "draft",
       is_active: input.isActive ?? true,
       sort_order: input.sortOrder ?? 0,
-      starts_at: input.startsAt || null,
-      ends_at: input.endsAt || null,
+      starts_at: normalizeQuestTimestamp(input.startsAt) ?? null,
+      ends_at: normalizeQuestTimestamp(input.endsAt) ?? null,
       rules: input.rules || {},
       updated_at: new Date().toISOString(),
     };
@@ -1500,9 +1563,9 @@ export class QuestEngine {
         throw new Error(`Failed to load quest board: ${questsError.message}`);
       }
 
-      const quests = ((questsData ?? []) as QuestRecord[]).filter((quest) =>
-        isQuestLive(quest, now)
-      );
+      const quests = ((questsData ?? []) as QuestRecord[])
+        .map((row) => normalizeQuestRecord(row))
+        .filter((quest) => isQuestLive(quest, now));
 
       let linkedAccounts: Record<string, unknown> = {};
       let progressByKey = new Map<string, QuestProgressRecord>();
@@ -1566,8 +1629,7 @@ export class QuestEngine {
         }
       }
 
-      const questItems = quests.map((questRow) => {
-        const quest = normalizeQuestRecord(questRow);
+      const questItems = quests.map((quest) => {
         const cycleKey = getCycleKey(quest.progress_window, now);
         const progress = progressByKey.get(`${quest.id}:${cycleKey}`) ?? null;
 
@@ -3213,9 +3275,9 @@ export class QuestEngine {
     }> = [];
 
     const now = getNow();
-    const quests = ((questsData ?? []) as QuestRecord[]).filter((quest) =>
-      isQuestLive(quest, now)
-    );
+    const quests = ((questsData ?? []) as QuestRecord[])
+      .map((row) => normalizeQuestRecord(row))
+      .filter((quest) => isQuestLive(quest, now));
 
     for (const quest of quests) {
       const seenCycleKeys = new Set<string>();
@@ -3269,9 +3331,9 @@ export class QuestEngine {
       throw new Error(`Failed to load campaign quests: ${questsError.message}`);
     }
 
-    const quests = ((questsData ?? []) as QuestRecord[]).filter((quest) =>
-      isQuestLive(quest, now)
-    );
+    const quests = ((questsData ?? []) as QuestRecord[])
+      .map((row) => normalizeQuestRecord(row))
+      .filter((quest) => isQuestLive(quest, now));
 
     if (quests.length === 0) {
       return new Map<string, QuestCampaignWhitelistRecord>();
@@ -3477,32 +3539,41 @@ export class QuestEngine {
   ) {
     const now = referenceDate;
     const cycleKey = getCycleKey(quest.progress_window, now);
-    const bounds = getWindowBounds(quest.progress_window, now);
+    const occurredBounds = getQuestSwapOccurredBounds(quest, now);
     const rules = safeRules(quest.rules);
     const chainIds = getQuestChainIds(rules);
     const tokenFilter = getQuestTokenFilter(rules);
     const source = String(rules.source || "dustswap_swap");
 
-    let query = postgresDb
-      .from("swap_transactions")
-      .select(
-        "amount_usd, chain_id, src_token_address, dst_token_address, metadata"
-      )
-      .eq("user_id", userId);
+    let data: Array<{
+      amount_usd: number | string | null;
+      chain_id: number | null;
+      src_token_address: string | null;
+      dst_token_address: string | null;
+      metadata: Record<string, unknown> | null;
+    }> | null;
 
-    if (chainIds.length > 0) {
-      query = query.in("chain_id", chainIds);
-    }
+    if (occurredBounds.end.getTime() <= occurredBounds.start.getTime()) {
+      data = [];
+    } else {
+      let query = postgresDb
+        .from("swap_transactions")
+        .select(
+          "amount_usd, chain_id, src_token_address, dst_token_address, metadata"
+        )
+        .eq("user_id", userId)
+        .gte("occurred_at", occurredBounds.start.toISOString())
+        .lt("occurred_at", occurredBounds.end.toISOString());
 
-    if (bounds) {
-      query = query
-        .gte("occurred_at", bounds.start.toISOString())
-        .lt("occurred_at", bounds.end.toISOString());
-    }
+      if (chainIds.length > 0) {
+        query = query.in("chain_id", chainIds);
+      }
 
-    const { data, error } = await query;
-    if (error) {
-      throw new Error(`Failed to load swap transactions: ${error.message}`);
+      const result = await query;
+      if (result.error) {
+        throw new Error(`Failed to load swap transactions: ${result.error.message}`);
+      }
+      data = result.data as typeof data;
     }
 
     const filteredRows = ((data ?? []) as Array<{
@@ -3696,7 +3767,7 @@ export class QuestEngine {
       throw new Error("Quest not found");
     }
 
-    const quest = data as QuestRecord;
+    const quest = normalizeQuestRecord(data as QuestRecord);
     if (!isQuestLive(quest, getNow())) {
       throw new Error("Quest is not active right now");
     }
