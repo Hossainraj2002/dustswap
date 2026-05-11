@@ -519,8 +519,10 @@ function normalizeQuestTimestamp(value: unknown): string | null {
   
   // Handle epoch string timestamps that might be present due to DB migrations
   const numericValue = Number(s);
-  if (s.length > 8 && Number.isFinite(numericValue)) {
-    const dNum = new Date(numericValue);
+  if (s.length >= 8 && Number.isFinite(numericValue)) {
+    // If it's less than 10 billion, it's likely epoch seconds, not milliseconds
+    const msValue = numericValue < 10000000000 ? numericValue * 1000 : numericValue;
+    const dNum = new Date(msValue);
     if (!Number.isNaN(dNum.getTime())) {
       return dNum.toISOString();
     }

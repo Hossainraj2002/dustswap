@@ -214,25 +214,31 @@ function toDateKey(value: string | Date) {
 }
 
 function normalizeDateOnlyValue(value: string | Date | null | undefined) {
-  if (!value) {
-    return "";
-  }
-
+  if (!value) return "";
   if (value instanceof Date) {
+    if (Number.isNaN(value.getTime())) return "";
     return value.toISOString().slice(0, 10);
   }
-
   const normalized = String(value).trim();
   if (/^\d{4}-\d{2}-\d{2}$/.test(normalized)) {
     return normalized;
   }
 
-  const parsed = new Date(normalized);
-  if (Number.isNaN(parsed.getTime())) {
-    return normalized;
+  const numericValue = Number(normalized);
+  if (normalized.length >= 8 && Number.isFinite(numericValue)) {
+    // If it's less than 10 billion, it's likely epoch seconds, not milliseconds
+    const msValue = numericValue < 10000000000 ? numericValue * 1000 : numericValue;
+    const dNum = new Date(msValue);
+    if (!Number.isNaN(dNum.getTime())) {
+      return dNum.toISOString().slice(0, 10);
+    }
   }
 
-  return parsed.toISOString().slice(0, 10);
+  const parsed = new Date(normalized);
+  if (!Number.isNaN(parsed.getTime())) {
+    return parsed.toISOString().slice(0, 10);
+  }
+  return "";
 }
 
 function addUtcDays(dateKey: string, days: number) {
