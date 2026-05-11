@@ -516,6 +516,16 @@ function normalizeQuestTimestamp(value: unknown): string | null {
   if (!s) {
     return null;
   }
+  
+  // Handle epoch string timestamps that might be present due to DB migrations
+  const numericValue = Number(s);
+  if (s.length > 8 && Number.isFinite(numericValue)) {
+    const dNum = new Date(numericValue);
+    if (!Number.isNaN(dNum.getTime())) {
+      return dNum.toISOString();
+    }
+  }
+
   const d = new Date(s);
   return Number.isNaN(d.getTime()) ? null : d.toISOString();
 }
