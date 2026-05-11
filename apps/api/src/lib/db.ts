@@ -12,7 +12,11 @@ const PG_TIMESTAMP_OID = 1114;
 const PG_TIMESTAMPTZ_OID = 1184;
 
 function normalizePgDateTimeText(value: string) {
-  return value.includes(" ") ? value.replace(" ", "T") : value;
+  let normalized = value.includes(" ") ? value.replace(" ", "T") : value;
+  if (/[+-]\d{2}$/.test(normalized)) {
+    normalized += ":00";
+  }
+  return normalized;
 }
 
 function parsePgInt8(value: string) {
