@@ -2788,9 +2788,9 @@ dustsweepRoutes.get("/tokens/:address", async (c) => {
   const runtimeKey = `dustsweep:tokens:${userAddress.toLowerCase()}`;
 
   try {
-    const result = await runtimeCache.getOrSet(runtimeKey, 60_000, async () => {
-      const cached = await getCachedTokenResult(userAddress);
-      if (cached) return cached;
+    const result = await runtimeCache.getOrSet(runtimeKey, 30_000, async () => {
+      // DB cache bypassed: stale payloads from previous filter logic cause empty results.
+      // Runtime cache (30s) is sufficient for avoiding repeated Alchemy calls.
 
       const whitelist = await loadWhitelist();
       const balances = await alchemyRpc<{
@@ -2866,7 +2866,6 @@ dustsweepRoutes.get("/tokens/:address", async (c) => {
       swappable.sort((a, b) => b.valueUSD - a.valueUSD);
 
       const payload = { swappable, unavailable };
-      await setCachedTokenResult(userAddress, payload);
       return payload;
     });
 
