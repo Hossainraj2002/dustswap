@@ -35,10 +35,10 @@ function getSweepButtonState(args: {
   if (args.sweepStep === "pending") return { state: "pending", label: "Sweeping..." };
   if (args.selectedCount === 0) return { state: "disabled", label: "Select tokens" };
   if (!args.hasTokenOut) return { state: "disabled", label: "Select output token" };
-  if (args.isLoading || args.isQuoting || !args.quoteReady) {
-    return { state: "loading", label: "Getting best route..." };
-  }
-  return { state: "ready", label: "Sweep Now" };
+  if (args.isQuoting) return { state: "loading", label: "Getting best route..." };
+  if (args.quoteReady) return { state: "ready", label: "Sweep Now" };
+  // Tokens selected, no quote yet → user must click Preview
+  return { state: "preview", label: "Preview Sweep" };
 }
 
 /* ─── Unconnected landing ───────────────────────────────────────────────── */
@@ -272,7 +272,15 @@ export default function DustSweepPage() {
           {/* Sweep button */}
           <SweepButton
             visualState={buttonState}
-            onClick={() => void sweep.executeSweep()}
+            onClick={() => {
+              if (buttonState.state === "preview") {
+                void sweep.previewSweep();
+              } else if (buttonState.state === "error") {
+                sweep.resetSweepState();
+              } else {
+                void sweep.executeSweep();
+              }
+            }}
             txHash={sweep.txHash}
           />
         </div>

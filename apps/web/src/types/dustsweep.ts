@@ -145,6 +145,7 @@ export type DustSweepRecordResponse = {
 export type SweepButtonVisualState =
   | { state: "disabled"; label: "Select tokens" }
   | { state: "disabled"; label: "Select output token" }
+  | { state: "preview"; label: "Preview Sweep" }
   | { state: "ready"; label: "Sweep Now" }
   | { state: "loading"; label: "Getting best route..." }
   | { state: "approving"; label: "Approve tokens..." }

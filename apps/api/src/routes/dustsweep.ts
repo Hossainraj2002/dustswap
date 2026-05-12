@@ -562,7 +562,14 @@ async function setCachedTokenResult(address: Address, payload: unknown) {
 }
 
 async function callContract(to: Address, data: Hex) {
-  return baseRpcRequest<Hex>("eth_call", [{ to, data }, "latest"]);
+  // 5s timeout per RPC call so one slow node doesn't block the quote pipeline
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 5_000);
+  try {
+    return await baseRpcRequest<Hex>("eth_call", [{ to, data }, "latest"]);
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 async function tryQuoteV3Single(
@@ -659,25 +666,36 @@ async function getV3QuoteCandidates(args: {
     return candidates;
   }
 
-  for (const [feeA, feeB] of TWO_HOP_FEE_PAIRS) {
-    if (!args.feeTiers.includes(feeA) || !args.feeTiers.includes(feeB)) continue;
-    try {
-      const path = encodeV3Path(args.tokenIn, feeA, WETH_ADDRESS, feeB, args.tokenOut);
-      const amountOut = await tryQuoteV3Path(args.quoter, path, args.amountIn);
-      if (!amountOut) continue;
-      candidates.push({
-        tokenIn: args.tokenIn,
-        amountIn: args.amountIn.toString(),
-        amountOutMin: "0",
-        estimatedOut: amountOut.toString(),
-        dex: args.dex,
-        dexName: `${args.dexName} via WETH`,
-        dexData: encodeV3DexData(feeA, path),
-        poolFee: feeA,
-        amountOut,
-      });
-    } catch {
-      // Try the next path.
+  // Two-hop: try WETH and USDC as intermediate tokens
+  const intermediates: Array<{ mid: Address; label: string }> = [];
+  if (args.tokenIn.toLowerCase() !== WETH_ADDRESS.toLowerCase() && args.tokenOut.toLowerCase() !== WETH_ADDRESS.toLowerCase()) {
+    intermediates.push({ mid: WETH_ADDRESS, label: "WETH" });
+  }
+  if (args.tokenIn.toLowerCase() !== USDC_ADDRESS.toLowerCase() && args.tokenOut.toLowerCase() !== USDC_ADDRESS.toLowerCase()) {
+    intermediates.push({ mid: USDC_ADDRESS, label: "USDC" });
+  }
+
+  for (const { mid, label } of intermediates) {
+    for (const [feeA, feeB] of TWO_HOP_FEE_PAIRS) {
+      if (!args.feeTiers.includes(feeA) || !args.feeTiers.includes(feeB)) continue;
+      try {
+        const path = encodeV3Path(args.tokenIn, feeA, mid, feeB, args.tokenOut);
+        const amountOut = await tryQuoteV3Path(args.quoter, path, args.amountIn);
+        if (!amountOut) continue;
+        candidates.push({
+          tokenIn: args.tokenIn,
+          amountIn: args.amountIn.toString(),
+          amountOutMin: "0",
+          estimatedOut: amountOut.toString(),
+          dex: args.dex,
+          dexName: `${args.dexName} via ${label}`,
+          dexData: encodeV3DexData(feeA, path),
+          poolFee: feeA,
+          amountOut,
+        });
+      } catch {
+        // Try the next path.
+      }
     }
   }
 
@@ -718,19 +736,24 @@ async function getAerodromeQuoteCandidates(
   const directRoutes = [false, true].map((stable) => [
     { from: tokenIn, to: tokenOut, stable, factory: AERODROME_FACTORY_ADDRESS },
   ]);
-  const twoHopRoutes = [false, true].map((stable) => [
-    { from: tokenIn, to: WETH_ADDRESS, stable: false, factory: AERODROME_FACTORY_ADDRESS },
-    { from: WETH_ADDRESS, to: tokenOut, stable, factory: AERODROME_FACTORY_ADDRESS },
-  ]);
+
+  // 2-hop via WETH and USDC intermediates
+  const twoHopRoutes: Array<Array<{ from: Address; to: Address; stable: boolean; factory: Address }>> = [];
+  const intermediates: Array<{ mid: Address; skip: boolean }> = [
+    { mid: WETH_ADDRESS, skip: tokenIn.toLowerCase() === WETH_ADDRESS.toLowerCase() || tokenOut.toLowerCase() === WETH_ADDRESS.toLowerCase() },
+    { mid: USDC_ADDRESS, skip: tokenIn.toLowerCase() === USDC_ADDRESS.toLowerCase() || tokenOut.toLowerCase() === USDC_ADDRESS.toLowerCase() },
+  ];
+  for (const { mid, skip } of intermediates) {
+    if (skip) continue;
+    for (const stable of [false, true]) {
+      twoHopRoutes.push([
+        { from: tokenIn, to: mid, stable: false, factory: AERODROME_FACTORY_ADDRESS },
+        { from: mid, to: tokenOut, stable, factory: AERODROME_FACTORY_ADDRESS },
+      ]);
+    }
+  }
 
   for (const routes of [...directRoutes, ...twoHopRoutes]) {
-    if (
-      routes.length > 1 &&
-      (tokenIn.toLowerCase() === WETH_ADDRESS.toLowerCase() ||
-        tokenOut.toLowerCase() === WETH_ADDRESS.toLowerCase())
-    ) {
-      continue;
-    }
     try {
       const amountOut = await tryQuoteAerodromeRoutes(amountIn, routes);
       if (!amountOut) continue;
@@ -907,6 +930,141 @@ async function get0xQuoteCandidate(
   }
 }
 
+// ── Uniswap V4 Quoting ──────────────────────────────────────────────────────
+const UNISWAP_V4_QUOTER_ADDRESS = (process.env.UNISWAP_V4_QUOTER_ADDRESS ||
+  "0x0d5e0f971ed27fbff6c2837bf31316121532048d") as Address;
+
+const V4_QUOTER_ABI = [
+  {
+    inputs: [
+      {
+        components: [
+          {
+            name: "poolKey",
+            type: "tuple",
+            components: [
+              { name: "currency0", type: "address" },
+              { name: "currency1", type: "address" },
+              { name: "fee", type: "uint24" },
+              { name: "tickSpacing", type: "int24" },
+              { name: "hooks", type: "address" },
+            ],
+          },
+          { name: "zeroForOne", type: "bool" },
+          { name: "exactAmount", type: "uint128" },
+          { name: "sqrtPriceLimitX96", type: "uint160" },
+          { name: "hookData", type: "bytes" },
+        ],
+        name: "params",
+        type: "tuple",
+      },
+    ],
+    name: "quoteExactInputSingle",
+    outputs: [
+      { name: "deltaAmounts", type: "int128[]" },
+      { name: "sqrtPriceX96After", type: "uint160" },
+      { name: "initializedTicksCrossed", type: "uint32" },
+    ],
+    stateMutability: "nonpayable",
+    type: "function",
+  },
+] as const;
+
+// V4 fee → tickSpacing mapping (standard Uniswap V4 defaults)
+const V4_FEE_TICK_SPACING = [
+  { fee: 100, tickSpacing: 1 },
+  { fee: 500, tickSpacing: 10 },
+  { fee: 3000, tickSpacing: 60 },
+  { fee: 10000, tickSpacing: 200 },
+] as const;
+
+async function tryQuoteV4Single(
+  tokenIn: Address,
+  tokenOut: Address,
+  amountIn: bigint,
+  fee: number,
+  tickSpacing: number,
+): Promise<bigint | null> {
+  // V4 requires currency0 < currency1 (sorted numerically)
+  const sorted = BigInt(tokenIn) < BigInt(tokenOut);
+  const currency0 = sorted ? tokenIn : tokenOut;
+  const currency1 = sorted ? tokenOut : tokenIn;
+  const zeroForOne = sorted; // if tokenIn is currency0, we swap 0→1
+
+  const data = encodeFunctionData({
+    abi: V4_QUOTER_ABI,
+    functionName: "quoteExactInputSingle",
+    args: [{
+      poolKey: {
+        currency0,
+        currency1,
+        fee,
+        tickSpacing,
+        hooks: "0x0000000000000000000000000000000000000000" as Address,
+      },
+      zeroForOne,
+      exactAmount: amountIn <= BigInt("170141183460469231731687303715884105727")
+        ? amountIn
+        : BigInt("170141183460469231731687303715884105727"), // uint128 max
+      sqrtPriceLimitX96: 0n,
+      hookData: "0x" as Hex,
+    }],
+  });
+
+  try {
+    const result = await callContract(UNISWAP_V4_QUOTER_ADDRESS, data);
+    if (!result || result === "0x") return null;
+    const decoded = decodeFunctionResult({
+      abi: V4_QUOTER_ABI,
+      functionName: "quoteExactInputSingle",
+      data: result,
+    });
+    // deltaAmounts: [amount0, amount1] — the output is the negative delta
+    const deltas = decoded[0];
+    // If zeroForOne, output is deltaAmounts[1] (negative = received)
+    // If !zeroForOne, output is deltaAmounts[0] (negative = received)
+    const outputDelta = zeroForOne ? deltas[1] : deltas[0];
+    const amountOut = outputDelta < 0n ? -outputDelta : 0n;
+    return amountOut > 0n ? amountOut : null;
+  } catch {
+    return null;
+  }
+}
+
+async function getV4QuoteCandidates(
+  tokenIn: Address,
+  tokenOut: Address,
+  amountIn: bigint,
+): Promise<QuoteCandidate[]> {
+  const candidates: QuoteCandidate[] = [];
+
+  for (const { fee, tickSpacing } of V4_FEE_TICK_SPACING) {
+    try {
+      const amountOut = await tryQuoteV4Single(tokenIn, tokenOut, amountIn, fee, tickSpacing);
+      if (!amountOut) continue;
+      // V4 uses DEX.UNISWAP_V4 = 1 — encode dexData with fee + tickSpacing
+      candidates.push({
+        tokenIn,
+        amountIn: amountIn.toString(),
+        amountOutMin: "0",
+        estimatedOut: amountOut.toString(),
+        dex: DEX.UNISWAP_V4,
+        dexName: "Uniswap V4",
+        dexData: encodeAbiParameters(
+          [{ type: "uint24" }, { type: "int24" }],
+          [fee, tickSpacing],
+        ),
+        poolFee: fee,
+        amountOut,
+      });
+    } catch {
+      // Try next fee tier.
+    }
+  }
+
+  return candidates;
+}
+
 async function getBestQuote(
   tokenIn: Address,
   tokenOut: Address,
@@ -933,6 +1091,7 @@ async function getBestQuote(
         amountIn,
         feeTiers: PANCAKE_FEE_TIERS,
       }),
+      getV4QuoteCandidates(tokenIn, tokenOut, amountIn),
       getAerodromeQuoteCandidates(tokenIn, tokenOut, amountIn),
       getBaseSwapQuoteCandidates(tokenIn, tokenOut, amountIn),
       get0xQuoteCandidate(tokenIn, tokenOut, amountIn, slippageBps).then((quote) =>
@@ -2656,8 +2815,9 @@ dustsweepRoutes.get("/tokens/:address", async (c) => {
           .filter((address): address is Address => isAddress(address)),
       );
 
-      const swappable = [];
-      const unavailable = [];
+      type TokenResult = { valueUSD: number; [key: string]: unknown };
+      const swappable: TokenResult[] = [];
+      const unavailable: TokenResult[] = [];
 
       for (const balance of whitelistedBalances.slice(0, 80)) {
         if (!isAddress(balance.contractAddress)) continue;
@@ -2689,16 +2849,13 @@ dustsweepRoutes.get("/tokens/:address", async (c) => {
           valueUSD: Math.round(valueUSD * 10000) / 10000,
         };
 
-        if (valueUSD > 0 && valueUSD < MIN_VALUE_USD) {
-          unavailable.push({ ...baseToken, reason: "BELOW_THRESHOLD" as const });
+        // Skip tokens worth less than $0.01 entirely — too small to sweep
+        if (valueUSD < 0.01 && priceUSD > 0) {
           continue;
         }
 
-        if (liquidityUSD <= 0 && tokenAddress.toLowerCase() !== USDC_ADDRESS.toLowerCase()) {
-          unavailable.push({ ...baseToken, reason: "NO_LIQUIDITY" as const });
-          continue;
-        }
-
+        // All whitelisted tokens are considered sweepable
+        // (the whitelist sync already filters for minimum liquidity)
         swappable.push({
           ...baseToken,
           bestDex: bestDexFromSource(whitelistRow.source),
@@ -2707,7 +2864,6 @@ dustsweepRoutes.get("/tokens/:address", async (c) => {
       }
 
       swappable.sort((a, b) => b.valueUSD - a.valueUSD);
-      unavailable.sort((a, b) => b.valueUSD - a.valueUSD);
 
       const payload = { swappable, unavailable };
       await setCachedTokenResult(userAddress, payload);

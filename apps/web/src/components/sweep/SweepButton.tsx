@@ -41,13 +41,14 @@ export function SweepButton({
   onClick: () => void;
   txHash: Hex | null;
 }) {
-  const disabled = visualState.state === "disabled" || visualState.state === "loading";
+  const disabled = visualState.state === "disabled";
   const isBusy =
     visualState.state === "loading" ||
     visualState.state === "approving" ||
     visualState.state === "signing" ||
     visualState.state === "pending";
   const isSuccess = visualState.state === "success" && txHash;
+  const isPreview = visualState.state === "preview";
 
   if (isSuccess) {
     return (
@@ -71,17 +72,29 @@ export function SweepButton({
       disabled={disabled || isBusy}
       className={cx(
         "flex min-h-[52px] w-full items-center justify-center gap-2.5 rounded-2xl px-4 text-base font-bold transition-all",
-        visualState.state === "ready"
-          ? "bg-blue-600 text-white shadow-[0_8px_24px_rgba(37,99,235,0.28)] hover:-translate-y-0.5 hover:bg-blue-700 hover:shadow-[0_12px_32px_rgba(37,99,235,0.36)]"
-          : visualState.state === "error"
-            ? "bg-red-500 text-white shadow-[0_8px_24px_rgba(239,68,68,0.24)] hover:bg-red-600"
-            : visualState.state === "loading" || isBusy
-              ? "cursor-wait bg-blue-500 text-white opacity-90"
-              : "cursor-not-allowed bg-slate-100 text-slate-400",
+        isPreview
+          ? "bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-[0_8px_24px_rgba(37,99,235,0.32)] hover:-translate-y-0.5 hover:shadow-[0_12px_32px_rgba(37,99,235,0.4)]"
+          : visualState.state === "ready"
+            ? "bg-blue-600 text-white shadow-[0_8px_24px_rgba(37,99,235,0.28)] hover:-translate-y-0.5 hover:bg-blue-700 hover:shadow-[0_12px_32px_rgba(37,99,235,0.36)]"
+            : visualState.state === "error"
+              ? "bg-red-500 text-white shadow-[0_8px_24px_rgba(239,68,68,0.24)] hover:bg-red-600"
+              : visualState.state === "loading" || isBusy
+                ? "cursor-wait bg-blue-500 text-white opacity-90"
+                : "cursor-not-allowed bg-slate-100 text-slate-400",
       )}
     >
       {isBusy ? <Spinner /> : null}
-      {visualState.label}
+      {isPreview ? (
+        <>
+          <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+            <circle cx="12" cy="12" r="3" />
+          </svg>
+          {visualState.label}
+        </>
+      ) : (
+        visualState.label
+      )}
     </button>
   );
 }

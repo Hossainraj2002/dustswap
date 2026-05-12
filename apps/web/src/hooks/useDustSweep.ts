@@ -79,6 +79,7 @@ export type UseDustSweepReturn = {
   clearUnavailableTokens: () => void;
   refreshTokens: () => Promise<void>;
   refreshQuote: () => Promise<void>;
+  previewSweep: () => Promise<void>;
   executeSweep: () => Promise<ExecuteSweepResult | null>;
   resetSweepState: () => void;
 };
@@ -304,14 +305,7 @@ export function useDustSweep(): UseDustSweepReturn {
     }
   }, [address, selectedTokens, slippageBps, tokenOut]);
 
-  useEffect(() => {
-    if (!address || !tokenOut || selectedTokens.length === 0) return;
-    const timeoutId = window.setTimeout(() => {
-      void refreshQuote();
-    }, 500);
-
-    return () => window.clearTimeout(timeoutId);
-  }, [address, refreshQuote, selectedTokens.length, slippageBps, tokenOut]);
+  // Quote ONLY fires on explicit user action (previewSweep), not on token selection
 
   const addToken = useCallback((token: SelectedToken) => {
     setAutoMode(false);
@@ -614,6 +608,7 @@ export function useDustSweep(): UseDustSweepReturn {
     clearUnavailableTokens,
     refreshTokens,
     refreshQuote,
+    previewSweep: refreshQuote,
     executeSweep,
     resetSweepState,
   };
