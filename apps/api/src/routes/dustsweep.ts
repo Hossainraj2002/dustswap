@@ -416,31 +416,111 @@ async function loadWhitelist() {
   return map;
 }
 
+// Concurrency limiter for parallel async tasks
+async function pLimit<T>(tasks: (() => Promise<T>)[], concurrency: number): Promise<T[]> {
+  const results: T[] = new Array(tasks.length);
+  let index = 0;
+  async function worker() {
+    while (index < tasks.length) {
+      const i = index++;
+      results[i] = await tasks[i]();
+    }
+  }
+  const workers = Array.from({ length: Math.min(concurrency, tasks.length) }, () => worker());
+  await Promise.all(workers);
+  return results;
+}
+
+async function fetchTokenPricesDexScreener(addresses: Address[]): Promise<Record<string, number>> {
+  const prices: Record<string, number> = {};
+  // DexScreener accepts up to 30 addresses per call — free, no auth, fast
+  const BATCH = 30;
+  for (let i = 0; i < addresses.length; i += BATCH) {
+    const batch = addresses.slice(i, i + BATCH);
+    try {
+      const response = await fetch(
+        `https://api.dexscreener.com/tokens/v1/base/${batch.join(",")}`,
+        {
+          headers: {
+            Accept: "application/json",
+            "User-Agent": "DustSwap/1.0 (+https://app.dustswap.wtf)",
+          },
+          signal: AbortSignal.timeout(8_000),
+        },
+      );
+      if (!response.ok) continue;
+      const pairs = (await response.json()) as Array<{
+        priceUsd?: string;
+        baseToken?: { address?: string };
+        quoteToken?: { address?: string };
+        liquidity?: { usd?: number };
+      }>;
+      // DexScreener returns pairs — pick highest-liquidity price per token
+      const bestByToken = new Map<string, number>();
+      for (const pair of pairs) {
+        const price = Number(pair.priceUsd || 0);
+        if (!price) continue;
+        const tokenAddr = (pair.baseToken?.address || "").toLowerCase();
+        if (!tokenAddr) continue;
+        const existing = bestByToken.get(tokenAddr) ?? 0;
+        if (price > existing) bestByToken.set(tokenAddr, price);
+      }
+      for (const [addr, price] of bestByToken) {
+        prices[addr] = price;
+      }
+    } catch {
+      // ignore batch failure, try next batch
+    }
+  }
+  return prices;
+}
+
 async function fetchTokenPrices(addresses: Address[]) {
   const prices: Record<string, number> = {
     [USDC_ADDRESS.toLowerCase()]: 1,
+    [USDBC_ADDRESS.toLowerCase()]: 1,
+    [USDT_ADDRESS.toLowerCase()]: 1,
+    [DAI_ADDRESS.toLowerCase()]: 1,
   };
 
   if (addresses.length === 0) return prices;
 
-  try {
-    const url = new URL("https://api.coingecko.com/api/v3/simple/token_price/base");
-    url.searchParams.set("contract_addresses", addresses.map((address) => address.toLowerCase()).join(","));
-    url.searchParams.set("vs_currencies", "usd");
-    const response = await fetch(url, {
-      headers: { Accept: "application/json" },
-    });
+  // Filter out stablecoins already priced above
+  const needed = addresses.filter((a) => !prices[a.toLowerCase()]);
+  if (needed.length === 0) return prices;
 
-    if (response.ok) {
-      const data = (await response.json()) as Record<string, { usd?: number }>;
-      for (const [address, value] of Object.entries(data)) {
-        if (value.usd && value.usd > 0) {
-          prices[address.toLowerCase()] = value.usd;
-        }
-      }
+  // Strategy A: DexScreener — free, no auth, best coverage for Base memecoins
+  try {
+    const dexPrices = await fetchTokenPricesDexScreener(needed);
+    for (const [addr, price] of Object.entries(dexPrices)) {
+      if (price > 0) prices[addr.toLowerCase()] = price;
     }
   } catch {
-    // Prices are display-only; quoting can still proceed.
+    // continue to fallback
+  }
+
+  // Strategy B: CoinGecko — for tokens DexScreener missed
+  const stillMissing = needed.filter((a) => !prices[a.toLowerCase()]);
+  if (stillMissing.length > 0) {
+    try {
+      const url = new URL("https://api.coingecko.com/api/v3/simple/token_price/base");
+      url.searchParams.set("contract_addresses", stillMissing.map((a) => a.toLowerCase()).join(","));
+      url.searchParams.set("vs_currencies", "usd");
+      const response = await fetch(url, {
+        headers: { Accept: "application/json" },
+        signal: AbortSignal.timeout(6_000),
+      });
+      if (response.ok) {
+        const data = (await response.json()) as Record<string, { usd?: number }>;
+        for (const [address, value] of Object.entries(data)) {
+          if (value.usd && value.usd > 0) {
+            prices[address.toLowerCase()] = value.usd;
+          }
+        }
+      }
+    } catch {
+      // Prices are display-only; quoting can still proceed.
+    }
   }
 
   return prices;
@@ -2665,23 +2745,31 @@ dustsweepRoutes.post("/quote", async (c) => {
 
   const tokenOut = normalizeAddress(body.tokenOut);
   const slippageBps = Math.max(1, Math.min(3000, Number(body.slippageBps || 50)));
-  const outputDecimals = tokenOut.toLowerCase() === USDC_ADDRESS.toLowerCase() ? 6 : 18;
   const routes: DustSweepRoute[] = [];
   const skippedTokens: QuoteSkippedToken[] = [];
-  const whitelist = await loadWhitelist();
+  const [whitelist] = await Promise.all([loadWhitelist()]);
   const userAddress = normalizeAddress(body.userAddress);
+
+  // Resolve output token decimals from whitelist, default to 6 for USDC, 18 otherwise
+  const outputWhitelistRow = whitelist.get(tokenOut.toLowerCase());
+  const outputDecimals = outputWhitelistRow
+    ? Number(outputWhitelistRow.decimals ?? 18)
+    : tokenOut.toLowerCase() === USDC_ADDRESS.toLowerCase()
+      ? 6
+      : 18;
+
+  // ── Step 1: validate and parse all inputs upfront ──────────────────────────
+  type PendingToken = { tokenIn: Address; amountIn: bigint; index: number };
+  const pending: PendingToken[] = [];
 
   for (let i = 0; i < body.tokenIns.length; i++) {
     const rawTokenIn = body.tokenIns[i];
     if (!isAddress(rawTokenIn)) continue;
     const tokenIn = normalizeAddress(rawTokenIn);
     if (tokenIn.toLowerCase() === tokenOut.toLowerCase()) continue;
+
     if (!whitelist.has(tokenIn.toLowerCase())) {
-      skippedTokens.push({
-        token: tokenIn,
-        reason: "NOT_WHITELISTED",
-        message: "Token is not whitelisted for DustSweep.",
-      });
+      skippedTokens.push({ token: tokenIn, reason: "NOT_WHITELISTED", message: "Token is not whitelisted for DustSweep." });
       continue;
     }
 
@@ -2692,53 +2780,69 @@ dustsweepRoutes.post("/quote", async (c) => {
       continue;
     }
     if (amountIn <= 0n) {
-      skippedTokens.push({
-        token: tokenIn,
-        reason: "BELOW_THRESHOLD",
-        message: "Token balance is too small to quote.",
-      });
+      skippedTokens.push({ token: tokenIn, reason: "BELOW_THRESHOLD", message: "Token balance is too small to quote." });
       continue;
     }
 
-    const liveBalance = await readErc20Balance(tokenIn, userAddress);
-    if (liveBalance < amountIn) {
+    pending.push({ tokenIn, amountIn, index: i });
+  }
+
+  // ── Step 2: check live balances in parallel ─────────────────────────────────
+  const balanceChecks = await Promise.all(
+    pending.map(({ tokenIn, amountIn }) =>
+      readErc20Balance(tokenIn, userAddress)
+        .then((live) => ({ live, amountIn, ok: live >= amountIn }))
+        .catch(() => ({ live: 0n, amountIn, ok: false })),
+    ),
+  );
+
+  const readyToQuote: PendingToken[] = [];
+  for (let i = 0; i < pending.length; i++) {
+    const item = pending[i]!;
+    const check = balanceChecks[i]!;
+    if (!check.ok) {
       skippedTokens.push({
-        token: tokenIn,
+        token: item.tokenIn,
         reason: "BALANCE_CHANGED",
         message: "Token balance changed. Refresh balances before sweeping this token.",
       });
+    } else {
+      readyToQuote.push(item);
+    }
+  }
+
+  // ── Step 3: run getBestQuote in parallel (max 8 concurrent) ────────────────
+  const quoteTasks = readyToQuote.map(
+    ({ tokenIn, amountIn }) =>
+      () =>
+        getBestQuote(tokenIn, tokenOut, amountIn, slippageBps)
+          .then((best) => ({ tokenIn, amountIn, best, error: null }))
+          .catch((error: unknown) => ({
+            tokenIn,
+            amountIn,
+            best: null as QuoteCandidate | null,
+            error: error instanceof Error ? error.message : String(error),
+          })),
+  );
+
+  const quoteResults = await pLimit(quoteTasks, 8);
+
+  for (const result of quoteResults) {
+    if (result.error || !result.best) {
+      if (result.error) {
+        console.warn("[dustsweep/quote] quote source failed", { tokenIn: result.tokenIn, tokenOut, message: result.error });
+        skippedTokens.push({ token: result.tokenIn, reason: "QUOTE_FAILED", message: "Quote source failed for this token." });
+      } else {
+        skippedTokens.push({ token: result.tokenIn, reason: "NO_LIQUIDITY", message: "No route found for this token." });
+      }
       continue;
     }
 
-    let best: QuoteCandidate | null = null;
-    try {
-      best = await getBestQuote(tokenIn, tokenOut, amountIn, slippageBps);
-    } catch (error) {
-      console.warn("[dustsweep/quote] quote source failed", {
-        tokenIn,
-        tokenOut,
-        message: error instanceof Error ? error.message : String(error),
-      });
-      skippedTokens.push({
-        token: tokenIn,
-        reason: "QUOTE_FAILED",
-        message: "Quote source failed for this token.",
-      });
-      continue;
-    }
-    if (!best) {
-      skippedTokens.push({
-        token: tokenIn,
-        reason: "NO_LIQUIDITY",
-        message: "No route found for this token.",
-      });
-      continue;
-    }
-
+    const best = result.best;
     const amountOutMin = (best.amountOut * BigInt(10_000 - slippageBps)) / 10_000n;
     routes.push({
-      tokenIn,
-      amountIn: amountIn.toString(),
+      tokenIn: result.tokenIn,
+      amountIn: result.amountIn.toString(),
       amountOutMin: amountOutMin.toString(),
       estimatedOut: best.estimatedOut,
       dex: best.dex,

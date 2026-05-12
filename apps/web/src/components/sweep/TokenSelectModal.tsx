@@ -87,8 +87,12 @@ export function TokenSelectModal({
     [selectedTokens],
   );
 
+  // Sort swappable by valueUSD descending — highest value first
   const visibleSwappable = useMemo(
-    () => swappableTokens.filter((token) => tokenMatchesSearch(token, query)),
+    () =>
+      swappableTokens
+        .filter((token) => tokenMatchesSearch(token, query))
+        .sort((a, b) => (b.valueUSD ?? 0) - (a.valueUSD ?? 0)),
     [query, swappableTokens],
   );
   const visibleUnavailable = useMemo(
@@ -99,6 +103,25 @@ export function TokenSelectModal({
     () => outputTokens.filter((token) => tokenMatchesSearch(token, query)),
     [outputTokens, query],
   );
+
+  function fmtBalance(value: string | undefined) {
+    const num = Number(value || "0");
+    if (!Number.isFinite(num) || num === 0) return "0";
+    if (num >= 1_000_000) return `${(num / 1_000_000).toFixed(2)}M`;
+    if (num >= 1_000) return `${(num / 1_000).toFixed(2)}K`;
+    if (num >= 1) return num.toLocaleString(undefined, { maximumFractionDigits: 3 });
+    if (num >= 0.001) return num.toPrecision(3);
+    return num.toExponential(2);
+  }
+
+  function fmtUSD(value: number | undefined) {
+    const v = value ?? 0;
+    if (v >= 1000) return `$${(v / 1000).toFixed(1)}K`;
+    if (v >= 1) return `$${v.toFixed(2)}`;
+    if (v >= 0.01) return `$${v.toFixed(3)}`;
+    if (v > 0) return "<$0.01";
+    return "$0.00";
+  }
 
   if (!isOpen) return null;
 
@@ -219,11 +242,11 @@ export function TokenSelectModal({
                       </span>
                     </span>
                     <span className="shrink-0 text-right">
-                      <span className="block font-mono text-base text-slate-950">
-                        {token.balanceFormatted || "0"}
+                      <span className="block font-mono text-sm font-semibold text-slate-900">
+                        {fmtBalance(token.balanceFormatted)} {token.symbol}
                       </span>
-                      <span className="block text-sm text-slate-500">
-                        ${(token.valueUSD ?? 0).toFixed(2)}
+                      <span className={`block text-xs font-medium ${(token.valueUSD ?? 0) > 0 ? "text-emerald-600" : "text-slate-400"}`}>
+                        {fmtUSD(token.valueUSD)}
                       </span>
                     </span>
                   </button>

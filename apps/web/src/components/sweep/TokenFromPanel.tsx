@@ -7,14 +7,23 @@ function cx(...parts: Array<string | false | null | undefined>) {
   return parts.filter(Boolean).join(" ");
 }
 
-function formatTokenAmount(value: string) {
+function formatAmount(value: string, decimals = 18) {
   const num = Number(value);
-  if (!Number.isFinite(num)) return value;
-  if (num >= 1_000_000) return `${(num / 1_000_000).toFixed(1)}M`;
-  if (num >= 1_000) return `${(num / 1_000).toFixed(1)}K`;
+  if (!Number.isFinite(num) || num === 0) return "0";
+  if (num >= 1_000_000) return `${(num / 1_000_000).toFixed(2)}M`;
+  if (num >= 1_000) return `${(num / 1_000).toFixed(2)}K`;
   if (num >= 1) return num.toLocaleString(undefined, { maximumFractionDigits: 3 });
-  if (num >= 0.001) return num.toFixed(4);
+  // For very small amounts use significant figures
+  if (num >= 0.001) return num.toPrecision(3);
   return num.toExponential(2);
+}
+
+function formatUSD(value: number) {
+  if (value >= 1000) return `$${(value / 1000).toFixed(1)}K`;
+  if (value >= 1) return `$${value.toFixed(2)}`;
+  if (value >= 0.01) return `$${value.toFixed(3)}`;
+  if (value > 0) return "<$0.01";
+  return "";
 }
 
 function SettingsIcon() {
@@ -64,6 +73,9 @@ export function TokenFromPanel({
   onToggleAuto: () => void;
   onOpenSettings: () => void;
 }) {
+  // Sort by valueUSD descending so highest-value tokens appear first in the chip grid
+  const sorted = [...selectedTokens].sort((a, b) => (b.valueUSD ?? 0) - (a.valueUSD ?? 0));
+
   return (
     <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
       {/* Header row */}
@@ -110,7 +122,7 @@ export function TokenFromPanel({
       {/* Chip grid */}
       <div className="px-3 pb-3">
         <div className="rounded-xl bg-slate-50/80 p-2">
-          {selectedTokens.length === 0 ? (
+          {sorted.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-5 text-center">
               <div className="mb-2 flex h-10 w-10 items-center justify-center rounded-full bg-slate-100">
                 <svg viewBox="0 0 24 24" className="h-5 w-5 text-slate-300" fill="none" stroke="currentColor" strokeWidth="1.5">
@@ -122,28 +134,40 @@ export function TokenFromPanel({
             </div>
           ) : (
             <div className="grid grid-cols-2 gap-1.5">
-              {selectedTokens.map((token) => (
-                <div
-                  key={token.address}
-                  className="group flex h-[38px] items-center gap-1.5 rounded-[10px] border border-blue-100 bg-white px-2 shadow-[0_1px_4px_rgba(37,99,235,0.06)] transition-all hover:border-blue-300 hover:shadow-[0_2px_8px_rgba(37,99,235,0.1)]"
-                >
-                  <TokenLogo token={token} size="sm" />
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-[11px] font-semibold leading-tight text-slate-800">
-                      {formatTokenAmount(token.balanceFormatted)}
-                    </p>
-                    <p className="truncate text-[10px] leading-tight text-slate-400">{token.symbol}</p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => onRemove(token.address)}
-                    className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[13px] text-slate-300 transition-colors hover:bg-red-50 hover:text-red-500 group-hover:text-slate-400"
-                    aria-label={`Remove ${token.symbol}`}
+              {sorted.map((token) => {
+                const usdStr = formatUSD(token.valueUSD ?? 0);
+                return (
+                  <div
+                    key={token.address}
+                    className="group flex h-[44px] items-center gap-1.5 rounded-[10px] border border-blue-100 bg-white px-2 shadow-[0_1px_4px_rgba(37,99,235,0.06)] transition-all hover:border-blue-300 hover:shadow-[0_2px_8px_rgba(37,99,235,0.1)]"
                   >
-                    ×
-                  </button>
-                </div>
-              ))}
+                    <TokenLogo token={token} size="sm" />
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-[11px] font-semibold leading-tight text-slate-800">
+                        {formatAmount(token.balanceFormatted, token.decimals)}{" "}
+                        <span className="text-slate-500">{token.symbol}</span>
+                      </p>
+                      {usdStr ? (
+                        <p className="truncate text-[10px] leading-tight text-emerald-600 font-medium">
+                          {usdStr}
+                        </p>
+                      ) : (
+                        <p className="truncate text-[10px] leading-tight text-slate-300">
+                          no price
+                        </p>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => onRemove(token.address)}
+                      className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[13px] text-slate-300 transition-colors hover:bg-red-50 hover:text-red-500 group-hover:text-slate-400"
+                      aria-label={`Remove ${token.symbol}`}
+                    >
+                      ×
+                    </button>
+                  </div>
+                );
+              })}
             </div>
           )}
 
