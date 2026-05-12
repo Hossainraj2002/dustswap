@@ -41,6 +41,56 @@ function getSweepButtonState(args: {
   return { state: "ready", label: "Sweep Now" };
 }
 
+/* ─── Unconnected landing ───────────────────────────────────────────────── */
+function DisconnectedView() {
+  return (
+    <div className="min-h-screen bg-gradient-to-b from-blue-50 via-white to-slate-50 px-4 py-8">
+      <div className="mx-auto flex min-h-[80dvh] max-w-[400px] flex-col items-center justify-center text-center">
+        {/* Logo */}
+        <div className="relative mb-6">
+          <div className="absolute inset-0 rounded-3xl bg-blue-200/30 blur-xl" />
+          <Image
+            src="/logo.png"
+            alt="DustSwap"
+            width={88}
+            height={88}
+            className="relative rounded-3xl shadow-lg"
+            priority
+          />
+        </div>
+
+        <h1 className="text-3xl font-bold tracking-tight text-slate-900">DustSweep</h1>
+        <p className="mt-1.5 text-sm font-medium text-blue-600">Base dust aggregator</p>
+        <p className="mt-4 max-w-sm text-sm leading-relaxed text-slate-500">
+          Connect a wallet to find small Base token balances and sweep them into one useful asset in just two transactions.
+        </p>
+
+        {/* Feature pills */}
+        <div className="mt-6 flex flex-wrap justify-center gap-2">
+          {["Up to 50 tokens", "EIP-712 signing", "1 approval + 1 sweep"].map((f) => (
+            <span
+              key={f}
+              className="rounded-full border border-blue-100 bg-blue-50 px-3 py-1 text-xs font-medium text-blue-600"
+            >
+              {f}
+            </span>
+          ))}
+        </div>
+
+        <div className="mt-8 w-full">
+          <WalletConnectButton
+            connectLabel="Connect Wallet"
+            description="Connect your wallet to use DustSweep."
+            fullWidth
+            className="rounded-2xl bg-blue-600 px-6 py-3 text-sm font-bold text-white shadow-[0_8px_24px_rgba(37,99,235,0.28)] hover:border-blue-600 hover:bg-blue-700 hover:text-white"
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ─── Main connected view ───────────────────────────────────────────────── */
 export default function DustSweepPage() {
   const { address, isConnected } = useAccount();
   const sweep = useDustSweep();
@@ -72,29 +122,11 @@ export default function DustSweepPage() {
     !walletGateDismissed;
 
   if (!isConnected) {
-    return (
-      <div className="min-h-screen bg-[#eef3f8] px-4 py-8">
-        <div className="mx-auto flex min-h-[70dvh] max-w-[460px] flex-col items-center justify-center text-center">
-          <Image src="/logo.png" alt="DustSwap" width={84} height={84} className="mb-5" priority />
-          <h1 className="text-3xl font-semibold tracking-[-0.02em] text-slate-950">DustSweep</h1>
-          <p className="mt-3 max-w-sm text-sm leading-6 text-slate-600">
-            Connect a supported wallet to find small Base token balances and sweep them into one useful asset.
-          </p>
-          <div className="mt-7 w-full">
-            <WalletConnectButton
-              connectLabel="Connect Wallet"
-              description="Connect your wallet to use DustSweep."
-              fullWidth
-              className="bg-blue-600 text-white hover:border-blue-600 hover:bg-blue-700 hover:text-white"
-            />
-          </div>
-        </div>
-      </div>
-    );
+    return <DisconnectedView />;
   }
 
   return (
-    <div className="min-h-screen bg-[#eef3f8] px-3 py-5 sm:px-6 sm:py-8">
+    <div className="min-h-screen bg-gradient-to-b from-blue-50 via-slate-50 to-white px-3 py-5 sm:px-6 sm:py-8">
       <WalletGateModal
         isOpen={shouldShowWalletGate}
         walletName={sweep.walletStatus.walletName}
@@ -105,7 +137,7 @@ export default function DustSweepPage() {
       <TokenSelectModal
         isOpen={tokenModalMode !== null}
         mode={tokenModalMode || "multi"}
-        title={tokenModalMode === "single" ? "Select a token" : "Select tokens"}
+        title={tokenModalMode === "single" ? "Select output token" : "Select tokens to sweep"}
         swappableTokens={sweep.swappableTokens}
         unavailableTokens={sweep.unavailableTokens}
         selectedTokens={sweep.selectedTokens}
@@ -123,36 +155,37 @@ export default function DustSweepPage() {
         onClose={() => setSettingsOpen(false)}
       />
 
-      <div className="mx-auto max-w-[520px] pb-[calc(82px+env(safe-area-inset-bottom))] sm:pb-8">
-        <div className="mb-5 flex items-center justify-between">
-          <Image src="/logo.png" alt="DustSwap" width={58} height={58} priority />
-          <div className="text-center">
-            <p className="text-lg font-semibold text-slate-950">Sweep</p>
-            <p className="text-xs text-slate-500">Base dust aggregator</p>
+      <div className="mx-auto max-w-[480px] pb-[calc(82px+env(safe-area-inset-bottom))] sm:pb-8">
+        {/* ── Header ── */}
+        <div className="mb-5 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5">
+            <Image src="/logo.png" alt="DustSwap" width={44} height={44} priority className="rounded-xl" />
+            <div>
+              <p className="text-base font-bold text-slate-900">Sweep</p>
+              <p className="text-[11px] text-slate-400">Base dust aggregator</p>
+            </div>
           </div>
           <WalletConnectButton
             connectedLabel={address ? shortAddress(address) : undefined}
             showDisconnect
-            className="rounded-[8px] bg-white px-3 text-xs"
+            className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-sm hover:border-blue-300 hover:bg-blue-50 hover:text-blue-700"
           />
         </div>
 
-        <div className="mb-5 rounded-[8px] border border-blue-100 bg-white/90 px-4 py-3 text-sm leading-6 text-slate-700 shadow-sm">
-          Sweep small token balances into one output token with a single route and one wallet signature.
-        </div>
-
-        <main className="space-y-4 rounded-[8px] border border-slate-200 bg-white/85 p-3 shadow-[0_18px_48px_rgba(15,23,42,0.08)] backdrop-blur sm:p-4">
+        {/* ── Main card ── */}
+        <div className="space-y-3">
+          {/* From panel */}
           <TokenFromPanel
             selectedTokens={sweep.selectedTokens}
             onRemove={sweep.removeToken}
             onClearAll={sweep.clearSelectedTokens}
-            onSelectAll={sweep.selectAllTokens}
             onAddMore={() => setTokenModalMode("multi")}
             autoMode={sweep.autoMode}
             onToggleAuto={() => sweep.setAutoMode(!sweep.autoMode)}
             onOpenSettings={() => setSettingsOpen(true)}
           />
 
+          {/* To panel */}
           <TokenToPanel
             tokenOut={sweep.tokenOut}
             quote={sweep.quote}
@@ -160,20 +193,22 @@ export default function DustSweepPage() {
             onOpenSelect={() => setTokenModalMode("single")}
           />
 
-          <div className="flex items-center justify-between gap-4 text-sm">
-            <span className="text-slate-500">Receiver address</span>
-            <span className="font-mono text-slate-950">
-              {address ? shortAddress(address) : "-"}
+          {/* Receiver address */}
+          <div className="flex items-center justify-between rounded-2xl border border-slate-100 bg-white px-4 py-3 shadow-sm">
+            <span className="text-xs font-medium text-slate-400">Receiver address</span>
+            <span className="font-mono text-xs font-semibold text-slate-700">
+              {address ? shortAddress(address) : "—"}
             </span>
           </div>
 
+          {/* Quote/sweep errors */}
           {sweep.quoteError ? (
-            <div className="rounded-[8px] border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-              Could not get quote.{" "}
+            <div className="flex items-center justify-between gap-3 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+              <span>Could not get quote.</span>
               <button
                 type="button"
                 onClick={() => void sweep.refreshQuote()}
-                className="font-semibold underline"
+                className="shrink-0 font-semibold underline underline-offset-2"
               >
                 Retry
               </button>
@@ -181,46 +216,66 @@ export default function DustSweepPage() {
           ) : null}
 
           {sweep.error ? (
-            <div className="rounded-[8px] border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+            <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
               {sweep.error}
             </div>
           ) : null}
 
-          <div className="space-y-3">
-            <p className="text-sm font-medium text-slate-500">Route</p>
-            <RouteDisplay
-              quote={sweep.quote}
-              tokenOut={sweep.tokenOut}
-              selectedTokens={sweep.selectedTokens}
-            />
-            {!sweep.quote && sweep.selectedTokens.length > 0 ? (
-              <div className="rounded-[8px] border border-dashed border-slate-200 bg-slate-50 px-4 py-5 text-center text-sm text-slate-500">
-                {sweep.isQuoting ? "Finding the best route..." : "Route appears after quote"}
-              </div>
-            ) : null}
-          </div>
-
-          <SweepDetails quote={sweep.quote} slippageBps={sweep.slippageBps} />
-
-          <UnavailablePanel
-            tokens={sweep.unavailableTokens}
-            onClearAll={sweep.clearUnavailableTokens}
-          />
-
-          {sweep.quote?.routes.some((route) => route.priceImpactBps > 500) ? (
-            <div className="rounded-[8px] border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-              High price impact. Review the route before sweeping.
+          {/* Route section */}
+          {sweep.selectedTokens.length > 0 ? (
+            <div className="space-y-2">
+              <p className="px-1 text-xs font-semibold uppercase tracking-wider text-slate-400">Route</p>
+              {sweep.quote ? (
+                <RouteDisplay
+                  quote={sweep.quote}
+                  tokenOut={sweep.tokenOut}
+                  selectedTokens={sweep.selectedTokens}
+                />
+              ) : (
+                <div className="flex items-center justify-center gap-2 rounded-2xl border border-dashed border-slate-200 bg-white py-6 text-sm text-slate-400">
+                  {sweep.isQuoting ? (
+                    <>
+                      <span className="h-4 w-4 animate-spin rounded-full border-2 border-blue-400 border-t-transparent" />
+                      Finding the best route...
+                    </>
+                  ) : (
+                    "Route will appear after quote"
+                  )}
+                </div>
+              )}
             </div>
           ) : null}
 
-          <div>
-            <SweepButton
-              visualState={buttonState}
-              onClick={() => void sweep.executeSweep()}
-              txHash={sweep.txHash}
+          {/* Slippage / Fee / Price Impact */}
+          {sweep.quote ? (
+            <div className="rounded-2xl border border-slate-100 bg-white px-4 py-3 shadow-sm">
+              <SweepDetails quote={sweep.quote} slippageBps={sweep.slippageBps} />
+            </div>
+          ) : null}
+
+          {/* Unavailable tokens */}
+          {sweep.unavailableTokens.length > 0 ? (
+            <UnavailablePanel
+              tokens={sweep.unavailableTokens}
+              onClearAll={sweep.clearUnavailableTokens}
             />
-          </div>
-        </main>
+          ) : null}
+
+          {/* High price impact warning */}
+          {sweep.quote?.routes.some((route) => route.priceImpactBps > 500) ? (
+            <div className="flex items-start gap-2.5 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+              <span className="mt-0.5 text-base">⚠️</span>
+              <span>High price impact detected. Review the route carefully before sweeping.</span>
+            </div>
+          ) : null}
+
+          {/* Sweep button */}
+          <SweepButton
+            visualState={buttonState}
+            onClick={() => void sweep.executeSweep()}
+            txHash={sweep.txHash}
+          />
+        </div>
       </div>
     </div>
   );

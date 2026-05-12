@@ -10,14 +10,16 @@ function cx(...parts: Array<string | false | null | undefined>) {
 function formatTokenAmount(value: string) {
   const num = Number(value);
   if (!Number.isFinite(num)) return value;
-  if (num >= 1000) return num.toLocaleString(undefined, { maximumFractionDigits: 2 });
-  if (num >= 1) return num.toLocaleString(undefined, { maximumFractionDigits: 4 });
-  return num.toLocaleString(undefined, { maximumFractionDigits: 6 });
+  if (num >= 1_000_000) return `${(num / 1_000_000).toFixed(1)}M`;
+  if (num >= 1_000) return `${(num / 1_000).toFixed(1)}K`;
+  if (num >= 1) return num.toLocaleString(undefined, { maximumFractionDigits: 3 });
+  if (num >= 0.001) return num.toFixed(4);
+  return num.toExponential(2);
 }
 
 function SettingsIcon() {
   return (
-    <svg viewBox="0 0 24 24" aria-hidden="true" className="h-5 w-5">
+    <svg viewBox="0 0 24 24" aria-hidden="true" className="h-4 w-4">
       <path
         fill="none"
         stroke="currentColor"
@@ -30,11 +32,25 @@ function SettingsIcon() {
   );
 }
 
+function ChevronDownIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className="h-3.5 w-3.5">
+      <path
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+        d="m6 9 6 6 6-6"
+      />
+    </svg>
+  );
+}
+
 export function TokenFromPanel({
   selectedTokens,
   onRemove,
   onClearAll,
-  onSelectAll,
   onAddMore,
   autoMode,
   onToggleAuto,
@@ -43,25 +59,27 @@ export function TokenFromPanel({
   selectedTokens: SelectedToken[];
   onRemove: (address: string) => void;
   onClearAll: () => void;
-  onSelectAll: () => void;
   onAddMore: () => void;
   autoMode: boolean;
   onToggleAuto: () => void;
   onOpenSettings: () => void;
 }) {
   return (
-    <section className="rounded-[8px] border border-slate-200 bg-white p-4 shadow-sm">
-      <div className="mb-4 flex items-start justify-between gap-3">
-        <div>
-          <p className="text-sm font-medium text-slate-500">From</p>
-          <p className="mt-1 text-xs text-slate-400">{selectedTokens.length}/50 selected</p>
+    <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+      {/* Header row */}
+      <div className="flex items-center justify-between gap-2 px-4 pb-2.5 pt-3.5">
+        <div className="flex items-baseline gap-2">
+          <p className="text-sm font-semibold text-slate-700">From</p>
+          <span className="rounded-full bg-blue-100 px-1.5 py-0.5 text-[10px] font-semibold text-blue-600">
+            {selectedTokens.length}/50
+          </span>
         </div>
-        <div className="flex flex-wrap items-center justify-end gap-2">
+        <div className="flex items-center gap-1">
           <button
             type="button"
             onClick={onOpenSettings}
-            className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-slate-50 text-slate-500 transition-colors hover:border-blue-200 hover:bg-blue-50 hover:text-blue-600"
-            aria-label="Open slippage settings"
+            className="flex h-7 w-7 items-center justify-center rounded-full text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600"
+            aria-label="Slippage settings"
             title="Settings"
           >
             <SettingsIcon />
@@ -69,25 +87,19 @@ export function TokenFromPanel({
           <button
             type="button"
             onClick={onClearAll}
-            className="rounded-full px-2 text-sm font-medium text-slate-500 transition-colors hover:text-slate-900"
+            disabled={selectedTokens.length === 0}
+            className="rounded-full px-2.5 py-1 text-[11px] font-medium text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600 disabled:opacity-40"
           >
             Clear all
           </button>
           <button
             type="button"
-            onClick={onSelectAll}
-            className="rounded-full px-2 text-sm font-medium text-blue-600 transition-colors hover:text-blue-800"
-          >
-            Select all
-          </button>
-          <button
-            type="button"
             onClick={onToggleAuto}
             className={cx(
-              "rounded-full border px-3 text-sm font-semibold transition-colors",
+              "rounded-full px-3 py-1 text-[11px] font-semibold transition-all",
               autoMode
-                ? "border-blue-200 bg-blue-50 text-blue-700"
-                : "border-slate-200 bg-white text-slate-500 hover:bg-slate-50",
+                ? "bg-blue-600 text-white shadow-sm"
+                : "border border-slate-200 text-slate-500 hover:border-blue-300 hover:bg-blue-50 hover:text-blue-600",
             )}
           >
             Auto
@@ -95,42 +107,55 @@ export function TokenFromPanel({
         </div>
       </div>
 
-      <div className="rounded-[8px] bg-slate-50 p-3">
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-          {selectedTokens.map((token) => (
-            <div
-              key={token.address}
-              className="flex min-h-[58px] items-center gap-2 rounded-[8px] border border-blue-200 bg-white px-2 py-2 shadow-[0_6px_16px_rgba(37,99,235,0.08)] transition-all duration-150"
-            >
-              <TokenLogo token={token} size="sm" />
-              <div className="min-w-0 flex-1">
-                <p className="truncate font-mono text-sm text-slate-950">
-                  {formatTokenAmount(token.balanceFormatted)}
-                </p>
-                <p className="truncate text-[11px] text-slate-500">
-                  {token.symbol} ${token.valueUSD.toFixed(2)}
-                </p>
+      {/* Chip grid */}
+      <div className="px-3 pb-3">
+        <div className="rounded-xl bg-slate-50/80 p-2">
+          {selectedTokens.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-5 text-center">
+              <div className="mb-2 flex h-10 w-10 items-center justify-center rounded-full bg-slate-100">
+                <svg viewBox="0 0 24 24" className="h-5 w-5 text-slate-300" fill="none" stroke="currentColor" strokeWidth="1.5">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+                </svg>
               </div>
-              <button
-                type="button"
-                onClick={() => onRemove(token.address)}
-                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-slate-400 transition-colors hover:bg-red-50 hover:text-red-600"
-                aria-label={`Remove ${token.symbol}`}
-              >
-                &times;
-              </button>
+              <p className="text-xs font-medium text-slate-400">No tokens selected</p>
+              <p className="mt-0.5 text-[10px] text-slate-300">Click Auto or add assets below</p>
             </div>
-          ))}
-        </div>
+          ) : (
+            <div className="grid grid-cols-2 gap-1.5">
+              {selectedTokens.map((token) => (
+                <div
+                  key={token.address}
+                  className="group flex h-[38px] items-center gap-1.5 rounded-[10px] border border-blue-100 bg-white px-2 shadow-[0_1px_4px_rgba(37,99,235,0.06)] transition-all hover:border-blue-300 hover:shadow-[0_2px_8px_rgba(37,99,235,0.1)]"
+                >
+                  <TokenLogo token={token} size="sm" />
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-[11px] font-semibold leading-tight text-slate-800">
+                      {formatTokenAmount(token.balanceFormatted)}
+                    </p>
+                    <p className="truncate text-[10px] leading-tight text-slate-400">{token.symbol}</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => onRemove(token.address)}
+                    className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[13px] text-slate-300 transition-colors hover:bg-red-50 hover:text-red-500 group-hover:text-slate-400"
+                    aria-label={`Remove ${token.symbol}`}
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
 
-        <button
-          type="button"
-          onClick={onAddMore}
-          className="mt-3 inline-flex min-h-[42px] items-center justify-center rounded-[8px] border border-slate-200 bg-white px-4 text-sm font-medium text-slate-600 shadow-sm transition-colors hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700"
-        >
-          Add more assets
-          <span className="ml-1 text-slate-400">v</span>
-        </button>
+          <button
+            type="button"
+            onClick={onAddMore}
+            className="mt-1.5 flex w-full items-center justify-center gap-1.5 rounded-[10px] border border-dashed border-slate-200 bg-white py-2 text-[11px] font-medium text-slate-400 transition-colors hover:border-blue-300 hover:bg-blue-50 hover:text-blue-600"
+          >
+            Add more assets
+            <ChevronDownIcon />
+          </button>
+        </div>
       </div>
     </section>
   );

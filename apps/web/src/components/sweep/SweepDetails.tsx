@@ -16,24 +16,30 @@ export function SweepDetails({
     0,
   );
 
+  const rows = [
+    { label: "Slippage", value: `${(slippageBps / 100).toFixed(2)}%`, warn: false },
+    {
+      label: "Fee",
+      value: `~$${quote.feeAmountUSD < 0.01 ? "<0.01" : quote.feeAmountUSD.toFixed(2)} (${quote.feeBps / 100}%)`,
+      warn: false,
+    },
+    {
+      label: "Price impact",
+      value: `${(maxImpact / 100).toFixed(2)}%`,
+      warn: maxImpact > 500,
+    },
+  ];
+
   return (
-    <dl className="grid grid-cols-1 gap-2 text-sm sm:grid-cols-3">
-      <div className="flex justify-between gap-3 sm:block">
-        <dt className="text-slate-500">Slippage</dt>
-        <dd className="font-medium text-slate-950">{(slippageBps / 100).toFixed(2)}%</dd>
-      </div>
-      <div className="flex justify-between gap-3 sm:block">
-        <dt className="text-slate-500">Fee</dt>
-        <dd className="font-medium text-slate-950">
-          ~${quote.feeAmountUSD < 0.01 ? "<0.01" : quote.feeAmountUSD.toFixed(2)} ({quote.feeBps / 100}%)
-        </dd>
-      </div>
-      <div className="flex justify-between gap-3 sm:block">
-        <dt className="text-slate-500">Price impact</dt>
-        <dd className={maxImpact > 500 ? "font-medium text-red-600" : "font-medium text-slate-950"}>
-          {(maxImpact / 100).toFixed(2)}%
-        </dd>
-      </div>
+    <dl className="flex flex-col gap-2">
+      {rows.map(({ label, value, warn }) => (
+        <div key={label} className="flex items-center justify-between gap-3">
+          <dt className="text-xs text-slate-400">{label}</dt>
+          <dd className={`text-xs font-semibold ${warn ? "text-red-600" : "text-slate-700"}`}>
+            {value}
+          </dd>
+        </div>
+      ))}
     </dl>
   );
 }

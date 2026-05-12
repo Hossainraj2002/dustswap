@@ -162,7 +162,7 @@ export function useDustSweep(): UseDustSweepReturn {
   const [tokenOut, setTokenOut] = useState<Token | null>(DEFAULT_OUTPUT_TOKENS[0]);
   const [quote, setQuote] = useState<DustSweepQuoteResponse | null>(null);
   const [slippageBps, setSlippageBps] = useState(50);
-  const [autoMode, setAutoMode] = useState(true);
+  const [autoMode, setAutoMode] = useState(false);
   const [isQuoting, setIsQuoting] = useState(false);
   const [isSweeping, setIsSweeping] = useState(false);
   const [sweepStep, setSweepStep] = useState<SweepStep>("idle");
