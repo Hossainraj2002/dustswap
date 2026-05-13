@@ -19,7 +19,7 @@ import {
 import { postgresDb } from "../services/postgres";
 import { pointsEngine } from "../services/pointsEngine";
 import { runtimeCache } from "../utils/runtimeCache";
-import { baseRpcRequest } from "../utils/baseRpc";
+import { baseRpcRequest, alchemyRpcRequest, RpcDeterministicError, RpcTransportError } from "../utils/baseRpc";
 import { isMaintenanceBlocking, maintenanceUnavailable } from "../utils/maintenance";
 
 const dustsweepRoutes = new Hono();
@@ -200,51 +200,98 @@ const AERODROME_PAIR_CREATED_TOPIC = toEventSelector(
   "PairCreated(address,address,bool,address,uint256)",
 );
 
+// ── Real compiled ABI — matches DustSweepRouter.sol ──
+// The contract has sweepDust (single-hop) and sweepDustMultiHop (multi-hop).
+// We use sweepDustMultiHop as the canonical entry since it supports both single and multi-hop routes.
 const DUST_SWEEP_ROUTER_ABI = [
   {
-    name: "sweep",
+    name: "sweepDust",
     type: "function",
     stateMutability: "nonpayable",
     inputs: [
       {
-        name: "params",
-        type: "tuple",
+        name: "orders",
+        type: "tuple[]",
         components: [
-          {
-            name: "routes",
-            type: "tuple[]",
-            components: [
-              { name: "tokenIn", type: "address" },
-              { name: "amountIn", type: "uint256" },
-              { name: "amountOutMin", type: "uint256" },
-              { name: "dex", type: "uint8" },
-              { name: "dexData", type: "bytes" },
-            ],
-          },
-          { name: "tokenOut", type: "address" },
-          { name: "receiver", type: "address" },
-          { name: "deadline", type: "uint256" },
-          {
-            name: "permit",
-            type: "tuple",
-            components: [
-              {
-                name: "permitted",
-                type: "tuple[]",
-                components: [
-                  { name: "token", type: "address" },
-                  { name: "amount", type: "uint256" },
-                ],
-              },
-              { name: "nonce", type: "uint256" },
-              { name: "deadline", type: "uint256" },
-            ],
-          },
-          { name: "signature", type: "bytes" },
+          { name: "tokenIn", type: "address" },
+          { name: "amountIn", type: "uint256" },
+          { name: "poolFee", type: "uint24" },
+          { name: "minAmountOut", type: "uint256" },
         ],
       },
+      { name: "tokenOut", type: "address" },
+      { name: "recipient", type: "address" },
+      { name: "deadline", type: "uint256" },
     ],
-    outputs: [{ name: "netOut", type: "uint256" }],
+    outputs: [],
+  },
+  {
+    name: "sweepDustMultiHop",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [
+      {
+        name: "orders",
+        type: "tuple[]",
+        components: [
+          { name: "tokenIn", type: "address" },
+          { name: "amountIn", type: "uint256" },
+          { name: "path", type: "bytes" },
+          { name: "minAmountOut", type: "uint256" },
+        ],
+      },
+      { name: "tokenOut", type: "address" },
+      { name: "recipient", type: "address" },
+      { name: "deadline", type: "uint256" },
+    ],
+    outputs: [],
+  },
+  {
+    name: "sweepDustToETH",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [
+      {
+        name: "orders",
+        type: "tuple[]",
+        components: [
+          { name: "tokenIn", type: "address" },
+          { name: "amountIn", type: "uint256" },
+          { name: "poolFee", type: "uint24" },
+          { name: "minAmountOut", type: "uint256" },
+        ],
+      },
+      { name: "recipient", type: "address" },
+      { name: "deadline", type: "uint256" },
+    ],
+    outputs: [],
+  },
+  {
+    name: "sweepDustMultiHopToETH",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [
+      {
+        name: "orders",
+        type: "tuple[]",
+        components: [
+          { name: "tokenIn", type: "address" },
+          { name: "amountIn", type: "uint256" },
+          { name: "path", type: "bytes" },
+          { name: "minAmountOut", type: "uint256" },
+        ],
+      },
+      { name: "recipient", type: "address" },
+      { name: "deadline", type: "uint256" },
+    ],
+    outputs: [],
+  },
+  {
+    name: "MAX_BATCH_SIZE",
+    type: "function",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "uint256" }],
   },
 ] as const;
 
@@ -369,7 +416,7 @@ function bestDexFromSource(source?: string | null) {
 }
 
 async function alchemyRpc<T>(method: string, params: unknown[]): Promise<T> {
-  return baseRpcRequest<T>(method, params);
+  return alchemyRpcRequest<T>(method, params, { timeoutMs: 10_000 });
 }
 
 async function loadWhitelist() {
@@ -561,15 +608,12 @@ async function setCachedTokenResult(address: Address, payload: unknown) {
   }
 }
 
-async function callContract(to: Address, data: Hex) {
+async function callContract(to: Address, data: Hex, signal?: AbortSignal) {
   // 5s timeout per RPC call so one slow node doesn't block the quote pipeline
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 5_000);
-  try {
-    return await baseRpcRequest<Hex>("eth_call", [{ to, data }, "latest"]);
-  } finally {
-    clearTimeout(timeout);
-  }
+  return baseRpcRequest<Hex>("eth_call", [{ to, data }, "latest"], {
+    signal,
+    timeoutMs: 5_000,
+  });
 }
 
 async function tryQuoteV3Single(
@@ -2789,14 +2833,20 @@ dustsweepRoutes.get("/tokens/:address", async (c) => {
 
   try {
     const result = await runtimeCache.getOrSet(runtimeKey, 30_000, async () => {
-      // DB cache bypassed: stale payloads from previous filter logic cause empty results.
-      // Runtime cache (30s) is sufficient for avoiding repeated Alchemy calls.
+      // ── Wallet-first discovery: fetch ALL balances, not just whitelisted ──
+      // Whitelist is used as metadata/liquidity HINTS, not a visibility gate.
+      const [whitelist, erc20Balances, nativeBalanceHex] = await Promise.all([
+        loadWhitelist(),
+        alchemyRpc<{ tokenBalances?: AlchemyBalance[] }>(
+          "alchemy_getTokenBalances",
+          [userAddress, "erc20"],
+        ),
+        baseRpcRequest<Hex>("eth_getBalance", [userAddress, "latest"], { timeoutMs: 5_000 }).catch(
+          () => "0x0" as Hex,
+        ),
+      ]);
 
-      const whitelist = await loadWhitelist();
-      const balances = await alchemyRpc<{
-        tokenBalances?: AlchemyBalance[];
-      }>("alchemy_getTokenBalances", [userAddress, "erc20"]);
-      const nonZero = (balances.tokenBalances || []).filter((balance) => {
+      const nonZero = (erc20Balances.tokenBalances || []).filter((balance) => {
         try {
           return BigInt(balance.tokenBalance || "0") > 0n;
         } catch {
@@ -2804,39 +2854,55 @@ dustsweepRoutes.get("/tokens/:address", async (c) => {
         }
       });
 
-      const whitelistedBalances = nonZero.filter(
-        (balance) =>
-          isAddress(balance.contractAddress) &&
-          whitelist.has(balance.contractAddress.toLowerCase()),
-      );
-      const prices = await fetchTokenPrices(
-        whitelistedBalances
-          .map((balance) => balance.contractAddress)
-          .filter((address): address is Address => isAddress(address)),
-      );
+      // Fetch prices for ALL non-zero balances, not just whitelisted
+      const allAddresses = nonZero
+        .map((b) => b.contractAddress)
+        .filter((a): a is Address => isAddress(a));
+      const prices = await fetchTokenPrices(allAddresses);
 
-      type TokenResult = { valueUSD: number; [key: string]: unknown };
+      type TokenResult = { valueUSD: number; status?: string; reason?: string; [key: string]: unknown };
       const swappable: TokenResult[] = [];
       const unavailable: TokenResult[] = [];
 
-      for (const balance of whitelistedBalances.slice(0, 80)) {
+      // ── Process ERC-20 balances ──
+      for (const balance of nonZero.slice(0, 200)) {
         if (!isAddress(balance.contractAddress)) continue;
 
         const tokenAddress = normalizeAddress(balance.contractAddress);
-        const whitelistRow = whitelist.get(tokenAddress.toLowerCase());
-        if (!whitelistRow) {
-          continue;
+        const key = tokenAddress.toLowerCase();
+        const whitelistRow = whitelist.get(key);
+
+        // Get metadata: prefer whitelist, fall back to on-chain read
+        let decimals = 18;
+        let symbol = `${tokenAddress.slice(0, 6)}...${tokenAddress.slice(-4)}`;
+        let name = symbol;
+        let logoURI: string | undefined;
+        let liquidityUSD = 0;
+        let bestDex: string = "GENERIC";
+
+        if (whitelistRow) {
+          decimals = Number(whitelistRow.decimals ?? 18);
+          symbol = String(whitelistRow.symbol ?? "TOKEN");
+          name = String(whitelistRow.name ?? symbol);
+          logoURI = whitelistRow.logo_uri ?? undefined;
+          liquidityUSD = Number(whitelistRow.liquidity_usd || 0);
+          bestDex = bestDexFromSource(whitelistRow.source);
+        } else {
+          // Not in whitelist — try on-chain metadata read
+          try {
+            const meta = await readErc20Metadata(tokenAddress);
+            decimals = meta.decimals;
+            symbol = meta.symbol;
+            name = meta.name;
+          } catch {
+            // Keep fallbacks
+          }
         }
 
-        const decimals = Number(whitelistRow.decimals ?? 18);
-        const symbol = String(whitelistRow.symbol ?? "TOKEN");
-        const name = String(whitelistRow.name ?? symbol);
-        const logoURI = whitelistRow.logo_uri ?? undefined;
         const rawBalance = BigInt(balance.tokenBalance).toString();
         const balanceFormatted = formatUnits(BigInt(rawBalance), decimals);
-        const priceUSD = prices[tokenAddress.toLowerCase()] || 0;
+        const priceUSD = prices[key] || 0;
         const valueUSD = Number(balanceFormatted) * priceUSD;
-        const liquidityUSD = Number(whitelistRow?.liquidity_usd || 0);
 
         const baseToken = {
           address: tokenAddress,
@@ -2849,24 +2915,88 @@ dustsweepRoutes.get("/tokens/:address", async (c) => {
           valueUSD: Math.round(valueUSD * 10000) / 10000,
         };
 
-        // Skip tokens worth less than $0.01 entirely — too small to sweep
-        if (valueUSD < 0.01 && priceUSD > 0) {
+        // ── Classification logic ──
+        // Skip output tokens (USDC, WETH) — they're not dust
+        if (key === USDC_ADDRESS.toLowerCase() || key === WETH_ADDRESS.toLowerCase()) {
           continue;
         }
 
-        // All whitelisted tokens are considered sweepable
-        // (the whitelist sync already filters for minimum liquidity)
+        // Skip sub-cent tokens with a known price
+        if (valueUSD < MIN_VALUE_USD && priceUSD > 0) {
+          unavailable.push({
+            ...baseToken,
+            status: "BELOW_THRESHOLD",
+            reason: `Worth less than $${MIN_VALUE_USD}`,
+            bestDex,
+            liquidityUSD,
+          });
+          continue;
+        }
+
+        // Unknown price — still show but classify
+        if (priceUSD === 0) {
+          // If it's in the whitelist with liquidity, it's probably sweepable
+          if (whitelistRow && liquidityUSD > MIN_WL_LIQUIDITY_USD) {
+            swappable.push({
+              ...baseToken,
+              bestDex,
+              liquidityUSD,
+              status: "SWAPPABLE",
+            });
+          } else {
+            unavailable.push({
+              ...baseToken,
+              status: "UNKNOWN_PRICE",
+              reason: "Price data unavailable",
+              bestDex,
+              liquidityUSD,
+            });
+          }
+          continue;
+        }
+
+        // Token has price and value — mark as swappable
         swappable.push({
           ...baseToken,
-          bestDex: bestDexFromSource(whitelistRow.source),
+          bestDex,
           liquidityUSD,
+          status: "SWAPPABLE",
         });
+      }
+
+      // ── Native ETH row ──
+      try {
+        const nativeBalance = BigInt(nativeBalanceHex || "0");
+        if (nativeBalance > 0n) {
+          const ethBalanceFormatted = formatUnits(nativeBalance, 18);
+          const ethPrice = prices[WETH_ADDRESS.toLowerCase()] || 0;
+          const ethValueUSD = Number(ethBalanceFormatted) * ethPrice;
+
+          if (ethValueUSD >= MIN_VALUE_USD || ethPrice === 0) {
+            swappable.push({
+              address: "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE" as Address,
+              symbol: "ETH",
+              name: "Ether",
+              decimals: 18,
+              logoURI: "https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/info/logo.png",
+              balance: nativeBalance.toString(),
+              balanceFormatted: ethBalanceFormatted,
+              valueUSD: Math.round(ethValueUSD * 10000) / 10000,
+              isNative: true,
+              wrapRequired: true,
+              bestDex: "GENERIC",
+              liquidityUSD: 0,
+              status: "NATIVE_WRAP_REQUIRED",
+            });
+          }
+        }
+      } catch {
+        // Native balance fetch failed — skip silently
       }
 
       swappable.sort((a, b) => b.valueUSD - a.valueUSD);
 
-      const payload = { swappable, unavailable };
-      return payload;
+      return { swappable, unavailable };
     });
 
     return c.json(result);
@@ -2891,8 +3021,13 @@ dustsweepRoutes.post("/quote", async (c) => {
   if (body.tokenIns.length !== body.amounts.length) {
     return c.json(errorJson("tokenIns and amounts length mismatch"), 400);
   }
-  if (body.tokenIns.length > 50) {
-    return c.json(errorJson("Maximum 50 tokens per sweep"), 400);
+
+  // Enforce actual contract capability — V1 contract has MAX_BATCH_SIZE = 10
+  const executionLane = process.env.DUST_SWEEP_EXECUTION_LANE || "owned";
+  const routeMaxCap = executionLane === "basket_aggregator" ? 50 : 10;
+
+  if (body.tokenIns.length > routeMaxCap) {
+    return c.json(errorJson(`Maximum ${routeMaxCap} tokens per sweep (${executionLane} lane)`), 400);
   }
   if (!isAddress(body.tokenOut) || !isAddress(body.userAddress)) {
     return c.json(errorJson("Invalid tokenOut or userAddress"), 400);
@@ -2902,7 +3037,7 @@ dustsweepRoutes.post("/quote", async (c) => {
   const slippageBps = Math.max(1, Math.min(3000, Number(body.slippageBps || 50)));
   const routes: DustSweepRoute[] = [];
   const skippedTokens: QuoteSkippedToken[] = [];
-  const [whitelist] = await Promise.all([loadWhitelist()]);
+  const whitelist = await loadWhitelist();
   const userAddress = normalizeAddress(body.userAddress);
 
   // Resolve output token decimals from whitelist, default to 6 for USDC, 18 otherwise
@@ -2913,8 +3048,8 @@ dustsweepRoutes.post("/quote", async (c) => {
       ? 6
       : 18;
 
-  // ── Step 1: validate and parse all inputs upfront ──────────────────────────
-  type PendingToken = { tokenIn: Address; amountIn: bigint; index: number };
+  // ── Step 1: validate and parse all inputs (no whitelist gating) ─────────────
+  type PendingToken = { tokenIn: Address; amountIn: bigint; index: number; bestDex?: string };
   const pending: PendingToken[] = [];
 
   for (let i = 0; i < body.tokenIns.length; i++) {
@@ -2923,8 +3058,13 @@ dustsweepRoutes.post("/quote", async (c) => {
     const tokenIn = normalizeAddress(rawTokenIn);
     if (tokenIn.toLowerCase() === tokenOut.toLowerCase()) continue;
 
-    if (!whitelist.has(tokenIn.toLowerCase())) {
-      skippedTokens.push({ token: tokenIn, reason: "NOT_WHITELISTED", message: "Token is not whitelisted for DustSweep." });
+    // Skip native ETH placeholder — must be wrapped to WETH first
+    if (tokenIn.toLowerCase() === "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee") {
+      skippedTokens.push({
+        token: tokenIn,
+        reason: "NO_LIQUIDITY",
+        message: "Native ETH must be wrapped to WETH before sweeping.",
+      });
       continue;
     }
 
@@ -2939,7 +3079,11 @@ dustsweepRoutes.post("/quote", async (c) => {
       continue;
     }
 
-    pending.push({ tokenIn, amountIn, index: i });
+    // Use whitelist as a bestDex hint — NOT a gate
+    const whitelistRow = whitelist.get(tokenIn.toLowerCase());
+    const bestDex = whitelistRow ? bestDexFromSource(whitelistRow.source) : "GENERIC";
+
+    pending.push({ tokenIn, amountIn, index: i, bestDex });
   }
 
   // ── Step 2: check live balances in parallel ─────────────────────────────────
@@ -2966,25 +3110,67 @@ dustsweepRoutes.post("/quote", async (c) => {
     }
   }
 
-  // ── Step 3: run getBestQuote in parallel (max 8 concurrent) ────────────────
+  // ── Step 3: routeability pre-screen with cache ─────────────────────────────
+  const ROUTEABILITY_OK_TTL = 60_000;
+  const ROUTEABILITY_NO_ROUTE_TTL = 30_000;
+
   const quoteTasks = readyToQuote.map(
     ({ tokenIn, amountIn }) =>
-      () =>
-        getBestQuote(tokenIn, tokenOut, amountIn, slippageBps)
-          .then((best) => ({ tokenIn, amountIn, best, error: null }))
-          .catch((error: unknown) => ({
-            tokenIn,
-            amountIn,
-            best: null as QuoteCandidate | null,
-            error: error instanceof Error ? error.message : String(error),
-          })),
+      async () => {
+        const cacheKey = `routeability:${tokenIn.toLowerCase()}:${tokenOut.toLowerCase()}`;
+        
+        // 1. Check runtime memory cache (fastest)
+        const memCached = runtimeCache.get<{ status: string; checkedAt: number }>(cacheKey);
+        if (memCached && memCached.status === "NO_ROUTE") {
+          return { tokenIn, amountIn, best: null, error: null, cachedNoRoute: true };
+        }
+
+        // 2. Check DB persistent cache (survives restarts)
+        const dbCached = await getDbRouteability(tokenIn, tokenOut, amountIn);
+        if (dbCached) {
+          if (dbCached.status === "NO_ROUTE") {
+            runtimeCache.set(cacheKey, { status: "NO_ROUTE", checkedAt: Date.now() }, ROUTEABILITY_NO_ROUTE_TTL);
+            return { tokenIn, amountIn, best: null, error: null, cachedNoRoute: true };
+          }
+          // If status is OK, we still might want a fresh quote to get live price,
+          // but we know a route exists. For now, we proceed to quote to be safe.
+        }
+
+        return getBestQuote(tokenIn, tokenOut, amountIn, slippageBps)
+          .then(async (best) => {
+            if (best) {
+              runtimeCache.set(cacheKey, { status: "OK", checkedAt: Date.now() }, ROUTEABILITY_OK_TTL);
+              await setDbRouteability(tokenIn, tokenOut, amountIn, "OK", ROUTEABILITY_OK_TTL * 10, best);
+            } else {
+              runtimeCache.set(cacheKey, { status: "NO_ROUTE", checkedAt: Date.now() }, ROUTEABILITY_NO_ROUTE_TTL);
+              await setDbRouteability(tokenIn, tokenOut, amountIn, "NO_ROUTE", ROUTEABILITY_NO_ROUTE_TTL * 10);
+            }
+            return { tokenIn, amountIn, best, error: null as string | null, cachedNoRoute: false };
+          })
+          .catch(async (error: unknown) => {
+            const message = error instanceof Error ? error.message : String(error);
+            if (error instanceof RpcDeterministicError) {
+              runtimeCache.set(cacheKey, { status: "NO_ROUTE", checkedAt: Date.now() }, ROUTEABILITY_NO_ROUTE_TTL);
+              await setDbRouteability(tokenIn, tokenOut, amountIn, "NO_ROUTE", ROUTEABILITY_NO_ROUTE_TTL * 10);
+            }
+            return {
+              tokenIn,
+              amountIn,
+              best: null as QuoteCandidate | null,
+              error: message,
+              cachedNoRoute: false,
+            };
+          });
+      },
   );
 
-  const quoteResults = await pLimit(quoteTasks, 8);
+  const quoteResults = await pLimit(quoteTasks, 4);
 
   for (const result of quoteResults) {
     if (result.error || !result.best) {
-      if (result.error) {
+      if (result.cachedNoRoute) {
+        skippedTokens.push({ token: result.tokenIn, reason: "NO_LIQUIDITY", message: "No route found (cached)." });
+      } else if (result.error) {
         console.warn("[dustsweep/quote] quote source failed", { tokenIn: result.tokenIn, tokenOut, message: result.error });
         skippedTokens.push({ token: result.tokenIn, reason: "QUOTE_FAILED", message: "Quote source failed for this token." });
       } else {
@@ -3018,7 +3204,10 @@ dustsweepRoutes.post("/quote", async (c) => {
     );
   }
 
-  const totalEstimatedOut = routes.reduce(
+  // Enforce route cap again after quoting (defensive)
+  const cappedRoutes = routes.slice(0, routeMaxCap);
+
+  const totalEstimatedOut = cappedRoutes.reduce(
     (sum, route) => sum + BigInt(route.estimatedOut),
     0n,
   );
@@ -3032,16 +3221,18 @@ dustsweepRoutes.post("/quote", async (c) => {
   const permit2Nonce = BigInt(`0x${randomBytes(16).toString("hex")}`).toString();
 
   return c.json({
-    routes,
+    routes: cappedRoutes,
     skippedTokens,
     totalEstimatedOut: totalEstimatedOut.toString(),
     totalEstimatedOutUSD: Math.round(totalEstimatedOutUSD * 100) / 100,
     feeAmountUSD: Math.round(feeAmountUSD * 10000) / 10000,
     feeBps,
-    gasEstimateETH: (0.0000015 + routes.length * 0.0000007).toFixed(8),
-    gasEstimateUSD: Math.round((0.004 + routes.length * 0.0015) * 100) / 100,
+    gasEstimateETH: (0.0000015 + cappedRoutes.length * 0.0000007).toFixed(8),
+    gasEstimateUSD: Math.round((0.004 + cappedRoutes.length * 0.0015) * 100) / 100,
     permit2Nonce,
     deadline,
+    executionLane,
+    routeMaxCap,
   });
 });
 
@@ -3107,6 +3298,18 @@ dustsweepRoutes.post("/build-tx", async (c) => {
       409,
     );
   }
+  // Enforce V1 contract cap
+  const executionLane = process.env.DUST_SWEEP_EXECUTION_LANE || "owned";
+  const routeMaxCap = executionLane === "basket_aggregator" ? 50 : 10;
+
+  if (routes.length > routeMaxCap) {
+    return c.json(
+      errorJson(`Maximum ${routeMaxCap} tokens per sweep (${executionLane} lane)`, {
+        code: "ROUTE_CAP_EXCEEDED",
+      }),
+      400,
+    );
+  }
 
   const missingApprovals = await findMissingPermit2Approvals(userAddress, routes);
   if (missingApprovals.length > 0) {
@@ -3119,35 +3322,26 @@ dustsweepRoutes.post("/build-tx", async (c) => {
     );
   }
 
-  const sweepRoutes = routes.map((route) => ({
-    tokenIn: route.tokenIn,
+  // ── Encode against the REAL compiled ABI: sweepDustMultiHop ──
+  // MultiHopSwapOrder struct: (address tokenIn, uint256 amountIn, bytes path, uint256 minAmountOut)
+  // The `dexData` field from the quote response contains the encoded Uniswap V3 path bytes.
+  const orders = routes.map((route) => ({
+    tokenIn: route.tokenIn as Address,
     amountIn: BigInt(route.amountIn),
-    amountOutMin: BigInt(route.amountOutMin),
-    dex: route.dex ?? 0,
-    dexData: route.dexData,
+    path: (route.dexData || "0x") as Hex,
+    minAmountOut: BigInt(route.amountOutMin),
   }));
   const tokenOut = normalizeAddress(body.tokenOut);
   const receiver = normalizeAddress(body.receiver);
-  const permit = {
-    permitted: routes.map((route) => ({
-      token: route.tokenIn,
-      amount: BigInt(route.amountIn),
-    })),
-    nonce: BigInt(body.permit2Nonce),
-    deadline: BigInt(body.deadline),
-  };
+
   const calldata = encodeFunctionData({
     abi: DUST_SWEEP_ROUTER_ABI,
-    functionName: "sweep",
+    functionName: "sweepDustMultiHop",
     args: [
-      {
-        routes: sweepRoutes,
-        tokenOut,
-        receiver,
-        deadline: BigInt(body.deadline),
-        permit,
-        signature: "0x",
-      },
+      orders,
+      tokenOut,
+      receiver,
+      BigInt(body.deadline),
     ],
   });
 
@@ -3160,7 +3354,9 @@ dustsweepRoutes.post("/build-tx", async (c) => {
     ),
     contractAddress: normalizeAddress(DUST_SWEEP_ROUTER_ADDRESS),
     calldata,
-    callMode: "permit2-sweep",
+    callMode: "sweepDustMultiHop",
+    executionLane,
+    routeMaxCap,
   });
 });
 
@@ -3229,5 +3425,53 @@ dustsweepRoutes.post("/record-sweep", async (c) => {
     },
   });
 });
+
+// ── Routeability DB Cache Persistence ───────────────────────────────────────
+
+async function getDbRouteability(tokenIn: Address, tokenOut: Address, amountIn: bigint) {
+  try {
+    // Bucket amount to normalize cache keys (e.g. 1.23 ETH and 1.24 ETH are same bucket)
+    const amountBucket = amountIn.toString().slice(0, 3);
+    const { data } = await postgresDb
+      .from("dustsweep_routeability_cache")
+      .select("*")
+      .eq("chain_id", BASE_CHAIN_ID)
+      .eq("token_in", tokenIn.toLowerCase())
+      .eq("token_out", tokenOut.toLowerCase())
+      .eq("amount_bucket", amountBucket)
+      .gt("expires_at", new Date().toISOString())
+      .maybeSingle();
+
+    return data;
+  } catch (err) {
+    console.error("[dustsweep/cache] DB read error:", err);
+    return null;
+  }
+}
+
+async function setDbRouteability(
+  tokenIn: Address,
+  tokenOut: Address,
+  amountIn: bigint,
+  status: "OK" | "NO_ROUTE",
+  ttlMs: number,
+  payload?: any,
+) {
+  try {
+    const amountBucket = amountIn.toString().slice(0, 3);
+    await postgresDb.from("dustsweep_routeability_cache").upsert({
+      chain_id: BASE_CHAIN_ID,
+      token_in: tokenIn.toLowerCase(),
+      token_out: tokenOut.toLowerCase(),
+      amount_bucket: amountBucket,
+      status,
+      payload,
+      expires_at: new Date(Date.now() + ttlMs).toISOString(),
+      updated_at: new Date().toISOString(),
+    });
+  } catch (err) {
+    console.error("[dustsweep/cache] DB write error:", err);
+  }
+}
 
 export { dustsweepRoutes };

@@ -13,7 +13,9 @@ export type UnavailableReason =
   | "NOT_WHITELISTED"
   | "BELOW_THRESHOLD"
   | "BALANCE_CHANGED"
-  | "QUOTE_FAILED";
+  | "QUOTE_FAILED"
+  | "UNKNOWN_PRICE"
+  | "SPAM_OR_DENYLISTED";
 
 export type SweepStep = "idle" | "approving" | "signing" | "pending" | "success" | "error";
 
@@ -36,6 +38,9 @@ export type SwappableToken = Token & {
   valueUSD: number;
   bestDex: Exclude<DustSweepDexName, "UNISWAP_V4"> | "GENERIC";
   liquidityUSD: number;
+  status?: "SWAPPABLE" | "NATIVE_WRAP_REQUIRED";
+  isNative?: boolean;
+  wrapRequired?: boolean;
 };
 
 export type UnavailableToken = Token & {
@@ -43,6 +48,7 @@ export type UnavailableToken = Token & {
   balanceFormatted: string;
   valueUSD: number;
   reason: UnavailableReason;
+  status?: string;
 };
 
 export type SelectedToken = SwappableToken;
@@ -87,6 +93,8 @@ export type DustSweepQuoteResponse = {
   gasEstimateUSD: number;
   permit2Nonce: string;
   deadline: number;
+  executionLane?: string;
+  routeMaxCap?: number;
 };
 
 export type Permit2TypedData = {
@@ -128,6 +136,9 @@ export type DustSweepBuildTxResponse = {
   permit2: Permit2TypedData;
   contractAddress: Address;
   calldata: Hex;
+  callMode?: string;
+  executionLane?: string;
+  routeMaxCap?: number;
 };
 
 export type DustSweepRecordRequest = {

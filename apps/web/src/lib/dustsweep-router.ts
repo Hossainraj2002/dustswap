@@ -1,94 +1,42 @@
-import { encodeFunctionData, type Address, type Hex } from "viem";
-import { type DustSweepRoute } from "@/types/dustsweep";
+import { type Address, type Hex } from "viem";
+
+// ── Real compiled ABI from DustSweepRouter.sol ──
+// Import from the canonical compiled JSON rather than maintaining inline duplicates.
+// This is the source of truth — any ABI duplication across the codebase is a bug.
+import DustSweepRouterABI from "@/abi/DustSweepRouter.json";
 
 export const DUST_SWEEP_ROUTER_ADDRESS = (process.env
   .NEXT_PUBLIC_DUST_SWEEP_ROUTER ||
   process.env.NEXT_PUBLIC_DUST_SWEEP_ROUTER_ADDRESS ||
   "0x0000000000000000000000000000000000000000") as Address;
 
-export const dustSweepRouterAbi = [
-  {
-    name: "sweep",
-    type: "function",
-    stateMutability: "nonpayable",
-    inputs: [
-      {
-        name: "params",
-        type: "tuple",
-        components: [
-          {
-            name: "routes",
-            type: "tuple[]",
-            components: [
-              { name: "tokenIn", type: "address" },
-              { name: "amountIn", type: "uint256" },
-              { name: "amountOutMin", type: "uint256" },
-              { name: "dex", type: "uint8" },
-              { name: "dexData", type: "bytes" },
-            ],
-          },
-          { name: "tokenOut", type: "address" },
-          { name: "receiver", type: "address" },
-          { name: "deadline", type: "uint256" },
-          {
-            name: "permit",
-            type: "tuple",
-            components: [
-              {
-                name: "permitted",
-                type: "tuple[]",
-                components: [
-                  { name: "token", type: "address" },
-                  { name: "amount", type: "uint256" },
-                ],
-              },
-              { name: "nonce", type: "uint256" },
-              { name: "deadline", type: "uint256" },
-            ],
-          },
-          { name: "signature", type: "bytes" },
-        ],
-      },
-    ],
-    outputs: [{ name: "netOut", type: "uint256" }],
-  },
-] as const;
+export const dustSweepRouterAbi = DustSweepRouterABI;
 
-export function encodeDustSweepPermit2Calldata(args: {
-  routes: DustSweepRoute[];
+// V1 contract cap — must be respected until V2 is deployed
+export const V1_MAX_BATCH_SIZE = 10;
+
+/**
+ * The backend now provides canonical calldata via POST /build-tx.
+ * Frontend should NOT re-encode — use the backend's calldata directly.
+ *
+ * This function is DEPRECATED and kept only for backward compatibility.
+ * All new code should use the backend-provided calldata from build-tx response.
+ *
+ * @deprecated Use backend canonical calldata from POST /build-tx instead.
+ */
+export function encodeDustSweepPermit2Calldata(_args: {
+  routes: unknown[];
   tokenOut: Address;
   receiver: Address;
   deadline: number;
   permit2Nonce: string;
   signature: Hex;
 }): Hex {
-  return encodeFunctionData({
-    abi: dustSweepRouterAbi,
-    functionName: "sweep",
-    args: [
-      {
-        routes: args.routes.map((route) => ({
-          tokenIn: route.tokenIn,
-          amountIn: BigInt(route.amountIn),
-          amountOutMin: BigInt(route.amountOutMin),
-          dex: route.dex,
-          dexData: route.dexData,
-        })),
-        tokenOut: args.tokenOut,
-        receiver: args.receiver,
-        deadline: BigInt(args.deadline),
-        permit: {
-          permitted: args.routes.map((route) => ({
-            token: route.tokenIn,
-            amount: BigInt(route.amountIn),
-          })),
-          nonce: BigInt(args.permit2Nonce),
-          deadline: BigInt(args.deadline),
-        },
-        signature: args.signature,
-      },
-    ],
-  });
+  throw new Error(
+    "encodeDustSweepPermit2Calldata is deprecated. " +
+    "Use the canonical calldata from POST /api/dustsweep/build-tx response instead. " +
+    "The old phantom sweep() ABI does not exist in the deployed contract.",
+  );
 }
 
 export function parseDustSweepError(error: unknown) {
@@ -99,14 +47,17 @@ export function parseDustSweepError(error: unknown) {
   if (lower.includes("signatureexpired")) return "Deadline expired. Refreshing quote.";
   if (lower.includes("invalidnonce")) return "Permit already used. Refresh quote and try again.";
   if (lower.includes("insufficientoutput")) return "Slippage exceeded, try again or increase slippage.";
-  if (lower.includes("toomanytokens")) return "DustSweep can sweep up to 50 tokens in one batch.";
+  if (lower.includes("batchtoolarge")) return `DustSweep can sweep up to ${V1_MAX_BATCH_SIZE} tokens in one batch (V1 contract limit).`;
+  if (lower.includes("toomanytokens")) return `DustSweep can sweep up to ${V1_MAX_BATCH_SIZE} tokens in one batch.`;
   if (lower.includes("zerotokens")) return "Select at least one token to sweep.";
+  if (lower.includes("emptyorders")) return "Select at least one token to sweep.";
   if (lower.includes("permitlengthmismatch")) return "Permit data did not match the selected tokens.";
   if (lower.includes("permit2 approval required")) return "Approve the selected tokens and try again.";
   if (lower.includes("transfer_from_failed")) return "Permit2 could not pull one token. Refresh balances, approve tokens, and try again.";
   if (lower.includes("transfer amount exceeds balance")) return "One token balance changed. Refresh and try again.";
   if (lower.includes("token balance changed")) return "One token balance changed. Refresh and try again.";
   if (lower.includes("user rejected") || lower.includes("rejected")) return "Transaction cancelled";
+  if (lower.includes("route_cap_exceeded")) return `Too many tokens selected. Maximum ${V1_MAX_BATCH_SIZE} per sweep.`;
 
   return raw || "Transaction failed";
 }

@@ -5,21 +5,12 @@ import { useAccount, useConnection, useWalletClient } from "wagmi";
 import { useWalletConnection } from "@/hooks/useWalletConnection";
 import { type WalletWhitelistStatus } from "@/types/dustsweep";
 
-const TIER_1_CONNECTORS = new Set(["coinbaseWallet", "safe", "baseAccount"]);
-const TIER_2_CONNECTORS = new Set([
-  "metaMask",
-  "rainbow",
-  "injected",
-  "privy",
-  "trust",
-  "tokenPocket",
-  "okx",
-  "zerion",
-  "imToken",
-  "walletConnect",
-  "phantom",
-  "coinbaseWalletSDK",
-]);
+// ── Capability-based wallet support (~99% coverage) ──
+// Instead of brand/connector allowlists, we detect functional capabilities:
+// 1. signTypedData (EIP-712) — required for Permit2 batch signing
+// 2. sendTransaction — required for executing the sweep tx
+// This supports MetaMask, Rabby, Trust, Phantom, OKX, Coinbase, WalletConnect,
+// and any wallet that exposes these standard methods.
 
 const PRIVY_WALLET_NAMES: Record<string, string> = {
   base_account: "Coinbase Smart Wallet",
@@ -44,15 +35,6 @@ const PRIVY_WALLET_NAMES: Record<string, string> = {
   phantom: "Phantom",
   embedded: "Privy Embedded Wallet",
 };
-
-const BLOCKED_PRIVY_WALLET_TYPES = new Set([
-  "ledger",
-  "ledger_live",
-  "mew",
-  "myetherwallet",
-  "unknown_legacy",
-  "unknownLegacy",
-]);
 
 type EthereumFlags = {
   isMetaMask?: boolean;
@@ -98,32 +80,6 @@ function getPrivyWalletName(walletClientType: string | null) {
   return PRIVY_WALLET_NAMES[normalized] ?? null;
 }
 
-function isWhitelistedPrivyWallet(walletClientType: string | null) {
-  const normalized = normalizeWalletClientType(walletClientType);
-  if (!normalized) return false;
-  if (BLOCKED_PRIVY_WALLET_TYPES.has(normalized)) return false;
-
-  return Boolean(PRIVY_WALLET_NAMES[normalized]);
-}
-
-function isWhitelistedConnector(connectorId: string | null, walletClientType: string | null) {
-  if (isWhitelistedPrivyWallet(walletClientType)) return true;
-  if (!connectorId) return false;
-  if (TIER_1_CONNECTORS.has(connectorId)) return true;
-  if (TIER_2_CONNECTORS.has(connectorId)) return true;
-
-  const flags = getEthereumFlags();
-  return Boolean(
-    flags.isMetaMask ||
-      flags.isRabby ||
-      flags.isTrust ||
-      flags.isTokenPocket ||
-      flags.isOKExWallet ||
-      flags.isImToken ||
-      flags.isPhantom,
-  );
-}
-
 export function useWalletWhitelist(): WalletWhitelistStatus {
   const { isConnected } = useAccount();
   const connection = useConnection();
@@ -137,7 +93,7 @@ export function useWalletWhitelist(): WalletWhitelistStatus {
   useEffect(() => {
     let cancelled = false;
 
-    async function checkEIP712Support() {
+    async function checkCapabilities() {
       if (!isConnected) {
         setSupportsEIP712(false);
         setIsChecking(false);
@@ -152,7 +108,11 @@ export function useWalletWhitelist(): WalletWhitelistStatus {
 
       setIsChecking(true);
       try {
-        const supported = typeof walletClient.signTypedData === "function";
+        // Capability-based check: does the wallet expose signTypedData?
+        const hasSignTypedData = typeof walletClient.signTypedData === "function";
+        const hasSendTransaction = typeof walletClient.sendTransaction === "function";
+        const supported = hasSignTypedData && hasSendTransaction;
+
         if (!cancelled) {
           setSupportsEIP712(supported);
         }
@@ -167,7 +127,7 @@ export function useWalletWhitelist(): WalletWhitelistStatus {
       }
     }
 
-    void checkEIP712Support();
+    void checkCapabilities();
 
     return () => {
       cancelled = true;
@@ -181,18 +141,26 @@ export function useWalletWhitelist(): WalletWhitelistStatus {
       walletClientType === "coinbase_smart_wallet"
         ? "Coinbase Smart Wallet"
         : privyWalletName || detectInjectedWalletName(connectorId);
-    const whitelisted =
+
+    // Capability-based support: any wallet with signTypedData + sendTransaction is supported
+    // No brand/connector allowlisting — supports ~99% of wallets
+    const isSupported = !isConnected || supportsEIP712;
+
+    // Tier is now based on capabilities and features, not brand allowlists
+    const isCoinbaseSmartWallet =
+      connectorId === "coinbaseWallet" ||
+      connectorId === "baseAccount" ||
       walletClientType === "base_account" ||
       walletClientType === "coinbase_smart_wallet" ||
-      isWhitelistedConnector(connectorId, walletClientType);
-    const tier = TIER_1_CONNECTORS.has(connectorId || "") || walletName === "Coinbase Smart Wallet"
-      ? "tier1"
-      : whitelisted
-        ? "tier2"
-        : isConnected
-          ? "blocked"
-          : "unknown";
-    const isSupported = !isConnected || (whitelisted && supportsEIP712);
+      walletName.toLowerCase().includes("coinbase");
+
+    const tier = !isConnected
+      ? "unknown" as const
+      : isCoinbaseSmartWallet
+        ? "tier1" as const  // Tier 1: smart wallets with paymaster support
+        : supportsEIP712
+          ? "tier2" as const  // Tier 2: any wallet with EIP-712 support
+          : "blocked" as const; // Blocked: wallet can't sign typed data
 
     return {
       isSupported,
@@ -202,16 +170,9 @@ export function useWalletWhitelist(): WalletWhitelistStatus {
       walletName,
       reason: isSupported
         ? null
-        : !whitelisted
-          ? "This wallet is not whitelisted for DustSweep."
-          : "This wallet does not expose EIP-712 batch signing.",
+        : "This wallet does not support EIP-712 batch signing required for DustSweep.",
       supportsEIP712,
-      isCoinbaseSmartWallet:
-        connectorId === "coinbaseWallet" ||
-        connectorId === "baseAccount" ||
-        walletClientType === "base_account" ||
-        walletClientType === "coinbase_smart_wallet" ||
-        walletName.toLowerCase().includes("coinbase"),
+      isCoinbaseSmartWallet,
     };
   }, [connectorId, isChecking, isConnected, supportsEIP712, walletClientType]);
 }

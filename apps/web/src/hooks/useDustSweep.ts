@@ -7,7 +7,7 @@ import { encodeFunctionData, erc20Abi, maxUint256, type Address, type Hex } from
 import { useTokenBalances } from "@/hooks/useTokenBalances";
 import { useWalletWhitelist } from "@/hooks/useWalletWhitelist";
 import { PERMIT2_ADDRESS, buildPermit2TypedData, getPermit2SignatureErrorMessage } from "@/lib/permit2";
-import { encodeDustSweepPermit2Calldata, parseDustSweepError } from "@/lib/dustsweep-router";
+import { parseDustSweepError } from "@/lib/dustsweep-router";
 import { DATA_SUFFIX } from "@/lib/builderCode";
 import { buildBasePaymasterCapabilities } from "@/lib/paymaster";
 import { USDC_ADDRESS, WETH_ADDRESS } from "@/lib/tokens";
@@ -508,21 +508,19 @@ export function useDustSweep(): UseDustSweepReturn {
 
       currentStep = "pending";
       setSweepStep(currentStep);
-      const fullCalldata = encodeDustSweepPermit2Calldata({
-        routes: quote.routes,
-        tokenOut: tokenOut.address,
-        receiver: address,
-        deadline: quote.deadline,
-        permit2Nonce: quote.permit2Nonce,
-        signature,
-      });
+
+      // Use the backend's canonical calldata — it encodes against the real compiled ABI.
+      // The old encodeDustSweepPermit2Calldata used a phantom sweep() that doesn't exist on-chain.
+      // Note: The current V1 contract doesn't accept Permit2 parameters inline —
+      // the Permit2 signature is verified separately through the Permit2 contract.
+      const canonicalCalldata = buildTx.calldata;
       const paymasterUrl = process.env.NEXT_PUBLIC_PAYMASTER_URL;
 
       const hash = (await walletClient.sendTransaction({
         account: address,
         chain: base,
         to: buildTx.contractAddress,
-        data: fullCalldata,
+        data: canonicalCalldata,
         dataSuffix: DATA_SUFFIX,
         ...(walletStatus.isCoinbaseSmartWallet && paymasterUrl
           ? {

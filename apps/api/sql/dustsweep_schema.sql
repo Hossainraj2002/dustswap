@@ -81,3 +81,29 @@ on conflict (address) do update set
   source = excluded.source,
   liquidity_usd = excluded.liquidity_usd,
   last_checked = now();
+
+-- ── Routeability cache ──────────────────────────────────────────────────────
+-- Short-lived cache for routing results. Used to avoid re-quoting tokens
+-- that were recently checked. The runtime cache (in-memory) is the primary
+-- layer; this DB table provides persistence across server restarts.
+create table if not exists public.dustsweep_routeability_cache (
+  chain_id       integer not null,
+  token_in       text not null,
+  token_out      text not null,
+  amount_bucket  text not null,
+  source         text,
+  status         text not null,
+  payload        jsonb,
+  expires_at     timestamptz not null,
+  updated_at     timestamptz not null default now(),
+  primary key (chain_id, token_in, token_out, amount_bucket)
+);
+
+create index if not exists idx_routeability_expires
+  on public.dustsweep_routeability_cache(expires_at);
+
+-- ── NOTE ────────────────────────────────────────────────────────────────────
+-- The `tokens` table is used as a METADATA and LIQUIDITY HINT registry.
+-- It is NOT a visibility gate. All wallet ERC-20 balances are shown to users
+-- regardless of whether the token exists in this table. Whitelist sync scripts
+-- populate metadata (logos, bestDex, liquidity) that enriches the UI.
