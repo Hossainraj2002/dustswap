@@ -15,7 +15,11 @@ export type UnavailableReason =
   | "BALANCE_CHANGED"
   | "QUOTE_FAILED"
   | "UNKNOWN_PRICE"
-  | "SPAM_OR_DENYLISTED";
+  | "SPAM_OR_DENYLISTED"
+  | "NATIVE_WRAP_REQUIRED";
+
+export type DustSweepExecutionLane = "owned_v1" | "owned_v2" | "basket_aggregator";
+export type DustSweepSignatureMode = "none" | "permit2_witness";
 
 export type SweepStep = "idle" | "approving" | "signing" | "pending" | "success" | "error";
 
@@ -36,7 +40,7 @@ export type SwappableToken = Token & {
   balance: string;
   balanceFormatted: string;
   valueUSD: number;
-  bestDex: Exclude<DustSweepDexName, "UNISWAP_V4"> | "GENERIC";
+  bestDex: DustSweepDexName;
   liquidityUSD: number;
   status?: "SWAPPABLE" | "NATIVE_WRAP_REQUIRED";
   isNative?: boolean;
@@ -86,14 +90,18 @@ export type DustSweepQuoteResponse = {
     message?: string;
   }[];
   totalEstimatedOut: string;
+  minAmountOut?: string;
+  protocolFeeAmount?: string;
+  netEstimatedOut?: string;
   totalEstimatedOutUSD: number;
   feeAmountUSD: number;
+  netEstimatedOutUSD?: number;
   feeBps: number;
   gasEstimateETH: string;
   gasEstimateUSD: number;
   permit2Nonce: string;
   deadline: number;
-  executionLane?: string;
+  executionLane?: DustSweepExecutionLane;
   routeMaxCap?: number;
 };
 
@@ -108,19 +116,50 @@ export type Permit2TypedData = {
       { readonly name: "token"; readonly type: "address" },
       { readonly name: "amount"; readonly type: "uint256" },
     ];
-    PermitBatchTransferFrom: readonly [
+    PermitBatchTransferFrom?: readonly [
       { readonly name: "permitted"; readonly type: "TokenPermissions[]" },
       { readonly name: "spender"; readonly type: "address" },
       { readonly name: "nonce"; readonly type: "uint256" },
       { readonly name: "deadline"; readonly type: "uint256" },
     ];
+    DustSweepWitness?: readonly [
+      { readonly name: "routeHash"; readonly type: "bytes32" },
+      { readonly name: "outputToken"; readonly type: "address" },
+      { readonly name: "receiver"; readonly type: "address" },
+      { readonly name: "minAmountOut"; readonly type: "uint256" },
+      { readonly name: "deadline"; readonly type: "uint256" },
+    ];
+    PermitBatchWitnessTransferFrom?: readonly [
+      { readonly name: "permitted"; readonly type: "TokenPermissions[]" },
+      { readonly name: "spender"; readonly type: "address" },
+      { readonly name: "nonce"; readonly type: "uint256" },
+      { readonly name: "deadline"; readonly type: "uint256" },
+      { readonly name: "witness"; readonly type: "DustSweepWitness" },
+    ];
   };
+  primaryType?: "PermitBatchTransferFrom" | "PermitBatchWitnessTransferFrom";
   message: {
     permitted: { token: Address; amount: string }[];
     spender: Address;
     nonce: string;
     deadline: string;
+    witness?: {
+      routeHash: Hex;
+      outputToken: Address;
+      receiver: Address;
+      minAmountOut: string;
+      deadline: string;
+    };
   };
+};
+
+export type DustSweepV2Route = {
+  tokenIn: Address;
+  amountIn: string;
+  target: Address;
+  spender: Address;
+  value: string;
+  data: Hex;
 };
 
 export type DustSweepBuildTxRequest = {
@@ -133,12 +172,27 @@ export type DustSweepBuildTxRequest = {
 };
 
 export type DustSweepBuildTxResponse = {
-  permit2: Permit2TypedData;
+  requiresSignature?: boolean;
+  signatureMode?: DustSweepSignatureMode;
+  approvalSpender?: Address;
+  routerAddress?: Address;
+  routeMaxCap?: number;
+  typedData?: Permit2TypedData;
+  permit2?: Permit2TypedData;
+  permit?: {
+    permitted: { token: Address; amount: string }[];
+    nonce: string;
+    deadline: string;
+  };
+  witness?: Permit2TypedData["message"]["witness"];
+  witnessHash?: Hex;
+  routes?: DustSweepV2Route[];
+  minAmountOut?: string;
+  value?: string;
   contractAddress: Address;
   calldata: Hex;
   callMode?: string;
-  executionLane?: string;
-  routeMaxCap?: number;
+  executionLane?: DustSweepExecutionLane;
 };
 
 export type DustSweepRecordRequest = {

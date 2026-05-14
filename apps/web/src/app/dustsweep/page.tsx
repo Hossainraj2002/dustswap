@@ -183,6 +183,7 @@ export default function DustSweepPage() {
             autoMode={sweep.autoMode}
             onToggleAuto={() => sweep.setAutoMode(!sweep.autoMode)}
             onOpenSettings={() => setSettingsOpen(true)}
+            routeMaxCap={sweep.routeMaxCap}
           />
 
           {/* To panel */}

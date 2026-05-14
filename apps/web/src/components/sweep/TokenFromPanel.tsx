@@ -64,6 +64,7 @@ export function TokenFromPanel({
   autoMode,
   onToggleAuto,
   onOpenSettings,
+  routeMaxCap,
 }: {
   selectedTokens: SelectedToken[];
   onRemove: (address: string) => void;
@@ -72,6 +73,7 @@ export function TokenFromPanel({
   autoMode: boolean;
   onToggleAuto: () => void;
   onOpenSettings: () => void;
+  routeMaxCap: number;
 }) {
   // Sort by valueUSD descending so highest-value tokens appear first in the chip grid
   const sorted = [...selectedTokens].sort((a, b) => (b.valueUSD ?? 0) - (a.valueUSD ?? 0));
@@ -83,7 +85,7 @@ export function TokenFromPanel({
         <div className="flex items-baseline gap-2">
           <p className="text-sm font-semibold text-slate-700">From</p>
           <span className="rounded-full bg-blue-100 px-1.5 py-0.5 text-[10px] font-semibold text-blue-600">
-            {selectedTokens.length}/50
+            {selectedTokens.length}/{routeMaxCap}
           </span>
         </div>
         <div className="flex items-center gap-1">

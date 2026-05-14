@@ -7,7 +7,7 @@ import { type DustSweepQuoteResponse, type Token } from "@/types/dustsweep";
 function formatOutput(quote: DustSweepQuoteResponse | null, token: Token | null) {
   if (!quote || !token) return "";
   try {
-    const formatted = formatUnits(BigInt(quote.totalEstimatedOut || "0"), token.decimals);
+    const formatted = formatUnits(BigInt(quote.netEstimatedOut || quote.totalEstimatedOut || "0"), token.decimals);
     const num = Number(formatted);
     if (!Number.isFinite(num)) return formatted;
     return num.toLocaleString(undefined, {
@@ -51,7 +51,9 @@ export function TokenToPanel({
               </p>
               <p className="mt-1 text-xs">
                 {quote ? (
-                  <span className="font-medium text-emerald-600">~${quote.totalEstimatedOutUSD.toFixed(2)} estimated</span>
+                  <span className="font-medium text-emerald-600">
+                    ~${(quote.netEstimatedOutUSD ?? quote.totalEstimatedOutUSD).toFixed(2)} net estimated
+                  </span>
                 ) : (
                   <span className="text-slate-400">Quote appears here</span>
                 )}

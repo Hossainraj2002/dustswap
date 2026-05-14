@@ -17,10 +17,20 @@ export function SweepDetails({
   );
 
   const rows = [
+    {
+      label: "Gross output",
+      value: `~$${quote.totalEstimatedOutUSD.toFixed(2)}`,
+      warn: false,
+    },
     { label: "Slippage", value: `${(slippageBps / 100).toFixed(2)}%`, warn: false },
     {
-      label: "Fee",
+      label: "Protocol fee",
       value: `~$${quote.feeAmountUSD < 0.01 ? "<0.01" : quote.feeAmountUSD.toFixed(2)} (${quote.feeBps / 100}%)`,
+      warn: false,
+    },
+    {
+      label: "Net receive",
+      value: `~$${(quote.netEstimatedOutUSD ?? quote.totalEstimatedOutUSD - quote.feeAmountUSD).toFixed(2)}`,
       warn: false,
     },
     {

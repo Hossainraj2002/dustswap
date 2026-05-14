@@ -1,6 +1,8 @@
 import { randomBytes } from "crypto";
 import { Hono } from "hono";
 import {
+  concatHex,
+  decodeAbiParameters,
   decodeEventLog,
   decodeFunctionResult,
   encodeAbiParameters,
@@ -10,6 +12,8 @@ import {
   formatUnits,
   getAddress,
   isAddress,
+  isHex,
+  keccak256,
   parseAbi,
   toEventSelector,
   toHex,
@@ -34,13 +38,24 @@ dustsweepRoutes.use("*", async (c, next) => {
 const BASE_CHAIN_ID = 8453;
 const USDC_ADDRESS = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" as Address;
 const WETH_ADDRESS = "0x4200000000000000000000000000000000000006" as Address;
+const NATIVE_TOKEN_SENTINEL = "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE" as Address;
 const PERMIT2_ADDRESS = (process.env.NEXT_PUBLIC_PERMIT2_ADDRESS ||
   process.env.PERMIT2_ADDRESS ||
   "0x000000000022D473030F116dDEE9F6B43aC78BA3") as Address;
-const DUST_SWEEP_ROUTER_ADDRESS = (process.env.DUST_SWEEP_ROUTER_ADDRESS ||
+const DUST_SWEEP_ROUTER_V1_ADDRESS = (process.env.DUST_SWEEP_ROUTER_V1_ADDRESS ||
+  process.env.DUST_SWEEP_ROUTER_ADDRESS ||
   process.env.NEXT_PUBLIC_DUST_SWEEP_ROUTER ||
   process.env.NEXT_PUBLIC_DUST_SWEEP_ROUTER_ADDRESS ||
   "0x0000000000000000000000000000000000000000") as Address;
+const DUST_SWEEP_ROUTER_V2_ADDRESS = (process.env.DUST_SWEEP_ROUTER_V2_ADDRESS ||
+  process.env.NEXT_PUBLIC_DUST_SWEEP_ROUTER_V2_ADDRESS ||
+  "0x0000000000000000000000000000000000000000") as Address;
+const UNISWAP_V3_SWAP_ROUTER_ADDRESS = (process.env.UNISWAP_V3_SWAP_ROUTER_ADDRESS ||
+  "0x2626664c2603336E57B271c5C0b26F421741e481") as Address;
+const UNISWAP_UNIVERSAL_ROUTER_ADDRESS = (process.env.UNISWAP_UNIVERSAL_ROUTER_ADDRESS ||
+  "0xfdf682f51fe81aa4898f0ae2163d8a55c127fbc7") as Address;
+const PANCAKE_V3_SWAP_ROUTER_ADDRESS = (process.env.PANCAKE_V3_SWAP_ROUTER_ADDRESS ||
+  "0x1b81D678ffb9C0263b24A97847620C99d213eB14") as Address;
 const UNISWAP_V3_QUOTER_ADDRESS = (process.env.UNISWAP_V3_QUOTER_ADDRESS ||
   "0x3d4e44Eb1374240CE5F1B871ab261CD16335B76a") as Address;
 const PANCAKE_V3_QUOTER_ADDRESS = (process.env.PANCAKE_V3_QUOTER_ADDRESS ||
@@ -62,6 +77,8 @@ const BASESWAP_FACTORY_ADDRESS = (process.env.BASESWAP_FACTORY_ADDRESS ||
 const USDBC_ADDRESS = "0xd9aAEc86B65D86f6A7B5B1b0c42FFA531710b6CA" as Address;
 const USDT_ADDRESS = "0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2" as Address;
 const DAI_ADDRESS = "0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb" as Address;
+const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000" as Address;
+const MAX_UINT128 = (1n << 128n) - 1n;
 const UNISWAP_FEE_TIERS = [500, 3000, 10000, 100] as const;
 const PANCAKE_FEE_TIERS = [500, 2500, 10000, 100] as const;
 const TWO_HOP_FEE_PAIRS = [
@@ -82,6 +99,62 @@ const DEX = {
   BASESWAP: 4,
   GENERIC: 5,
 } as const;
+
+type DustSweepExecutionLane = "owned_v1" | "owned_v2" | "basket_aggregator";
+
+function getExecutionLane(): DustSweepExecutionLane {
+  const raw = String(process.env.DUST_SWEEP_EXECUTION_LANE || "owned_v1").toLowerCase();
+  if (raw === "owned_v2") return "owned_v2";
+  if (raw === "basket_aggregator") return "basket_aggregator";
+  return "owned_v1";
+}
+
+function getRouteMaxCap(executionLane: DustSweepExecutionLane) {
+  return executionLane === "owned_v1" ? 10 : 50;
+}
+
+function getRouterAddressForLane(executionLane: DustSweepExecutionLane) {
+  if (executionLane === "owned_v2") return DUST_SWEEP_ROUTER_V2_ADDRESS;
+  return DUST_SWEEP_ROUTER_V1_ADDRESS;
+}
+
+function parseAddressSet(value: string | undefined, fallback: Address[] = []) {
+  const addresses = String(value || "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter((item) => isAddress(item))
+    .map((item) => normalizeAddress(item).toLowerCase());
+
+  if (addresses.length === 0) {
+    return new Set(fallback.map((item) => item.toLowerCase()));
+  }
+
+  return new Set(addresses);
+}
+
+function getAllowedV2Targets() {
+  const targets = parseAddressSet(process.env.DUST_SWEEP_ALLOWED_TARGETS, [
+    UNISWAP_V3_SWAP_ROUTER_ADDRESS,
+    UNISWAP_UNIVERSAL_ROUTER_ADDRESS,
+    PANCAKE_V3_SWAP_ROUTER_ADDRESS,
+    AERODROME_ROUTER_ADDRESS,
+    BASESWAP_ROUTER_ADDRESS,
+  ]);
+  for (const address of getAllowedAggregatorAddresses()) targets.add(address);
+  return targets;
+}
+
+function getAllowedV2Spenders() {
+  const spenders = parseAddressSet(process.env.DUST_SWEEP_ALLOWED_SPENDERS, [
+    UNISWAP_V3_SWAP_ROUTER_ADDRESS,
+    PERMIT2_ADDRESS,
+    PANCAKE_V3_SWAP_ROUTER_ADDRESS,
+    AERODROME_ROUTER_ADDRESS,
+    BASESWAP_ROUTER_ADDRESS,
+  ]);
+  for (const address of getAllowedAggregatorAddresses()) spenders.add(address);
+  return spenders;
+}
 
 const DEFAULT_TOKEN_WHITELIST = [
   {
@@ -295,6 +368,151 @@ const DUST_SWEEP_ROUTER_ABI = [
   },
 ] as const;
 
+const DUST_SWEEP_ROUTER_V2_ABI = [
+  {
+    name: "sweepWithPermit2",
+    type: "function",
+    stateMutability: "payable",
+    inputs: [
+      {
+        name: "routes",
+        type: "tuple[]",
+        components: [
+          { name: "tokenIn", type: "address" },
+          { name: "amountIn", type: "uint256" },
+          { name: "target", type: "address" },
+          { name: "spender", type: "address" },
+          { name: "value", type: "uint256" },
+          { name: "data", type: "bytes" },
+        ],
+      },
+      { name: "outputToken", type: "address" },
+      { name: "receiver", type: "address" },
+      { name: "minAmountOut", type: "uint256" },
+      { name: "deadline", type: "uint256" },
+      {
+        name: "permit",
+        type: "tuple",
+        components: [
+          {
+            name: "permitted",
+            type: "tuple[]",
+            components: [
+              { name: "token", type: "address" },
+              { name: "amount", type: "uint256" },
+            ],
+          },
+          { name: "nonce", type: "uint256" },
+          { name: "deadline", type: "uint256" },
+        ],
+      },
+      { name: "signature", type: "bytes" },
+    ],
+    outputs: [
+      { name: "grossAmountOut", type: "uint256" },
+      { name: "feeAmount", type: "uint256" },
+      { name: "netAmountOut", type: "uint256" },
+    ],
+  },
+] as const;
+
+const SWAP_ROUTER_02_ABI = [
+  {
+    name: "exactInputSingle",
+    type: "function",
+    stateMutability: "payable",
+    inputs: [
+      {
+        name: "params",
+        type: "tuple",
+        components: [
+          { name: "tokenIn", type: "address" },
+          { name: "tokenOut", type: "address" },
+          { name: "fee", type: "uint24" },
+          { name: "recipient", type: "address" },
+          { name: "amountIn", type: "uint256" },
+          { name: "amountOutMinimum", type: "uint256" },
+          { name: "sqrtPriceLimitX96", type: "uint160" },
+        ],
+      },
+    ],
+    outputs: [{ name: "amountOut", type: "uint256" }],
+  },
+  {
+    name: "exactInput",
+    type: "function",
+    stateMutability: "payable",
+    inputs: [
+      {
+        name: "params",
+        type: "tuple",
+        components: [
+          { name: "path", type: "bytes" },
+          { name: "recipient", type: "address" },
+          { name: "amountIn", type: "uint256" },
+          { name: "amountOutMinimum", type: "uint256" },
+        ],
+      },
+    ],
+    outputs: [{ name: "amountOut", type: "uint256" }],
+  },
+] as const;
+
+const AERODROME_SWAP_ABI = [
+  {
+    name: "swapExactTokensForTokens",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "amountIn", type: "uint256" },
+      { name: "amountOutMin", type: "uint256" },
+      {
+        name: "routes",
+        type: "tuple[]",
+        components: [
+          { name: "from", type: "address" },
+          { name: "to", type: "address" },
+          { name: "stable", type: "bool" },
+          { name: "factory", type: "address" },
+        ],
+      },
+      { name: "to", type: "address" },
+      { name: "deadline", type: "uint256" },
+    ],
+    outputs: [{ name: "amounts", type: "uint256[]" }],
+  },
+] as const;
+
+const BASESWAP_SWAP_ABI = [
+  {
+    name: "swapExactTokensForTokens",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "amountIn", type: "uint256" },
+      { name: "amountOutMin", type: "uint256" },
+      { name: "path", type: "address[]" },
+      { name: "to", type: "address" },
+      { name: "deadline", type: "uint256" },
+    ],
+    outputs: [{ name: "amounts", type: "uint256[]" }],
+  },
+] as const;
+
+const UNIVERSAL_ROUTER_ABI = [
+  {
+    name: "execute",
+    type: "function",
+    stateMutability: "payable",
+    inputs: [
+      { name: "commands", type: "bytes" },
+      { name: "inputs", type: "bytes[]" },
+      { name: "deadline", type: "uint256" },
+    ],
+    outputs: [],
+  },
+] as const;
+
 const V3_DEX_DATA_PARAMETERS = [
   {
     type: "tuple",
@@ -304,6 +522,11 @@ const V3_DEX_DATA_PARAMETERS = [
       { name: "path", type: "bytes" },
     ],
   },
+] as const;
+
+const V4_DEX_DATA_PARAMETERS = [
+  { type: "uint24" },
+  { type: "int24" },
 ] as const;
 
 const AERODROME_DEX_DATA_PARAMETERS = [
@@ -372,6 +595,23 @@ type DustSweepRoute = {
   poolFee?: number;
 };
 
+type DustSweepV2Route = {
+  tokenIn: Address;
+  amountIn: bigint;
+  target: Address;
+  spender: Address;
+  value: bigint;
+  data: Hex;
+};
+
+type Permit2Witness = {
+  routeHash: Hex;
+  outputToken: Address;
+  receiver: Address;
+  minAmountOut: string;
+  deadline: string;
+};
+
 type QuoteCandidate = Omit<DustSweepRoute, "priceImpactBps"> & {
   amountOut: bigint;
   priceImpactBps?: number;
@@ -379,7 +619,7 @@ type QuoteCandidate = Omit<DustSweepRoute, "priceImpactBps"> & {
 
 type QuoteSkippedToken = {
   token: Address;
-  reason: "NO_LIQUIDITY" | "NOT_WHITELISTED" | "BELOW_THRESHOLD" | "BALANCE_CHANGED" | "QUOTE_FAILED";
+  reason: "NO_LIQUIDITY" | "NOT_WHITELISTED" | "BELOW_THRESHOLD" | "BALANCE_CHANGED" | "QUOTE_FAILED" | "NATIVE_WRAP_REQUIRED";
   message?: string;
 };
 
@@ -901,7 +1141,8 @@ async function get0xQuoteCandidate(
   amountIn: bigint,
   slippageBps: number,
 ): Promise<QuoteCandidate | null> {
-  if (!aggregatorsEnabled() || !isAddress(DUST_SWEEP_ROUTER_ADDRESS)) return null;
+  const taker = getRouterAddressForLane(getExecutionLane());
+  if (!aggregatorsEnabled() || !isAddress(taker)) return null;
 
   try {
     const url = new URL("https://api.0x.org/swap/allowance-holder/quote");
@@ -909,8 +1150,8 @@ async function get0xQuoteCandidate(
     url.searchParams.set("sellToken", tokenIn);
     url.searchParams.set("buyToken", tokenOut);
     url.searchParams.set("sellAmount", amountIn.toString());
-    url.searchParams.set("taker", DUST_SWEEP_ROUTER_ADDRESS);
-    url.searchParams.set("recipient", DUST_SWEEP_ROUTER_ADDRESS);
+    url.searchParams.set("taker", taker);
+    url.searchParams.set("recipient", taker);
     url.searchParams.set("slippageBps", String(slippageBps));
 
     const response = await fetch(url, {
@@ -1021,6 +1262,8 @@ const V4_FEE_TICK_SPACING = [
   { fee: 3000, tickSpacing: 60 },
   { fee: 10000, tickSpacing: 200 },
 ] as const;
+const UNIVERSAL_ROUTER_COMMAND_V4_SWAP = "0x10" as Hex;
+const V4_ACTIONS_EXACT_IN_SINGLE = "0x060c0f" as Hex;
 
 async function tryQuoteV4Single(
   tokenIn: Address,
@@ -1094,10 +1337,7 @@ async function getV4QuoteCandidates(
         estimatedOut: amountOut.toString(),
         dex: DEX.UNISWAP_V4,
         dexName: "Uniswap V4",
-        dexData: encodeAbiParameters(
-          [{ type: "uint24" }, { type: "int24" }],
-          [fee, tickSpacing],
-        ),
+        dexData: encodeAbiParameters(V4_DEX_DATA_PARAMETERS, [fee, tickSpacing]),
         poolFee: fee,
         amountOut,
       });
@@ -1114,6 +1354,7 @@ async function getBestQuote(
   tokenOut: Address,
   amountIn: bigint,
   slippageBps: number,
+  executionLane: DustSweepExecutionLane,
 ) {
   const candidates = (
     await Promise.all([
@@ -1142,12 +1383,91 @@ async function getBestQuote(
         quote ? [quote] : [],
       ),
     ])
-  ).flat();
+  )
+    .flat()
+    .filter((candidate) => isCandidateExecutableInLane(candidate, executionLane));
 
   return candidates.sort((a, b) => (a.amountOut > b.amountOut ? -1 : a.amountOut < b.amountOut ? 1 : 0))[0] || null;
 }
 
-function buildPermit2TypedData(routes: DustSweepRoute[], spender: Address, nonce: string, deadline: number) {
+function isCandidateExecutableInLane(candidate: QuoteCandidate, executionLane: DustSweepExecutionLane) {
+  if (executionLane === "owned_v1") {
+    return candidate.dex === DEX.UNISWAP_V3;
+  }
+
+  if (executionLane === "owned_v2") {
+    return true;
+  }
+
+  return true;
+}
+
+const SWEEP_ROUTE_TYPEHASH = keccak256(
+  toHex("SweepRoute(address tokenIn,uint256 amountIn,address target,address spender,uint256 value,bytes32 dataHash)"),
+);
+const DUST_SWEEP_WITNESS_TYPEHASH = keccak256(
+  toHex("DustSweepWitness(bytes32 routeHash,address outputToken,address receiver,uint256 minAmountOut,uint256 deadline)"),
+);
+
+function hashV2Route(route: DustSweepV2Route) {
+  return keccak256(
+    encodeAbiParameters(
+      [
+        { type: "bytes32" },
+        { type: "address" },
+        { type: "uint256" },
+        { type: "address" },
+        { type: "address" },
+        { type: "uint256" },
+        { type: "bytes32" },
+      ],
+      [
+        SWEEP_ROUTE_TYPEHASH,
+        route.tokenIn,
+        route.amountIn,
+        route.target,
+        route.spender,
+        route.value,
+        keccak256(route.data),
+      ],
+    ),
+  );
+}
+
+function hashV2Routes(routes: DustSweepV2Route[]) {
+  return keccak256(concatHex(routes.map(hashV2Route)));
+}
+
+function hashDustSweepWitness(witness: Permit2Witness) {
+  return keccak256(
+    encodeAbiParameters(
+      [
+        { type: "bytes32" },
+        { type: "bytes32" },
+        { type: "address" },
+        { type: "address" },
+        { type: "uint256" },
+        { type: "uint256" },
+      ],
+      [
+        DUST_SWEEP_WITNESS_TYPEHASH,
+        witness.routeHash,
+        witness.outputToken,
+        witness.receiver,
+        BigInt(witness.minAmountOut),
+        BigInt(witness.deadline),
+      ],
+    ),
+  );
+}
+
+function buildPermit2WitnessTypedData(args: {
+  routes: DustSweepV2Route[];
+  spender: Address;
+  nonce: string;
+  deadline: number;
+  witness: Permit2Witness;
+}) {
   return {
     domain: {
       name: "Permit2",
@@ -1159,23 +1479,320 @@ function buildPermit2TypedData(routes: DustSweepRoute[], spender: Address, nonce
         { name: "token", type: "address" },
         { name: "amount", type: "uint256" },
       ],
-      PermitBatchTransferFrom: [
+      DustSweepWitness: [
+        { name: "routeHash", type: "bytes32" },
+        { name: "outputToken", type: "address" },
+        { name: "receiver", type: "address" },
+        { name: "minAmountOut", type: "uint256" },
+        { name: "deadline", type: "uint256" },
+      ],
+      PermitBatchWitnessTransferFrom: [
         { name: "permitted", type: "TokenPermissions[]" },
         { name: "spender", type: "address" },
         { name: "nonce", type: "uint256" },
         { name: "deadline", type: "uint256" },
+        { name: "witness", type: "DustSweepWitness" },
       ],
     },
+    primaryType: "PermitBatchWitnessTransferFrom",
     message: {
-      permitted: routes.map((route) => ({
+      permitted: args.routes.map((route) => ({
         token: route.tokenIn,
-        amount: route.amountIn,
+        amount: route.amountIn.toString(),
       })),
-      spender,
-      nonce,
-      deadline: String(deadline),
+      spender: args.spender,
+      nonce: args.nonce,
+      deadline: String(args.deadline),
+      witness: args.witness,
     },
   };
+}
+
+function decodeV3DexData(dexData: Hex) {
+  const [decoded] = decodeAbiParameters(V3_DEX_DATA_PARAMETERS, dexData);
+  return decoded as { fee: number; isMultiHop: boolean; path: Hex };
+}
+
+function decodeV4DexData(dexData: Hex) {
+  const [fee, tickSpacing] = decodeAbiParameters(V4_DEX_DATA_PARAMETERS, dexData);
+  return { fee: Number(fee), tickSpacing: Number(tickSpacing) };
+}
+
+function buildV1Calldata(args: {
+  routes: DustSweepRoute[];
+  tokenOut: Address;
+  receiver: Address;
+  deadline: number;
+}) {
+  if (args.routes.some((route) => route.dex !== DEX.UNISWAP_V3)) {
+    throw new Error("owned_v1 only supports Uniswap V3 routes. Refresh quote using the V1 lane.");
+  }
+
+  const orders = args.routes.map((route) => {
+    const v3 = decodeV3DexData(route.dexData as Hex);
+    const path = v3.isMultiHop
+      ? v3.path
+      : encodePacked(
+          ["address", "uint24", "address"],
+          [route.tokenIn, v3.fee, args.tokenOut],
+        );
+
+    return {
+      tokenIn: route.tokenIn,
+      amountIn: BigInt(route.amountIn),
+      path,
+      minAmountOut: BigInt(route.amountOutMin),
+    };
+  });
+
+  return encodeFunctionData({
+    abi: DUST_SWEEP_ROUTER_ABI,
+    functionName: "sweepDustMultiHop",
+    args: [orders, args.tokenOut, args.receiver, BigInt(args.deadline)],
+  });
+}
+
+function assertConfiguredV2Route(route: DustSweepV2Route) {
+  const allowedTargets = getAllowedV2Targets();
+  const allowedSpenders = getAllowedV2Spenders();
+
+  if (!allowedTargets.has(route.target.toLowerCase())) {
+    throw new Error(`V2 target ${route.target} is not configured in DUST_SWEEP_ALLOWED_TARGETS`);
+  }
+
+  if (!allowedSpenders.has(route.spender.toLowerCase())) {
+    throw new Error(`V2 spender ${route.spender} is not configured in DUST_SWEEP_ALLOWED_SPENDERS`);
+  }
+}
+
+function buildUniswapV4UniversalRouterCalldata(args: {
+  route: DustSweepRoute;
+  tokenOut: Address;
+  amountIn: bigint;
+  amountOutMin: bigint;
+  deadline: number;
+}) {
+  if (args.amountIn > MAX_UINT128 || args.amountOutMin > MAX_UINT128) {
+    throw new Error("Uniswap V4 route amount exceeds uint128");
+  }
+
+  const { fee, tickSpacing } = decodeV4DexData(args.route.dexData as Hex);
+  const tokenInIsCurrency0 = BigInt(args.route.tokenIn) < BigInt(args.tokenOut);
+  const currency0 = tokenInIsCurrency0 ? args.route.tokenIn : args.tokenOut;
+  const currency1 = tokenInIsCurrency0 ? args.tokenOut : args.route.tokenIn;
+  const poolKey = {
+    currency0,
+    currency1,
+    fee,
+    tickSpacing,
+    hooks: ZERO_ADDRESS,
+  };
+
+  const swapParam = encodeAbiParameters(
+    [
+      {
+        type: "tuple",
+        components: [
+          {
+            name: "poolKey",
+            type: "tuple",
+            components: [
+              { name: "currency0", type: "address" },
+              { name: "currency1", type: "address" },
+              { name: "fee", type: "uint24" },
+              { name: "tickSpacing", type: "int24" },
+              { name: "hooks", type: "address" },
+            ],
+          },
+          { name: "zeroForOne", type: "bool" },
+          { name: "amountIn", type: "uint128" },
+          { name: "amountOutMinimum", type: "uint128" },
+          { name: "minHopPriceX36", type: "uint256" },
+          { name: "hookData", type: "bytes" },
+        ],
+      },
+    ],
+    [
+      {
+        poolKey,
+        zeroForOne: tokenInIsCurrency0,
+        amountIn: args.amountIn,
+        amountOutMinimum: args.amountOutMin,
+        minHopPriceX36: 0n,
+        hookData: "0x" as Hex,
+      },
+    ],
+  );
+  const settleParam = encodeAbiParameters(
+    [{ type: "address" }, { type: "uint256" }],
+    [args.route.tokenIn, args.amountIn],
+  );
+  const takeParam = encodeAbiParameters(
+    [{ type: "address" }, { type: "uint256" }],
+    [args.tokenOut, args.amountOutMin],
+  );
+  const v4Input = encodeAbiParameters(
+    [{ type: "bytes" }, { type: "bytes[]" }],
+    [V4_ACTIONS_EXACT_IN_SINGLE, [swapParam, settleParam, takeParam]],
+  );
+
+  return encodeFunctionData({
+    abi: UNIVERSAL_ROUTER_ABI,
+    functionName: "execute",
+    args: [UNIVERSAL_ROUTER_COMMAND_V4_SWAP, [v4Input], BigInt(args.deadline)],
+  });
+}
+
+function buildV2Route(route: DustSweepRoute, tokenOut: Address, receiver: Address, deadline: number): DustSweepV2Route {
+  const amountIn = BigInt(route.amountIn);
+  const amountOutMin = BigInt(route.amountOutMin);
+
+  if (route.tokenIn.toLowerCase() === NATIVE_TOKEN_SENTINEL.toLowerCase()) {
+    throw new Error("Native ETH must be wrapped to WETH before using owned_v2.");
+  }
+
+  if (route.dex === DEX.UNISWAP_V3 || route.dex === DEX.PANCAKESWAP_V3) {
+    const target = route.dex === DEX.UNISWAP_V3
+      ? UNISWAP_V3_SWAP_ROUTER_ADDRESS
+      : PANCAKE_V3_SWAP_ROUTER_ADDRESS;
+    const v3 = decodeV3DexData(route.dexData as Hex);
+    const data = v3.isMultiHop
+      ? encodeFunctionData({
+          abi: SWAP_ROUTER_02_ABI,
+          functionName: "exactInput",
+          args: [
+            {
+              path: v3.path,
+              recipient: receiver,
+              amountIn,
+              amountOutMinimum: amountOutMin,
+            },
+          ],
+        })
+      : encodeFunctionData({
+          abi: SWAP_ROUTER_02_ABI,
+          functionName: "exactInputSingle",
+          args: [
+            {
+              tokenIn: route.tokenIn,
+              tokenOut,
+              fee: v3.fee,
+              recipient: receiver,
+              amountIn,
+              amountOutMinimum: amountOutMin,
+              sqrtPriceLimitX96: 0n,
+            },
+          ],
+        });
+
+    return { tokenIn: route.tokenIn, amountIn, target, spender: target, value: 0n, data };
+  }
+
+  if (route.dex === DEX.UNISWAP_V4) {
+    const data = buildUniswapV4UniversalRouterCalldata({
+      route,
+      tokenOut,
+      amountIn,
+      amountOutMin,
+      deadline,
+    });
+
+    return {
+      tokenIn: route.tokenIn,
+      amountIn,
+      target: UNISWAP_UNIVERSAL_ROUTER_ADDRESS,
+      spender: PERMIT2_ADDRESS,
+      value: 0n,
+      data,
+    };
+  }
+
+  if (route.dex === DEX.AERODROME) {
+    const [decoded] = decodeAbiParameters(AERODROME_DEX_DATA_PARAMETERS, route.dexData as Hex);
+    const data = encodeFunctionData({
+      abi: AERODROME_SWAP_ABI,
+      functionName: "swapExactTokensForTokens",
+      args: [amountIn, amountOutMin, decoded.routes, receiver, BigInt(deadline)],
+    });
+
+    return {
+      tokenIn: route.tokenIn,
+      amountIn,
+      target: AERODROME_ROUTER_ADDRESS,
+      spender: AERODROME_ROUTER_ADDRESS,
+      value: 0n,
+      data,
+    };
+  }
+
+  if (route.dex === DEX.BASESWAP) {
+    const [path] = decodeAbiParameters([{ type: "address[]" }], route.dexData as Hex);
+    const data = encodeFunctionData({
+      abi: BASESWAP_SWAP_ABI,
+      functionName: "swapExactTokensForTokens",
+      args: [amountIn, amountOutMin, path, receiver, BigInt(deadline)],
+    });
+
+    return {
+      tokenIn: route.tokenIn,
+      amountIn,
+      target: BASESWAP_ROUTER_ADDRESS,
+      spender: BASESWAP_ROUTER_ADDRESS,
+      value: 0n,
+      data,
+    };
+  }
+
+  if (route.dex === DEX.GENERIC) {
+    const [decoded] = decodeAbiParameters(GENERIC_DEX_DATA_PARAMETERS, route.dexData as Hex);
+    if (!isAddress(decoded.target) || !isAddress(decoded.spender) || !isHex(decoded.data)) {
+      throw new Error("Malformed generic route data");
+    }
+
+    return {
+      tokenIn: route.tokenIn,
+      amountIn,
+      target: normalizeAddress(decoded.target),
+      spender: normalizeAddress(decoded.spender),
+      value: 0n,
+      data: decoded.data,
+    };
+  }
+
+  throw new Error("This route is not executable in owned_v2 yet. Refresh quote or use another lane.");
+}
+
+function encodeV2SweepCalldata(args: {
+  v2Routes: DustSweepV2Route[];
+  tokenOut: Address;
+  receiver: Address;
+  minAmountOut: bigint;
+  deadline: number;
+  nonce: string;
+  signature: Hex;
+}) {
+  const permit = {
+    permitted: args.v2Routes.map((route) => ({
+      token: route.tokenIn,
+      amount: route.amountIn,
+    })),
+    nonce: BigInt(args.nonce),
+    deadline: BigInt(args.deadline),
+  };
+
+  return encodeFunctionData({
+    abi: DUST_SWEEP_ROUTER_V2_ABI,
+    functionName: "sweepWithPermit2",
+    args: [
+      args.v2Routes,
+      args.tokenOut,
+      args.receiver,
+      args.minAmountOut,
+      BigInt(args.deadline),
+      permit,
+      args.signature,
+    ],
+  });
 }
 
 type GeckoToken = {
@@ -1610,6 +2227,10 @@ async function findStaleRouteBalances(userAddress: Address, routes: DustSweepRou
 }
 
 async function findMissingPermit2Approvals(userAddress: Address, routes: DustSweepRoute[]) {
+  return findMissingTokenApprovals(userAddress, routes, PERMIT2_ADDRESS);
+}
+
+async function findMissingTokenApprovals(userAddress: Address, routes: DustSweepRoute[], spender: Address) {
   const requiredByToken = new Map<string, { token: Address; amount: bigint }>();
 
   for (const route of routes) {
@@ -1632,13 +2253,13 @@ async function findMissingPermit2Approvals(userAddress: Address, routes: DustSwe
   }> = [];
 
   for (const item of requiredByToken.values()) {
-    const allowance = await readErc20Allowance(item.token, userAddress, PERMIT2_ADDRESS);
+    const allowance = await readErc20Allowance(item.token, userAddress, spender);
     if (allowance < item.amount) {
       approvals.push({
         token: item.token,
         required: item.amount.toString(),
         allowance: allowance.toString(),
-        spender: PERMIT2_ADDRESS,
+        spender,
       });
     }
   }
@@ -2973,7 +3594,7 @@ dustsweepRoutes.get("/tokens/:address", async (c) => {
           const ethValueUSD = Number(ethBalanceFormatted) * ethPrice;
 
           if (ethValueUSD >= MIN_VALUE_USD || ethPrice === 0) {
-            swappable.push({
+            unavailable.push({
               address: "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE" as Address,
               symbol: "ETH",
               name: "Ether",
@@ -2987,6 +3608,7 @@ dustsweepRoutes.get("/tokens/:address", async (c) => {
               bestDex: "GENERIC",
               liquidityUSD: 0,
               status: "NATIVE_WRAP_REQUIRED",
+              reason: "NATIVE_WRAP_REQUIRED",
             });
           }
         }
@@ -3023,8 +3645,8 @@ dustsweepRoutes.post("/quote", async (c) => {
   }
 
   // Enforce actual contract capability — V1 contract has MAX_BATCH_SIZE = 10
-  const executionLane = process.env.DUST_SWEEP_EXECUTION_LANE || "owned";
-  const routeMaxCap = executionLane === "basket_aggregator" ? 50 : 10;
+  const executionLane = getExecutionLane();
+  const routeMaxCap = getRouteMaxCap(executionLane);
 
   if (body.tokenIns.length > routeMaxCap) {
     return c.json(errorJson(`Maximum ${routeMaxCap} tokens per sweep (${executionLane} lane)`), 400);
@@ -3062,7 +3684,7 @@ dustsweepRoutes.post("/quote", async (c) => {
     if (tokenIn.toLowerCase() === "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee") {
       skippedTokens.push({
         token: tokenIn,
-        reason: "NO_LIQUIDITY",
+        reason: "NATIVE_WRAP_REQUIRED",
         message: "Native ETH must be wrapped to WETH before sweeping.",
       });
       continue;
@@ -3136,7 +3758,7 @@ dustsweepRoutes.post("/quote", async (c) => {
           // but we know a route exists. For now, we proceed to quote to be safe.
         }
 
-        return getBestQuote(tokenIn, tokenOut, amountIn, slippageBps)
+        return getBestQuote(tokenIn, tokenOut, amountIn, slippageBps, executionLane)
           .then(async (best) => {
             if (best) {
               runtimeCache.set(cacheKey, { status: "OK", checkedAt: Date.now() }, ROUTEABILITY_OK_TTL);
@@ -3216,7 +3838,11 @@ dustsweepRoutes.post("/quote", async (c) => {
   const totalEstimatedOutUSD =
     Number(formatUnits(totalEstimatedOut, outputDecimals)) * outputPrice;
   const feeBps = getFeeBps();
+  const protocolFeeAmount = (totalEstimatedOut * BigInt(feeBps)) / 10_000n;
+  const netEstimatedOut = totalEstimatedOut - protocolFeeAmount;
+  const minAmountOut = cappedRoutes.reduce((sum, route) => sum + BigInt(route.amountOutMin), 0n);
   const feeAmountUSD = (totalEstimatedOutUSD * feeBps) / 10_000;
+  const netEstimatedOutUSD = totalEstimatedOutUSD - feeAmountUSD;
   const deadline = Math.floor(Date.now() / 1000) + 1800;
   const permit2Nonce = BigInt(`0x${randomBytes(16).toString("hex")}`).toString();
 
@@ -3224,8 +3850,12 @@ dustsweepRoutes.post("/quote", async (c) => {
     routes: cappedRoutes,
     skippedTokens,
     totalEstimatedOut: totalEstimatedOut.toString(),
+    minAmountOut: minAmountOut.toString(),
+    protocolFeeAmount: protocolFeeAmount.toString(),
+    netEstimatedOut: netEstimatedOut.toString(),
     totalEstimatedOutUSD: Math.round(totalEstimatedOutUSD * 100) / 100,
     feeAmountUSD: Math.round(feeAmountUSD * 10000) / 10000,
+    netEstimatedOutUSD: Math.round(netEstimatedOutUSD * 100) / 100,
     feeBps,
     gasEstimateETH: (0.0000015 + cappedRoutes.length * 0.0000007).toFixed(8),
     gasEstimateUSD: Math.round((0.004 + cappedRoutes.length * 0.0015) * 100) / 100,
@@ -3244,13 +3874,18 @@ dustsweepRoutes.post("/build-tx", async (c) => {
     deadline?: number;
     permit2Nonce?: string;
     userAddress?: string;
+    signature?: string;
   }>();
 
-  if (!body.routes?.length || !body.tokenOut || !body.receiver || !body.deadline || !body.permit2Nonce || !body.userAddress) {
-    return c.json(errorJson("routes, tokenOut, receiver, deadline, permit2Nonce, and userAddress are required"), 400);
+  const executionLane = getExecutionLane();
+  const routeMaxCap = getRouteMaxCap(executionLane);
+  const routerAddress = getRouterAddressForLane(executionLane);
+
+  if (!body.routes?.length || !body.tokenOut || !body.receiver || !body.deadline || !body.userAddress) {
+    return c.json(errorJson("routes, tokenOut, receiver, deadline, and userAddress are required"), 400);
   }
-  if (body.routes.length > 50) {
-    return c.json(errorJson("Maximum 50 tokens per sweep"), 400);
+  if (body.routes.length > routeMaxCap) {
+    return c.json(errorJson(`Maximum ${routeMaxCap} tokens per sweep (${executionLane} lane)`), 400);
   }
   if (!isAddress(body.tokenOut) || !isAddress(body.receiver) || !isAddress(body.userAddress)) {
     return c.json(errorJson("Invalid tokenOut, receiver, or userAddress"), 400);
@@ -3258,8 +3893,14 @@ dustsweepRoutes.post("/build-tx", async (c) => {
   if (Number(body.deadline) <= Math.floor(Date.now() / 1000)) {
     return c.json(errorJson("Deadline expired. Refresh quote and try again.", { code: "DEADLINE_EXPIRED" }), 409);
   }
-  if (!isAddress(DUST_SWEEP_ROUTER_ADDRESS)) {
-    return c.json(errorJson("DustSweep router address is not configured"), 500);
+  if (executionLane === "owned_v2" && !body.permit2Nonce) {
+    return c.json(errorJson("permit2Nonce is required for owned_v2"), 400);
+  }
+  if (executionLane === "basket_aggregator") {
+    return c.json(errorJson("basket_aggregator build is not wired yet. Use assembled aggregator transactions as-is."), 501);
+  }
+  if (!isAddress(routerAddress) || routerAddress === "0x0000000000000000000000000000000000000000") {
+    return c.json(errorJson(`DustSweep ${executionLane} router address is not configured`), 500);
   }
 
   let routes: DustSweepRoute[];
@@ -3298,10 +3939,6 @@ dustsweepRoutes.post("/build-tx", async (c) => {
       409,
     );
   }
-  // Enforce V1 contract cap
-  const executionLane = process.env.DUST_SWEEP_EXECUTION_LANE || "owned";
-  const routeMaxCap = executionLane === "basket_aggregator" ? 50 : 10;
-
   if (routes.length > routeMaxCap) {
     return c.json(
       errorJson(`Maximum ${routeMaxCap} tokens per sweep (${executionLane} lane)`, {
@@ -3311,52 +3948,127 @@ dustsweepRoutes.post("/build-tx", async (c) => {
     );
   }
 
-  const missingApprovals = await findMissingPermit2Approvals(userAddress, routes);
-  if (missingApprovals.length > 0) {
+  const buildTokenOut = normalizeAddress(body.tokenOut);
+  const buildReceiver = normalizeAddress(body.receiver);
+
+  if (executionLane === "owned_v1") {
+    const routerApprovals = await findMissingTokenApprovals(userAddress, routes, routerAddress);
+    if (routerApprovals.length > 0) {
+      return c.json(
+        errorJson("Router approval required before sweep.", {
+          code: "ROUTER_APPROVAL_REQUIRED",
+          approvals: routerApprovals,
+        }),
+        409,
+      );
+    }
+
+    let calldata: Hex;
+    try {
+      calldata = buildV1Calldata({
+        routes,
+        tokenOut: buildTokenOut,
+        receiver: buildReceiver,
+        deadline: body.deadline,
+      });
+    } catch (error) {
+      return c.json(errorJson((error as Error).message || "Failed to build V1 calldata"), 400);
+    }
+
+    return c.json({
+      requiresSignature: false,
+      signatureMode: "none",
+      approvalSpender: routerAddress,
+      routerAddress,
+      contractAddress: routerAddress,
+      calldata,
+      value: "0",
+      callMode: "sweepDustMultiHop",
+      executionLane,
+      routeMaxCap,
+    });
+  }
+
+  const permit2Approvals = await findMissingPermit2Approvals(userAddress, routes);
+  if (permit2Approvals.length > 0) {
     return c.json(
       errorJson("Permit2 approval required before sweep.", {
         code: "PERMIT2_APPROVAL_REQUIRED",
-        approvals: missingApprovals,
+        approvals: permit2Approvals,
       }),
       409,
     );
   }
 
-  // ── Encode against the REAL compiled ABI: sweepDustMultiHop ──
-  // MultiHopSwapOrder struct: (address tokenIn, uint256 amountIn, bytes path, uint256 minAmountOut)
-  // The `dexData` field from the quote response contains the encoded Uniswap V3 path bytes.
-  const orders = routes.map((route) => ({
-    tokenIn: route.tokenIn as Address,
-    amountIn: BigInt(route.amountIn),
-    path: (route.dexData || "0x") as Hex,
-    minAmountOut: BigInt(route.amountOutMin),
-  }));
-  const tokenOut = normalizeAddress(body.tokenOut);
-  const receiver = normalizeAddress(body.receiver);
+  let v2Routes: DustSweepV2Route[];
+  try {
+    v2Routes = routes.map((route) => buildV2Route(route, buildTokenOut, routerAddress, body.deadline!));
+    for (const route of v2Routes) assertConfiguredV2Route(route);
+  } catch (error) {
+    return c.json(errorJson((error as Error).message || "Failed to build V2 route"), 400);
+  }
 
-  const calldata = encodeFunctionData({
-    abi: DUST_SWEEP_ROUTER_ABI,
-    functionName: "sweepDustMultiHop",
-    args: [
-      orders,
-      tokenOut,
-      receiver,
-      BigInt(body.deadline),
-    ],
+  const minAmountOut = routes.reduce((sum, route) => sum + BigInt(route.amountOutMin), 0n);
+  const value = v2Routes.reduce((sum, route) => sum + route.value, 0n);
+  const routeHash = hashV2Routes(v2Routes);
+  const witness: Permit2Witness = {
+    routeHash,
+    outputToken: buildTokenOut,
+    receiver: buildReceiver,
+    minAmountOut: minAmountOut.toString(),
+    deadline: String(body.deadline),
+  };
+  const witnessHash = hashDustSweepWitness(witness);
+  const typedData = buildPermit2WitnessTypedData({
+    routes: v2Routes,
+    spender: routerAddress,
+    nonce: String(body.permit2Nonce),
+    deadline: body.deadline,
+    witness,
+  });
+  const signature = body.signature && isHex(body.signature) ? body.signature as Hex : "0x";
+  const calldata = encodeV2SweepCalldata({
+    v2Routes,
+    tokenOut: buildTokenOut,
+    receiver: buildReceiver,
+    minAmountOut,
+    deadline: body.deadline,
+    nonce: String(body.permit2Nonce),
+    signature,
   });
 
   return c.json({
-    permit2: buildPermit2TypedData(
-      routes,
-      normalizeAddress(DUST_SWEEP_ROUTER_ADDRESS),
-      String(body.permit2Nonce),
-      body.deadline,
-    ),
-    contractAddress: normalizeAddress(DUST_SWEEP_ROUTER_ADDRESS),
-    calldata,
-    callMode: "sweepDustMultiHop",
-    executionLane,
+    requiresSignature: true,
+    signatureMode: "permit2_witness",
+    approvalSpender: PERMIT2_ADDRESS,
+    routerAddress,
+    contractAddress: routerAddress,
     routeMaxCap,
+    typedData,
+    permit2: typedData,
+    permit: {
+      permitted: v2Routes.map((route) => ({
+        token: route.tokenIn,
+        amount: route.amountIn.toString(),
+      })),
+      nonce: String(body.permit2Nonce),
+      deadline: String(body.deadline),
+    },
+    witness,
+    witnessHash,
+    routes: v2Routes.map((route) => ({
+      tokenIn: route.tokenIn,
+      amountIn: route.amountIn.toString(),
+      target: route.target,
+      spender: route.spender,
+      value: route.value.toString(),
+      data: route.data,
+    })),
+    minAmountOut: minAmountOut.toString(),
+    calldata,
+    value: value.toString(),
+    callMode: "sweepWithPermit2",
+    executionLane,
   });
 });
 

@@ -8,6 +8,7 @@ function reasonBadge(reason: UnavailableToken["reason"]) {
   if (reason === "NOT_WHITELISTED") return "Not listed";
   if (reason === "BALANCE_CHANGED") return "Balance changed";
   if (reason === "QUOTE_FAILED") return "No route";
+  if (reason === "NATIVE_WRAP_REQUIRED") return "Wrap to WETH";
   return "Too small";
 }
 

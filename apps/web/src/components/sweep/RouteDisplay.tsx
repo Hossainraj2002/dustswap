@@ -11,7 +11,7 @@ import {
 function formatOutput(quote: DustSweepQuoteResponse, tokenOut: Token | null) {
   if (!tokenOut) return "0";
   try {
-    const value = formatUnits(BigInt(quote.totalEstimatedOut), tokenOut.decimals);
+    const value = formatUnits(BigInt(quote.netEstimatedOut || quote.totalEstimatedOut), tokenOut.decimals);
     const num = Number(value);
     return Number.isFinite(num)
       ? num.toLocaleString(undefined, { maximumFractionDigits: 6 })
@@ -112,7 +112,9 @@ export function RouteDisplay({
           <p className="font-mono text-base font-bold text-slate-900">
             {formatOutput(quote, tokenOut)} {tokenOut.symbol}
           </p>
-          <p className="text-[11px] text-slate-500">~${quote.totalEstimatedOutUSD.toFixed(2)}</p>
+          <p className="text-[11px] text-slate-500">
+            ~${(quote.netEstimatedOutUSD ?? quote.totalEstimatedOutUSD).toFixed(2)} net
+          </p>
         </div>
       </div>
 

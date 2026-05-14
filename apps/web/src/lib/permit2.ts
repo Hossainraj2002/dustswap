@@ -21,6 +21,27 @@ export const permit2BatchTransferTypes = {
   ],
 } as const;
 
+export const permit2BatchWitnessTransferTypes = {
+  TokenPermissions: [
+    { name: "token", type: "address" },
+    { name: "amount", type: "uint256" },
+  ],
+  DustSweepWitness: [
+    { name: "routeHash", type: "bytes32" },
+    { name: "outputToken", type: "address" },
+    { name: "receiver", type: "address" },
+    { name: "minAmountOut", type: "uint256" },
+    { name: "deadline", type: "uint256" },
+  ],
+  PermitBatchWitnessTransferFrom: [
+    { name: "permitted", type: "TokenPermissions[]" },
+    { name: "spender", type: "address" },
+    { name: "nonce", type: "uint256" },
+    { name: "deadline", type: "uint256" },
+    { name: "witness", type: "DustSweepWitness" },
+  ],
+} as const;
+
 export function buildPermit2TypedData(args: {
   routes: DustSweepRoute[];
   spender: Address;
@@ -33,6 +54,7 @@ export function buildPermit2TypedData(args: {
       chainId: BASE_CHAIN_ID,
       verifyingContract: PERMIT2_ADDRESS,
     },
+    primaryType: "PermitBatchTransferFrom",
     types: permit2BatchTransferTypes,
     message: {
       permitted: args.routes.map((route) => ({
@@ -42,6 +64,34 @@ export function buildPermit2TypedData(args: {
       spender: args.spender,
       nonce: String(args.nonce),
       deadline: String(args.deadline),
+    },
+  };
+}
+
+export function buildPermit2WitnessTypedData(args: {
+  routes: DustSweepRoute[];
+  spender: Address;
+  nonce: string;
+  deadline: number | string;
+  witness: NonNullable<Permit2TypedData["message"]["witness"]>;
+}): Permit2TypedData {
+  return {
+    domain: {
+      name: "Permit2",
+      chainId: BASE_CHAIN_ID,
+      verifyingContract: PERMIT2_ADDRESS,
+    },
+    primaryType: "PermitBatchWitnessTransferFrom",
+    types: permit2BatchWitnessTransferTypes,
+    message: {
+      permitted: args.routes.map((route) => ({
+        token: route.tokenIn,
+        amount: route.amountIn,
+      })),
+      spender: args.spender,
+      nonce: String(args.nonce),
+      deadline: String(args.deadline),
+      witness: args.witness,
     },
   };
 }

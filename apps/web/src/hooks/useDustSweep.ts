@@ -6,8 +6,15 @@ import { base } from "viem/chains";
 import { encodeFunctionData, erc20Abi, maxUint256, type Address, type Hex } from "viem";
 import { useTokenBalances } from "@/hooks/useTokenBalances";
 import { useWalletWhitelist } from "@/hooks/useWalletWhitelist";
-import { PERMIT2_ADDRESS, buildPermit2TypedData, getPermit2SignatureErrorMessage } from "@/lib/permit2";
-import { parseDustSweepError } from "@/lib/dustsweep-router";
+import { PERMIT2_ADDRESS, getPermit2SignatureErrorMessage } from "@/lib/permit2";
+import {
+  DUST_SWEEP_EXECUTION_LANE,
+  DUST_SWEEP_ROUTER_ADDRESS,
+  V1_MAX_BATCH_SIZE,
+  V2_MAX_BATCH_SIZE,
+  encodeDustSweepV2Calldata,
+  parseDustSweepError,
+} from "@/lib/dustsweep-router";
 import { DATA_SUFFIX } from "@/lib/builderCode";
 import { buildBasePaymasterCapabilities } from "@/lib/paymaster";
 import { USDC_ADDRESS, WETH_ADDRESS } from "@/lib/tokens";
@@ -66,6 +73,8 @@ export type UseDustSweepReturn = {
   error: string | null;
   quoteError: string | null;
   autoMode: boolean;
+  routeMaxCap: number;
+  supportsWalletSendCalls: boolean;
   outputTokens: Token[];
   walletStatus: ReturnType<typeof useWalletWhitelist>;
   setTokenOut: (token: Token | null) => void;
@@ -150,6 +159,10 @@ function mergeUnavailableTokens(current: UnavailableToken[], additions: Unavaila
   return Array.from(byAddress.values());
 }
 
+function getCapForLane(lane?: string | null) {
+  return lane === "owned_v1" ? V1_MAX_BATCH_SIZE : V2_MAX_BATCH_SIZE;
+}
+
 export function useDustSweep(): UseDustSweepReturn {
   const { address, isConnected } = useAccount();
   const { data: walletClient } = useWalletClient();
@@ -170,6 +183,10 @@ export function useDustSweep(): UseDustSweepReturn {
   const [txHash, setTxHash] = useState<Hex | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [quoteError, setQuoteError] = useState<string | null>(null);
+  const [supportsWalletSendCalls, setSupportsWalletSendCalls] = useState(false);
+
+  const configuredRouteCap = getCapForLane(DUST_SWEEP_EXECUTION_LANE);
+  const routeMaxCap = quote?.routeMaxCap ?? configuredRouteCap;
 
   const swappableTokens = balances.swappableTokens;
   const outputTokens = useMemo(() => {
@@ -205,8 +222,48 @@ export function useDustSweep(): UseDustSweepReturn {
 
   useEffect(() => {
     if (!autoMode) return;
-    setSelectedTokens(swappableTokens.slice(0, 50));
-  }, [autoMode, swappableTokens]);
+    setSelectedTokens(swappableTokens.slice(0, configuredRouteCap));
+  }, [autoMode, configuredRouteCap, swappableTokens]);
+
+  useEffect(() => {
+    if (!address || !walletClient) {
+      setSupportsWalletSendCalls(false);
+      return;
+    }
+
+    let cancelled = false;
+    const chainIdHex = `0x${base.id.toString(16)}`;
+
+    async function detectCapabilities() {
+      try {
+        const request = (walletClient as unknown as {
+          request?: (args: { method: string; params?: unknown[] }) => Promise<unknown>;
+        }).request;
+        if (!request) {
+          if (!cancelled) setSupportsWalletSendCalls(false);
+          return;
+        }
+
+        const result = await request({
+          method: "wallet_getCapabilities",
+          params: [address, [chainIdHex]],
+        });
+        const capabilities = result as Record<string, Record<string, { status?: string; supported?: boolean }> | undefined>;
+        const chainCapabilities = capabilities[chainIdHex] || capabilities["0x0"];
+        const atomic = chainCapabilities?.atomic;
+        const supported = atomic?.status === "supported" || atomic?.status === "ready";
+        if (!cancelled) setSupportsWalletSendCalls(Boolean(supported));
+      } catch {
+        if (!cancelled) setSupportsWalletSendCalls(false);
+      }
+    }
+
+    void detectCapabilities();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [address, walletClient]);
 
   useEffect(() => {
     setQuote(null);
@@ -313,14 +370,14 @@ export function useDustSweep(): UseDustSweepReturn {
       if (current.some((item) => isSameAddress(item.address, token.address))) {
         return current;
       }
-      return [...current, token].slice(0, 50);
+      return [...current, token].slice(0, configuredRouteCap);
     });
-  }, []);
+  }, [configuredRouteCap]);
 
   const selectAllTokens = useCallback(() => {
     setAutoMode(false);
-    setSelectedTokens(swappableTokens.slice(0, 50));
-  }, [swappableTokens]);
+    setSelectedTokens(swappableTokens.slice(0, configuredRouteCap));
+  }, [configuredRouteCap, swappableTokens]);
 
   const removeToken = useCallback((tokenAddress: string) => {
     setAutoMode(false);
@@ -352,7 +409,7 @@ export function useDustSweep(): UseDustSweepReturn {
     return receipt;
   }, [publicClient]);
 
-  const ensurePermit2Approvals = useCallback(async (routes: DustSweepQuoteResponse["routes"]) => {
+  const ensureTokenApprovals = useCallback(async (routes: DustSweepQuoteResponse["routes"], spender: Address) => {
     if (!address || !walletClient) return;
 
     const approvalRequirements: ApprovalRequirement[] = [];
@@ -361,7 +418,7 @@ export function useDustSweep(): UseDustSweepReturn {
         address: requirement.token,
         abi: erc20Abi,
         functionName: "allowance",
-        args: [address, PERMIT2_ADDRESS],
+        args: [address, spender],
       })) as bigint;
 
       if (allowance >= requirement.amount) {
@@ -398,7 +455,7 @@ export function useDustSweep(): UseDustSweepReturn {
           data: encodeFunctionData({
             abi: erc20Abi,
             functionName: "approve",
-            args: [PERMIT2_ADDRESS, 0n],
+            args: [spender, 0n],
           }),
         } as never)) as Hex;
         await waitForSuccessfulTransaction(resetHash);
@@ -409,7 +466,7 @@ export function useDustSweep(): UseDustSweepReturn {
         data: encodeFunctionData({
           abi: erc20Abi,
           functionName: "approve",
-          args: [PERMIT2_ADDRESS, requirement.approvalAmount],
+          args: [spender, requirement.approvalAmount],
         }),
       } as never)) as Hex;
       await waitForSuccessfulTransaction(approvalHash);
@@ -458,10 +515,9 @@ export function useDustSweep(): UseDustSweepReturn {
     setError(null);
 
     try {
-      await ensurePermit2Approvals(quote.routes);
-
-      currentStep = "signing";
-      setSweepStep(currentStep);
+      const lane = quote.executionLane || DUST_SWEEP_EXECUTION_LANE;
+      const approvalSpender = lane === "owned_v2" ? PERMIT2_ADDRESS : DUST_SWEEP_ROUTER_ADDRESS;
+      await ensureTokenApprovals(quote.routes, approvalSpender);
 
       const response = await fetch("/api/dustsweep/build-tx", {
         method: "POST",
@@ -486,24 +542,31 @@ export function useDustSweep(): UseDustSweepReturn {
       }
 
       const buildTx = payload as DustSweepBuildTxResponse;
-      const permit2 = buildTx.permit2 ?? buildPermit2TypedData({
-        routes: quote.routes,
-        spender: buildTx.contractAddress,
-        nonce: quote.permit2Nonce,
-        deadline: quote.deadline,
-      });
+      let canonicalCalldata = buildTx.calldata;
 
-      let signature: Hex;
-      try {
-        signature = (await walletClient.signTypedData({
-          account: address,
-          domain: permit2.domain,
-          types: permit2.types,
-          primaryType: "PermitBatchTransferFrom",
-          message: permit2.message,
-        } as never)) as Hex;
-      } catch (signatureError) {
-        throw new Error(getPermit2SignatureErrorMessage(signatureError));
+      if (buildTx.requiresSignature || buildTx.signatureMode === "permit2_witness") {
+        const typedData = buildTx.typedData || buildTx.permit2;
+        if (!typedData) {
+          throw new Error("Permit2 typed data missing from V2 sweep transaction");
+        }
+
+        currentStep = "signing";
+        setSweepStep(currentStep);
+
+        let signature: Hex;
+        try {
+          signature = (await walletClient.signTypedData({
+            account: address,
+            domain: typedData.domain,
+            types: typedData.types,
+            primaryType: typedData.primaryType || "PermitBatchWitnessTransferFrom",
+            message: typedData.message,
+          } as never)) as Hex;
+        } catch (signatureError) {
+          throw new Error(getPermit2SignatureErrorMessage(signatureError));
+        }
+
+        canonicalCalldata = encodeDustSweepV2Calldata(buildTx, signature);
       }
 
       currentStep = "pending";
@@ -513,14 +576,15 @@ export function useDustSweep(): UseDustSweepReturn {
       // The old encodeDustSweepPermit2Calldata used a phantom sweep() that doesn't exist on-chain.
       // Note: The current V1 contract doesn't accept Permit2 parameters inline —
       // the Permit2 signature is verified separately through the Permit2 contract.
-      const canonicalCalldata = buildTx.calldata;
       const paymasterUrl = process.env.NEXT_PUBLIC_PAYMASTER_URL;
+      const txValue = buildTx.value ? BigInt(buildTx.value) : 0n;
 
       const hash = (await walletClient.sendTransaction({
         account: address,
         chain: base,
-        to: buildTx.contractAddress,
+        to: buildTx.routerAddress || buildTx.contractAddress,
         data: canonicalCalldata,
+        value: txValue,
         dataSuffix: DATA_SUFFIX,
         ...(walletStatus.isCoinbaseSmartWallet && paymasterUrl
           ? {
@@ -566,7 +630,7 @@ export function useDustSweep(): UseDustSweepReturn {
     }
   }, [
     address,
-    ensurePermit2Approvals,
+    ensureTokenApprovals,
     publicClient,
     quote,
     refreshQuote,
@@ -593,6 +657,8 @@ export function useDustSweep(): UseDustSweepReturn {
     error: error || balances.error,
     quoteError,
     autoMode,
+    routeMaxCap,
+    supportsWalletSendCalls,
     outputTokens,
     walletStatus,
     setTokenOut,

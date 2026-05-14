@@ -48,6 +48,7 @@ function reasonText(reason: UnavailableToken["reason"]) {
   if (reason === "NOT_WHITELISTED") return "Not whitelisted";
   if (reason === "BALANCE_CHANGED") return "Balance changed";
   if (reason === "QUOTE_FAILED") return "Quote failed";
+  if (reason === "NATIVE_WRAP_REQUIRED") return "Wrap to WETH required";
   return "Below threshold";
 }
 

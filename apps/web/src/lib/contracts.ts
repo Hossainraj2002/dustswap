@@ -19,6 +19,7 @@ export const BASE_CHAIN = {
 
 export const DUSTSWAP_CONTRACTS = {
   DustSweepRouter: process.env.NEXT_PUBLIC_DUST_SWEEP_ROUTER_ADDRESS as `0x${string}`,
+  DustSweepRouterV2: process.env.NEXT_PUBLIC_DUST_SWEEP_ROUTER_V2_ADDRESS as `0x${string}`,
   FeeCollector: process.env.NEXT_PUBLIC_FEE_COLLECTOR_ADDRESS as `0x${string}`,
 } as const;
 
@@ -67,8 +68,8 @@ export const COMMON_TOKENS: Record<string, TokenInfo> = {
 // ─── Fee Constants (must match on-chain values) ────────────────────────────────
 
 export const FEES = {
-  /** Fee deducted from each token during sweepDust / sweepDustToETH (2%) */
-  DUST_SWEEP_FEE_BPS: 200,
+  /** Display fee for DustSweep. The contract fee is set on-chain. */
+  DUST_SWEEP_FEE_BPS: Number(process.env.NEXT_PUBLIC_DUST_SWEEP_FEE_BPS || "60"),
 
   /** Fee deducted on singleSwap (0.1%) */
   SWAP_FEE_BPS: 10,
