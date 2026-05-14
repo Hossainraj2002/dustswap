@@ -14,12 +14,7 @@ function cx(...parts: Array<string | false | null | undefined>) {
 }
 
 const CHAIN_FILTERS = [
-  { key: "all", label: "All" },
-  { key: "eth", label: "ETH" },
-  { key: "base", label: "Base" },
-  { key: "arb", label: "Arb" },
-  { key: "bnb", label: "BNB" },
-  { key: "more", label: "More" },
+  { key: "base", label: "Base", icon: "https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/base/info/logo.png" },
 ] as const;
 
 function SearchIcon() {
@@ -130,7 +125,7 @@ export function TokenSelectModal({
   return (
     <div className="fixed inset-0 z-[90] flex items-end justify-center bg-slate-950/45 px-0 backdrop-blur-sm sm:items-center sm:px-4">
       <div className="flex max-h-[86dvh] w-full max-w-[520px] flex-col rounded-t-[8px] bg-white shadow-[0_30px_80px_rgba(15,23,42,0.22)] sm:rounded-[8px]">
-        <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
+        <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3 sm:px-5">
           <h2 className="text-lg font-semibold text-slate-950">{title}</h2>
           <button
             type="button"
@@ -142,7 +137,7 @@ export function TokenSelectModal({
           </button>
         </div>
 
-        <div className="space-y-5 overflow-y-auto px-5 py-4">
+        <div className="space-y-4 overflow-y-auto px-4 py-3 sm:px-5">
           <div className="relative">
             <input
               value={query}
@@ -155,19 +150,22 @@ export function TokenSelectModal({
             </span>
           </div>
 
-          <div className="grid grid-cols-3 gap-4 px-4 sm:grid-cols-6 sm:px-0">
+          <div className="flex flex-wrap gap-2">
             {CHAIN_FILTERS.map((filter) => (
               <button
                 key={filter.key}
                 type="button"
                 className={cx(
-                  "flex aspect-square min-h-0 items-center justify-center rounded-[8px] border text-sm font-semibold transition-colors",
+                  "flex h-[32px] items-center gap-1.5 rounded-full border px-3 text-sm font-semibold transition-colors",
                   filter.key === "base"
                     ? "border-blue-300 bg-blue-50 text-blue-700"
                     : "border-slate-200 bg-slate-50 text-slate-600 hover:border-blue-200 hover:bg-blue-50",
                 )}
                 title={filter.label}
               >
+                {filter.icon && (
+                  <img src={filter.icon} alt={filter.label} className="h-4 w-4 rounded-full" />
+                )}
                 {filter.label}
               </button>
             ))}
