@@ -3990,15 +3990,6 @@ dustsweepRoutes.post("/build-tx", async (c) => {
   }
 
   const permit2Approvals = await findMissingPermit2Approvals(userAddress, routes);
-  if (permit2Approvals.length > 0) {
-    return c.json(
-      errorJson("Permit2 approval required before sweep.", {
-        code: "PERMIT2_APPROVAL_REQUIRED",
-        approvals: permit2Approvals,
-      }),
-      409,
-    );
-  }
 
   let v2Routes: DustSweepV2Route[];
   try {
@@ -4041,6 +4032,7 @@ dustsweepRoutes.post("/build-tx", async (c) => {
     requiresSignature: true,
     signatureMode: "permit2_witness",
     approvalSpender: PERMIT2_ADDRESS,
+    approvalRequirements: permit2Approvals,
     routerAddress,
     contractAddress: routerAddress,
     routeMaxCap,

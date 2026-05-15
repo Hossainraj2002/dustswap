@@ -175,6 +175,12 @@ export type DustSweepBuildTxResponse = {
   requiresSignature?: boolean;
   signatureMode?: DustSweepSignatureMode;
   approvalSpender?: Address;
+  approvalRequirements?: {
+    token: Address;
+    required: string;
+    allowance: string;
+    spender: Address;
+  }[];
   routerAddress?: Address;
   routeMaxCap?: number;
   typedData?: Permit2TypedData;
