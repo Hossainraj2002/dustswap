@@ -161,6 +161,12 @@ export function ProfileSettingsModal({
   const xCardRef = useRef<HTMLDivElement>(null);
   const discordCardRef = useRef<HTMLDivElement>(null);
 
+  const inheritedUsername = normalizeProfileUsername(profile?.fallback.username || "");
+  const inheritedDisplayName = profile?.fallback.displayName || "";
+  const inheritedProfileCopy =
+    profile?.xConnected && (profile?.xUsername || profile?.xName || profile?.xAvatar)
+      ? "Using your connected X profile by default. Save a name or username here to override it."
+      : "Using your connected profile by default. Save a name or username here to override it.";
   const initialPreviewUrl =
     profile?.custom.pfpUrl || profile?.fallback.pfpUrl || "";
   const currentPreviewUrl = previewUrl || initialPreviewUrl;
@@ -170,16 +176,8 @@ export function ProfileSettingsModal({
       return;
     }
 
-    const fallbackUsername = normalizeProfileUsername(profile?.fallback.username || "");
-    setUsername(
-      profile?.custom.username ||
-        (fallbackUsername && !validateProfileUsername(fallbackUsername)
-          ? fallbackUsername
-          : "")
-    );
-    setDisplayName(
-      profile?.custom.displayName || profile?.fallback.displayName || ""
-    );
+    setUsername(profile?.custom.username || "");
+    setDisplayName(profile?.custom.displayName || "");
     setSelectedFile(null);
     setPreviewUrl("");
     setFieldError(null);
@@ -682,7 +680,7 @@ export function ProfileSettingsModal({
                   setUsername(event.target.value.toLowerCase().replace(/^@+/, ""));
                   setFieldError(null);
                 }}
-                placeholder="username.base.eth"
+                placeholder={inheritedUsername || "username.base.eth"}
                 maxLength={24}
                 disabled={isSaving}
                 className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-950 outline-none transition placeholder:text-slate-400 focus:border-sky-300 focus:ring-2 focus:ring-sky-100 disabled:cursor-not-allowed disabled:opacity-60"
@@ -699,12 +697,20 @@ export function ProfileSettingsModal({
                   setDisplayName(event.target.value);
                   setFieldError(null);
                 }}
-                placeholder="Nickname"
+                placeholder={inheritedDisplayName || "Nickname"}
                 maxLength={32}
                 disabled={isSaving}
                 className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-950 outline-none transition placeholder:text-slate-400 focus:border-sky-300 focus:ring-2 focus:ring-sky-100 disabled:cursor-not-allowed disabled:opacity-60"
               />
             </label>
+
+            {!profile?.custom.username &&
+            !profile?.custom.displayName &&
+            (inheritedUsername || inheritedDisplayName) ? (
+              <p className="text-[11px] leading-4 text-slate-500">
+                {inheritedProfileCopy}
+              </p>
+            ) : null}
 
             <div ref={connectionsSectionRef} className="space-y-3">
               <div>

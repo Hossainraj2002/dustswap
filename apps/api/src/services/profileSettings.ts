@@ -7,7 +7,11 @@ import { postgresDb } from "./postgres";
 import { isAllowedAppDomain } from "../config/appOrigins";
 import { createBasePublicClient } from "../utils/baseRpc";
 import { runtimeCache } from "../utils/runtimeCache";
-import { toXAccountSummary, type XSocialAccountRecord } from "./xVerification";
+import {
+  isConnectedXAccount,
+  toXAccountSummary,
+  type XSocialAccountRecord,
+} from "./xVerification";
 import {
   toDiscordAccountSummary,
   type DiscordSocialAccountRecord,
@@ -477,9 +481,14 @@ export class ProfileSettingsService {
 
       custom = (customData as UserProfileRecord | null) ?? null;
       const socialRows = (socialData ?? []) as Array<SocialAccountRecord & { platform: string }>;
-      fallback = socialRows.find((row) => row.platform === "farcaster") ?? null;
+      const farcasterAccount =
+        socialRows.find((row) => row.platform === "farcaster") ?? null;
       xAccount = socialRows.find((row) => row.platform === "x") ?? null;
       discordAccount = socialRows.find((row) => row.platform === "discord") ?? null;
+      fallback =
+        xAccount && isConnectedXAccount(xAccount as XSocialAccountRecord)
+          ? xAccount
+          : farcasterAccount;
     }
 
     const r2Status = getR2ConfigStatus();
