@@ -27,8 +27,8 @@ function parsePgInt8(value: string) {
   return parsed;
 }
 
-// Supabase returned date/time columns as strings. Keep that shape so the app does
-// not receive timezone-shifted Date objects from node-postgres.
+// Keep the older API response shape: date/time columns are returned as strings
+// instead of timezone-shifted Date objects from node-postgres.
 types.setTypeParser(PG_INT8_OID, parsePgInt8);
 types.setTypeParser(PG_DATE_OID, (value) => value);
 types.setTypeParser(PG_TIMESTAMP_OID, normalizePgDateTimeText);

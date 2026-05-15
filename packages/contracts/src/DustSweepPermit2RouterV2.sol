@@ -53,10 +53,17 @@ contract DustSweepPermit2RouterV2 is Ownable, ReentrancyGuard {
         bytes data;
     }
 
+    struct SweepParams {
+        address outputToken;
+        address receiver;
+        uint256 minAmountOut;
+        uint256 deadline;
+    }
+
     uint256 public constant BPS_DENOMINATOR = 10_000;
     uint256 public constant MAX_BATCH_SIZE = 50;
     uint16 public constant MAX_FEE_BPS = 300;
-    address public constant NATIVE_TOKEN_SENTINEL = 0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee;
+    address public constant NATIVE_TOKEN_SENTINEL = 0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE;
 
     bytes32 public constant SWEEP_ROUTE_TYPEHASH =
         keccak256("SweepRoute(address tokenIn,uint256 amountIn,address target,address spender,uint256 value,bytes32 dataHash)");
@@ -143,19 +150,67 @@ contract DustSweepPermit2RouterV2 is Ownable, ReentrancyGuard {
         nonReentrant
         returns (uint256 grossAmountOut, uint256 feeAmount, uint256 netAmountOut)
     {
-        if (block.timestamp > deadline) revert DeadlineExpired();
+        SweepParams memory params = SweepParams({
+            outputToken: outputToken,
+            receiver: receiver,
+            minAmountOut: minAmountOut,
+            deadline: deadline
+        });
+
+        _validateSweepParams(routes, params, permit.deadline);
+
+        uint256 initialOutputBalance = IERC20(params.outputToken).balanceOf(address(this));
+
+        _validateRoutesAndPermit(routes, params.outputToken, permit);
+        _pullInputsWithPermit2(routes, params, permit, signature);
+        _executeRoutes(routes, params.deadline);
+
+        return _settleOutput(routes.length, params, initialOutputBalance);
+    }
+
+    function _validateSweepParams(
+        SweepRoute[] calldata routes,
+        SweepParams memory params,
+        uint256 permitDeadline
+    ) internal view {
+        if (block.timestamp > params.deadline) revert DeadlineExpired();
         if (routes.length == 0) revert EmptyRoutes();
         if (routes.length > MAX_BATCH_SIZE) revert BatchTooLarge();
-        if (outputToken == address(0) || receiver == address(0)) revert ZeroAddress();
-        if (outputToken == NATIVE_TOKEN_SENTINEL) revert NativeInputUnsupported();
-        if (permit.deadline != deadline) revert PermitDeadlineMismatch();
+        if (params.outputToken == address(0) || params.receiver == address(0)) revert ZeroAddress();
+        if (params.outputToken == NATIVE_TOKEN_SENTINEL) revert NativeInputUnsupported();
+        if (permitDeadline != params.deadline) revert PermitDeadlineMismatch();
+    }
 
-        uint256 initialOutputBalance = IERC20(outputToken).balanceOf(address(this));
-
-        _validateRoutesAndPermit(routes, outputToken, permit);
-
+    function _pullInputsWithPermit2(
+        SweepRoute[] calldata routes,
+        SweepParams memory params,
+        ISignatureTransfer.PermitBatchTransferFrom calldata permit,
+        bytes calldata signature
+    ) internal {
         ISignatureTransfer.SignatureTransferDetails[] memory transferDetails =
-            new ISignatureTransfer.SignatureTransferDetails[](routes.length);
+            _buildTransferDetails(routes);
+        bytes32 witness = hashSweepWitness(
+            hashRoutes(routes),
+            params.outputToken,
+            params.receiver,
+            params.minAmountOut,
+            params.deadline
+        );
+
+        permit2.permitWitnessTransferFrom(
+            permit,
+            transferDetails,
+            msg.sender,
+            witness,
+            PERMIT2_WITNESS_TYPE_STRING,
+            signature
+        );
+    }
+
+    function _buildTransferDetails(
+        SweepRoute[] calldata routes
+    ) internal view returns (ISignatureTransfer.SignatureTransferDetails[] memory transferDetails) {
+        transferDetails = new ISignatureTransfer.SignatureTransferDetails[](routes.length);
         for (uint256 i; i < routes.length;) {
             transferDetails[i] = ISignatureTransfer.SignatureTransferDetails({
                 to: address(this),
@@ -166,22 +221,15 @@ contract DustSweepPermit2RouterV2 is Ownable, ReentrancyGuard {
                 ++i;
             }
         }
+    }
 
-        bytes32 witness = hashSweepWitness(hashRoutes(routes), outputToken, receiver, minAmountOut, deadline);
-        permit2.permitWitnessTransferFrom(
-            permit,
-            transferDetails,
-            msg.sender,
-            witness,
-            PERMIT2_WITNESS_TYPE_STRING,
-            signature
-        );
-
-        _executeRoutes(routes, deadline);
-
-        uint256 finalOutputBalance = IERC20(outputToken).balanceOf(address(this));
-        grossAmountOut = finalOutputBalance - initialOutputBalance;
-        if (grossAmountOut < minAmountOut) revert InsufficientOutput();
+    function _settleOutput(
+        uint256 routeCount,
+        SweepParams memory params,
+        uint256 initialOutputBalance
+    ) internal returns (uint256 grossAmountOut, uint256 feeAmount, uint256 netAmountOut) {
+        grossAmountOut = IERC20(params.outputToken).balanceOf(address(this)) - initialOutputBalance;
+        if (grossAmountOut < params.minAmountOut) revert InsufficientOutput();
 
         feeAmount = (grossAmountOut * feeBps) / BPS_DENOMINATOR;
         netAmountOut = grossAmountOut - feeAmount;
@@ -189,17 +237,17 @@ contract DustSweepPermit2RouterV2 is Ownable, ReentrancyGuard {
         if (feeAmount > 0) {
             address collector = feeCollector;
             if (collector == address(0)) revert FeeCollectorRequired();
-            IERC20(outputToken).safeTransfer(collector, feeAmount);
-            emit ProtocolFeePaid(outputToken, msg.sender, collector, feeAmount);
+            IERC20(params.outputToken).safeTransfer(collector, feeAmount);
+            emit ProtocolFeePaid(params.outputToken, msg.sender, collector, feeAmount);
         }
 
-        IERC20(outputToken).safeTransfer(receiver, netAmountOut);
+        IERC20(params.outputToken).safeTransfer(params.receiver, netAmountOut);
 
         emit DustSweepExecuted(
             msg.sender,
-            receiver,
-            outputToken,
-            routes.length,
+            params.receiver,
+            params.outputToken,
+            routeCount,
             grossAmountOut,
             feeAmount,
             netAmountOut

@@ -10,9 +10,7 @@ Users now save their X username manually on `/quests`, and the backend uses your
 
 Fill these in `apps/api/.env`:
 
-- `SUPABASE_URL`
-- `SUPABASE_SERVICE_ROLE_KEY`
-- `SUPABASE_ANON_KEY` optional fallback
+- `DATABASE_URL`
 - `NEXT_PUBLIC_APP_URL`
 - `QUEST_ADMIN_TOKEN`
 - `X_BEARER_TOKEN`
@@ -21,42 +19,21 @@ Recommended local values:
 
 - `NEXT_PUBLIC_APP_URL=http://localhost:3000`
 
-## Supabase dashboard mapping
+## Railway Postgres Mapping
 
-Supabase now shows newer key names in many dashboards, so the env names in this repo do not always match the exact label you see in the UI.
+This repo uses plain PostgreSQL through `DATABASE_URL`.
 
-Use this mapping:
+Use this mapping in Railway:
 
-- `SUPABASE_URL` = `Project URL`
-- `SUPABASE_ANON_KEY` = `Anon Key (Legacy)` if available
-- `SUPABASE_SERVICE_ROLE_KEY` = backend-only elevated key
+- `DATABASE_URL` = the Railway-injected Postgres connection string for the API service
+- `DATABASE_SSL_MODE=require` if the public Railway URL needs explicit SSL
+- leave `DATABASE_SSL_MODE` blank for the default auto-detection
 
 Important:
 
-- If Supabase shows you a new `Secret Key` like `sb_secret_...`, you can use that value for `SUPABASE_SERVICE_ROLE_KEY` in this repo.
-- If you do not see a legacy `service_role` key, that is normal on newer Supabase projects.
-- The `Connection String` is not what we need for this app right now.
-- Do not put the secret/service key in the web app envs.
-
-If your project only shows:
-
-- `Project URL`
-- `Publishable Key`
-- `Anon Key (Legacy)`
-
-then you already have enough for:
-
-- `SUPABASE_URL` from `Project URL`
-- `SUPABASE_ANON_KEY` from `Anon Key (Legacy)`
-
-For `SUPABASE_SERVICE_ROLE_KEY`, go to the API keys or API settings area and create/copy a server-side secret key. Supabase docs now recommend secret keys over the old legacy `service_role` key.
-
-For this repo today, the minimum backend setup is:
-
-- `SUPABASE_URL`
-- `SUPABASE_SERVICE_ROLE_KEY`
-
-`SUPABASE_ANON_KEY` is optional because the API already prefers the service key first.
+- Do not put `DATABASE_URL` in the web app envs.
+- If you run SQL manually, run it against the Railway Postgres database.
+- For local migrations through `.env.migration`, set `TARGET_DATABASE_URL` to Railway's public/external Postgres URL.
 
 Fill these in `apps/web/.env.local`:
 
@@ -67,9 +44,7 @@ Fill these in `apps/web/.env.local`:
 
 Set these on Railway for the API service:
 
-- `SUPABASE_URL`
-- `SUPABASE_SERVICE_ROLE_KEY`
-- `SUPABASE_ANON_KEY`
+- `DATABASE_URL`
 - `NEXT_PUBLIC_APP_URL`
 - `QUEST_ADMIN_TOKEN`
 - `X_BEARER_TOKEN`
@@ -113,7 +88,7 @@ Flow:
 
 Best next upgrade for this product:
 
-1. Wallet whitelist in Supabase
+1. Wallet whitelist in the database
 2. Sign-In With Ethereum style signed message
 3. Server checks signed wallet against the whitelist
 
