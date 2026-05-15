@@ -3,10 +3,21 @@
 import Image from "next/image";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { pay } from "@base-org/account/payment";
-import { useAccount, usePublicClient, useReadContract, useWalletClient } from "wagmi";
-import { encodeFunctionData, erc20Abi } from "viem";
+import {
+  useAccount,
+  usePublicClient,
+  useReadContract,
+  useSignMessage,
+  useWalletClient,
+} from "wagmi";
+import { encodeFunctionData, erc20Abi, type Hex } from "viem";
 import { DailyCheckInModule } from "@/components/profile/DailyCheckInModule";
-import { ProfileSettingsModal } from "@/components/profile/ProfileSettingsModal";
+import { ProfileCompletionGuide } from "@/components/profile/ProfileCompletionGuide";
+import {
+  ProfileSettingsModal,
+  type ProfileSettingsFocusTarget,
+  type ProfileSettingsInitialSection,
+} from "@/components/profile/ProfileSettingsModal";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { WalletConnectButton } from "@/components/wallet/WalletConnectButton";
 import { useBaseChainSwitch } from "@/hooks/useBaseChainSwitch";
@@ -25,6 +36,15 @@ import {
   type UserStats,
 } from "@/lib/points";
 import { emitDataInvalidation, subscribeToDataInvalidation } from "@/lib/clientEvents";
+import {
+  buildProfileCompletionMessage,
+  claimProfileCompletionReward,
+  dismissProfileCompletion,
+  fetchProfileCompletion,
+  recordProfileCompletionImpression,
+  type ProfileCompletionGuide as ProfileCompletionGuideState,
+  type ProfileCompletionStepKey,
+} from "@/lib/profileCompletion";
 import {
   buildReferralLink,
   buildReferralLandingPath,
@@ -80,6 +100,34 @@ function getErrorMessage(error: unknown) {
 
 function shortAddress(address: string) {
   return `${address.slice(0, 6)}...${address.slice(-4)}`;
+}
+
+function getXConnectErrorMessage(error?: string | null) {
+  if (!error) {
+    return "X connection failed. Please try again.";
+  }
+
+  if (error.toLowerCase().includes("already linked")) {
+    return error;
+  }
+
+  return "X connection failed. Please try again.";
+}
+
+function getDiscordConnectErrorMessage(error?: string | null) {
+  if (!error) {
+    return "Discord connection failed. Please try again.";
+  }
+
+  if (error === "DISCORD_OAUTH_STATE_INVALID") {
+    return "Discord connection expired. Please try again.";
+  }
+
+  if (error === "DISCORD_NOT_CONFIGURED") {
+    return "Discord is not configured on the API server.";
+  }
+
+  return "Discord connection failed. Please try again.";
 }
 
 function isTxHash(value: unknown): value is `0x${string}` {
@@ -175,6 +223,7 @@ const PROFILE_FAQ_ITEMS = [
 
 function ProfilePageContent() {
   const { address, isConnected } = useAccount();
+  const { signMessageAsync } = useSignMessage();
   const { data: walletClient } = useWalletClient();
   const { supportsBaseAccountFeatures } = useWalletConnection();
   const { isOnBase, isSwitching: isSwitchingToBase, switchToBase } = useBaseChainSwitch();
@@ -187,6 +236,14 @@ function ProfilePageContent() {
     useState<ProfileSettingsResponse | null>(null);
   const [isProfileSettingsLoading, setIsProfileSettingsLoading] = useState(false);
   const [profileSettingsError, setProfileSettingsError] = useState<string | null>(null);
+  const [profileCompletion, setProfileCompletion] =
+    useState<ProfileCompletionGuideState | null>(null);
+  const [isProfileCompletionLoading, setIsProfileCompletionLoading] =
+    useState(false);
+  const [isProfileCompletionModalOpen, setIsProfileCompletionModalOpen] =
+    useState(false);
+  const [isClaimingProfileCompletionReward, setIsClaimingProfileCompletionReward] =
+    useState(false);
   const [balance, setBalance] = useState<PointsBalance | null>(null);
   const [stats, setStats] = useState<UserStats | null>(null);
   const [referral, setReferral] = useState<ReferralStats | null>(null);
@@ -194,6 +251,12 @@ function ProfilePageContent() {
   const [celebration, setCelebration] = useState<CelebrationState>(null);
   const [isCopied, setIsCopied] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [settingsInitialSection, setSettingsInitialSection] =
+    useState<ProfileSettingsInitialSection>("profile");
+  const [settingsInitialFocusTarget, setSettingsInitialFocusTarget] =
+    useState<ProfileSettingsFocusTarget | null>(null);
+  const [settingsConnectionSource, setSettingsConnectionSource] =
+    useState<string | null>(null);
   const [pendingReferralCode, setPendingReferralCode] = useState<string | null>(null);
 
   // Inline referral code entry state — profile fallback, completely separate from link-based flow
@@ -211,6 +274,9 @@ function ProfilePageContent() {
   const inlineDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const silentRefreshPromiseRef = useRef<Promise<void> | null>(null);
   const lastSilentRefreshAtRef = useRef(0);
+  const referralSectionRef = useRef<HTMLElement | null>(null);
+  const trackerImpressionAddressRef = useRef<string | null>(null);
+  const modalImpressionAddressRef = useRef<string | null>(null);
   const [isCheckingIn, setIsCheckingIn] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isResetting, setIsResetting] = useState(false);
@@ -387,6 +453,62 @@ function ProfilePageContent() {
     }
   }, [address]);
 
+  const fetchProfileCompletionData = useCallback(
+    async (options?: { silent?: boolean }) => {
+      if (!address) {
+        setProfileCompletion(null);
+        setIsProfileCompletionLoading(false);
+        return;
+      }
+
+      if (!options?.silent) {
+        setIsProfileCompletionLoading(true);
+      }
+
+      try {
+        const nextGuide = await fetchProfileCompletion(address);
+        setProfileCompletion(nextGuide.guide);
+      } catch {
+        // Keep the rest of the profile resilient if the completion API is unavailable.
+      } finally {
+        if (!options?.silent) {
+          setIsProfileCompletionLoading(false);
+        }
+      }
+    },
+    [address]
+  );
+
+  const openProfileSettings = useCallback(
+    (options?: {
+      section?: ProfileSettingsInitialSection;
+      focusTarget?: ProfileSettingsFocusTarget | null;
+      source?: string | null;
+    }) => {
+      setSettingsInitialSection(options?.section ?? "profile");
+      setSettingsInitialFocusTarget(options?.focusTarget ?? null);
+      setSettingsConnectionSource(options?.source ?? null);
+      setIsSettingsOpen(true);
+
+      if (!profileSettings && !isProfileSettingsLoading) {
+        void fetchProfileSettingsData();
+      }
+    },
+    [
+      fetchProfileSettingsData,
+      isProfileSettingsLoading,
+      profileSettings,
+    ]
+  );
+
+  const closeProfileSettings = useCallback(() => {
+    setIsSettingsOpen(false);
+    setSettingsInitialSection("profile");
+    setSettingsInitialFocusTarget(null);
+    setSettingsConnectionSource(null);
+    void fetchProfileCompletionData({ silent: true });
+  }, [fetchProfileCompletionData]);
+
   useEffect(() => {
     setIsMounted(true);
     setPendingReferralCode(getPendingReferralCode());
@@ -397,6 +519,7 @@ function ProfilePageContent() {
       void fetchProfileData();
       void fetchNeynarProfile();
       void fetchProfileSettingsData();
+      void fetchProfileCompletionData();
       return;
     }
 
@@ -407,9 +530,21 @@ function ProfilePageContent() {
     setProfileSettings(null);
     setProfileSettingsError(null);
     setIsProfileSettingsLoading(false);
+    setProfileCompletion(null);
+    setIsProfileCompletionLoading(false);
+    setIsProfileCompletionModalOpen(false);
+    setSettingsInitialSection("profile");
+    setSettingsInitialFocusTarget(null);
+    setSettingsConnectionSource(null);
     setIsSettingsOpen(false);
     setIsLoading(false);
-  }, [fetchNeynarProfile, fetchProfileData, fetchProfileSettingsData, isConnected]);
+  }, [
+    fetchNeynarProfile,
+    fetchProfileCompletionData,
+    fetchProfileData,
+    fetchProfileSettingsData,
+    isConnected,
+  ]);
 
   useEffect(() => {
     if (
@@ -438,16 +573,125 @@ function ProfilePageContent() {
   }, [address]);
 
   useEffect(() => {
+    trackerImpressionAddressRef.current = null;
+    modalImpressionAddressRef.current = null;
+  }, [address]);
+
+  useEffect(() => {
+    if (!address || typeof window === "undefined") {
+      return;
+    }
+
+    const params = new URLSearchParams(window.location.search);
+    const openSettingsParam = params.get("open_settings");
+    const settingsSectionParam = params.get("settings_section");
+    const settingsFocusParam = params.get("settings_focus");
+    const settingsSourceParam = params.get("settings_source");
+    const xLinked = params.get("x_linked");
+    const xError = params.get("x_error");
+    const xUsername = params.get("x_username");
+    const discordLinked = params.get("discord_linked");
+    const discordError = params.get("discord_error");
+    const discordUsername = params.get("discord_username");
+
+    if (
+      !openSettingsParam &&
+      !xLinked &&
+      !xError &&
+      !discordLinked &&
+      !discordError
+    ) {
+      return;
+    }
+
+    const settingsFocusTarget =
+      settingsFocusParam === "x_connection" ||
+      settingsFocusParam === "discord_connection"
+        ? settingsFocusParam
+        : null;
+    const settingsSection =
+      settingsSectionParam === "connections" ? "connections" : "profile";
+
+    if (openSettingsParam === "1") {
+      openProfileSettings({
+        section: settingsSection,
+        focusTarget: settingsFocusTarget,
+        source: settingsSourceParam || null,
+      });
+    }
+
+    if (xLinked === "1") {
+      setToast({
+        kind: "success",
+        message: xUsername ? `X connected as @${xUsername}.` : "X connected.",
+      });
+      emitDataInvalidation(["profile", "quests"], "x-connected");
+      void refreshProfileDataSilently();
+      void fetchProfileSettingsData();
+      void fetchProfileCompletionData({ silent: true });
+    } else if (xError) {
+      setToast({
+        kind: "error",
+        message: getXConnectErrorMessage(xError),
+      });
+    }
+
+    if (discordLinked === "1") {
+      setToast({
+        kind: "success",
+        message: discordUsername
+          ? `Discord connected as ${discordUsername}.`
+          : "Discord connected.",
+      });
+      emitDataInvalidation(["profile", "quests"], "discord-connected");
+      void refreshProfileDataSilently();
+      void fetchProfileSettingsData();
+      void fetchProfileCompletionData({ silent: true });
+    } else if (discordError) {
+      setToast({
+        kind: "error",
+        message: getDiscordConnectErrorMessage(discordError),
+      });
+    }
+
+    [
+      "open_settings",
+      "settings_section",
+      "settings_focus",
+      "settings_source",
+      "x_linked",
+      "x_error",
+      "x_username",
+      "discord_linked",
+      "discord_error",
+      "discord_username",
+    ].forEach((key) => params.delete(key));
+
+    const nextUrl = `${window.location.pathname}${
+      params.toString() ? `?${params.toString()}` : ""
+    }${window.location.hash}`;
+    window.history.replaceState({}, "", nextUrl);
+  }, [
+    address,
+    fetchProfileCompletionData,
+    fetchProfileSettingsData,
+    openProfileSettings,
+    refreshProfileDataSilently,
+  ]);
+
+  useEffect(() => {
     if (!address) {
       return;
     }
 
     const handleFocus = () => {
       void refreshProfileDataSilently();
+      void fetchProfileCompletionData({ silent: true });
     };
     const handleVisibilityChange = () => {
       if (document.visibilityState === "visible") {
         void refreshProfileDataSilently();
+        void fetchProfileCompletionData({ silent: true });
       }
     };
 
@@ -458,7 +702,7 @@ function ProfilePageContent() {
       window.removeEventListener("focus", handleFocus);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
-  }, [address, refreshProfileDataSilently]);
+  }, [address, fetchProfileCompletionData, refreshProfileDataSilently]);
 
   useEffect(() => {
     if (!address) {
@@ -468,6 +712,7 @@ function ProfilePageContent() {
     const handleInvalidation = () => {
       void refreshProfileDataSilently();
       void fetchProfileSettingsData();
+      void fetchProfileCompletionData({ silent: true });
     };
     const unsubscribeProfile = subscribeToDataInvalidation("profile", handleInvalidation);
     const unsubscribePoints = subscribeToDataInvalidation("points", handleInvalidation);
@@ -476,7 +721,12 @@ function ProfilePageContent() {
       unsubscribeProfile();
       unsubscribePoints();
     };
-  }, [address, fetchProfileSettingsData, refreshProfileDataSilently]);
+  }, [
+    address,
+    fetchProfileCompletionData,
+    fetchProfileSettingsData,
+    refreshProfileDataSilently,
+  ]);
 
   useEffect(() => {
     if (!pendingReferralCode || referral?.hasReferrer !== true) {
@@ -499,6 +749,40 @@ function ProfilePageContent() {
 
     return () => window.clearTimeout(timeout);
   }, [toast]);
+
+  useEffect(() => {
+    if (!address || !profileCompletion) {
+      return;
+    }
+
+    if (trackerImpressionAddressRef.current === address.toLowerCase()) {
+      return;
+    }
+
+    trackerImpressionAddressRef.current = address.toLowerCase();
+    void recordProfileCompletionImpression({
+      address,
+      surface: "tracker",
+    });
+  }, [address, profileCompletion]);
+
+  useEffect(() => {
+    if (!address || !profileCompletion?.showModal) {
+      return;
+    }
+
+    setIsProfileCompletionModalOpen(true);
+
+    if (modalImpressionAddressRef.current === address.toLowerCase()) {
+      return;
+    }
+
+    modalImpressionAddressRef.current = address.toLowerCase();
+    void recordProfileCompletionImpression({
+      address,
+      surface: "modal",
+    });
+  }, [address, profileCompletion?.showModal]);
 
   useEffect(() => {
     if (!celebration) {
@@ -585,12 +869,19 @@ function ProfilePageContent() {
       emitDataInvalidation(["leaderboard", "points"], "referral-applied");
       setToast({ kind: "success", message: "Referral linked! +500 PP on the way." });
       await refreshProfileDataSilently();
+      await fetchProfileCompletionData({ silent: true });
     } catch {
       setInlineError("Something went wrong. Please try again.");
     } finally {
       setIsApplyingInline(false);
     }
-  }, [address, inlineCode, isApplyingInline, refreshProfileDataSilently]);
+  }, [
+    address,
+    fetchProfileCompletionData,
+    inlineCode,
+    isApplyingInline,
+    refreshProfileDataSilently,
+  ]);
 
   const promptSwitchToBase = useCallback(async (successMessage: string) => {
     try {
@@ -992,24 +1283,135 @@ function ProfilePageContent() {
     promptSwitchToBase,
     sendSavePayment,
     updateBalanceAndStats,
-    usesBasePayForSave,
   ]);
+
+  const handleDismissProfileCompletionModal = useCallback(() => {
+    setIsProfileCompletionModalOpen(false);
+
+    if (!address) {
+      return;
+    }
+
+    setProfileCompletion((current) =>
+      current
+        ? {
+            ...current,
+            showModal: false,
+          }
+        : current
+    );
+
+    void dismissProfileCompletion(address);
+  }, [address]);
+
+  const handleClaimProfileCompletionReward = useCallback(async () => {
+    if (
+      !address ||
+      !profileCompletion?.canClaimReward ||
+      isClaimingProfileCompletionReward
+    ) {
+      return;
+    }
+
+    setIsClaimingProfileCompletionReward(true);
+
+    try {
+      const message = buildProfileCompletionMessage(address);
+      const signature = (await signMessageAsync({
+        message,
+      })) as Hex;
+      const result = await claimProfileCompletionReward({
+        address,
+        message,
+        signature,
+      });
+
+      clearPointsSummaryCache(address);
+      setProfileCompletion(result.guide);
+      setIsProfileCompletionModalOpen(false);
+      emitDataInvalidation(["leaderboard", "points", "profile"], "profile-completion-claimed");
+      await Promise.all([
+        refreshProfileDataSilently(),
+        fetchProfileSettingsData(),
+        fetchProfileCompletionData({ silent: true }),
+      ]);
+      setToast({
+        kind: "success",
+        message: "1,000 PP claimed.",
+      });
+    } catch (error) {
+      const message = getErrorMessage(error);
+      const payload = (error as Error & {
+        payload?: { guide?: ProfileCompletionGuideState };
+      }).payload;
+
+      if (payload?.guide) {
+        setProfileCompletion(payload.guide);
+      }
+
+      setToast({
+        kind: "error",
+        message: message || "Failed to claim your profile completion reward.",
+      });
+    } finally {
+      setIsClaimingProfileCompletionReward(false);
+    }
+  }, [
+    address,
+    fetchProfileCompletionData,
+    fetchProfileSettingsData,
+    isClaimingProfileCompletionReward,
+    profileCompletion?.canClaimReward,
+    refreshProfileDataSilently,
+    signMessageAsync,
+  ]);
+
+  const handleProfileCompletionContinue = useCallback(
+    async (step: ProfileCompletionStepKey | "claim_reward") => {
+      if (step === "claim_reward") {
+        await handleClaimProfileCompletionReward();
+        return;
+      }
+
+      setIsProfileCompletionModalOpen(false);
+
+      if (step === "add_referral") {
+        referralSectionRef.current?.scrollIntoView({
+          behavior: "smooth",
+          block: "start",
+        });
+        return;
+      }
+
+      openProfileSettings({
+        section: "connections",
+        focusTarget:
+          step === "connect_x" ? "x_connection" : "discord_connection",
+        source: "profile_completion",
+      });
+    },
+    [handleClaimProfileCompletionReward, openProfileSettings]
+  );
 
   const handleProfileSettingsSaved = useCallback(
     (settings: ProfileSettingsResponse) => {
       setProfileSettings(settings);
       setProfileSettingsError(null);
       setIsSettingsOpen(false);
+      setSettingsInitialSection("profile");
+      setSettingsInitialFocusTarget(null);
+      setSettingsConnectionSource(null);
       setToast({
         kind: "success",
         message: "Profile updated.",
       });
+      void fetchProfileCompletionData({ silent: true });
       emitDataInvalidation(
         ["profile", "leaderboard", "quests"],
         "profile-settings-updated"
       );
     },
-    []
+    [fetchProfileCompletionData]
   );
 
   if (!isMounted) {
@@ -1186,10 +1588,7 @@ function ProfilePageContent() {
           <button
             type="button"
             onClick={() => {
-              setIsSettingsOpen(true);
-              if (!profileSettings && !isProfileSettingsLoading) {
-                void fetchProfileSettingsData();
-              }
+              openProfileSettings();
             }}
             className="absolute right-3 top-3 flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 bg-white/90 text-slate-500 shadow-sm transition hover:border-sky-200 hover:bg-sky-50 hover:text-sky-700"
             aria-label="Open profile settings"
@@ -1274,6 +1673,17 @@ function ProfilePageContent() {
           </div>
         </section>
 
+        {isProfileCompletionLoading || profileCompletion ? (
+          <ProfileCompletionGuide
+            guide={profileCompletion}
+            isLoading={isProfileCompletionLoading}
+            isModalOpen={isProfileCompletionModalOpen}
+            isClaimingReward={isClaimingProfileCompletionReward}
+            onContinue={handleProfileCompletionContinue}
+            onDismissModal={handleDismissProfileCompletionModal}
+          />
+        ) : null}
+
         <DailyCheckInModule
           balance={balance}
           isCheckingIn={isCheckingIn}
@@ -1288,7 +1698,10 @@ function ProfilePageContent() {
           onReset={() => void handleReset()}
         />
 
-        <section className="rounded-[28px] border border-white/70 bg-white/82 px-4 py-3 shadow-[0_20px_70px_rgba(15,23,42,0.08)] sm:px-5 sm:py-4">
+        <section
+          ref={referralSectionRef}
+          className="rounded-[28px] border border-white/70 bg-white/82 px-4 py-3 shadow-[0_20px_70px_rgba(15,23,42,0.08)] sm:px-5 sm:py-4"
+        >
           <div className="flex items-center justify-between gap-3">
             <div className="min-w-0">
               <p className="text-[9px] font-black uppercase tracking-[0.32em] text-slate-500">
@@ -1534,8 +1947,11 @@ function ProfilePageContent() {
         isProfileSettingsLoading={isProfileSettingsLoading}
         profileSettingsError={profileSettingsError}
         onRetryLoad={() => void fetchProfileSettingsData()}
-        onClose={() => setIsSettingsOpen(false)}
+        onClose={closeProfileSettings}
         onSaved={handleProfileSettingsSaved}
+        initialSection={settingsInitialSection}
+        initialFocusTarget={settingsInitialFocusTarget}
+        connectionSource={settingsConnectionSource}
       />
     </div>
   );

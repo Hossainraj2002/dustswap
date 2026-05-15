@@ -378,6 +378,21 @@ CREATE TABLE IF NOT EXISTS user_profiles (
   )
 );
 
+CREATE TABLE IF NOT EXISTS user_onboarding_guides (
+  id                     BIGSERIAL PRIMARY KEY,
+  wallet_address         VARCHAR(42) NOT NULL,
+  guide_key              TEXT NOT NULL,
+  guide_version          INTEGER NOT NULL DEFAULT 1,
+  first_seen_at          TIMESTAMPTZ,
+  last_seen_at           TIMESTAMPTZ,
+  modal_impression_count INTEGER NOT NULL DEFAULT 0,
+  dismiss_count          INTEGER NOT NULL DEFAULT 0,
+  completed_at           TIMESTAMPTZ,
+  created_at             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(wallet_address, guide_key)
+);
+
 CREATE TABLE IF NOT EXISTS quest_progress (
   id                    BIGSERIAL PRIMARY KEY,
   quest_id              UUID NOT NULL REFERENCES quests(id) ON DELETE CASCADE,
@@ -463,18 +478,24 @@ CREATE INDEX IF NOT EXISTS idx_quests_campaign        ON quests(campaign_key, st
 CREATE INDEX IF NOT EXISTS idx_social_accounts_user   ON social_accounts(user_id, platform);
 CREATE INDEX IF NOT EXISTS idx_oauth_states_state     ON oauth_states(state_hash, platform, consumed_at);
 CREATE INDEX IF NOT EXISTS idx_user_profiles_username ON user_profiles(username);
+CREATE INDEX IF NOT EXISTS idx_user_onboarding_guides_wallet_guide
+  ON user_onboarding_guides(wallet_address, guide_key);
 CREATE INDEX IF NOT EXISTS idx_quest_progress_user    ON quest_progress(user_id, quest_id, cycle_key);
 CREATE INDEX IF NOT EXISTS idx_quest_logs_user        ON quest_verification_logs(user_id, quest_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_activity_events_user   ON activity_events(user_id, event_type, occurred_at DESC);
 CREATE INDEX IF NOT EXISTS idx_activity_events_user_source_occurred
   ON activity_events(user_id, event_type, source, occurred_at DESC);
 CREATE INDEX IF NOT EXISTS idx_campaign_whitelist_campaign ON quest_campaign_whitelist(campaign_key, created_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_point_events_profile_completion_reward_once
+  ON point_events(user_id, action)
+  WHERE action = 'profile_completion_reward_v1';
 
 ALTER TABLE quests                   ENABLE ROW LEVEL SECURITY;
 ALTER TABLE social_accounts          ENABLE ROW LEVEL SECURITY;
 ALTER TABLE oauth_states             ENABLE ROW LEVEL SECURITY;
 ALTER TABLE app_migration_runs       ENABLE ROW LEVEL SECURITY;
 ALTER TABLE user_profiles            ENABLE ROW LEVEL SECURITY;
+ALTER TABLE user_onboarding_guides   ENABLE ROW LEVEL SECURITY;
 ALTER TABLE quest_progress           ENABLE ROW LEVEL SECURITY;
 ALTER TABLE quest_verification_logs  ENABLE ROW LEVEL SECURITY;
 ALTER TABLE activity_events          ENABLE ROW LEVEL SECURITY;
@@ -486,6 +507,7 @@ DROP POLICY IF EXISTS "service_all_social_accounts"  ON social_accounts;
 DROP POLICY IF EXISTS "service_all_oauth_states"     ON oauth_states;
 DROP POLICY IF EXISTS "service_all_app_migration_runs" ON app_migration_runs;
 DROP POLICY IF EXISTS "service_all_user_profiles"    ON user_profiles;
+DROP POLICY IF EXISTS "service_all_user_onboarding_guides" ON user_onboarding_guides;
 DROP POLICY IF EXISTS "service_all_quest_progress"   ON quest_progress;
 DROP POLICY IF EXISTS "service_all_quest_logs"       ON quest_verification_logs;
 DROP POLICY IF EXISTS "service_all_activity_events"  ON activity_events;
@@ -496,6 +518,7 @@ CREATE POLICY "service_all_social_accounts" ON social_accounts         FOR ALL U
 CREATE POLICY "service_all_oauth_states"    ON oauth_states            FOR ALL USING (true);
 CREATE POLICY "service_all_app_migration_runs" ON app_migration_runs   FOR ALL USING (true);
 CREATE POLICY "service_all_user_profiles"   ON user_profiles           FOR ALL USING (true);
+CREATE POLICY "service_all_user_onboarding_guides" ON user_onboarding_guides FOR ALL USING (true);
 CREATE POLICY "service_all_quest_progress"  ON quest_progress          FOR ALL USING (true);
 CREATE POLICY "service_all_quest_logs"      ON quest_verification_logs FOR ALL USING (true);
 CREATE POLICY "service_all_activity_events" ON activity_events         FOR ALL USING (true);

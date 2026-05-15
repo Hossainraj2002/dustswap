@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useSignMessage } from "wagmi";
 import type { Hex } from "viem";
 import {
@@ -34,7 +34,13 @@ type ProfileSettingsModalProps = {
   onRetryLoad?: () => void;
   onClose: () => void;
   onSaved: (settings: ProfileSettingsResponse) => void;
+  initialSection?: ProfileSettingsInitialSection;
+  initialFocusTarget?: ProfileSettingsFocusTarget | null;
+  connectionSource?: string | null;
 };
+
+export type ProfileSettingsInitialSection = "profile" | "connections";
+export type ProfileSettingsFocusTarget = "x_connection" | "discord_connection";
 
 const MAX_PFP_BYTES = 1024 * 1024;
 
@@ -115,6 +121,9 @@ export function ProfileSettingsModal({
   onRetryLoad,
   onClose,
   onSaved,
+  initialSection = "profile",
+  initialFocusTarget = null,
+  connectionSource,
 }: ProfileSettingsModalProps) {
   const { signMessageAsync } = useSignMessage();
   const profile = profileSettings?.profile;
@@ -146,6 +155,11 @@ export function ProfileSettingsModal({
   const [discordActionState, setDiscordActionState] = useState<
     "idle" | "connecting" | "verifying"
   >("idle");
+  const [highlightTarget, setHighlightTarget] =
+    useState<ProfileSettingsFocusTarget | null>(null);
+  const connectionsSectionRef = useRef<HTMLDivElement>(null);
+  const xCardRef = useRef<HTMLDivElement>(null);
+  const discordCardRef = useRef<HTMLDivElement>(null);
 
   const initialPreviewUrl =
     profile?.custom.pfpUrl || profile?.fallback.pfpUrl || "";
@@ -238,12 +252,73 @@ export function ProfileSettingsModal({
     return () => window.removeEventListener("message", handleDiscordOAuthMessage);
   }, [address, onSaved, open]);
 
+  useEffect(() => {
+    if (!open) {
+      setHighlightTarget(null);
+      return;
+    }
+
+    if (initialSection !== "connections") {
+      return;
+    }
+
+    const targetElement =
+      initialFocusTarget === "discord_connection"
+        ? discordCardRef.current
+        : initialFocusTarget === "x_connection"
+          ? xCardRef.current
+          : connectionsSectionRef.current;
+
+    const scrollTimer = window.setTimeout(() => {
+      targetElement?.scrollIntoView({
+        behavior: "smooth",
+        block: "center",
+      });
+
+      if (initialFocusTarget) {
+        setHighlightTarget(initialFocusTarget);
+        targetElement?.querySelector<HTMLButtonElement>("button")?.focus();
+      }
+    }, 80);
+
+    const clearHighlightTimer = initialFocusTarget
+      ? window.setTimeout(() => {
+          setHighlightTarget((current) =>
+            current === initialFocusTarget ? null : current
+          );
+        }, 2200)
+      : null;
+
+    return () => {
+      window.clearTimeout(scrollTimer);
+      if (clearHighlightTimer) {
+        window.clearTimeout(clearHighlightTimer);
+      }
+    };
+  }, [initialFocusTarget, initialSection, open]);
+
   const validationMessage = useMemo(() => {
     return (
       validateProfileUsername(username) ||
       validateDisplayName(displayName)
     );
   }, [displayName, username]);
+
+  function buildConnectionReturnTo(target: ProfileSettingsFocusTarget) {
+    if (typeof window === "undefined") {
+      return "/profile";
+    }
+
+    const returnTo = new URL("/profile", window.location.origin);
+    returnTo.searchParams.set("open_settings", "1");
+    returnTo.searchParams.set("settings_section", "connections");
+    returnTo.searchParams.set("settings_focus", target);
+    if (connectionSource) {
+      returnTo.searchParams.set("settings_source", connectionSource);
+    }
+
+    return returnTo.toString();
+  }
 
   if (!open) {
     return null;
@@ -364,10 +439,7 @@ export function ProfileSettingsModal({
       const signature = (await signMessageAsync({
         message: messageToSign,
       })) as Hex;
-      const returnTo =
-        typeof window !== "undefined"
-          ? new URL("/profile", window.location.origin).toString()
-          : "/profile";
+      const returnTo = buildConnectionReturnTo("x_connection");
       const response = await createXConnectUrl({
         address,
         message: messageToSign,
@@ -400,10 +472,7 @@ export function ProfileSettingsModal({
       const signature = (await signMessageAsync({
         message: messageToSign,
       })) as Hex;
-      const returnTo =
-        typeof window !== "undefined"
-          ? new URL("/profile", window.location.origin).toString()
-          : "/profile";
+      const returnTo = buildConnectionReturnTo("discord_connection");
       const authUrl = getDiscordConnectUrl({
         address,
         message: messageToSign,
@@ -637,7 +706,24 @@ export function ProfileSettingsModal({
               />
             </label>
 
-            <div className="rounded-2xl border border-slate-200 bg-white p-3">
+            <div ref={connectionsSectionRef} className="space-y-3">
+              <div>
+                <p className="text-xs font-black uppercase tracking-[0.24em] text-slate-500">
+                  Connected accounts
+                </p>
+                <p className="mt-1 text-sm text-slate-500">
+                  Link the accounts that power your profile and social rewards.
+                </p>
+              </div>
+
+            <div
+              ref={discordCardRef}
+              className={`rounded-2xl border bg-white p-3 transition ${
+                highlightTarget === "discord_connection"
+                  ? "border-sky-300 ring-4 ring-sky-100"
+                  : "border-slate-200"
+              }`}
+            >
               <div className="flex items-center gap-3">
                 {discordAccount?.profileImageUrl ? (
                   <img
@@ -703,7 +789,14 @@ export function ProfileSettingsModal({
               </div>
             </div>
 
-            <div className="rounded-2xl border border-slate-200 bg-white p-3">
+            <div
+              ref={xCardRef}
+              className={`rounded-2xl border bg-white p-3 transition ${
+                highlightTarget === "x_connection"
+                  ? "border-sky-300 ring-4 ring-sky-100"
+                  : "border-slate-200"
+              }`}
+            >
               <div className="flex items-center gap-3">
                 {profile?.xAvatar ? (
                   <img
@@ -753,6 +846,7 @@ export function ProfileSettingsModal({
                   </button>
                 ) : null}
               </div>
+            </div>
             </div>
           </div>
 

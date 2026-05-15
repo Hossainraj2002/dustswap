@@ -9,6 +9,7 @@ import { prettyJSON } from "hono/pretty-json";
 import { authRoutes } from "./routes/auth";
 import { partnerRoutes } from "./routes/partner";
 import { pointsRoutes } from "./routes/points";
+import { profileCompletionRoutes } from "./routes/profileCompletion";
 import { profileSettingsRoutes } from "./routes/profileSettings";
 import { questsRoutes } from "./routes/quests";
 import { swapsRoutes } from "./routes/swaps";
@@ -43,6 +44,7 @@ app.route("/api/tokens", tokens);
 app.route("/api/auth", authRoutes);
 app.route("/api/partner", partnerRoutes);
 app.route("/api/points", pointsRoutes);
+app.route("/api/profile-completion", profileCompletionRoutes);
 app.route("/api/profile-settings", profileSettingsRoutes);
 app.route("/api/quests", questsRoutes);
 app.route("/api/swaps", swapsRoutes);
@@ -86,6 +88,10 @@ app.get("/", (c) => {
       "GET /api/partner/dashboard?address=": "Get partner dashboard state and metrics",
       "GET /api/partner/history?address=": "Get partner distribution history",
       "POST /api/partner/join": "Verify partner join signature and unlock dashboard access",
+      "GET /api/profile-completion?address=": "Get profile completion guide state",
+      "POST /api/profile-completion/impression": "Record profile completion guide impressions",
+      "POST /api/profile-completion/dismiss": "Dismiss the profile completion guide",
+      "POST /api/profile-completion/claim": "Claim the profile completion PP bonus",
       "GET /api/profile-settings?address=": "Get merged profile settings",
       "POST /api/profile-settings": "Save signed profile settings",
       "POST /api/profile-settings/pfp-upload-url": "Create signed R2 PFP upload URL",

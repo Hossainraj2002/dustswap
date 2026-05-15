@@ -183,6 +183,8 @@ export function AppShell({ children }: AppShellProps) {
     if (
       isLandingPage ||
       isShelllessPage ||
+      pathname === '/profile' ||
+      pathname.startsWith('/profile/') ||
       pathname.startsWith('/admin') ||
       pathname.startsWith('/partner') ||
       pathname.startsWith('/ref/')
@@ -211,6 +213,7 @@ export function AppShell({ children }: AppShellProps) {
   }, [
     address,
     checkReferralEligibility,
+    isLandingPage,
     isConnected,
     isShelllessPage,
     pathname,
