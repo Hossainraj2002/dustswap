@@ -1,26 +1,19 @@
 import { createHash } from "crypto";
-import { createPublicClient, getAddress, http, isAddress, type Hex } from "viem";
-import { base } from "viem/chains";
+import { getAddress, isAddress, type Hex } from "viem";
 import { isAllowedAppDomain } from "../config/appOrigins";
 import { runtimeCache } from "../utils/runtimeCache";
+import { createBasePublicClient } from "../utils/baseRpc";
 import { pointsEngine } from "./pointsEngine";
 import { postgresDb } from "./postgres";
 
 const PARTNER_JOIN_STATEMENT = "DustSwap Partner Program Join";
-const BASE_RPC_URL =
-  process.env.BASE_RPC_URL ||
-  process.env.NEXT_PUBLIC_BASE_RPC_URL ||
-  "https://mainnet.base.org";
 const PARTNER_JOIN_SIGNATURE_TTL_MS = 5 * 60 * 1000;
 const PARTNER_JOIN_FUTURE_SKEW_MS = 60 * 1000;
 const PARTNER_JOIN_WINDOW_MS = 60 * 1000;
 const PARTNER_JOIN_LIMIT = 8;
 const PARTNER_PROTOCOL_FEE_RATE = 0.002;
 
-const publicClient = createPublicClient({
-  chain: base,
-  transport: http(BASE_RPC_URL),
-});
+const publicClient = createBasePublicClient();
 
 type PartnerProgramState = "not_whitelisted" | "pending_join" | "joined";
 

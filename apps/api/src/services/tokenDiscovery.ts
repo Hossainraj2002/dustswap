@@ -1,8 +1,6 @@
 // apps/api/src/services/tokenDiscovery.ts
 
 import {
-  createPublicClient,
-  http,
   getAddress,
   formatUnits,
   parseAbi,
@@ -11,7 +9,11 @@ import {
   type Address,
   type Hex,
 } from "viem";
-import { base } from "viem/chains";
+import {
+  alchemyRpcRequest,
+  createBasePublicClient,
+  getAlchemyRpcEndpoints,
+} from "../utils/baseRpc";
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
@@ -159,10 +161,6 @@ function env(key: string, fallback?: string): string {
   return value;
 }
 
-function optEnv(key: string): string | undefined {
-  return process.env[key];
-}
-
 async function fetchWithRetry(
   url: string,
   options: RequestInit = {},
@@ -240,9 +238,11 @@ function dedupeAddresses(addresses: string[]): Address[] {
 export class TokenDiscovery {
   // Typed as any to avoid dual-viem structural type conflict in node_modules
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private client!: any;
-  private alchemyKey: string | undefined;
-  private baseRpcUrl: string;
+  private get client(): any {
+    return createBasePublicClient(20_000);
+  }
+
+  private readonly hasAlchemyRpc: boolean;
   private okuApiUrl: string;
 
   // Simple in-memory cache: tokenAddress → metadata
@@ -260,22 +260,8 @@ export class TokenDiscovery {
   private static PRICE_TTL = 30_000; // 30 seconds
 
   constructor() {
-    this.alchemyKey = optEnv("ALCHEMY_API_KEY");
-    this.baseRpcUrl = env("BASE_RPC_URL", "https://mainnet.base.org");
+    this.hasAlchemyRpc = getAlchemyRpcEndpoints().length > 0;
     this.okuApiUrl = env("OKU_API_URL", "https://omni.icarus.tools");
-
-    const rpcUrl = this.alchemyKey
-      ? `https://base-mainnet.g.alchemy.com/v2/${this.alchemyKey}`
-      : this.baseRpcUrl;
-
-    this.client = createPublicClient({
-      chain: base,
-      transport: http(rpcUrl, {
-        retryCount: 3,
-        retryDelay: 500,
-        timeout: 20_000,
-      }),
-    });
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -286,7 +272,7 @@ export class TokenDiscovery {
     const wallet = getAddress(walletAddress);
 
     // Strategy A: Alchemy API (most comprehensive)
-    if (this.alchemyKey) {
+    if (this.hasAlchemyRpc) {
       try {
         const result = await this.getTokenBalancesAlchemy(wallet);
         if (result.length > 0) return result;
@@ -307,36 +293,17 @@ export class TokenDiscovery {
   private async getTokenBalancesAlchemy(
     wallet: Address
   ): Promise<TokenBalance[]> {
-    const url = `https://base-mainnet.g.alchemy.com/v2/${this.alchemyKey}`;
-
-    // First call: get all token balances
-    const balanceResponse = await fetchWithRetry(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        id: 1,
-        method: "alchemy_getTokenBalances",
-        params: [wallet, "erc20"],
-      }),
+    const balanceData = await alchemyRpcRequest<{
+      tokenBalances?: {
+        contractAddress: string;
+        tokenBalance: string;
+        error: string | null;
+      }[];
+    }>("alchemy_getTokenBalances", [wallet, "erc20"], {
+      timeoutMs: 15_000,
     });
 
-    const balanceData = await balanceResponse.json() as {
-      result?: {
-        tokenBalances: {
-          contractAddress: string;
-          tokenBalance: string;
-          error: string | null;
-        }[];
-      };
-      error?: { message: string };
-    };
-
-    if (balanceData.error) {
-      throw new Error(`Alchemy error: ${balanceData.error.message}`);
-    }
-
-    const nonZeroBalances = (balanceData.result?.tokenBalances ?? []).filter(
+    const nonZeroBalances = (balanceData.tokenBalances ?? []).filter(
       (tb) => {
         if (tb.error) return false;
         const val = BigInt(tb.tokenBalance ?? "0");
@@ -516,27 +483,20 @@ export class TokenDiscovery {
     }
 
     // Try Alchemy metadata endpoint first if available
-    if (this.alchemyKey) {
+    if (this.hasAlchemyRpc) {
       try {
-        const url = `https://base-mainnet.g.alchemy.com/v2/${this.alchemyKey}`;
-        const resp = await fetchWithRetry(url, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            jsonrpc: "2.0",
-            id: 1,
-            method: "alchemy_getTokenMetadata",
-            params: [tokenAddress],
-          }),
+        const data = await alchemyRpcRequest<{
+          symbol?: string;
+          name?: string;
+          decimals?: number;
+        }>("alchemy_getTokenMetadata", [tokenAddress], {
+          timeoutMs: 10_000,
         });
-        const data = await resp.json() as {
-          result?: { symbol: string; name: string; decimals: number };
-        };
-        if (data.result && data.result.symbol) {
+        if (data?.symbol) {
           const meta = {
-            symbol: data.result.symbol,
-            name: data.result.name || data.result.symbol,
-            decimals: data.result.decimals ?? 18,
+            symbol: data.symbol,
+            name: data.name || data.symbol,
+            decimals: data.decimals ?? 18,
             cachedAt: Date.now(),
           };
           this.metadataCache.set(key, meta);

@@ -1,25 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server';
 import {
-  createPublicClient,
-  http,
   erc20Abi,
   formatUnits,
   encodeFunctionData,
   decodeFunctionResult,
   type Address,
 } from 'viem';
-import { base } from 'viem/chains';
+import {
+  alchemyRpcRequest,
+  createBasePublicClient,
+  getAlchemyRpcEndpoints,
+} from '../../src/utils/baseRpc';
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 
-const RPC_URL = process.env.ALCHEMY_API_KEY
-  ? `https://base-mainnet.g.alchemy.com/v2/${process.env.ALCHEMY_API_KEY}`
-  : process.env.NEXT_PUBLIC_BASE_RPC_URL || 'https://mainnet.base.org';
-
-const publicClient = createPublicClient({
-  chain: base,
-  transport: http(RPC_URL, { timeout: 20_000 }),
-});
+type BasePublicClient = ReturnType<typeof createBasePublicClient>;
 
 // ─── Uniswap V3 on Base ───────────────────────────────────────────────────────
 
@@ -94,6 +89,7 @@ async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T | null
 // ─── Uniswap Quoter helpers ───────────────────────────────────────────────────
 
 async function tryQuote(
+  publicClient: BasePublicClient,
   tokenIn: Address,
   tokenOut: Address,
   amountIn: bigint,
@@ -126,6 +122,7 @@ async function tryQuote(
  * Returns hasLiquidity + a USD price derived from the quote.
  */
 async function checkLiquidityAndPrice(
+  publicClient: BasePublicClient,
   tokenAddress: Address,
   decimals: number,
 ): Promise<{ hasLiquidity: boolean; quoterPriceUsd: number }> {
@@ -134,7 +131,7 @@ async function checkLiquidityAndPrice(
 
   // Direct: token → USDC
   for (const fee of FEE_TIERS) {
-    const usdcOut = await tryQuote(tokenAddress, USDC_ADDRESS, testAmount, fee);
+    const usdcOut = await tryQuote(publicClient, tokenAddress, USDC_ADDRESS, testAmount, fee);
     if (usdcOut !== null) {
       const priceUsd = (Number(usdcOut) / 1e6) / (Number(testAmount) / 10 ** decimals);
       return { hasLiquidity: true, quoterPriceUsd: priceUsd };
@@ -143,10 +140,10 @@ async function checkLiquidityAndPrice(
 
   // Two-hop: token → WETH → USDC
   for (const fee of FEE_TIERS) {
-    const wethOut = await tryQuote(tokenAddress, WETH_ADDRESS, testAmount, fee);
+    const wethOut = await tryQuote(publicClient, tokenAddress, WETH_ADDRESS, testAmount, fee);
     if (!wethOut || wethOut === 0n) continue;
 
-    const usdcOut = await tryQuote(WETH_ADDRESS, USDC_ADDRESS, wethOut, 500);
+    const usdcOut = await tryQuote(publicClient, WETH_ADDRESS, USDC_ADDRESS, wethOut, 500);
     if (usdcOut !== null && usdcOut > 0n) {
       const priceUsd = (Number(usdcOut) / 1e6) / (Number(testAmount) / 10 ** decimals);
       return { hasLiquidity: true, quoterPriceUsd: priceUsd };
@@ -212,22 +209,14 @@ async function fetchExternalPrices(addresses: Address[]): Promise<Record<string,
 // ─── Alchemy token discovery ──────────────────────────────────────────────────
 
 async function discoverTokensFromAlchemy(walletAddress: Address): Promise<Address[]> {
-  const key = process.env.ALCHEMY_API_KEY;
-  if (!key) return [];
+  if (getAlchemyRpcEndpoints().length === 0) return [];
   try {
-    const resp = await withTimeout(
-      fetch(`https://base-mainnet.g.alchemy.com/v2/${key}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'alchemy_getTokenBalances', params: [walletAddress, 'erc20'] }),
-      }),
-      10_000,
-    );
-    if (!resp?.ok) return [];
-    const data = (await resp.json()) as {
-      result?: { tokenBalances?: { contractAddress: string; tokenBalance?: string }[] };
-    };
-    return (data.result?.tokenBalances ?? [])
+    const data = await alchemyRpcRequest<{
+      tokenBalances?: { contractAddress: string; tokenBalance?: string }[];
+    }>('alchemy_getTokenBalances', [walletAddress, 'erc20'], {
+      timeoutMs: 10_000,
+    });
+    return (data.tokenBalances ?? [])
       .filter((tb) => BigInt(tb.tokenBalance ?? '0') > 0n)
       .map((tb) => tb.contractAddress as Address);
   } catch {
@@ -247,6 +236,8 @@ export async function GET(request: NextRequest) {
   }
 
   try {
+    const publicClient = createBasePublicClient(20_000);
+
     // 1. Collect all addresses to scan
     const tokenSet = new Set<string>(KNOWN_TOKENS.map((t) => t.address.toLowerCase()));
     const alchemyTokens = await discoverTokensFromAlchemy(address);
@@ -319,7 +310,7 @@ export async function GET(request: NextRequest) {
           return { token, hasLiquidity: true, priceUsd: extPrice };
         }
 
-        const res = await withTimeout(checkLiquidityAndPrice(token.address, token.decimals), 4000);
+        const res = await withTimeout(checkLiquidityAndPrice(publicClient, token.address, token.decimals), 4000);
         const hasLiquidity = res?.hasLiquidity ?? false;
         const priceUsd = extPrice > 0 ? extPrice : (res?.quoterPriceUsd ?? 0);
         return { token, hasLiquidity, priceUsd };

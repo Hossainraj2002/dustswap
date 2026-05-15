@@ -1,12 +1,14 @@
 // apps/web/src/lib/contracts.ts
 
+import { getRpcUrlForChain } from "@/config/web3";
+
 // ─── Chain Configuration ───────────────────────────────────────────────────────
 
 export const BASE_CHAIN = {
   chainId: 8453,
   name: "Base",
   network: "base",
-  rpcUrl: process.env.NEXT_PUBLIC_BASE_RPC_URL || "https://mainnet.base.org",
+  rpcUrl: getRpcUrlForChain(8453) || "https://mainnet.base.org",
   blockExplorer: "https://basescan.org",
   nativeCurrency: {
     name: "Ether",

@@ -1,17 +1,11 @@
 import { createHash, randomBytes } from "crypto";
 import { HeadObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
-import {
-  createPublicClient,
-  getAddress,
-  http,
-  isAddress,
-  type Hex,
-} from "viem";
-import { base } from "viem/chains";
+import { getAddress, isAddress, type Hex } from "viem";
 import { pointsEngine } from "./pointsEngine";
 import { postgresDb } from "./postgres";
 import { isAllowedAppDomain } from "../config/appOrigins";
+import { createBasePublicClient } from "../utils/baseRpc";
 import { runtimeCache } from "../utils/runtimeCache";
 import { toXAccountSummary, type XSocialAccountRecord } from "./xVerification";
 import {
@@ -149,15 +143,7 @@ export class ProfileSettingsError extends Error {
   }
 }
 
-const BASE_RPC_URL =
-  process.env.BASE_RPC_URL ||
-  process.env.NEXT_PUBLIC_BASE_RPC_URL ||
-  "https://mainnet.base.org";
-
-const publicClient = createPublicClient({
-  chain: base,
-  transport: http(BASE_RPC_URL),
-});
+const publicClient = createBasePublicClient();
 
 function normalizeAddress(address: string) {
   if (!isAddress(address)) {

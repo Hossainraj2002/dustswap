@@ -73,10 +73,6 @@ const REFERRAL_COFOUNDER_PASS_BONUS_PCT = Number(
   process.env.REFERRAL_COFOUNDER_PASS_BONUS_PCT || "30"
 );
 
-const BASE_RPC_URL =
-  process.env.BASE_RPC_URL ||
-  process.env.NEXT_PUBLIC_BASE_RPC_URL ||
-  "https://mainnet.base.org";
 const STREAK_SAVE_RECIPIENT =
   process.env.STREAK_SAVE_RECIPIENT ||
   process.env.NEXT_PUBLIC_STREAK_SAVE_RECIPIENT ||
@@ -146,7 +142,7 @@ const SPIN_FUNCTION_SELECTOR = encodeFunctionData({
 
 const baseClient = createPublicClient({
   chain: base,
-  transport: http(BASE_RPC_URL),
+  transport: http("https://mainnet.base.org"),
 });
 
 type BasePublicClient = typeof baseClient;

@@ -1,10 +1,10 @@
 import { createHash } from "crypto";
 import type { PoolClient } from "pg";
-import { createPublicClient, getAddress, http, isAddress, type Hex } from "viem";
-import { base } from "viem/chains";
+import { getAddress, isAddress, type Hex } from "viem";
 import { isAllowedAppDomain } from "../config/appOrigins";
 import { dbQuery, getDbPool } from "../lib/db";
 import { runtimeCache } from "../utils/runtimeCache";
+import { createBasePublicClient } from "../utils/baseRpc";
 import { pointsEngine } from "./pointsEngine";
 import { postgresDb } from "./postgres";
 import { isConnectedXAccount, type XSocialAccountRecord } from "./xVerification";
@@ -110,14 +110,7 @@ export class ProfileCompletionError extends Error {
   }
 }
 
-const publicClient = createPublicClient({
-  chain: base,
-  transport: http(
-    process.env.BASE_RPC_URL ||
-      process.env.NEXT_PUBLIC_BASE_RPC_URL ||
-      "https://mainnet.base.org"
-  ),
-});
+const publicClient = createBasePublicClient();
 
 function normalizeAddress(address: string) {
   if (!isAddress(address)) {

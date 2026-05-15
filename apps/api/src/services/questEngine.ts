@@ -1,8 +1,6 @@
 import { randomBytes, createHash } from "crypto";
 import {
-  createPublicClient,
   getAddress,
-  http,
   isAddress,
   type Hex,
 } from "viem";
@@ -10,6 +8,7 @@ import { base } from "viem/chains";
 import { pointsEngine } from "./pointsEngine";
 import { recordSwap } from "./swapRecorder";
 import { postgresDb } from "./postgres";
+import { createBasePublicClient } from "../utils/baseRpc";
 import { runtimeCache } from "../utils/runtimeCache";
 import { isAllowedAppDomain, isAllowedAppOrigin } from "../config/appOrigins";
 import {
@@ -255,14 +254,7 @@ const SWAP_SYNC_DEDUPE_TTL_MS = 25_000;
 const MANUAL_X_USERNAME_DEDUPE_TTL_MS = 15_000;
 const START_DELAY_QUEST_DEDUPE_TTL_MS = 15_000;
 
-const publicClient = createPublicClient({
-  chain: base,
-  transport: http(
-    process.env.BASE_RPC_URL ||
-      process.env.NEXT_PUBLIC_BASE_RPC_URL ||
-      "https://mainnet.base.org"
-  ),
-});
+const publicClient = createBasePublicClient();
 
 function toNumber(value: unknown, fallback = 0): number {
   const parsed = Number(value);

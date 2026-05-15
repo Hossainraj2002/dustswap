@@ -1,24 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
 import {
-  createPublicClient,
-  http,
   formatUnits,
   encodeFunctionData,
   decodeFunctionResult,
   type Address,
 } from 'viem';
-import { base } from 'viem/chains';
+import { createBasePublicClient } from '../../src/utils/baseRpc';
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 
-const RPC_URL = process.env.ALCHEMY_API_KEY
-  ? `https://base-mainnet.g.alchemy.com/v2/${process.env.ALCHEMY_API_KEY}`
-  : process.env.NEXT_PUBLIC_BASE_RPC_URL || 'https://mainnet.base.org';
-
-const publicClient = createPublicClient({
-  chain: base,
-  transport: http(RPC_URL, { timeout: 20_000 }),
-});
+type BasePublicClient = ReturnType<typeof createBasePublicClient>;
 
 const QUOTER_ADDRESS: Address = '0x3d4e44Eb1374240CE5F1B871ab261CD16335B76a';
 const WETH_ADDRESS:   Address = '0x4200000000000000000000000000000000000006';
@@ -53,6 +44,7 @@ const QUOTER_ABI = [
 // ─── Quoter helpers ───────────────────────────────────────────────────────────
 
 async function tryQuote(
+  publicClient: BasePublicClient,
   tokenIn: Address,
   tokenOut: Address,
   amountIn: bigint,
@@ -80,13 +72,14 @@ async function tryQuote(
 
 /** Get the best direct quote across all fee tiers */
 async function getBestDirectQuote(
+  publicClient: BasePublicClient,
   tokenIn: Address,
   tokenOut: Address,
   amountIn: bigint,
 ): Promise<{ amountOut: bigint; fee: number } | null> {
   let best: { amountOut: bigint; fee: number } | null = null;
   for (const fee of FEE_TIERS) {
-    const out = await tryQuote(tokenIn, tokenOut, amountIn, fee);
+    const out = await tryQuote(publicClient, tokenIn, tokenOut, amountIn, fee);
     if (out !== null && (!best || out > best.amountOut)) {
       best = { amountOut: out, fee };
     }
@@ -96,21 +89,22 @@ async function getBestDirectQuote(
 
 /** Quote with WETH routing fallback */
 async function getBestQuoteWithRouting(
+  publicClient: BasePublicClient,
   tokenIn: Address,
   tokenOut: Address,
   amountIn: bigint,
 ): Promise<{ amountOut: bigint; fee: number } | null> {
-  const direct = await getBestDirectQuote(tokenIn, tokenOut, amountIn);
+  const direct = await getBestDirectQuote(publicClient, tokenIn, tokenOut, amountIn);
   if (direct) return direct;
 
   // Two-hop via WETH (skip if tokenOut already is WETH)
   if (tokenOut.toLowerCase() === WETH_ADDRESS.toLowerCase()) return null;
 
   for (const fee1 of FEE_TIERS) {
-    const wethOut = await tryQuote(tokenIn, WETH_ADDRESS, amountIn, fee1);
+    const wethOut = await tryQuote(publicClient, tokenIn, WETH_ADDRESS, amountIn, fee1);
     if (!wethOut || wethOut === 0n) continue;
 
-    const leg2 = await getBestDirectQuote(WETH_ADDRESS, tokenOut, wethOut);
+    const leg2 = await getBestDirectQuote(publicClient, WETH_ADDRESS, tokenOut, wethOut);
     if (leg2) return { amountOut: leg2.amountOut, fee: fee1 };
   }
 
@@ -122,6 +116,7 @@ async function getBestQuoteWithRouting(
  * Returns the best quote found and what percentage of the balance was swappable.
  */
 async function getBestQuoteWithPartialFallback(
+  publicClient: BasePublicClient,
   tokenIn: Address,
   tokenOut: Address,
   fullAmount: bigint,
@@ -137,7 +132,7 @@ async function getBestQuoteWithPartialFallback(
     const adjustedAmount = (fullAmount * BigInt(pct)) / 100n;
     if (adjustedAmount === 0n) continue;
 
-    const result = await getBestQuoteWithRouting(tokenIn, tokenOut, adjustedAmount);
+    const result = await getBestQuoteWithRouting(publicClient, tokenIn, tokenOut, adjustedAmount);
     if (result) {
       return {
         amountIn: adjustedAmount,
@@ -155,6 +150,7 @@ async function getBestQuoteWithPartialFallback(
 
 export async function POST(request: NextRequest) {
   try {
+    const publicClient = createBasePublicClient(20_000);
     const body = await request.json() as {
       // Frontend sends: { orders: [{tokenIn, amountIn, decimals?}], tokenOut }
       orders?: { tokenIn: string; amountIn: string; decimals?: number }[];
@@ -218,6 +214,7 @@ export async function POST(request: NextRequest) {
 
         // FIX 2: try partial amounts if full amount has no liquidity
         const result = await getBestQuoteWithPartialFallback(
+          publicClient,
           order.tokenIn,
           tokenOutAddr,
           order.amountIn,

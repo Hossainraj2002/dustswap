@@ -1,14 +1,10 @@
 import { Hono } from "hono";
 import { createHash } from "crypto";
-import {
-  createPublicClient,
-  getAddress,
-  http,
-} from "viem";
-import { base } from "viem/chains";
+import { getAddress } from "viem";
 import { generateSiweNonce, parseSiweMessage } from "viem/siwe";
 import { isAllowedAppDomain } from "../config/appOrigins";
 import { runtimeCache } from "../utils/runtimeCache";
+import { createBasePublicClient } from "../utils/baseRpc";
 
 const authRoutes = new Hono();
 
@@ -32,14 +28,7 @@ type VerifyResponse = {
   expiresAt: string;
 };
 
-const publicClient = createPublicClient({
-  chain: base,
-  transport: http(
-    process.env.BASE_RPC_URL ||
-      process.env.NEXT_PUBLIC_BASE_RPC_URL ||
-      "https://mainnet.base.org"
-  ),
-});
+const publicClient = createBasePublicClient();
 
 function clearExpiredNonces() {
   const now = Date.now();

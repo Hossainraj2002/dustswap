@@ -1,10 +1,9 @@
+import { fallback, http } from "wagmi";
 import { base, mainnet, arbitrum, optimism, polygon, bsc, avalanche } from "wagmi/chains";
 import type { Chain } from "wagmi/chains";
-import { http } from "wagmi";
 
 export const DEFAULT_SOURCE_CHAIN_ID = base.id;
 
-// Seed the app with a stable starter set for wallet/network support.
 export const INITIAL_WAGMI_CHAINS = [
   base,
   mainnet,
@@ -25,22 +24,54 @@ export const SUPPORTED_CHAINS = {
   avalanche: avalanche.id,
 } as const;
 
-const rpcUrlByChainId: Record<number, string | undefined> = {
-  [base.id]: 
-    process.env.NEXT_PUBLIC_BASE_RPC_URL || 
-    (process.env.NEXT_PUBLIC_ALCHEMY_API_KEY 
-      ? `https://base-mainnet.g.alchemy.com/v2/${process.env.NEXT_PUBLIC_ALCHEMY_API_KEY}`
-      : undefined),
-  [mainnet.id]: process.env.NEXT_PUBLIC_ETHEREUM_RPC_URL,
-  [arbitrum.id]: process.env.NEXT_PUBLIC_ARBITRUM_RPC_URL,
-  [optimism.id]: process.env.NEXT_PUBLIC_OPTIMISM_RPC_URL,
-  [polygon.id]: process.env.NEXT_PUBLIC_POLYGON_RPC_URL,
-  [bsc.id]: process.env.NEXT_PUBLIC_BSC_RPC_URL,
-  [avalanche.id]: process.env.NEXT_PUBLIC_AVALANCHE_RPC_URL,
+function splitEnv(value?: string) {
+  return String(value || "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function unique(values: string[]) {
+  return Array.from(new Set(values));
+}
+
+function getBaseRpcUrls() {
+  const preferredAlchemyKeys = [
+    ...splitEnv(process.env.NEXT_PUBLIC_ALCHEMY_BASE_RPC_KEYS),
+    ...splitEnv(process.env.NEXT_PUBLIC_ALCHEMY_API_KEYS),
+  ];
+  const fallbackAlchemyKeys = splitEnv(process.env.NEXT_PUBLIC_ALCHEMY_API_KEY);
+  const explicitUrls = [
+    ...splitEnv(process.env.NEXT_PUBLIC_BASE_RPC_URLS),
+    ...splitEnv(process.env.NEXT_PUBLIC_BASE_RPC_URL),
+  ];
+  const alchemyUrls = [...preferredAlchemyKeys, ...fallbackAlchemyKeys].map(
+    (key) => `https://base-mainnet.g.alchemy.com/v2/${key}`,
+  );
+
+  return unique([...alchemyUrls, ...explicitUrls]);
+}
+
+function toRpcUrlList(...values: Array<string | undefined>) {
+  return values.filter((value): value is string => Boolean(value && value.trim()));
+}
+
+const rpcUrlsByChainId: Record<number, string[]> = {
+  [base.id]: getBaseRpcUrls(),
+  [mainnet.id]: toRpcUrlList(process.env.NEXT_PUBLIC_ETHEREUM_RPC_URL),
+  [arbitrum.id]: toRpcUrlList(process.env.NEXT_PUBLIC_ARBITRUM_RPC_URL),
+  [optimism.id]: toRpcUrlList(process.env.NEXT_PUBLIC_OPTIMISM_RPC_URL),
+  [polygon.id]: toRpcUrlList(process.env.NEXT_PUBLIC_POLYGON_RPC_URL),
+  [bsc.id]: toRpcUrlList(process.env.NEXT_PUBLIC_BSC_RPC_URL),
+  [avalanche.id]: toRpcUrlList(process.env.NEXT_PUBLIC_AVALANCHE_RPC_URL),
 };
 
+export function getRpcUrlsForChain(chainId: number) {
+  return rpcUrlsByChainId[chainId] || [];
+}
+
 export function getRpcUrlForChain(chainId: number) {
-  return rpcUrlByChainId[chainId];
+  return getRpcUrlsForChain(chainId)[0];
 }
 
 const customFetchFn = async (url: string | URL | globalThis.Request, init?: RequestInit) => {
@@ -63,8 +94,8 @@ const customFetchFn = async (url: string | URL | globalThis.Request, init?: Requ
           continue;
         }
       }
-    } catch (e) {
-      // Ignore JSON parse errors
+    } catch {
+      // Ignore JSON parse errors.
     }
     return response;
   }
@@ -73,12 +104,27 @@ const customFetchFn = async (url: string | URL | globalThis.Request, init?: Requ
 
 export function getWagmiTransports(chains: readonly Chain[]) {
   return Object.fromEntries(
-    chains.map((chain) => [
-      chain.id,
-      http(getRpcUrlForChain(chain.id), {
-        // @ts-ignore - viem supports fetchFn to override the default fetch
-        fetchFn: customFetchFn,
-      }),
-    ])
+    chains.map((chain) => {
+      const rpcUrls = getRpcUrlsForChain(chain.id);
+      const transports =
+        rpcUrls.length > 0
+          ? rpcUrls.map((url) =>
+              http(url, {
+                // @ts-ignore - viem supports fetchFn to override the default fetch
+                fetchFn: customFetchFn,
+              }),
+            )
+          : [
+              http(undefined, {
+                // @ts-ignore - viem supports fetchFn to override the default fetch
+                fetchFn: customFetchFn,
+              }),
+            ];
+
+      return [
+        chain.id,
+        transports.length === 1 ? transports[0] : fallback(transports),
+      ];
+    }),
   );
 }

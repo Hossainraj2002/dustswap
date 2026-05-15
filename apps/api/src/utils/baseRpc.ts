@@ -1,12 +1,15 @@
+import { createPublicClient, fallback, http } from "viem";
+import { base } from "viem/chains";
+
 const BASE_PUBLIC_RPC_URL = "https://mainnet.base.org";
 const BASE_CHAIN_ID = 8453;
 const DEFAULT_ROTATION_CALLS = 100;
 
 let activeIndex = 0;
 let activeCalls = 0;
+let alchemyActiveIndex = 0;
+let alchemyActiveCalls = 0;
 let requestId = 1;
-
-// ── Error classification ─────────────────────────────────────────────────────
 
 export class RpcDeterministicError extends Error {
   override name = "RpcDeterministicError" as const;
@@ -37,27 +40,18 @@ function isDeterministicRpcError(error?: { code?: number; message?: string }): b
   );
 }
 
-// ── Types ─────────────────────────────────────────────────────────────────────
-
 export type BaseRpcEndpoint = {
   url: string;
   headers?: Record<string, string>;
-  /** Label for metrics/logging */
   label?: string;
 };
 
 export type RpcRequestOptions = {
-  /** AbortSignal to cancel the request */
   signal?: AbortSignal;
-  /** Timeout in milliseconds (default: 5000) */
   timeoutMs?: number;
-  /** If false (default), deterministic errors are NOT retried across endpoints */
   retryDeterministic?: false;
-  /** Provider label for metrics */
   providerLabel?: string;
 };
-
-// ── Env helpers ───────────────────────────────────────────────────────────────
 
 function splitEnv(value?: string) {
   return String(value || "")
@@ -83,6 +77,37 @@ function shouldUsePublicFallback() {
   return process.env.BASE_RPC_PUBLIC_FALLBACK !== "0";
 }
 
+function isSameEndpoint(a: BaseRpcEndpoint, b: BaseRpcEndpoint) {
+  return (
+    a.url === b.url &&
+    JSON.stringify(a.headers || {}) === JSON.stringify(b.headers || {})
+  );
+}
+
+function getPreferredAlchemyKeyUrls() {
+  const preferredKeys = [
+    ...splitEnv(process.env.ALCHEMY_BASE_RPC_KEYS),
+    ...splitEnv(process.env.ALCHEMY_API_KEYS),
+  ];
+  const fallbackKeys = splitEnv(process.env.ALCHEMY_API_KEY);
+
+  return [...preferredKeys, ...fallbackKeys].map(
+    (key) => `https://base-mainnet.g.alchemy.com/v2/${key}`,
+  );
+}
+
+function getPreferredBaseRpcUrls() {
+  return unique(
+    [
+      ...splitEnv(process.env.ALCHEMY_BASE_RPC_URLS),
+      ...splitEnv(process.env.ALCHEMY_BASE_RPC),
+      ...getPreferredAlchemyKeyUrls(),
+      ...splitEnv(process.env.BASE_RPC_URLS),
+      ...splitEnv(process.env.BASE_RPC_URL),
+    ].filter(isHttpsUrl),
+  );
+}
+
 function getBlockscoutRpcEndpoints(): BaseRpcEndpoint[] {
   const keys = unique([
     ...splitEnv(process.env.BLOCKSCOUT_API_KEYS),
@@ -98,26 +123,26 @@ function getBlockscoutRpcEndpoints(): BaseRpcEndpoint[] {
   }));
 }
 
-export function getBaseRpcEndpoints(): BaseRpcEndpoint[] {
-  const explicitUrls = [
+export function getAlchemyRpcEndpoints(): BaseRpcEndpoint[] {
+  const explicitAlchemyUrls = [
     ...splitEnv(process.env.ALCHEMY_BASE_RPC_URLS),
-    ...splitEnv(process.env.BASE_RPC_URLS),
     ...splitEnv(process.env.ALCHEMY_BASE_RPC),
-    ...splitEnv(process.env.BASE_RPC_URL),
-  ];
-  const alchemyKeys = [
-    ...splitEnv(process.env.ALCHEMY_BASE_RPC_KEYS),
-    ...splitEnv(process.env.ALCHEMY_API_KEYS),
-    ...splitEnv(process.env.ALCHEMY_API_KEY),
-  ];
-  const alchemyUrls = alchemyKeys.map(
-    (key) => `https://base-mainnet.g.alchemy.com/v2/${key}`,
-  );
-  const endpoints: BaseRpcEndpoint[] = unique([...explicitUrls, ...alchemyUrls].filter(isHttpsUrl))
-    .map((url) => ({
-      url,
-      label: url.includes("alchemy") ? "alchemy" : url.includes("blockscout") ? "blockscout" : "custom",
-    }));
+  ].filter((url) => isHttpsUrl(url) && url.includes("alchemy"));
+
+  return unique([
+    ...explicitAlchemyUrls,
+    ...getPreferredAlchemyKeyUrls(),
+  ]).map((url) => ({
+    url,
+    label: "alchemy-dedicated",
+  }));
+}
+
+export function getBaseRpcEndpoints(): BaseRpcEndpoint[] {
+  const endpoints: BaseRpcEndpoint[] = getPreferredBaseRpcUrls().map((url) => ({
+    url,
+    label: url.includes("alchemy") ? "alchemy" : url.includes("blockscout") ? "blockscout" : "custom",
+  }));
   const withBlockscout = [...endpoints, ...getBlockscoutRpcEndpoints()];
   const withPublicFallback = shouldUsePublicFallback()
     ? [...withBlockscout, { url: BASE_PUBLIC_RPC_URL, label: "public" }]
@@ -149,104 +174,121 @@ export function getRotatingBaseRpcUrl() {
   return getRotatingBaseRpcEndpoint().url;
 }
 
-function orderedRpcUrls() {
+export function getOrderedBaseRpcEndpoints() {
   const endpoints = getBaseRpcEndpoints();
   const first = getRotatingBaseRpcEndpoint();
-  return [first, ...endpoints.filter((endpoint) => endpoint !== first)];
+  return [first, ...endpoints.filter((endpoint) => !isSameEndpoint(endpoint, first))];
 }
 
-// ── Dedicated Alchemy RPC (for alchemy_* proprietary methods) ────────────────
+export function getRotatingAlchemyRpcEndpoint() {
+  const endpoints = getAlchemyRpcEndpoints();
+  if (endpoints.length === 0) return null;
+  if (endpoints.length === 1) return endpoints[0];
 
-function getAlchemyEndpoint(): BaseRpcEndpoint | null {
-  const keys = [
-    ...splitEnv(process.env.ALCHEMY_API_KEY),
-    ...splitEnv(process.env.ALCHEMY_API_KEYS),
-    ...splitEnv(process.env.ALCHEMY_BASE_RPC_KEYS),
-  ];
-  if (keys.length > 0) {
-    return {
-      url: `https://base-mainnet.g.alchemy.com/v2/${keys[0]}`,
-      label: "alchemy-dedicated",
-    };
+  const endpoint = endpoints[alchemyActiveIndex % endpoints.length];
+  alchemyActiveCalls += 1;
+
+  if (alchemyActiveCalls >= getRotationCalls()) {
+    alchemyActiveCalls = 0;
+    alchemyActiveIndex = (alchemyActiveIndex + 1) % endpoints.length;
   }
 
-  // Check explicit URLs
-  const urls = [
-    ...splitEnv(process.env.ALCHEMY_BASE_RPC_URLS),
-    ...splitEnv(process.env.ALCHEMY_BASE_RPC),
-  ].filter((url) => url.includes("alchemy"));
-
-  if (urls.length > 0) {
-    return { url: urls[0], label: "alchemy-dedicated" };
-  }
-
-  return null;
+  return endpoint;
 }
 
-/**
- * Dedicated Alchemy RPC for proprietary methods like `alchemy_getTokenBalances`.
- * Does NOT use general RPC rotation — Alchemy-only methods must go to Alchemy.
- * Falls back to general rotation only if no Alchemy endpoint is configured.
- */
+function getOrderedAlchemyRpcEndpoints() {
+  const endpoints = getAlchemyRpcEndpoints();
+  const first = getRotatingAlchemyRpcEndpoint();
+  if (!first) return [];
+  return [first, ...endpoints.filter((endpoint) => !isSameEndpoint(endpoint, first))];
+}
+
+// Typed as any to avoid cross-package viem client incompatibilities in this workspace.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function createBasePublicClient(timeoutMs = 20_000): any {
+  const transports = getOrderedBaseRpcEndpoints().map((endpoint) =>
+    http(endpoint.url, {
+      timeout: timeoutMs,
+      fetchOptions: endpoint.headers
+        ? {
+            headers: endpoint.headers,
+          }
+        : undefined,
+    }),
+  );
+
+  return createPublicClient({
+    chain: base,
+    transport: transports.length === 1 ? transports[0] : fallback(transports),
+  });
+}
+
 export async function alchemyRpcRequest<T>(
   method: string,
   params: unknown[],
   opts: RpcRequestOptions = {},
 ): Promise<T> {
-  const alchemyEndpoint = getAlchemyEndpoint();
-  if (!alchemyEndpoint) {
-    // No dedicated Alchemy — fall back to general rotation (may fail for alchemy_* methods)
+  const endpoints = getOrderedAlchemyRpcEndpoints();
+  if (endpoints.length === 0) {
     return baseRpcRequest<T>(method, params, opts);
   }
 
-  const controller = new AbortController();
-  const timeoutMs = opts.timeoutMs ?? 10_000; // Alchemy balance calls can be slow
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  let lastTransport: Error | null = null;
 
-  // Use external signal if provided
-  const combinedSignal = opts.signal
-    ? AbortSignal.any([opts.signal, controller.signal])
-    : controller.signal;
+  for (const endpoint of endpoints) {
+    const controller = new AbortController();
+    const timeoutMs = opts.timeoutMs ?? 10_000;
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    const combinedSignal = opts.signal
+      ? AbortSignal.any([opts.signal, controller.signal])
+      : controller.signal;
 
-  try {
-    const response = await fetch(alchemyEndpoint.url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...alchemyEndpoint.headers },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        id: requestId++,
-        method,
-        params,
-      }),
-      signal: combinedSignal,
-    });
+    try {
+      const response = await fetch(endpoint.url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...endpoint.headers },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: requestId++,
+          method,
+          params,
+        }),
+        signal: combinedSignal,
+      });
 
-    if (!response.ok) {
-      if (response.status === 429) {
-        throw new RpcRateLimitError(`Alchemy rate limited (${response.status})`);
+      if (!response.ok) {
+        if (response.status === 429) {
+          throw new RpcRateLimitError(`Alchemy rate limited (${response.status})`);
+        }
+        throw new RpcTransportError(`Alchemy ${response.status}`);
       }
-      throw new RpcTransportError(`Alchemy ${response.status}`);
-    }
 
-    const payload = (await response.json()) as {
-      result?: T;
-      error?: { code?: number; message?: string };
-    };
+      const payload = (await response.json()) as {
+        result?: T;
+        error?: { code?: number; message?: string };
+      };
 
-    if (payload.error) {
-      if (isDeterministicRpcError(payload.error)) {
-        throw new RpcDeterministicError(payload.error.message || "Alchemy deterministic error");
+      if (payload.error) {
+        if (isDeterministicRpcError(payload.error)) {
+          throw new RpcDeterministicError(payload.error.message || "Alchemy deterministic error");
+        }
+        throw new RpcTransportError(payload.error.message || "Alchemy RPC error");
       }
-      throw new RpcTransportError(payload.error.message || "Alchemy RPC error");
-    }
 
-    return payload.result as T;
-  } finally {
-    clearTimeout(timeout);
+      return payload.result as T;
+    } catch (err) {
+      if (err instanceof RpcDeterministicError) throw err;
+      if (opts.signal?.aborted) throw err;
+
+      lastTransport = err instanceof Error ? err : new Error(String(err));
+      continue;
+    } finally {
+      clearTimeout(timeout);
+    }
   }
-}
 
-// ── Core RPC request with error classification and retry ─────────────────────
+  throw lastTransport ?? new Error("Alchemy RPC request failed");
+}
 
 export async function baseRpcRequest<T>(
   method: string,
@@ -254,14 +296,12 @@ export async function baseRpcRequest<T>(
   opts: RpcRequestOptions = {},
 ): Promise<T> {
   let lastTransport: Error | null = null;
-  const endpoints = orderedRpcUrls();
+  const endpoints = getOrderedBaseRpcEndpoints();
 
   for (const endpoint of endpoints) {
     const controller = new AbortController();
     const timeoutMs = opts.timeoutMs ?? 5_000;
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
-
-    // Combine external signal with our timeout signal
     const combinedSignal = opts.signal
       ? AbortSignal.any([opts.signal, controller.signal])
       : controller.signal;
@@ -293,7 +333,6 @@ export async function baseRpcRequest<T>(
 
       if (payload.error) {
         if (isDeterministicRpcError(payload.error)) {
-          // Deterministic error: do NOT retry across endpoints
           throw new RpcDeterministicError(payload.error.message || "deterministic rpc error");
         }
         throw new RpcTransportError(payload.error.message || "rpc error");
@@ -301,10 +340,7 @@ export async function baseRpcRequest<T>(
 
       return payload.result as T;
     } catch (err) {
-      // Deterministic errors must not rotate — throw immediately
       if (err instanceof RpcDeterministicError) throw err;
-
-      // External abort — throw immediately
       if (opts.signal?.aborted) throw err;
 
       lastTransport = err instanceof Error ? err : new Error(String(err));
