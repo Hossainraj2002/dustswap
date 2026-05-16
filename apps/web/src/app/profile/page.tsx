@@ -334,6 +334,16 @@ function ProfilePageContent() {
       }),
     [address, profile, profileSettings]
   );
+  const shouldShowProfileCompletionGuide = useMemo(() => {
+    if (!profileCompletion) {
+      return false;
+    }
+
+    return !(
+      profileCompletion.rewardClaimed &&
+      profileCompletion.completedSteps >= profileCompletion.totalSteps
+    );
+  }, [profileCompletion]);
 
   const applySummary = useCallback((summary: PointsSummaryResponse) => {
     setBalance(summary.balance);
@@ -751,7 +761,7 @@ function ProfilePageContent() {
   }, [toast]);
 
   useEffect(() => {
-    if (!address || !profileCompletion) {
+    if (!address || !profileCompletion || !shouldShowProfileCompletionGuide) {
       return;
     }
 
@@ -764,9 +774,14 @@ function ProfilePageContent() {
       address,
       surface: "tracker",
     });
-  }, [address, profileCompletion]);
+  }, [address, profileCompletion, shouldShowProfileCompletionGuide]);
 
   useEffect(() => {
+    if (!shouldShowProfileCompletionGuide) {
+      setIsProfileCompletionModalOpen(false);
+      return;
+    }
+
     if (!address || !profileCompletion?.showModal) {
       return;
     }
@@ -782,7 +797,7 @@ function ProfilePageContent() {
       address,
       surface: "modal",
     });
-  }, [address, profileCompletion?.showModal]);
+  }, [address, profileCompletion?.showModal, shouldShowProfileCompletionGuide]);
 
   useEffect(() => {
     if (!celebration) {
@@ -1673,7 +1688,7 @@ function ProfilePageContent() {
           </div>
         </section>
 
-        {isProfileCompletionLoading || profileCompletion ? (
+        {isProfileCompletionLoading || shouldShowProfileCompletionGuide ? (
           <ProfileCompletionGuide
             guide={profileCompletion}
             isLoading={isProfileCompletionLoading}
