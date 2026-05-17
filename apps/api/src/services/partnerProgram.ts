@@ -196,6 +196,13 @@ type PartnerHistoryRowPayload = {
   status: "pending" | "paid";
 };
 
+type PartnerBulkUpsertResult = {
+  processedCount: number;
+  createdCount: number;
+  updatedCount: number;
+  addresses: string[];
+};
+
 type PartnerContentSubmissionRow = {
   id: number | string;
   partner_member_id: number | string;
@@ -1429,12 +1436,12 @@ export class PartnerProgramService {
     };
   }
 
-  async upsertMember(input: {
-    address?: string;
-    feeSharePercent?: number;
-    isAdmin?: boolean;
+  private async upsertMemberRecord(input: {
+    address: string;
+    feeSharePercent: number;
+    isAdmin: boolean;
   }) {
-    const normalizedAddress = normalizeAddress(String(input.address || ""));
+    const normalizedAddress = normalizeAddress(input.address);
     const feeSharePercent = normalizeFeeSharePercent(input.feeSharePercent);
     const nextIsAdmin = Boolean(input.isAdmin);
     const user = await pointsEngine.getOrCreate(normalizedAddress);
@@ -1480,7 +1487,10 @@ export class PartnerProgramService {
         throw new Error(`Create partner fee history: ${historyError.message}`);
       }
 
-      return this.getAdminMemberDetail(normalizedAddress);
+      return {
+        created: true,
+        address: normalizedAddress,
+      } as const;
     }
 
     const currentFeeSharePercent = toNumber(existing.current_fee_share_percent);
@@ -1555,7 +1565,69 @@ export class PartnerProgramService {
       }
     }
 
+    return {
+      created: false,
+      address: normalizedAddress,
+    } as const;
+  }
+
+  async upsertMember(input: {
+    address?: string;
+    feeSharePercent?: number;
+    isAdmin?: boolean;
+  }) {
+    const normalizedAddress = normalizeAddress(String(input.address || ""));
+    await this.upsertMemberRecord({
+      address: normalizedAddress,
+      feeSharePercent: Number(input.feeSharePercent),
+      isAdmin: Boolean(input.isAdmin),
+    });
     return this.getAdminMemberDetail(normalizedAddress);
+  }
+
+  async upsertMembersBulk(input: {
+    addresses?: string[];
+    feeSharePercent?: number;
+    isAdmin?: boolean;
+  }): Promise<PartnerBulkUpsertResult> {
+    const feeSharePercent = normalizeFeeSharePercent(input.feeSharePercent);
+    const nextIsAdmin = Boolean(input.isAdmin);
+    const sourceAddresses = Array.isArray(input.addresses) ? input.addresses : [];
+    const normalizedAddresses = Array.from(
+      new Set(sourceAddresses.map((entry) => normalizeAddress(String(entry || ""))))
+    );
+
+    if (!normalizedAddresses.length) {
+      throw new PartnerProgramError("At least one valid wallet address is required.", 400);
+    }
+
+    if (normalizedAddresses.length > 500) {
+      throw new PartnerProgramError("You can whitelist up to 500 addresses at once.", 400);
+    }
+
+    let createdCount = 0;
+    let updatedCount = 0;
+
+    for (const address of normalizedAddresses) {
+      const result = await this.upsertMemberRecord({
+        address,
+        feeSharePercent,
+        isAdmin: nextIsAdmin,
+      });
+
+      if (result.created) {
+        createdCount += 1;
+      } else {
+        updatedCount += 1;
+      }
+    }
+
+    return {
+      processedCount: normalizedAddresses.length,
+      createdCount,
+      updatedCount,
+      addresses: normalizedAddresses,
+    };
   }
 
   async getAdminMemberDetail(address: string) {

@@ -146,6 +146,15 @@ export type PartnerMarkPaidResponse = {
   error?: string;
 };
 
+export type PartnerBatchUpsertResponse = {
+  success: boolean;
+  processedCount: number;
+  createdCount: number;
+  updatedCount: number;
+  addresses: string[];
+  error?: string;
+};
+
 function parseJson<T>(response: Response): Promise<T> {
   return response.text().then((text) => (text ? JSON.parse(text) : {}));
 }
@@ -390,6 +399,26 @@ export async function savePartnerAdminMember(
   });
 
   return parseJson<PartnerUpsertMemberResponse>(response);
+}
+
+export async function savePartnerAdminMembersBatch(
+  adminToken: string,
+  input: {
+    addresses: string[];
+    feeSharePercent: number;
+    isAdmin?: boolean;
+  }
+) {
+  const response = await publicApiFetch(getPartnerApiUrl("/admin/members/batch"), {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-admin-token": adminToken,
+    },
+    body: JSON.stringify(input),
+  });
+
+  return parseJson<PartnerBatchUpsertResponse>(response);
 }
 
 export async function fetchPartnerAdminMember(

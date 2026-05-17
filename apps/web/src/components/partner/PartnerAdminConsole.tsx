@@ -2,11 +2,13 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { getAddress, isAddress } from "viem";
 import {
   fetchPartnerAdminLeaderboard,
   formatUsd,
   formatUtcDate,
   savePartnerAdminMember,
+  savePartnerAdminMembersBatch,
   shortAddress,
   type PartnerAdminLeaderboardResponse,
   type PartnerAdminLeaderboardRow,
@@ -20,6 +22,25 @@ function getDisplayError(error: unknown) {
     return "Could not reach the partner API. Check NEXT_PUBLIC_API_URL and the API deployment.";
   }
   return message;
+}
+
+function extractUniqueAddresses(value: string) {
+  const matches = value.match(/0x[a-fA-F0-9]{40}/g) || [];
+  const deduped = new Map<string, string>();
+
+  for (const match of matches) {
+    if (!isAddress(match)) {
+      continue;
+    }
+
+    const normalized = getAddress(match);
+    const key = normalized.toLowerCase();
+    if (!deduped.has(key)) {
+      deduped.set(key, normalized);
+    }
+  }
+
+  return Array.from(deduped.values());
 }
 
 function SummaryCard({
@@ -174,7 +195,7 @@ export function PartnerAdminConsole({
   const [isSaving, setIsSaving] = useState(false);
   const [isUnlocked, setIsUnlocked] = useState(false);
   const [search, setSearch] = useState("");
-  const [formAddress, setFormAddress] = useState("");
+  const [formAddressInput, setFormAddressInput] = useState("");
   const [formFeeSharePercent, setFormFeeSharePercent] = useState("50");
   const [formIsAdmin, setFormIsAdmin] = useState(false);
 
@@ -259,9 +280,19 @@ export function PartnerAdminConsole({
     };
   }, [data?.rows]);
 
+  const parsedAddresses = useMemo(
+    () => extractUniqueAddresses(formAddressInput),
+    [formAddressInput]
+  );
+
   async function handleSaveMember() {
     if (!adminToken || !isUnlocked) {
       setError("Load the admin with a valid token first.");
+      return;
+    }
+
+    if (!parsedAddresses.length) {
+      setError("Paste at least one valid wallet address.");
       return;
     }
 
@@ -271,20 +302,37 @@ export function PartnerAdminConsole({
 
     try {
       const feeSharePercent = Number(formFeeSharePercent);
-      const response = await savePartnerAdminMember(adminToken, {
-        address: formAddress.trim(),
-        feeSharePercent,
-        isAdmin: formIsAdmin,
-      });
+      if (parsedAddresses.length === 1) {
+        const response = await savePartnerAdminMember(adminToken, {
+          address: parsedAddresses[0],
+          feeSharePercent,
+          isAdmin: formIsAdmin,
+        });
 
-      if (!response.success) {
-        throw new Error(response.error || "Failed to save partner member");
+        if (!response.success) {
+          throw new Error(response.error || "Failed to save partner member");
+        }
+
+        setStatus(`Partner member saved for ${response.member.address}.`);
+        setFormAddressInput(response.member.address);
+        setFormFeeSharePercent(response.member.currentFeeSharePercent.toString());
+        setFormIsAdmin(response.member.isAdmin);
+      } else {
+        const response = await savePartnerAdminMembersBatch(adminToken, {
+          addresses: parsedAddresses,
+          feeSharePercent,
+          isAdmin: formIsAdmin,
+        });
+
+        if (!response.success) {
+          throw new Error(response.error || "Failed to save partner members");
+        }
+
+        setStatus(
+          `Processed ${response.processedCount} partners. ${response.createdCount} new, ${response.updatedCount} updated.`
+        );
+        setFormAddressInput("");
       }
-
-      setStatus(`Partner member saved for ${response.member.address}.`);
-      setFormAddress(response.member.address);
-      setFormFeeSharePercent(response.member.currentFeeSharePercent.toString());
-      setFormIsAdmin(response.member.isAdmin);
       await loadLeaderboard();
     } catch (saveError) {
       setError(getDisplayError(saveError));
@@ -294,7 +342,7 @@ export function PartnerAdminConsole({
   }
 
   function applyRowToForm(row: PartnerAdminLeaderboardRow) {
-    setFormAddress(row.member.address);
+    setFormAddressInput(row.member.address);
     setFormFeeSharePercent(row.member.currentFeeSharePercent.toString());
     setFormIsAdmin(row.member.isAdmin);
     window.scrollTo({ top: 0, behavior: "smooth" });
@@ -411,13 +459,41 @@ export function PartnerAdminConsole({
                 </h2>
                 <div className="mt-5 space-y-4">
                   <label className="block">
-                    <span className="text-sm font-semibold text-slate-900">Wallet address</span>
-                    <input
-                      value={formAddress}
-                      onChange={(event) => setFormAddress(event.target.value)}
-                      placeholder="0x..."
-                      className="mt-2 w-full rounded-[18px] border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none ring-0 transition focus:border-sky-500 focus:ring-2 focus:ring-sky-100"
+                    <span className="text-sm font-semibold text-slate-900">
+                      Wallet address or bulk paste
+                    </span>
+                    <textarea
+                      value={formAddressInput}
+                      onChange={(event) => setFormAddressInput(event.target.value)}
+                      placeholder={"0x...\n0x...\nPaste many addresses, comma lists, or mixed text"}
+                      rows={5}
+                      className="mt-2 w-full resize-y rounded-[18px] border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none ring-0 transition focus:border-sky-500 focus:ring-2 focus:ring-sky-100"
                     />
+                    <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-slate-500">
+                      <span>
+                        Detects unique `0x...` addresses from any pasted text, commas, or new lines.
+                      </span>
+                      <span className="inline-flex rounded-full border border-sky-200 bg-sky-50 px-2.5 py-1 font-black uppercase tracking-[0.14em] text-sky-700">
+                        {parsedAddresses.length} unique
+                      </span>
+                    </div>
+                    {parsedAddresses.length ? (
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        {parsedAddresses.slice(0, 8).map((parsedAddress) => (
+                          <span
+                            key={parsedAddress}
+                            className="inline-flex rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-mono font-semibold text-slate-700"
+                          >
+                            {shortAddress(parsedAddress)}
+                          </span>
+                        ))}
+                        {parsedAddresses.length > 8 ? (
+                          <span className="inline-flex rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-semibold text-slate-600">
+                            +{parsedAddresses.length - 8} more
+                          </span>
+                        ) : null}
+                      </div>
+                    ) : null}
                   </label>
                   <label className="block">
                     <span className="text-sm font-semibold text-slate-900">Fee share percent</span>
@@ -443,10 +519,14 @@ export function PartnerAdminConsole({
                   <button
                     type="button"
                     onClick={() => void handleSaveMember()}
-                    disabled={!formAddress.trim() || isSaving}
+                    disabled={!parsedAddresses.length || isSaving}
                     className="inline-flex rounded-[18px] bg-slate-950 px-5 py-3 text-sm font-black text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
                   >
-                    {isSaving ? "Saving..." : "Save Partner"}
+                    {isSaving
+                      ? "Saving..."
+                      : parsedAddresses.length > 1
+                        ? `Save ${parsedAddresses.length} Partners`
+                        : "Save Partner"}
                   </button>
                 </div>
               </div>
@@ -460,6 +540,7 @@ export function PartnerAdminConsole({
                 </h2>
                 <ul className="mt-4 space-y-3 text-sm leading-7 text-slate-600">
                   <li>Whitelisting creates the partner’s DustSwap user record immediately so the referral code already exists.</li>
+                  <li>Paste one or many wallets in any format and the admin extracts unique valid addresses automatically.</li>
                   <li>Changing fee share is forward-only and starts a new effective interval from the save time.</li>
                   <li>Open-week values stay read-only until the week closes; payouts are marked from the individual partner profile.</li>
                   <li>The table stays sorted by the latest closed-week reward still due so weekly distribution work stays visible first.</li>
