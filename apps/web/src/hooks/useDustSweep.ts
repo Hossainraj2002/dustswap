@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAccount, usePublicClient, useWalletClient } from "wagmi";
 import { base } from "viem/chains";
+import { useBaseChainSwitch } from "@/hooks/useBaseChainSwitch";
 import { encodeFunctionData, erc20Abi, maxUint256, type Address, type Hex } from "viem";
 import { useTokenBalances } from "@/hooks/useTokenBalances";
 import { useWalletWhitelist } from "@/hooks/useWalletWhitelist";
@@ -287,7 +288,8 @@ function getCapForLane(lane?: string | null) {
 export function useDustSweep(): UseDustSweepReturn {
   const { address, isConnected } = useAccount();
   const { data: walletClient } = useWalletClient();
-  const publicClient = usePublicClient();
+  const publicClient = usePublicClient({ chainId: base.id });
+  const { switchToBase } = useBaseChainSwitch();
   const walletStatus = useWalletWhitelist();
   const balances = useTokenBalances(address);
   const refetchBalances = balances.refetch;
@@ -792,6 +794,8 @@ export function useDustSweep(): UseDustSweepReturn {
     setError(null);
 
     try {
+      await switchToBase();
+
       const lane = quote.executionLane || DUST_SWEEP_EXECUTION_LANE;
       const approvalSpender = lane === "owned_v2" ? PERMIT2_ADDRESS : DUST_SWEEP_ROUTER_ADDRESS;
       const approvalRequirements = await getTokenApprovalRequirements(quote.routes, approvalSpender);
@@ -958,6 +962,7 @@ export function useDustSweep(): UseDustSweepReturn {
     sendTokenApprovals,
     selectedTokens.length,
     supportsWalletSendCalls,
+    switchToBase,
     tokenOut,
     waitForSuccessfulTransaction,
     walletClient,
