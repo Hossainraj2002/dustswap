@@ -5,12 +5,18 @@ import { runtimeCache } from "../utils/runtimeCache";
 import { createBasePublicClient } from "../utils/baseRpc";
 import { pointsEngine } from "./pointsEngine";
 import { postgresDb } from "./postgres";
+import { isConnectedXAccount, type XSocialAccountRecord } from "./xVerification";
 
 const PARTNER_JOIN_STATEMENT = "DustSwap Partner Program Join";
+const PARTNER_CONTENT_SUBMISSION_STATEMENT = "DustSwap Partner Content Submission";
 const PARTNER_JOIN_SIGNATURE_TTL_MS = 5 * 60 * 1000;
 const PARTNER_JOIN_FUTURE_SKEW_MS = 60 * 1000;
 const PARTNER_JOIN_WINDOW_MS = 60 * 1000;
 const PARTNER_JOIN_LIMIT = 8;
+const PARTNER_CONTENT_SUBMISSION_SIGNATURE_TTL_MS = 5 * 60 * 1000;
+const PARTNER_CONTENT_SUBMISSION_FUTURE_SKEW_MS = 60 * 1000;
+const PARTNER_CONTENT_SUBMISSION_WINDOW_MS = 60 * 1000;
+const PARTNER_CONTENT_SUBMISSION_LIMIT = 12;
 const PARTNER_PROTOCOL_FEE_RATE = 0.002;
 
 const publicClient = createBasePublicClient();
@@ -139,6 +145,13 @@ type PartnerJoinInput = {
   signature?: Hex;
 };
 
+type PartnerContentSubmissionInput = {
+  address?: string;
+  message?: string;
+  signature?: Hex;
+  url?: string;
+};
+
 type PartnerMemberPayload = {
   id: number;
   userId: number;
@@ -181,6 +194,29 @@ type PartnerHistoryRowPayload = {
   paidAt: string | null;
   paidNotes: string | null;
   status: "pending" | "paid";
+};
+
+type PartnerContentSubmissionRow = {
+  id: number | string;
+  partner_member_id: number | string;
+  partner_user_id: number | string;
+  content_url: string;
+  normalized_url: string;
+  platform: string;
+  submitted_at: string;
+  created_at?: string | null;
+};
+
+type PartnerContentSubmissionPayload = {
+  id: number;
+  url: string;
+  platform: "x" | "telegram" | "other";
+  submittedAt: string;
+};
+
+type PartnerContentSubmissionSummaryPayload = {
+  total: number;
+  currentMonthTotal: number;
 };
 
 export class PartnerProgramError extends Error {
@@ -287,6 +323,35 @@ function parsePartnerJoinMessage(message: string) {
   };
 }
 
+function parsePartnerContentSubmissionMessage(message: string) {
+  const lines = message.split(/\r?\n/).map((line) => line.trim());
+  if (lines[0] !== PARTNER_CONTENT_SUBMISSION_STATEMENT) {
+    throw new PartnerProgramError("Invalid partner content submission message.", 401);
+  }
+
+  const fields = new Map<string, string>();
+  for (const line of lines.slice(1)) {
+    const separator = line.indexOf(":");
+    if (separator <= 0) {
+      continue;
+    }
+
+    fields.set(
+      line.slice(0, separator).trim().toLowerCase(),
+      line.slice(separator + 1).trim()
+    );
+  }
+
+  return {
+    address: fields.get("address") || "",
+    action: fields.get("action") || "",
+    url: fields.get("url") || "",
+    timestamp: fields.get("timestamp") || "",
+    nonce: fields.get("nonce") || "",
+    domain: fields.get("domain") || "",
+  };
+}
+
 function normalizeAddress(address: string) {
   if (!isAddress(address)) {
     throw new PartnerProgramError("A valid wallet address is required.", 400);
@@ -325,6 +390,104 @@ function normalizeTxHash(value: unknown) {
   }
 
   return normalized;
+}
+
+function normalizePartnerContentUrl(value: unknown) {
+  const raw = String(value || "").trim();
+  if (!raw) {
+    throw new PartnerProgramError("A valid content link is required.", 400);
+  }
+
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw new PartnerProgramError("A valid content link is required.", 400);
+  }
+
+  if (!/^https?:$/.test(url.protocol)) {
+    throw new PartnerProgramError("Content links must start with http:// or https://.", 400);
+  }
+
+  url.username = "";
+  url.password = "";
+  url.hash = "";
+  const normalizedHostname = url.hostname.toLowerCase().replace(/^www\./, "");
+  url.hostname = normalizedHostname;
+  const isXHost =
+    normalizedHostname === "x.com" ||
+    normalizedHostname === "twitter.com" ||
+    normalizedHostname.endsWith(".x.com") ||
+    normalizedHostname.endsWith(".twitter.com");
+
+  if (
+    (url.protocol === "https:" && url.port === "443") ||
+    (url.protocol === "http:" && url.port === "80")
+  ) {
+    url.port = "";
+  }
+
+  url.pathname = url.pathname.replace(/\/{2,}/g, "/");
+  if (url.pathname.length > 1) {
+    url.pathname = url.pathname.replace(/\/+$/, "");
+  }
+
+  const keptParams = Array.from(url.searchParams.entries())
+    .filter(([key]) => {
+      const normalizedKey = key.toLowerCase();
+      return (
+        !normalizedKey.startsWith("utm_") &&
+        normalizedKey !== "ref" &&
+        normalizedKey !== "ref_src" &&
+        (!isXHost || (normalizedKey !== "s" && normalizedKey !== "t"))
+      );
+    })
+    .sort(([leftKey, leftValue], [rightKey, rightValue]) => {
+      return leftKey.localeCompare(rightKey) || leftValue.localeCompare(rightValue);
+    });
+
+  url.search = "";
+  for (const [key, entryValue] of keptParams) {
+    url.searchParams.append(key, entryValue);
+  }
+
+  return url.toString();
+}
+
+function detectPartnerContentPlatform(
+  normalizedUrl: string
+): PartnerContentSubmissionPayload["platform"] {
+  let hostname = "";
+  try {
+    hostname = new URL(normalizedUrl).hostname.toLowerCase();
+  } catch {
+    return "other";
+  }
+
+  if (
+    hostname === "x.com" ||
+    hostname === "twitter.com" ||
+    hostname.endsWith(".x.com") ||
+    hostname.endsWith(".twitter.com")
+  ) {
+    return "x";
+  }
+
+  if (
+    hostname === "t.me" ||
+    hostname === "telegram.me" ||
+    hostname.endsWith(".t.me")
+  ) {
+    return "telegram";
+  }
+
+  return "other";
+}
+
+function getCurrentUtcMonthStartIso(reference = new Date()) {
+  return new Date(
+    Date.UTC(reference.getUTCFullYear(), reference.getUTCMonth(), 1)
+  ).toISOString();
 }
 
 function buildReferralLink(code: string) {
@@ -588,6 +751,38 @@ export class PartnerProgramService {
     return rows;
   }
 
+  private async loadConnectedXAccount(userId: number) {
+    const { data, error } = await postgresDb
+      .from("social_accounts")
+      .select(
+        "id, user_id, platform, platform_user_id, username, display_name, profile_image_url, metadata, created_at, updated_at"
+      )
+      .eq("user_id", userId)
+      .eq("platform", "x")
+      .maybeSingle();
+
+    if (error) {
+      throw new Error(`Load partner X account: ${error.message}`);
+    }
+
+    const account = (data as XSocialAccountRecord | null) ?? null;
+    return account && isConnectedXAccount(account) ? account : null;
+  }
+
+  private async loadContentSubmissions(memberId: number) {
+    const { data, error } = await postgresDb
+      .from("partner_content_submissions")
+      .select("*")
+      .eq("partner_member_id", memberId)
+      .order("submitted_at", { ascending: false });
+
+    if (error) {
+      throw new Error(`Load partner content submissions: ${error.message}`);
+    }
+
+    return (data ?? []) as PartnerContentSubmissionRow[];
+  }
+
   private buildMemberPayload(member: MemberRow, user: UserRow): PartnerMemberPayload {
     return {
       id: Number(member.id),
@@ -600,6 +795,31 @@ export class PartnerProgramService {
       isAdmin: Boolean(member.is_admin),
       referralCode: user.referral_code,
       referralLink: buildReferralLink(user.referral_code),
+    };
+  }
+
+  private buildContentSubmissionPayload(
+    row: PartnerContentSubmissionRow
+  ): PartnerContentSubmissionPayload {
+    const platform = detectPartnerContentPlatform(row.normalized_url || row.content_url);
+
+    return {
+      id: Number(row.id),
+      url: row.content_url,
+      platform,
+      submittedAt: row.submitted_at,
+    };
+  }
+
+  private buildContentSubmissionSummary(
+    rows: PartnerContentSubmissionPayload[]
+  ): PartnerContentSubmissionSummaryPayload {
+    const monthStartIso = getCurrentUtcMonthStartIso();
+    const currentMonthTotal = rows.filter((row) => row.submittedAt >= monthStartIso).length;
+
+    return {
+      total: rows.length,
+      currentMonthTotal,
     };
   }
 
@@ -853,6 +1073,93 @@ export class PartnerProgramService {
     return normalizedAddress;
   }
 
+  private async assertContentSubmissionAuthentication(
+    input: PartnerContentSubmissionInput,
+    requestIp: string
+  ) {
+    if (!input.address || !input.message || !input.signature || !input.url) {
+      throw new PartnerProgramError(
+        "address, message, signature, and url are required.",
+        400
+      );
+    }
+
+    const normalizedAddress = normalizeAddress(input.address);
+    const normalizedUrl = normalizePartnerContentUrl(input.url);
+    const parsed = parsePartnerContentSubmissionMessage(input.message);
+    const messageAddress = normalizeAddress(parsed.address);
+    const messageUrl = normalizePartnerContentUrl(parsed.url);
+
+    if (messageAddress !== normalizedAddress) {
+      throw new PartnerProgramError("Partner content signature address mismatch.", 401);
+    }
+
+    if (messageUrl !== normalizedUrl) {
+      throw new PartnerProgramError("Partner content signature URL mismatch.", 401);
+    }
+
+    if (parsed.action !== "submit-partner-content") {
+      throw new PartnerProgramError("Invalid partner content action.", 401);
+    }
+
+    if (!parsed.domain || !isAllowedAppDomain(parsed.domain)) {
+      throw new PartnerProgramError("Unexpected partner content domain.", 401);
+    }
+
+    if (!parsed.nonce || parsed.nonce.length < 8 || parsed.nonce.length > 128) {
+      throw new PartnerProgramError("Invalid partner content nonce.", 401);
+    }
+
+    const timestampMs = Date.parse(parsed.timestamp);
+    const now = Date.now();
+    if (!Number.isFinite(timestampMs)) {
+      throw new PartnerProgramError("Invalid partner content timestamp.", 401);
+    }
+
+    if (now - timestampMs > PARTNER_CONTENT_SUBMISSION_SIGNATURE_TTL_MS) {
+      throw new PartnerProgramError("Expired partner content signature.", 401);
+    }
+
+    if (timestampMs - now > PARTNER_CONTENT_SUBMISSION_FUTURE_SKEW_MS) {
+      throw new PartnerProgramError("Invalid partner content timestamp.", 401);
+    }
+
+    const rateLimit = runtimeCache.consumeRateLimit(
+      `partner-content-submit:rate:${normalizedAddress}:${requestIp}`,
+      PARTNER_CONTENT_SUBMISSION_LIMIT,
+      PARTNER_CONTENT_SUBMISSION_WINDOW_MS
+    );
+
+    if (!rateLimit.allowed) {
+      throw new PartnerProgramError("Content submission is cooling down. Please wait.", 429);
+    }
+
+    const replayKey = `partner-content-submit:replay:${createHash("sha256")
+      .update(`${input.message}|${input.signature.toLowerCase()}`)
+      .digest("hex")}`;
+
+    if (runtimeCache.get(replayKey)) {
+      throw new PartnerProgramError("Partner content signature was already used.", 401);
+    }
+
+    const valid = await publicClient.verifyMessage({
+      address: normalizedAddress as `0x${string}`,
+      message: input.message,
+      signature: input.signature,
+    });
+
+    if (!valid) {
+      throw new PartnerProgramError("Invalid partner content signature.", 401);
+    }
+
+    runtimeCache.set(replayKey, true, PARTNER_CONTENT_SUBMISSION_SIGNATURE_TTL_MS);
+
+    return {
+      normalizedAddress,
+      normalizedUrl,
+    };
+  }
+
   async getDashboard(address: string) {
     const normalizedAddress = normalizeAddress(address);
     const member = await this.findMemberByAddress(normalizedAddress);
@@ -898,6 +1205,91 @@ export class PartnerProgramService {
       currentWeekStartUtc,
       rows: context.history,
     };
+  }
+
+  async getSubmissions(address: string) {
+    const normalizedAddress = normalizeAddress(address);
+    const member = await this.findMemberByAddress(normalizedAddress);
+
+    if (!member) {
+      return {
+        state: "not_whitelisted" as const,
+        summary: this.buildContentSubmissionSummary([]),
+        rows: [] as PartnerContentSubmissionPayload[],
+      };
+    }
+
+    const rows = (await this.loadContentSubmissions(Number(member.id))).map((row) =>
+      this.buildContentSubmissionPayload(row)
+    );
+
+    return {
+      state: buildMemberState(member),
+      summary: this.buildContentSubmissionSummary(rows),
+      rows,
+    };
+  }
+
+  async submitContent(input: PartnerContentSubmissionInput, requestIp: string) {
+    const { normalizedAddress, normalizedUrl } =
+      await this.assertContentSubmissionAuthentication(input, requestIp);
+    const member = await this.findMemberByAddress(normalizedAddress);
+
+    if (!member || !member.joined_at) {
+      throw new PartnerProgramError("Only joined partners can submit content.", 403);
+    }
+
+    const xAccount = await this.loadConnectedXAccount(Number(member.user_id));
+    if (!xAccount) {
+      throw new PartnerProgramError("Connect X before submitting partner content.", 403);
+    }
+
+    const submittedAt = new Date().toISOString();
+    const platform = detectPartnerContentPlatform(normalizedUrl);
+
+    const { data, error } = await postgresDb
+      .from("partner_content_submissions")
+      .insert({
+        partner_member_id: Number(member.id),
+        partner_user_id: Number(member.user_id),
+        content_url: normalizedUrl,
+        normalized_url: normalizedUrl,
+        platform,
+        submitted_at: submittedAt,
+        created_at: submittedAt,
+      })
+      .select("*")
+      .maybeSingle();
+
+    if (error) {
+      if (error.code === "23505") {
+        throw new PartnerProgramError("This content link was already submitted.", 409);
+      }
+
+      throw new Error(`Submit partner content: ${error.message}`);
+    }
+
+    const submission = this.buildContentSubmissionPayload(
+      (data as PartnerContentSubmissionRow | null) ?? {
+        id: 0,
+        partner_member_id: member.id,
+        partner_user_id: member.user_id,
+        content_url: normalizedUrl,
+        normalized_url: normalizedUrl,
+        platform,
+        submitted_at: submittedAt,
+      }
+    );
+    const rows = (await this.loadContentSubmissions(Number(member.id))).map((row) =>
+      this.buildContentSubmissionPayload(row)
+    );
+
+    return {
+      success: true,
+      submission,
+      summary: this.buildContentSubmissionSummary(rows),
+      rows,
+    } as const;
   }
 
   async joinProgram(input: PartnerJoinInput, requestIp: string) {
@@ -1178,10 +1570,12 @@ export class PartnerProgramService {
       ? toDateKey(getCurrentUtcWeekStart())
       : toDateKey(getCurrentUtcWeekStart());
     const nextDistributionAt = getNextUtcWeekStart().toISOString();
-    const [referredUsers, referredAlltimeMetrics, referredWeeklyMetrics] = await Promise.all([
+    const [referredUsers, referredAlltimeMetrics, referredWeeklyMetrics, contentSubmissions] =
+      await Promise.all([
       this.loadReferredUsers(Number(member.id)),
       this.loadReferredUserAlltimeMetrics(Number(member.id)),
       this.loadReferredUserWeeklyMetrics(Number(member.id), toDateKey(getCurrentUtcWeekStart())),
+      this.loadContentSubmissions(Number(member.id)),
     ]);
 
     const referredUserRows = referredUsers
@@ -1209,6 +1603,9 @@ export class PartnerProgramService {
           a.address.localeCompare(b.address)
         );
       });
+    const submissionRows = contentSubmissions.map((row) =>
+      this.buildContentSubmissionPayload(row)
+    );
 
     return {
       currentWeekStartUtc,
@@ -1216,6 +1613,8 @@ export class PartnerProgramService {
       member: context.memberPayload,
       metrics: context.metrics,
       history: context.history,
+      submissionSummary: this.buildContentSubmissionSummary(submissionRows),
+      submissions: submissionRows,
       referredUsers: referredUserRows,
     };
   }

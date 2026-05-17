@@ -2,6 +2,7 @@ import type { Hex } from "viem";
 import { buildPublicApiUrl, publicApiFetch } from "@/lib/apiBase";
 
 const PARTNER_JOIN_STATEMENT = "DustSwap Partner Program Join";
+const PARTNER_CONTENT_SUBMISSION_STATEMENT = "DustSwap Partner Content Submission";
 
 export type PartnerProgramState = "not_whitelisted" | "pending_join" | "joined";
 
@@ -49,6 +50,20 @@ export type PartnerHistoryRow = {
   status: "pending" | "paid";
 };
 
+export type PartnerContentSubmissionPlatform = "x" | "telegram" | "other";
+
+export type PartnerContentSubmission = {
+  id: number;
+  url: string;
+  platform: PartnerContentSubmissionPlatform;
+  submittedAt: string;
+};
+
+export type PartnerContentSubmissionSummary = {
+  total: number;
+  currentMonthTotal: number;
+};
+
 export type PartnerDashboardResponse = {
   success: boolean;
   state: PartnerProgramState;
@@ -71,6 +86,15 @@ export type PartnerJoinResponse = {
   success: boolean;
   status?: "joined";
   joinedAt?: string;
+  error?: string;
+};
+
+export type PartnerSubmissionsResponse = {
+  success: boolean;
+  state: PartnerProgramState;
+  summary: PartnerContentSubmissionSummary;
+  rows: PartnerContentSubmission[];
+  submission?: PartnerContentSubmission;
   error?: string;
 };
 
@@ -107,6 +131,8 @@ export type PartnerAdminMemberDetailResponse = {
   member: PartnerMember;
   metrics: PartnerMetrics;
   history: PartnerHistoryRow[];
+  submissionSummary: PartnerContentSubmissionSummary;
+  submissions: PartnerContentSubmission[];
   referredUsers: PartnerReferredUserRow[];
   error?: string;
 };
@@ -167,6 +193,84 @@ export function buildPartnerJoinMessage(address: string) {
   ].join("\n");
 }
 
+export function normalizePartnerContentUrl(value: string) {
+  const raw = value.trim();
+  if (!raw) {
+    throw new Error("Paste the content link you want to submit.");
+  }
+
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw new Error("Enter a valid X, Telegram, or public content URL.");
+  }
+
+  if (!/^https?:$/.test(url.protocol)) {
+    throw new Error("Content links must start with http:// or https://.");
+  }
+
+  url.username = "";
+  url.password = "";
+  url.hash = "";
+  const normalizedHostname = url.hostname.toLowerCase().replace(/^www\./, "");
+  url.hostname = normalizedHostname;
+  const isXHost =
+    normalizedHostname === "x.com" ||
+    normalizedHostname === "twitter.com" ||
+    normalizedHostname.endsWith(".x.com") ||
+    normalizedHostname.endsWith(".twitter.com");
+
+  if (
+    (url.protocol === "https:" && url.port === "443") ||
+    (url.protocol === "http:" && url.port === "80")
+  ) {
+    url.port = "";
+  }
+
+  url.pathname = url.pathname.replace(/\/{2,}/g, "/");
+  if (url.pathname.length > 1) {
+    url.pathname = url.pathname.replace(/\/+$/, "");
+  }
+
+  const keptParams = Array.from(url.searchParams.entries())
+    .filter(([key]) => {
+      const normalizedKey = key.toLowerCase();
+      return (
+        !normalizedKey.startsWith("utm_") &&
+        normalizedKey !== "ref" &&
+        normalizedKey !== "ref_src" &&
+        (!isXHost || (normalizedKey !== "s" && normalizedKey !== "t"))
+      );
+    })
+    .sort(([leftKey, leftValue], [rightKey, rightValue]) => {
+      return leftKey.localeCompare(rightKey) || leftValue.localeCompare(rightValue);
+    });
+
+  url.search = "";
+  for (const [key, entryValue] of keptParams) {
+    url.searchParams.append(key, entryValue);
+  }
+
+  return url.toString();
+}
+
+export function buildPartnerContentSubmissionMessage(address: string, url: string) {
+  const domain =
+    typeof window !== "undefined" ? window.location.host : "localhost:3000";
+  const normalizedUrl = normalizePartnerContentUrl(url);
+
+  return [
+    PARTNER_CONTENT_SUBMISSION_STATEMENT,
+    `Address: ${address}`,
+    "Action: submit-partner-content",
+    `URL: ${normalizedUrl}`,
+    `Timestamp: ${new Date().toISOString()}`,
+    `Nonce: ${createNonce()}`,
+    `Domain: ${domain}`,
+  ].join("\n");
+}
+
 export async function fetchPartnerDashboard(address: string) {
   const url = new URL(getPartnerApiUrl("/dashboard"));
   url.searchParams.set("address", address);
@@ -193,6 +297,19 @@ export async function fetchPartnerHistory(address: string) {
   return parseJson<PartnerHistoryResponse>(response);
 }
 
+export async function fetchPartnerSubmissions(address: string) {
+  const url = new URL(getPartnerApiUrl("/submissions"));
+  url.searchParams.set("address", address);
+  const response = await publicApiFetch(url.toString(), {
+    headers: {
+      "Content-Type": "application/json",
+    },
+    cache: "no-store",
+  });
+
+  return parseJson<PartnerSubmissionsResponse>(response);
+}
+
 export async function joinPartnerProgram(input: {
   address: string;
   message: string;
@@ -207,6 +324,32 @@ export async function joinPartnerProgram(input: {
   });
 
   return parseJson<PartnerJoinResponse>(response);
+}
+
+export async function submitPartnerContent(input: {
+  address: string;
+  message: string;
+  signature: Hex;
+  url: string;
+}) {
+  const normalizedUrl = normalizePartnerContentUrl(input.url);
+  const response = await publicApiFetch(getPartnerApiUrl("/submissions"), {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      ...input,
+      url: normalizedUrl,
+    }),
+  });
+
+  const data = await parseJson<PartnerSubmissionsResponse>(response);
+  if (!response.ok || !data.success) {
+    throw new Error(data.error || "Failed to submit partner content.");
+  }
+
+  return data;
 }
 
 export async function fetchPartnerAdminLeaderboard(

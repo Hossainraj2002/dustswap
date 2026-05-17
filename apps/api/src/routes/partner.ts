@@ -77,7 +77,7 @@ partnerRoutes.get("/dashboard", async (c) => {
     return c.json({ success: true, ...data });
   } catch (error) {
     const payload = getErrorPayload(error);
-    return c.json(payload.body, payload.status as 400 | 401 | 403 | 404 | 429 | 500);
+    return c.json(payload.body, payload.status as 400 | 401 | 403 | 404 | 409 | 429 | 500);
   }
 });
 
@@ -96,7 +96,26 @@ partnerRoutes.get("/history", async (c) => {
     return c.json({ success: true, ...data });
   } catch (error) {
     const payload = getErrorPayload(error);
-    return c.json(payload.body, payload.status as 400 | 401 | 403 | 404 | 429 | 500);
+    return c.json(payload.body, payload.status as 400 | 401 | 403 | 404 | 409 | 429 | 500);
+  }
+});
+
+partnerRoutes.get("/submissions", async (c) => {
+  if (await isMaintenanceBlocking(c)) {
+    return maintenanceUnavailable(c);
+  }
+
+  try {
+    const address = c.req.query("address");
+    if (!address) {
+      return c.json({ success: false, error: "address is required" }, 400);
+    }
+
+    const data = await partnerProgramService.getSubmissions(address);
+    return c.json({ success: true, ...data });
+  } catch (error) {
+    const payload = getErrorPayload(error);
+    return c.json(payload.body, payload.status as 400 | 401 | 403 | 404 | 409 | 429 | 500);
   }
 });
 
@@ -116,7 +135,28 @@ partnerRoutes.post("/join", async (c) => {
     return c.json(data);
   } catch (error) {
     const payload = getErrorPayload(error);
-    return c.json(payload.body, payload.status as 400 | 401 | 403 | 404 | 429 | 500);
+    return c.json(payload.body, payload.status as 400 | 401 | 403 | 404 | 409 | 429 | 500);
+  }
+});
+
+partnerRoutes.post("/submissions", async (c) => {
+  if (await isMaintenanceBlocking(c)) {
+    return maintenanceUnavailable(c);
+  }
+
+  try {
+    const body = await c.req.json<{
+      address?: string;
+      message?: string;
+      signature?: `0x${string}`;
+      url?: string;
+    }>();
+
+    const data = await partnerProgramService.submitContent(body, getRequestIp(c));
+    return c.json(data);
+  } catch (error) {
+    const payload = getErrorPayload(error);
+    return c.json(payload.body, payload.status as 400 | 401 | 403 | 404 | 409 | 429 | 500);
   }
 });
 
@@ -132,7 +172,7 @@ partnerRoutes.get("/admin/leaderboard", async (c) => {
     return c.json({ success: true, ...data });
   } catch (error) {
     const payload = getErrorPayload(error);
-    return c.json(payload.body, payload.status as 400 | 401 | 403 | 404 | 429 | 500);
+    return c.json(payload.body, payload.status as 400 | 401 | 403 | 404 | 409 | 429 | 500);
   }
 });
 
@@ -152,7 +192,7 @@ partnerRoutes.post("/admin/members", async (c) => {
     return c.json({ success: true, ...data });
   } catch (error) {
     const payload = getErrorPayload(error);
-    return c.json(payload.body, payload.status as 400 | 401 | 403 | 404 | 429 | 500);
+    return c.json(payload.body, payload.status as 400 | 401 | 403 | 404 | 409 | 429 | 500);
   }
 });
 
@@ -167,7 +207,7 @@ partnerRoutes.get("/admin/members/:address", async (c) => {
     return c.json({ success: true, ...data });
   } catch (error) {
     const payload = getErrorPayload(error);
-    return c.json(payload.body, payload.status as 400 | 401 | 403 | 404 | 429 | 500);
+    return c.json(payload.body, payload.status as 400 | 401 | 403 | 404 | 409 | 429 | 500);
   }
 });
 
@@ -189,7 +229,7 @@ partnerRoutes.post("/admin/distributions/mark-paid", async (c) => {
     return c.json(data);
   } catch (error) {
     const payload = getErrorPayload(error);
-    return c.json(payload.body, payload.status as 400 | 401 | 403 | 404 | 429 | 500);
+    return c.json(payload.body, payload.status as 400 | 401 | 403 | 404 | 409 | 429 | 500);
   }
 });
 

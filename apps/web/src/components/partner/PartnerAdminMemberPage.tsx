@@ -1,7 +1,8 @@
 "use client";
+/* eslint-disable @next/next/no-img-element */
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   fetchPartnerAdminMember,
   formatFeeShareRange,
@@ -13,6 +14,11 @@ import {
   shortAddress,
   type PartnerAdminMemberDetailResponse,
 } from "@/lib/partner";
+import {
+  fetchProfileSettings,
+  resolveProfileDisplay,
+  type ProfileSettingsResponse,
+} from "@/lib/profileSettings";
 
 const PARTNER_ADMIN_TOKEN_STORAGE_KEY = "partner-admin-token";
 
@@ -22,6 +28,18 @@ function getDisplayError(error: unknown) {
     return "Could not reach the partner API. Check NEXT_PUBLIC_API_URL and the API deployment.";
   }
   return message;
+}
+
+function getSubmissionPlatformLabel(platform?: string | null) {
+  if (platform === "x") {
+    return "X";
+  }
+
+  if (platform === "telegram") {
+    return "Telegram";
+  }
+
+  return "Other";
 }
 
 function MetricCard({
@@ -51,14 +69,25 @@ export function PartnerAdminMemberPage({
 }) {
   const [adminToken, setAdminToken] = useState("");
   const [data, setData] = useState<PartnerAdminMemberDetailResponse | null>(null);
+  const [profileSettings, setProfileSettings] = useState<ProfileSettingsResponse | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isUnlocked, setIsUnlocked] = useState(false);
   const [savingWeek, setSavingWeek] = useState<string | null>(null);
+  const [isWalletCopied, setIsWalletCopied] = useState(false);
   const [payoutAmounts, setPayoutAmounts] = useState<Record<string, string>>({});
   const [txHashes, setTxHashes] = useState<Record<string, string>>({});
   const [notes, setNotes] = useState<Record<string, string>>({});
+  const profileDisplay = useMemo(
+    () =>
+      resolveProfileDisplay({
+        settings: profileSettings,
+        neynarProfile: null,
+        address,
+      }),
+    [address, profileSettings]
+  );
 
   const loadMember = useCallback(
     async (tokenOverride?: string) => {
@@ -71,12 +100,16 @@ export function PartnerAdminMemberPage({
       setError(null);
       setStatus(null);
       try {
-        const response = await fetchPartnerAdminMember(tokenToUse, address);
+        const [response, nextProfileSettings] = await Promise.all([
+          fetchPartnerAdminMember(tokenToUse, address),
+          fetchProfileSettings(address).catch(() => null),
+        ]);
         if (!response.success) {
           throw new Error(response.error || "Failed to load partner profile");
         }
 
         setData(response);
+        setProfileSettings(nextProfileSettings);
         setIsUnlocked(true);
         setPayoutAmounts((current) => {
           const next = { ...current };
@@ -89,6 +122,7 @@ export function PartnerAdminMemberPage({
         });
       } catch (loadError) {
         setData(null);
+        setProfileSettings(null);
         setIsUnlocked(false);
         setError(getDisplayError(loadError));
       } finally {
@@ -115,6 +149,7 @@ export function PartnerAdminMemberPage({
     window.sessionStorage.removeItem(PARTNER_ADMIN_TOKEN_STORAGE_KEY);
     setIsUnlocked(false);
     setData(null);
+    setProfileSettings(null);
   }, [adminToken]);
 
   async function handleMarkPaid(weekStartUtc: string) {
@@ -148,23 +183,74 @@ export function PartnerAdminMemberPage({
     }
   }
 
+  async function handleCopyWallet() {
+    try {
+      await navigator.clipboard.writeText(data?.member.address || address);
+      setIsWalletCopied(true);
+      setStatus("Wallet copied.");
+      window.setTimeout(() => setIsWalletCopied(false), 1600);
+    } catch {
+      setError("Could not copy the wallet address.");
+    }
+  }
+
   const pendingRows = data?.history.filter((row) => row.status === "pending") || [];
 
   return (
     <div className="mx-auto flex w-full max-w-7xl flex-col gap-5 px-4 py-6 sm:px-6">
       <section className="rounded-[32px] border border-white/80 bg-white/88 p-6 shadow-[0_24px_80px_rgba(15,23,42,0.08)]">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-          <div>
-            <p className="text-[11px] font-black uppercase tracking-[0.28em] text-sky-600">
-              Partner Profile
-            </p>
-            <h1 className="mt-3 text-3xl font-black tracking-tight text-slate-950">
-              {data?.member ? shortAddress(data.member.address) : shortAddress(address)}
-            </h1>
-            <p className="mt-3 max-w-3xl text-sm leading-7 text-slate-600">
-              Individual partner drill-down for whitelist status, fee share, weekly payout
-              history, and referred-user performance.
-            </p>
+          <div className="flex items-start gap-4">
+            {profileDisplay.avatarUrl ? (
+              <img
+                src={profileDisplay.avatarUrl}
+                alt="Partner profile"
+                className="h-16 w-16 rounded-[20px] border border-white/80 object-cover shadow-[0_12px_30px_rgba(56,189,248,0.16)]"
+                referrerPolicy="no-referrer"
+              />
+            ) : (
+              <div className="flex h-16 w-16 items-center justify-center rounded-[20px] border border-sky-200 bg-[linear-gradient(135deg,#0ea5e9,#2563eb)] text-xl font-black text-white shadow-[0_12px_30px_rgba(37,99,235,0.2)]">
+                {profileDisplay.initials}
+              </div>
+            )}
+
+            <div>
+              <p className="text-[11px] font-black uppercase tracking-[0.28em] text-sky-600">
+                Partner Profile
+              </p>
+              <h1 className="mt-2 text-3xl font-black tracking-tight text-slate-950">
+                {profileDisplay.displayName}
+              </h1>
+              <p className="mt-1 text-sm text-slate-500">{profileDisplay.subtitle}</p>
+              <p className="mt-3 max-w-3xl text-sm leading-7 text-slate-600">
+                Individual partner drill-down for whitelist status, fee share, weekly payout
+                history, referred-user performance, and ambassador content submissions.
+              </p>
+
+              <div className="mt-4 flex flex-wrap gap-2">
+                <span className="inline-flex rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 font-mono text-xs font-semibold text-slate-700">
+                  {data?.member.address || address}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => void handleCopyWallet()}
+                  className="inline-flex rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-black text-slate-700 transition hover:border-slate-300 hover:text-slate-950"
+                >
+                  {isWalletCopied ? "Copied" : "Copy wallet"}
+                </button>
+                <span
+                  className={`inline-flex rounded-full px-3 py-1.5 text-xs font-black ${
+                    profileSettings?.profile.xConnected
+                      ? "border border-sky-200 bg-sky-50 text-sky-700"
+                      : "border border-slate-200 bg-slate-50 text-slate-600"
+                  }`}
+                >
+                  {profileSettings?.profile.xConnected
+                    ? `X @${profileSettings.profile.xUsername || "connected"}`
+                    : "X not connected"}
+                </span>
+              </div>
+            </div>
           </div>
 
           <div className="flex flex-wrap gap-3">
@@ -269,6 +355,86 @@ export function PartnerAdminMemberPage({
               value={formatUtcDate(data.nextDistributionAt)}
               caption="UTC Monday 00:00 payout boundary."
             />
+          </section>
+
+          <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+              <div>
+                <p className="text-[11px] font-black uppercase tracking-[0.24em] text-sky-600">
+                  Content
+                </p>
+                <h2 className="mt-2 text-xl font-black tracking-tight text-slate-950">
+                  Partner content submissions
+                </h2>
+                <p className="mt-2 text-sm leading-6 text-slate-600">
+                  Review the ambassador’s submitted DustSwap content links from X, Telegram,
+                  and other public posts.
+                </p>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="rounded-[18px] border border-slate-200 bg-slate-50 px-4 py-3">
+                  <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">
+                    This month
+                  </p>
+                  <p className="mt-1 text-lg font-black text-slate-950">
+                    {data.submissionSummary.currentMonthTotal}
+                  </p>
+                </div>
+                <div className="rounded-[18px] border border-slate-200 bg-slate-50 px-4 py-3">
+                  <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">
+                    Total
+                  </p>
+                  <p className="mt-1 text-lg font-black text-slate-950">
+                    {data.submissionSummary.total}
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {data.submissions.length ? (
+              <div className="mt-5 space-y-3">
+                {data.submissions.map((row) => (
+                  <div
+                    key={row.id}
+                    className="rounded-[22px] border border-slate-200 bg-slate-50/80 px-4 py-4"
+                  >
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="inline-flex rounded-full border border-sky-200 bg-sky-50 px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.16em] text-sky-700">
+                            {getSubmissionPlatformLabel(row.platform)}
+                          </span>
+                          <span className="text-xs text-slate-500">
+                            {formatUtcDate(row.submittedAt)}
+                          </span>
+                        </div>
+                        <a
+                          href={row.url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="mt-3 block break-all text-sm font-semibold text-slate-900 hover:text-sky-700"
+                        >
+                          {row.url}
+                        </a>
+                      </div>
+                      <a
+                        href={row.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex shrink-0 rounded-[14px] border border-slate-200 bg-white px-3 py-2 text-sm font-black text-slate-700 transition hover:border-slate-300 hover:text-slate-950"
+                      >
+                        Open link
+                      </a>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="mt-5 rounded-[24px] border border-dashed border-slate-200 bg-slate-50 px-5 py-6 text-sm leading-7 text-slate-600">
+                This partner has not submitted any DustSwap content links yet.
+              </div>
+            )}
           </section>
 
           <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">

@@ -56,6 +56,19 @@ CREATE TABLE IF NOT EXISTS partner_reward_distributions (
     CHECK (week_end_utc > week_start_utc)
 );
 
+CREATE TABLE IF NOT EXISTS partner_content_submissions (
+  id                BIGSERIAL PRIMARY KEY,
+  partner_member_id BIGINT NOT NULL REFERENCES partner_program_members(id) ON DELETE CASCADE,
+  partner_user_id   INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  content_url       TEXT NOT NULL,
+  normalized_url    TEXT NOT NULL,
+  platform          TEXT NOT NULL DEFAULT 'other',
+  submitted_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT partner_content_submissions_platform_check
+    CHECK (platform IN ('x', 'telegram', 'other'))
+);
+
 CREATE INDEX IF NOT EXISTS idx_partner_program_members_status
   ON partner_program_members(status, joined_at DESC);
 CREATE INDEX IF NOT EXISTS idx_partner_program_members_wallet
@@ -69,14 +82,20 @@ CREATE INDEX IF NOT EXISTS idx_partner_reward_distributions_member_week
   ON partner_reward_distributions(partner_member_id, week_start_utc DESC);
 CREATE INDEX IF NOT EXISTS idx_partner_reward_distributions_paid_at
   ON partner_reward_distributions(paid_at DESC);
+CREATE INDEX IF NOT EXISTS idx_partner_content_submissions_member_submitted
+  ON partner_content_submissions(partner_member_id, submitted_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_partner_content_submissions_member_url
+  ON partner_content_submissions(partner_member_id, normalized_url);
 
 ALTER TABLE partner_program_members ENABLE ROW LEVEL SECURITY;
 ALTER TABLE partner_fee_share_history ENABLE ROW LEVEL SECURITY;
 ALTER TABLE partner_reward_distributions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE partner_content_submissions ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS "service_all_partner_program_members" ON partner_program_members;
 DROP POLICY IF EXISTS "service_all_partner_fee_share_history" ON partner_fee_share_history;
 DROP POLICY IF EXISTS "service_all_partner_reward_distributions" ON partner_reward_distributions;
+DROP POLICY IF EXISTS "service_all_partner_content_submissions" ON partner_content_submissions;
 
 CREATE POLICY "service_all_partner_program_members"
   ON partner_program_members FOR ALL USING (true);
@@ -84,6 +103,8 @@ CREATE POLICY "service_all_partner_fee_share_history"
   ON partner_fee_share_history FOR ALL USING (true);
 CREATE POLICY "service_all_partner_reward_distributions"
   ON partner_reward_distributions FOR ALL USING (true);
+CREATE POLICY "service_all_partner_content_submissions"
+  ON partner_content_submissions FOR ALL USING (true);
 
 CREATE OR REPLACE FUNCTION partner_program_current_week_start_utc(
   p_reference TIMESTAMPTZ DEFAULT NOW()

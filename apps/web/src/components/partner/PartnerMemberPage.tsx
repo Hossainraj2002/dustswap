@@ -6,9 +6,11 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAccount, useWalletClient } from "wagmi";
 import { WalletConnectButton } from "@/components/wallet/WalletConnectButton";
 import {
+  buildPartnerContentSubmissionMessage,
   buildPartnerJoinMessage,
   fetchPartnerDashboard,
   fetchPartnerHistory,
+  fetchPartnerSubmissions,
   formatFeeShareRange,
   formatUsd,
   formatUsdc,
@@ -19,7 +21,10 @@ import {
   shortAddress,
   type PartnerDashboardResponse,
   type PartnerHistoryResponse,
+  type PartnerSubmissionsResponse,
+  submitPartnerContent,
 } from "@/lib/partner";
+import { buildXAccountMessage, createXConnectUrl } from "@/lib/quests";
 import {
   fetchProfileSettings,
   resolveProfileDisplay,
@@ -37,6 +42,18 @@ function getErrorMessage(error: unknown) {
   return error instanceof Error && error.message
     ? error.message
     : "Request failed. Please try again.";
+}
+
+function getSubmissionPlatformLabel(platform?: string | null) {
+  if (platform === "x") {
+    return "X";
+  }
+
+  if (platform === "telegram") {
+    return "Telegram";
+  }
+
+  return "Other";
 }
 
 function MetricCard({
@@ -96,10 +113,15 @@ export function PartnerMemberPage() {
   const { data: walletClient } = useWalletClient();
   const [dashboard, setDashboard] = useState<PartnerDashboardResponse | null>(null);
   const [history, setHistory] = useState<PartnerHistoryResponse | null>(null);
+  const [submissions, setSubmissions] = useState<PartnerSubmissionsResponse | null>(null);
   const [profileSettings, setProfileSettings] = useState<ProfileSettingsResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSigning, setIsSigning] = useState(false);
+  const [isConnectingX, setIsConnectingX] = useState(false);
+  const [isSubmittingContent, setIsSubmittingContent] = useState(false);
   const [isCopied, setIsCopied] = useState(false);
+  const [contentUrl, setContentUrl] = useState("");
+  const [isSubmissionsOpen, setIsSubmissionsOpen] = useState(false);
   const [notice, setNotice] = useState<NoticeState>(null);
   const [, setRefreshTick] = useState(0);
 
@@ -116,11 +138,13 @@ export function PartnerMemberPage() {
   const countdown = getDistributionCountdown(
     dashboard?.nextDistributionAt || new Date().toISOString()
   );
+  const isXConnected = profileSettings?.profile.xConnected === true;
 
   const loadData = useCallback(async () => {
     if (!address) {
       setDashboard(null);
       setHistory(null);
+      setSubmissions(null);
       setProfileSettings(null);
       setIsLoading(false);
       return;
@@ -128,15 +152,18 @@ export function PartnerMemberPage() {
 
     setIsLoading(true);
     try {
-      const [dashboardResponse, historyResponse, settingsResponse] = await Promise.all([
+      const [dashboardResponse, historyResponse, settingsResponse, submissionsResponse] =
+        await Promise.all([
         fetchPartnerDashboard(address),
         fetchPartnerHistory(address),
         fetchProfileSettings(address).catch(() => null),
+        fetchPartnerSubmissions(address).catch(() => null),
       ]);
 
       setDashboard(dashboardResponse);
       setHistory(historyResponse);
       setProfileSettings(settingsResponse);
+      setSubmissions(submissionsResponse?.success ? submissionsResponse : null);
 
       if (!dashboardResponse.success) {
         throw new Error(dashboardResponse.error || "Failed to load partner dashboard");
@@ -158,6 +185,7 @@ export function PartnerMemberPage() {
     if (!isConnected) {
       setDashboard(null);
       setHistory(null);
+      setSubmissions(null);
       setProfileSettings(null);
       setNotice(null);
       setIsLoading(false);
@@ -224,6 +252,149 @@ export function PartnerMemberPage() {
       setIsSigning(false);
     }
   }, [address, loadData, walletClient]);
+
+  const handleConnectX = useCallback(async () => {
+    if (!address || !walletClient) {
+      setNotice({
+        kind: "error",
+        message: "Connect the partner wallet first.",
+      });
+      return;
+    }
+
+    if (isConnectingX) {
+      return;
+    }
+
+    setIsConnectingX(true);
+    try {
+      const message = buildXAccountMessage(address, "connect-x");
+      const signature = await walletClient.signMessage({
+        account: address as `0x${string}`,
+        message,
+      });
+      const response = await createXConnectUrl({
+        address,
+        message,
+        signature,
+        returnTo:
+          typeof window !== "undefined"
+            ? new URL("/partner", window.location.origin).toString()
+            : "/partner",
+      });
+
+      if (!response.success || !response.authUrl) {
+        throw new Error(response.error || "Failed to start X connection.");
+      }
+
+      window.location.assign(response.authUrl);
+    } catch (error) {
+      setNotice({
+        kind: "error",
+        message: getErrorMessage(error),
+      });
+      setIsConnectingX(false);
+    }
+  }, [address, isConnectingX, walletClient]);
+
+  const handleSubmitContent = useCallback(async () => {
+    if (!address || !walletClient) {
+      setNotice({
+        kind: "error",
+        message: "Connect the partner wallet first.",
+      });
+      return;
+    }
+
+    if (!dashboard?.member || dashboard.state !== "joined") {
+      setNotice({
+        kind: "error",
+        message: "Finish partner access first before submitting content.",
+      });
+      return;
+    }
+
+    if (!isXConnected) {
+      await handleConnectX();
+      return;
+    }
+
+    setIsSubmittingContent(true);
+    try {
+      const message = buildPartnerContentSubmissionMessage(address, contentUrl);
+      const signature = await walletClient.signMessage({
+        account: address as `0x${string}`,
+        message,
+      });
+      const result = await submitPartnerContent({
+        address,
+        message,
+        signature,
+        url: contentUrl,
+      });
+
+      setSubmissions(result);
+      setContentUrl("");
+      setIsSubmissionsOpen(true);
+      setNotice({
+        kind: "success",
+        message: "Content link submitted.",
+      });
+    } catch (error) {
+      setNotice({
+        kind: "error",
+        message: getErrorMessage(error),
+      });
+    } finally {
+      setIsSubmittingContent(false);
+    }
+  }, [
+    address,
+    contentUrl,
+    dashboard?.member,
+    dashboard?.state,
+    handleConnectX,
+    isXConnected,
+    walletClient,
+  ]);
+
+  useEffect(() => {
+    if (!address || typeof window === "undefined") {
+      return;
+    }
+
+    const params = new URLSearchParams(window.location.search);
+    const xLinked = params.get("x_linked");
+    const xError = params.get("x_error");
+    const xUsername = params.get("x_username");
+
+    if (!xLinked && !xError) {
+      return;
+    }
+
+    if (xLinked === "1") {
+      setNotice({
+        kind: "success",
+        message: xUsername ? `X connected as @${xUsername}.` : "X connected.",
+      });
+      void loadData();
+    } else if (xError) {
+      setNotice({
+        kind: "error",
+        message: xError || "X connection failed. Please try again.",
+      });
+      setIsConnectingX(false);
+    }
+
+    params.delete("x_linked");
+    params.delete("x_error");
+    params.delete("x_username");
+
+    const nextUrl = `${window.location.pathname}${
+      params.toString() ? `?${params.toString()}` : ""
+    }${window.location.hash}`;
+    window.history.replaceState({}, "", nextUrl);
+  }, [address, loadData]);
 
   const referralLink = dashboard?.member?.referralLink || "";
 
@@ -462,6 +633,122 @@ export function PartnerMemberPage() {
                 </div>
               </div>
             </SectionCard>
+
+            <section className="rounded-[24px] border border-white/80 bg-white/88 px-4 py-4 shadow-[0_18px_56px_rgba(15,23,42,0.06)] backdrop-blur">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0 flex-1">
+                  <p className="text-[10px] font-black uppercase tracking-[0.24em] text-sky-600">
+                    Submit your content
+                  </p>
+                  <p className="mt-1 text-[11px] leading-4 text-slate-600">
+                    Share your DustSwap content link. Ambassadors need at least 3 posts
+                    monthly, with no upper limit.
+                  </p>
+                </div>
+
+                <div className="rounded-[14px] border border-slate-200 bg-slate-50 px-2.5 py-2 text-right">
+                  <p className="text-[9px] font-black uppercase tracking-[0.18em] text-slate-500">
+                    This month
+                  </p>
+                  <p className="mt-0.5 text-sm font-black tracking-tight text-slate-950">
+                    {submissions?.summary.currentMonthTotal || 0}
+                  </p>
+                </div>
+              </div>
+
+              {isXConnected ? (
+                <>
+                  <div className="mt-3 flex items-center gap-2 rounded-[18px] border border-slate-200 bg-slate-50/70 p-2">
+                    <input
+                      value={contentUrl}
+                      onChange={(event) => setContentUrl(event.target.value)}
+                      placeholder="X tweet link / Tg post link / Others"
+                      className="h-10 min-w-0 flex-1 rounded-[14px] border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none transition focus:border-sky-500 focus:ring-2 focus:ring-sky-100"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => void handleSubmitContent()}
+                      disabled={isSubmittingContent}
+                      className="inline-flex h-10 shrink-0 items-center justify-center rounded-[14px] bg-[linear-gradient(135deg,#0284c7,#2563eb)] px-3 text-sm font-black text-white transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {isSubmittingContent ? "Submitting..." : "Submit"}
+                    </button>
+                  </div>
+
+                  <div className="mt-2 flex items-center justify-between gap-3">
+                    <p className="text-[11px] text-slate-500">
+                      {submissions?.summary.currentMonthTotal || 0} this month ·{" "}
+                      {submissions?.summary.total || 0} total
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => setIsSubmissionsOpen((current) => !current)}
+                      className="text-xs font-black text-sky-700 transition hover:text-sky-800"
+                    >
+                      {isSubmissionsOpen
+                        ? "Hide your submissions -"
+                        : "View your submissions +"}
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <div className="mt-3 flex items-center justify-between gap-3 rounded-[18px] border border-amber-200 bg-amber-50/80 p-3">
+                  <div className="min-w-0 flex-1">
+                    <p className="text-xs font-black text-amber-900">
+                      Connect X to unlock partner content submissions.
+                    </p>
+                    <p className="mt-1 text-[11px] leading-4 text-amber-800">
+                      This uses the same X connection shared across your profile, quests, and
+                      the rest of the app.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => void handleConnectX()}
+                    disabled={isConnectingX}
+                    className="inline-flex h-10 shrink-0 items-center justify-center rounded-[14px] bg-slate-950 px-3 text-sm font-black text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {isConnectingX ? "Connecting..." : "Connect X"}
+                  </button>
+                </div>
+              )}
+
+              {isSubmissionsOpen ? (
+                <div className="mt-3 border-t border-slate-200 pt-3">
+                  {submissions?.rows?.length ? (
+                    <div className="space-y-2">
+                      {submissions.rows.map((row) => (
+                        <div
+                          key={row.id}
+                          className="rounded-[18px] border border-slate-200 bg-slate-50/80 px-3 py-2.5"
+                        >
+                          <div className="flex items-center justify-between gap-3">
+                            <span className="inline-flex rounded-full border border-sky-200 bg-sky-50 px-2 py-1 text-[10px] font-black uppercase tracking-[0.16em] text-sky-700">
+                              {getSubmissionPlatformLabel(row.platform)}
+                            </span>
+                            <span className="text-[11px] text-slate-500">
+                              {formatUtcDate(row.submittedAt)}
+                            </span>
+                          </div>
+                          <a
+                            href={row.url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="mt-2 block break-all text-sm font-semibold text-slate-900 hover:text-sky-700"
+                          >
+                            {row.url}
+                          </a>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="rounded-[18px] border border-dashed border-slate-200 bg-slate-50 px-4 py-4 text-xs leading-6 text-slate-500">
+                      No submissions yet. Your first approved content link can start here.
+                    </div>
+                  )}
+                </div>
+              ) : null}
+            </section>
 
             <SectionCard eyebrow="Metrics" title="Partner performance">
               <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
