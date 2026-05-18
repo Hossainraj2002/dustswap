@@ -4,13 +4,14 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAccount, usePublicClient, useWalletClient } from "wagmi";
 import { base } from "viem/chains";
 import { useBaseChainSwitch } from "@/hooks/useBaseChainSwitch";
-import { encodeFunctionData, erc20Abi, maxUint256, type Address, type Hex } from "viem";
+import { encodeFunctionData, erc20Abi, type Address, type Hex } from "viem";
 import { useTokenBalances } from "@/hooks/useTokenBalances";
 import { useWalletWhitelist } from "@/hooks/useWalletWhitelist";
-import { PERMIT2_ADDRESS, getPermit2SignatureErrorMessage } from "@/lib/permit2";
+import { getPermit2SignatureErrorMessage } from "@/lib/permit2";
 import {
   DUST_SWEEP_EXECUTION_LANE,
   DUST_SWEEP_ROUTER_ADDRESS,
+  DUST_SWEEP_ROUTER_V2_ADDRESS,
   V1_MAX_BATCH_SIZE,
   V2_MAX_BATCH_SIZE,
   encodeDustSweepV2Calldata,
@@ -71,6 +72,7 @@ type WalletRpcRequest = (args: { method: string; params?: unknown[] }) => Promis
 type WalletCallsStatusResult = {
   status?: string | number;
   statusCode?: number;
+  atomic?: boolean;
   receipts?: Array<{ transactionHash?: unknown }>;
 };
 
@@ -110,6 +112,8 @@ export type UseDustSweepReturn = {
 };
 
 const USDT_ADDRESS = "0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2" as Address;
+const ATOMIC_BATCH_UNSUPPORTED_MESSAGE =
+  "This wallet cannot combine token approvals and the sweep into one Base transaction. Use a wallet/account with atomic batch support, or pre-approve the selected tokens with exact caps.";
 
 function isSameAddress(a?: string | null, b?: string | null) {
   return Boolean(a && b && a.toLowerCase() === b.toLowerCase());
@@ -225,6 +229,22 @@ function getLatestCallsStatusTxHash(result: WalletCallsStatusResult | null) {
     .reverse()
     .find((receipt) => isTxHash(receipt?.transactionHash))
     ?.transactionHash as Hex | undefined;
+}
+
+function getSendCallsResultTxHash(result: unknown) {
+  if (!result || typeof result !== "object") {
+    return undefined;
+  }
+
+  const candidate = result as {
+    hash?: unknown;
+    transactionHash?: unknown;
+    receipts?: Array<{ transactionHash?: unknown }>;
+  };
+
+  if (isTxHash(candidate.transactionHash)) return candidate.transactionHash;
+  if (isTxHash(candidate.hash)) return candidate.hash;
+  return getLatestCallsStatusTxHash(candidate as WalletCallsStatusResult);
 }
 
 function isAtomicCapabilitySupported(atomic: unknown) {
@@ -555,7 +575,7 @@ export function useDustSweep(): UseDustSweepReturn {
       approvalRequirements.push({
         ...requirement,
         allowance,
-        approvalAmount: maxUint256,
+        approvalAmount: requirement.amount,
         resetFirst: allowance > 0n && requiresApprovalReset(requirement.token),
       });
     }
@@ -661,7 +681,14 @@ export function useDustSweep(): UseDustSweepReturn {
     }
 
     const client = walletClient as unknown as {
-      sendCalls?: (request: { calls: WalletSendCall[]; capabilities?: unknown }) => Promise<unknown>;
+      sendCalls?: (request: {
+        account?: Address;
+        chain?: typeof base;
+        calls: WalletSendCall[];
+        capabilities?: unknown;
+        forceAtomic?: boolean;
+        version?: string;
+      }) => Promise<unknown>;
       waitForCallsStatus?: (request: {
         id: string;
         throwOnFailure?: boolean;
@@ -684,9 +711,17 @@ export function useDustSweep(): UseDustSweepReturn {
       let viemCallId = "";
       try {
         const sendCallsResult = await client.sendCalls({
+          account: args.account,
+          chain: base,
           calls,
+          forceAtomic: true,
+          version: "2.0.0",
           ...(capabilities ? { capabilities } : {}),
         });
+        const immediateHash = getSendCallsResultTxHash(sendCallsResult);
+        if (immediateHash) {
+          return immediateHash;
+        }
         viemCallId = resolveSendCallsId(sendCallsResult);
       } catch (error) {
         if (isRejectedByUser(error)) {
@@ -700,6 +735,9 @@ export function useDustSweep(): UseDustSweepReturn {
           throwOnFailure: true,
           timeout: 180_000,
         });
+        if (status.atomic === false) {
+          throw new Error(ATOMIC_BATCH_UNSUPPORTED_MESSAGE);
+        }
         const hash = getLatestCallsStatusTxHash(status);
 
         if (!hash) {
@@ -720,6 +758,7 @@ export function useDustSweep(): UseDustSweepReturn {
       params: [
         {
           version: "2.0.0",
+          atomicRequired: true,
           chainId: `0x${base.id.toString(16)}`,
           from: args.account,
           calls: calls.map((call) => ({
@@ -731,6 +770,11 @@ export function useDustSweep(): UseDustSweepReturn {
         },
       ],
     });
+    const immediateHash = getSendCallsResultTxHash(sendCallsResult);
+    if (immediateHash) {
+      return immediateHash;
+    }
+
     const callId = resolveSendCallsId(sendCallsResult);
     if (!callId) {
       throw new Error("wallet_sendCalls did not return an id");
@@ -745,6 +789,9 @@ export function useDustSweep(): UseDustSweepReturn {
       const hash = getLatestCallsStatusTxHash(status);
 
       if (hash) {
+        if (status?.atomic === false) {
+          throw new Error(ATOMIC_BATCH_UNSUPPORTED_MESSAGE);
+        }
         return hash;
       }
 
@@ -797,17 +844,11 @@ export function useDustSweep(): UseDustSweepReturn {
       await switchToBase();
 
       const lane = quote.executionLane || DUST_SWEEP_EXECUTION_LANE;
-      const approvalSpender = lane === "owned_v2" ? PERMIT2_ADDRESS : DUST_SWEEP_ROUTER_ADDRESS;
-      const approvalRequirements = await getTokenApprovalRequirements(quote.routes, approvalSpender);
-      const walletHasSendCalls =
-        typeof (walletClient as unknown as { sendCalls?: unknown }).sendCalls === "function";
-      const walletHasRawBatchRpc = Boolean(getWalletRequest(walletClient));
-      const shouldTryBundledV2 =
-        lane === "owned_v2" &&
-        approvalRequirements.length > 0 &&
-        (supportsWalletSendCalls || walletHasSendCalls || walletHasRawBatchRpc);
+      let approvalSpender = lane === "owned_v2" ? DUST_SWEEP_ROUTER_V2_ADDRESS : DUST_SWEEP_ROUTER_ADDRESS;
+      let approvalRequirements: ApprovalRequirement[] = [];
 
-      if (!shouldTryBundledV2) {
+      if (lane !== "owned_v2") {
+        approvalRequirements = await getTokenApprovalRequirements(quote.routes, approvalSpender);
         await sendTokenApprovals(approvalRequirements, approvalSpender);
       }
 
@@ -835,6 +876,11 @@ export function useDustSweep(): UseDustSweepReturn {
 
       const buildTx = payload as DustSweepBuildTxResponse;
       let canonicalCalldata = buildTx.calldata;
+
+      if (lane === "owned_v2") {
+        approvalSpender = (buildTx.approvalSpender || DUST_SWEEP_ROUTER_V2_ADDRESS) as Address;
+        approvalRequirements = await getTokenApprovalRequirements(quote.routes, approvalSpender);
+      }
 
       if (buildTx.requiresSignature || buildTx.signatureMode === "permit2_witness") {
         const typedData = buildTx.typedData || buildTx.permit2;
@@ -871,6 +917,7 @@ export function useDustSweep(): UseDustSweepReturn {
       const paymasterUrl = process.env.NEXT_PUBLIC_PAYMASTER_URL;
       const txValue = buildTx.value ? BigInt(buildTx.value) : 0n;
       const sweepTarget = buildTx.routerAddress || buildTx.contractAddress;
+      const shouldTryBundledV2 = lane === "owned_v2" && approvalRequirements.length > 0;
 
       const sendSweepTransaction = async () =>
         (await walletClient.sendTransaction({
@@ -904,13 +951,8 @@ export function useDustSweep(): UseDustSweepReturn {
             throw bundleError;
           }
 
-          console.warn("Bundled DustSweep sendCalls failed, falling back to sequential approvals.", bundleError);
-          currentStep = "approving";
-          setSweepStep(currentStep);
-          await sendTokenApprovals(approvalRequirements, approvalSpender);
-          currentStep = "pending";
-          setSweepStep(currentStep);
-          hash = await sendSweepTransaction();
+          console.warn("Bundled DustSweep sendCalls failed.", bundleError);
+          throw new Error(ATOMIC_BATCH_UNSUPPORTED_MESSAGE);
         }
       } else {
         hash = await sendSweepTransaction();

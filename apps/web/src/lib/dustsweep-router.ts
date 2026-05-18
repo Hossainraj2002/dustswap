@@ -129,6 +129,15 @@ export function parseDustSweepError(error: unknown) {
   if (lower.includes("nativeinputunsupported")) return "ETH must be wrapped to WETH before sweeping.";
   if (lower.includes("permit2 approval required")) return "Approve Permit2 for the selected tokens and try again.";
   if (lower.includes("router approval required")) return "Approve the DustSweep router for the selected tokens and try again.";
+  if (
+    lower.includes("atomic batch") ||
+    lower.includes("atomicity") ||
+    lower.includes("forceatomic") ||
+    lower.includes("wallet_sendcalls") ||
+    lower.includes("eip-7702")
+  ) {
+    return "This wallet cannot combine token approvals and the sweep into one Base transaction. Use a wallet/account with atomic batch support, or pre-approve the selected tokens with exact caps.";
+  }
   if (lower.includes("transfer_from_failed")) return "Permit2 could not pull one token. Refresh balances, approve tokens, and try again.";
   if (lower.includes("transfer amount exceeds balance")) return "One token balance changed. Refresh and try again.";
   if (lower.includes("token balance changed")) return "One token balance changed. Refresh and try again.";

@@ -370,6 +370,34 @@ const DUST_SWEEP_ROUTER_ABI = [
 
 const DUST_SWEEP_ROUTER_V2_ABI = [
   {
+    name: "sweepWithAllowance",
+    type: "function",
+    stateMutability: "payable",
+    inputs: [
+      {
+        name: "routes",
+        type: "tuple[]",
+        components: [
+          { name: "tokenIn", type: "address" },
+          { name: "amountIn", type: "uint256" },
+          { name: "target", type: "address" },
+          { name: "spender", type: "address" },
+          { name: "value", type: "uint256" },
+          { name: "data", type: "bytes" },
+        ],
+      },
+      { name: "outputToken", type: "address" },
+      { name: "receiver", type: "address" },
+      { name: "minAmountOut", type: "uint256" },
+      { name: "deadline", type: "uint256" },
+    ],
+    outputs: [
+      { name: "grossAmountOut", type: "uint256" },
+      { name: "feeAmount", type: "uint256" },
+      { name: "netAmountOut", type: "uint256" },
+    ],
+  },
+  {
     name: "sweepWithPermit2",
     type: "function",
     stateMutability: "payable",
@@ -1791,6 +1819,26 @@ function encodeV2SweepCalldata(args: {
       BigInt(args.deadline),
       permit,
       args.signature,
+    ],
+  });
+}
+
+function encodeV2AllowanceSweepCalldata(args: {
+  v2Routes: DustSweepV2Route[];
+  tokenOut: Address;
+  receiver: Address;
+  minAmountOut: bigint;
+  deadline: number;
+}) {
+  return encodeFunctionData({
+    abi: DUST_SWEEP_ROUTER_V2_ABI,
+    functionName: "sweepWithAllowance",
+    args: [
+      args.v2Routes,
+      args.tokenOut,
+      args.receiver,
+      args.minAmountOut,
+      BigInt(args.deadline),
     ],
   });
 }
@@ -3989,8 +4037,6 @@ dustsweepRoutes.post("/build-tx", async (c) => {
     });
   }
 
-  const permit2Approvals = await findMissingPermit2Approvals(userAddress, routes);
-
   let v2Routes: DustSweepV2Route[];
   try {
     v2Routes = routes.map((route) => buildV2Route(route, buildTokenOut, routerAddress, body.deadline!));
@@ -4001,6 +4047,43 @@ dustsweepRoutes.post("/build-tx", async (c) => {
 
   const minAmountOut = routes.reduce((sum, route) => sum + BigInt(route.amountOutMin), 0n);
   const value = v2Routes.reduce((sum, route) => sum + route.value, 0n);
+  const v2AuthMode = (process.env.DUST_SWEEP_V2_AUTH_MODE || "allowance").toLowerCase();
+
+  if (v2AuthMode !== "permit2") {
+    const routerApprovals = await findMissingTokenApprovals(userAddress, routes, routerAddress);
+    const calldata = encodeV2AllowanceSweepCalldata({
+      v2Routes,
+      tokenOut: buildTokenOut,
+      receiver: buildReceiver,
+      minAmountOut,
+      deadline: body.deadline,
+    });
+
+    return c.json({
+      requiresSignature: false,
+      signatureMode: "none",
+      approvalSpender: routerAddress,
+      approvalRequirements: routerApprovals,
+      routerAddress,
+      contractAddress: routerAddress,
+      routeMaxCap,
+      routes: v2Routes.map((route) => ({
+        tokenIn: route.tokenIn,
+        amountIn: route.amountIn.toString(),
+        target: route.target,
+        spender: route.spender,
+        value: route.value.toString(),
+        data: route.data,
+      })),
+      minAmountOut: minAmountOut.toString(),
+      calldata,
+      value: value.toString(),
+      callMode: "sweepWithAllowance",
+      executionLane,
+    });
+  }
+
+  const permit2Approvals = await findMissingPermit2Approvals(userAddress, routes);
   const routeHash = hashV2Routes(v2Routes);
   const witness: Permit2Witness = {
     routeHash,

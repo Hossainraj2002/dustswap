@@ -157,12 +157,44 @@ contract DustSweepPermit2RouterV2 is Ownable, ReentrancyGuard {
             deadline: deadline
         });
 
-        _validateSweepParams(routes, params, permit.deadline);
+        _validateSweepParams(routes, params);
+        if (permit.deadline != params.deadline) revert PermitDeadlineMismatch();
 
         uint256 initialOutputBalance = IERC20(params.outputToken).balanceOf(address(this));
 
-        _validateRoutesAndPermit(routes, params.outputToken, permit);
+        _validateRoutes(routes, params.outputToken);
+        _validatePermit(routes, permit);
         _pullInputsWithPermit2(routes, params, permit, signature);
+        _executeRoutes(routes, params.deadline);
+
+        return _settleOutput(routes.length, params, initialOutputBalance);
+    }
+
+    function sweepWithAllowance(
+        SweepRoute[] calldata routes,
+        address outputToken,
+        address receiver,
+        uint256 minAmountOut,
+        uint256 deadline
+    )
+        external
+        payable
+        nonReentrant
+        returns (uint256 grossAmountOut, uint256 feeAmount, uint256 netAmountOut)
+    {
+        SweepParams memory params = SweepParams({
+            outputToken: outputToken,
+            receiver: receiver,
+            minAmountOut: minAmountOut,
+            deadline: deadline
+        });
+
+        _validateSweepParams(routes, params);
+
+        uint256 initialOutputBalance = IERC20(params.outputToken).balanceOf(address(this));
+
+        _validateRoutes(routes, params.outputToken);
+        _pullInputsWithAllowance(routes);
         _executeRoutes(routes, params.deadline);
 
         return _settleOutput(routes.length, params, initialOutputBalance);
@@ -170,15 +202,13 @@ contract DustSweepPermit2RouterV2 is Ownable, ReentrancyGuard {
 
     function _validateSweepParams(
         SweepRoute[] calldata routes,
-        SweepParams memory params,
-        uint256 permitDeadline
+        SweepParams memory params
     ) internal view {
         if (block.timestamp > params.deadline) revert DeadlineExpired();
         if (routes.length == 0) revert EmptyRoutes();
         if (routes.length > MAX_BATCH_SIZE) revert BatchTooLarge();
         if (params.outputToken == address(0) || params.receiver == address(0)) revert ZeroAddress();
         if (params.outputToken == NATIVE_TOKEN_SENTINEL) revert NativeInputUnsupported();
-        if (permitDeadline != params.deadline) revert PermitDeadlineMismatch();
     }
 
     function _pullInputsWithPermit2(
@@ -205,6 +235,16 @@ contract DustSweepPermit2RouterV2 is Ownable, ReentrancyGuard {
             PERMIT2_WITNESS_TYPE_STRING,
             signature
         );
+    }
+
+    function _pullInputsWithAllowance(SweepRoute[] calldata routes) internal {
+        for (uint256 i; i < routes.length;) {
+            IERC20(routes[i].tokenIn).safeTransferFrom(msg.sender, address(this), routes[i].amountIn);
+
+            unchecked {
+                ++i;
+            }
+        }
     }
 
     function _buildTransferDetails(
@@ -345,13 +385,10 @@ contract DustSweepPermit2RouterV2 is Ownable, ReentrancyGuard {
         );
     }
 
-    function _validateRoutesAndPermit(
+    function _validateRoutes(
         SweepRoute[] calldata routes,
-        address outputToken,
-        ISignatureTransfer.PermitBatchTransferFrom calldata permit
+        address outputToken
     ) internal view {
-        if (permit.permitted.length != routes.length) revert PermitLengthMismatch();
-
         uint256 totalValue;
         for (uint256 i; i < routes.length;) {
             SweepRoute calldata route = routes[i];
@@ -365,8 +402,6 @@ contract DustSweepPermit2RouterV2 is Ownable, ReentrancyGuard {
             if (route.data.length < 4) revert MalformedRouteData(i);
             if (!allowedTargets[route.target]) revert TargetNotAllowed(route.target);
             if (!allowedSpenders[route.spender]) revert SpenderNotAllowed(route.spender);
-            if (permit.permitted[i].token != route.tokenIn) revert PermitTokenMismatch(i);
-            if (permit.permitted[i].amount != route.amountIn) revert PermitAmountMismatch(i);
 
             totalValue += route.value;
 
@@ -376,6 +411,22 @@ contract DustSweepPermit2RouterV2 is Ownable, ReentrancyGuard {
         }
 
         if (msg.value != totalValue) revert InvalidMsgValue();
+    }
+
+    function _validatePermit(
+        SweepRoute[] calldata routes,
+        ISignatureTransfer.PermitBatchTransferFrom calldata permit
+    ) internal pure {
+        if (permit.permitted.length != routes.length) revert PermitLengthMismatch();
+
+        for (uint256 i; i < routes.length;) {
+            if (permit.permitted[i].token != routes[i].tokenIn) revert PermitTokenMismatch(i);
+            if (permit.permitted[i].amount != routes[i].amountIn) revert PermitAmountMismatch(i);
+
+            unchecked {
+                ++i;
+            }
+        }
     }
 
     function _executeRoutes(SweepRoute[] calldata routes, uint256 deadline) internal {

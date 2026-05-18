@@ -299,6 +299,25 @@ contract DustSweepPermit2RouterV2Test is Test {
         assertEq(tokenB.balanceOf(address(target)), 6 ether);
     }
 
+    function test_sweepWithAllowanceTransfersMultipleInputs() public {
+        DustSweepPermit2RouterV2.SweepRoute[] memory routes = new DustSweepPermit2RouterV2.SweepRoute[](2);
+        routes[0] = _route(address(tokenA), 4 ether, 500_000);
+        routes[1] = _route(address(tokenB), 6 ether, 700_000);
+
+        vm.startPrank(user);
+        tokenA.approve(address(router), 4 ether);
+        tokenB.approve(address(router), 6 ether);
+        router.sweepWithAllowance(routes, address(outputToken), receiver, 1_000_000, DEADLINE);
+        vm.stopPrank();
+
+        assertEq(outputToken.balanceOf(feeCollector), 7_200);
+        assertEq(outputToken.balanceOf(receiver), 1_192_800);
+        assertEq(tokenA.balanceOf(address(target)), 4 ether);
+        assertEq(tokenB.balanceOf(address(target)), 6 ether);
+        assertEq(tokenA.allowance(address(router), address(target)), 0);
+        assertEq(tokenB.allowance(address(router), address(target)), 0);
+    }
+
     function test_sweepSupportsPermit2AllowanceSpenderRoutes() public {
         DustSweepPermit2RouterV2.SweepRoute[] memory routes = new DustSweepPermit2RouterV2.SweepRoute[](1);
         routes[0] = DustSweepPermit2RouterV2.SweepRoute({
