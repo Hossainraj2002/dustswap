@@ -88,6 +88,8 @@ type ClaimVerificationState = {
   txHash: `0x${string}`;
 };
 
+const FOOTPRINT_DROP_COUNTDOWN_DURATION_MS = 7 * 24 * 60 * 60 * 1000;
+
 function cx(...parts: Array<string | false | null | undefined>) {
   return parts.filter(Boolean).join(" ");
 }
@@ -591,6 +593,77 @@ function StatusMetric({
   );
 }
 
+function formatCountdownUnit(value: number) {
+  return value.toString().padStart(2, "0");
+}
+
+function FootprintDropEndTrimBar({
+  countdownEndsAt,
+}: {
+  countdownEndsAt: string;
+}) {
+  const countdownEndMs = useMemo(() => {
+    const parsed = new Date(countdownEndsAt).getTime();
+    return Number.isFinite(parsed)
+      ? parsed
+      : Date.now() + FOOTPRINT_DROP_COUNTDOWN_DURATION_MS;
+  }, [countdownEndsAt]);
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setNow(Date.now());
+    }, 1000);
+
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, []);
+
+  const remainingMs = Math.max(0, countdownEndMs - now);
+  const totalSeconds = Math.floor(remainingMs / 1000);
+  const days = Math.floor(totalSeconds / 86_400);
+  const hours = Math.floor((totalSeconds % 86_400) / 3_600);
+  const minutes = Math.floor((totalSeconds % 3_600) / 60);
+  const seconds = totalSeconds % 60;
+  const progressPercent = Math.max(
+    0,
+    Math.min(100, (remainingMs / FOOTPRINT_DROP_COUNTDOWN_DURATION_MS) * 100)
+  );
+  const countdownLabel = `${formatCountdownUnit(days)}d ${formatCountdownUnit(
+    hours
+  )}h ${formatCountdownUnit(minutes)}m ${formatCountdownUnit(seconds)}s`;
+
+  return (
+    <div className="rounded-[22px] border border-black bg-black p-1 shadow-[0_20px_48px_rgba(15,23,42,0.16)]">
+      <div className="relative h-[1.5cm] overflow-hidden rounded-[18px] border border-black/90 bg-[#12090a]">
+        <div
+          className="absolute inset-y-0 left-0 rounded-[16px] bg-[linear-gradient(90deg,#ef4444_0%,#dc2626_58%,#991b1b_100%)] transition-[width] duration-1000 ease-linear"
+          style={{ width: `${progressPercent}%` }}
+        />
+        <div className="absolute inset-y-0 right-0 w-16 bg-[linear-gradient(270deg,rgba(0,0,0,0.88)_0%,rgba(0,0,0,0)_100%)]" />
+        <div className="absolute inset-x-0 top-0 h-px bg-white/15" />
+        <div className="absolute inset-x-0 bottom-0 h-px bg-black/80" />
+
+        <div className="relative z-10 flex h-full items-center justify-between gap-3 px-4">
+          <div className="min-w-0">
+            <p className="text-[9px] font-semibold uppercase tracking-[0.24em] text-white/70 sm:text-[10px]">
+              Footprint Drop end timer
+            </p>
+            <p className="truncate text-sm font-semibold text-white sm:text-[15px]">
+              Ends in 7 days
+            </p>
+          </div>
+
+          <div className="shrink-0 rounded-full border border-white/12 bg-black/35 px-3 py-1.5 font-mono text-[12px] font-semibold tracking-[0.08em] text-white sm:text-[13px]">
+            {countdownLabel}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ClaimFollowGate({
   followGateState,
   remainingSecondsByTask,
@@ -1065,8 +1138,10 @@ function FootprintStatusPanel({
 
 export default function FootprintDropLanding({
   initialReferralCode = null,
+  countdownEndsAt,
 }: {
   initialReferralCode?: string | null;
+  countdownEndsAt: string;
 }) {
   const { address, chainId, isConnected } = useAccount();
   const { data: walletClient } = useWalletClient();
@@ -1986,7 +2061,7 @@ export default function FootprintDropLanding({
 
       <main className="relative z-10 overflow-x-clip px-4 pb-16 pt-6 sm:px-6 sm:pb-20 sm:pt-10 lg:pt-14">
         <section className="mx-auto max-w-6xl py-4 sm:py-12 lg:py-16">
-          <div className="grid gap-5 sm:gap-8 lg:grid-cols-[minmax(0,0.82fr)_minmax(0,1fr)] lg:items-start lg:gap-10">
+          <div className="space-y-5 sm:space-y-6 lg:space-y-8">
             <div className="min-w-0 max-w-[19rem] sm:max-w-xl">
               <SectionKicker>Footprint Drop</SectionKicker>
               <h1 className="mt-3 max-w-[12ch] font-syne text-[1.95rem] font-bold leading-[1.02] tracking-[-0.045em] text-slate-950 sm:mt-5 sm:text-[3.25rem] lg:text-[4.5rem]">
@@ -1999,7 +2074,9 @@ export default function FootprintDropLanding({
               </p>
             </div>
 
-            <div className="rounded-[28px] border border-white/90 bg-white/90 p-4 shadow-[0_24px_60px_rgba(37,99,235,0.12)] backdrop-blur sm:rounded-[30px] sm:p-6">
+            <FootprintDropEndTrimBar countdownEndsAt={countdownEndsAt} />
+
+            <div className="max-w-[42rem] rounded-[28px] border border-white/90 bg-white/90 p-4 shadow-[0_24px_60px_rgba(37,99,235,0.12)] backdrop-blur sm:rounded-[30px] sm:p-6">
               <SectionKicker>Airdrop</SectionKicker>
               <h2 className="mt-3 font-syne text-[1.55rem] font-bold tracking-[-0.04em] text-slate-950 sm:mt-4 sm:text-[2.2rem]">
                 Are you a power onchain user on Base?
