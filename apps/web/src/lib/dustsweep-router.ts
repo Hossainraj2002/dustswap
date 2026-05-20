@@ -129,6 +129,12 @@ export function parseDustSweepError(error: unknown) {
   if (lower.includes("nativeinputunsupported")) return "ETH must be wrapped to WETH before sweeping.";
   if (lower.includes("permit2 approval required")) return "Approve Permit2 for the selected tokens and try again.";
   if (lower.includes("router approval required")) return "Approve the DustSweep router for the selected tokens and try again.";
+  if (lower.includes("not configured on-chain") || lower.includes("missing allowed target") || lower.includes("missing allowed spender")) {
+    return "DustSweep V2 router is not configured on-chain yet. The owner must allowlist the route target and spender before sweeping.";
+  }
+  if (lower.includes("wallet batch executed but inner call")) {
+    return "Wallet batch submitted, but the sweep call failed inside the wallet batch. Refresh the route and try again.";
+  }
   if (
     lower.includes("atomic batch") ||
     lower.includes("atomicity") ||

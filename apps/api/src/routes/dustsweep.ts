@@ -442,6 +442,20 @@ const DUST_SWEEP_ROUTER_V2_ABI = [
       { name: "netAmountOut", type: "uint256" },
     ],
   },
+  {
+    name: "allowedTargets",
+    type: "function",
+    stateMutability: "view",
+    inputs: [{ name: "target", type: "address" }],
+    outputs: [{ name: "", type: "bool" }],
+  },
+  {
+    name: "allowedSpenders",
+    type: "function",
+    stateMutability: "view",
+    inputs: [{ name: "spender", type: "address" }],
+    outputs: [{ name: "", type: "bool" }],
+  },
 ] as const;
 
 const SWAP_ROUTER_02_ABI = [
@@ -1590,6 +1604,72 @@ function assertConfiguredV2Route(route: DustSweepV2Route) {
 
   if (!allowedSpenders.has(route.spender.toLowerCase())) {
     throw new Error(`V2 spender ${route.spender} is not configured in DUST_SWEEP_ALLOWED_SPENDERS`);
+  }
+}
+
+async function readV2AllowedTarget(routerAddress: Address, target: Address) {
+  const data = encodeFunctionData({
+    abi: DUST_SWEEP_ROUTER_V2_ABI,
+    functionName: "allowedTargets",
+    args: [target],
+  });
+  const result = await callContract(routerAddress, data);
+  const allowed = decodeFunctionResult({
+    abi: DUST_SWEEP_ROUTER_V2_ABI,
+    functionName: "allowedTargets",
+    data: result,
+  });
+  return allowed;
+}
+
+async function readV2AllowedSpender(routerAddress: Address, spender: Address) {
+  const data = encodeFunctionData({
+    abi: DUST_SWEEP_ROUTER_V2_ABI,
+    functionName: "allowedSpenders",
+    args: [spender],
+  });
+  const result = await callContract(routerAddress, data);
+  const allowed = decodeFunctionResult({
+    abi: DUST_SWEEP_ROUTER_V2_ABI,
+    functionName: "allowedSpenders",
+    data: result,
+  });
+  return allowed;
+}
+
+async function assertOnchainV2RouterAllowlist(routerAddress: Address, routes: DustSweepV2Route[]) {
+  const targets = Array.from(new Set(routes.map((route) => route.target.toLowerCase() as Lowercase<Address>)));
+  const spenders = Array.from(new Set(routes.map((route) => route.spender.toLowerCase() as Lowercase<Address>)));
+
+  const [targetChecks, spenderChecks] = await Promise.all([
+    Promise.all(
+      targets.map(async (target) => ({
+        address: target,
+        allowed: await readV2AllowedTarget(routerAddress, getAddress(target)),
+      })),
+    ),
+    Promise.all(
+      spenders.map(async (spender) => ({
+        address: spender,
+        allowed: await readV2AllowedSpender(routerAddress, getAddress(spender)),
+      })),
+    ),
+  ]);
+
+  const missingTargets = targetChecks.filter((check) => !check.allowed).map((check) => check.address);
+  const missingSpenders = spenderChecks.filter((check) => !check.allowed).map((check) => check.address);
+
+  if (missingTargets.length > 0 || missingSpenders.length > 0) {
+    throw new Error(
+      [
+        `V2 router ${routerAddress} is not configured on-chain.`,
+        missingTargets.length > 0 ? `Missing allowed target(s): ${missingTargets.join(", ")}` : "",
+        missingSpenders.length > 0 ? `Missing allowed spender(s): ${missingSpenders.join(", ")}` : "",
+        "Call setAllowedTarget/setAllowedSpender from the router owner, then retry.",
+      ]
+        .filter(Boolean)
+        .join(" "),
+    );
   }
 }
 
@@ -4042,6 +4122,7 @@ dustsweepRoutes.post("/build-tx", async (c) => {
   try {
     v2Routes = routes.map((route) => buildV2Route(route, buildTokenOut, routerAddress, body.deadline!));
     for (const route of v2Routes) assertConfiguredV2Route(route);
+    await assertOnchainV2RouterAllowlist(routerAddress, v2Routes);
   } catch (error) {
     return c.json(errorJson((error as Error).message || "Failed to build V2 route"), 400);
   }

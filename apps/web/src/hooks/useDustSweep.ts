@@ -121,6 +121,8 @@ const ATOMIC_BATCH_UNSUPPORTED_MESSAGE =
   "This wallet cannot combine token approvals and the sweep into one Base transaction. Use a wallet/account with atomic batch support, or pre-approve the selected tokens with exact caps.";
 const WALLET_BATCH_UNSUPPORTED_MESSAGE =
   "This wallet rejected approval+sweep batching. Use a wallet with EIP-5792/EIP-7702 batch support, or pre-approve the selected tokens with exact caps.";
+const TOKENPOCKET_EXECUTE_FAILURES_TOPIC =
+  "0xc42159347c71974b140767e5ffe0d24cb03d38c0e86462ec59a240394c3b9b4c";
 
 function isSameAddress(a?: string | null, b?: string | null) {
   return Boolean(a && b && a.toLowerCase() === b.toLowerCase());
@@ -588,6 +590,14 @@ export function useDustSweep(): UseDustSweepReturn {
     if (receipt.status !== "success") {
       throw new Error("Transaction reverted");
     }
+    const failedBatchCall = (receipt.logs as Array<{ topics: readonly Hex[] }>).find(
+      (log) => log.topics[0]?.toLowerCase() === TOKENPOCKET_EXECUTE_FAILURES_TOPIC,
+    );
+    if (failedBatchCall) {
+      const failedIndex =
+        failedBatchCall.topics[1] ? BigInt(failedBatchCall.topics[1]).toString() : "unknown";
+      throw new Error(`Wallet batch executed but inner call ${failedIndex} failed`);
+    }
     return receipt;
   }, [publicClient]);
 
@@ -686,7 +696,6 @@ export function useDustSweep(): UseDustSweepReturn {
             args: [spender, 0n],
           }),
           value: 0n,
-          dataSuffix: DATA_SUFFIX,
         });
       }
 
@@ -698,7 +707,6 @@ export function useDustSweep(): UseDustSweepReturn {
           args: [spender, requirement.approvalAmount],
         }),
         value: 0n,
-        dataSuffix: DATA_SUFFIX,
       });
     }
 
