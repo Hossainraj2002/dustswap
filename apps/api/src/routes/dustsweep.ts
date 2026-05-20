@@ -3928,6 +3928,7 @@ dustsweepRoutes.post("/build-tx", async (c) => {
   const executionLane = getExecutionLane();
   const routeMaxCap = getRouteMaxCap(executionLane);
   const routerAddress = getRouterAddressForLane(executionLane);
+  const v2AuthMode = (process.env.DUST_SWEEP_V2_AUTH_MODE || "allowance").toLowerCase();
 
   if (!body.routes?.length || !body.tokenOut || !body.receiver || !body.deadline || !body.userAddress) {
     return c.json(errorJson("routes, tokenOut, receiver, deadline, and userAddress are required"), 400);
@@ -3941,8 +3942,8 @@ dustsweepRoutes.post("/build-tx", async (c) => {
   if (Number(body.deadline) <= Math.floor(Date.now() / 1000)) {
     return c.json(errorJson("Deadline expired. Refresh quote and try again.", { code: "DEADLINE_EXPIRED" }), 409);
   }
-  if (executionLane === "owned_v2" && !body.permit2Nonce) {
-    return c.json(errorJson("permit2Nonce is required for owned_v2"), 400);
+  if (executionLane === "owned_v2" && v2AuthMode === "permit2" && !body.permit2Nonce) {
+    return c.json(errorJson("permit2Nonce is required for owned_v2 Permit2 mode"), 400);
   }
   if (executionLane === "basket_aggregator") {
     return c.json(errorJson("basket_aggregator build is not wired yet. Use assembled aggregator transactions as-is."), 501);
@@ -4047,8 +4048,6 @@ dustsweepRoutes.post("/build-tx", async (c) => {
 
   const minAmountOut = routes.reduce((sum, route) => sum + BigInt(route.amountOutMin), 0n);
   const value = v2Routes.reduce((sum, route) => sum + route.value, 0n);
-  const v2AuthMode = (process.env.DUST_SWEEP_V2_AUTH_MODE || "allowance").toLowerCase();
-
   if (v2AuthMode !== "permit2") {
     const routerApprovals = await findMissingTokenApprovals(userAddress, routes, routerAddress);
     const calldata = encodeV2AllowanceSweepCalldata({

@@ -76,6 +76,11 @@ type WalletCallsStatusResult = {
   receipts?: Array<{ transactionHash?: unknown }>;
 };
 
+type WalletChainCapabilities = {
+  atomic?: { status?: unknown; supported?: unknown };
+  atomicBatch?: { supported?: unknown };
+};
+
 export type UseDustSweepReturn = {
   swappableTokens: SwappableToken[];
   unavailableTokens: UnavailableToken[];
@@ -114,6 +119,8 @@ export type UseDustSweepReturn = {
 const USDT_ADDRESS = "0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2" as Address;
 const ATOMIC_BATCH_UNSUPPORTED_MESSAGE =
   "This wallet cannot combine token approvals and the sweep into one Base transaction. Use a wallet/account with atomic batch support, or pre-approve the selected tokens with exact caps.";
+const WALLET_BATCH_UNSUPPORTED_MESSAGE =
+  "This wallet rejected approval+sweep batching. Use a wallet with EIP-5792/EIP-7702 batch support, or pre-approve the selected tokens with exact caps.";
 
 function isSameAddress(a?: string | null, b?: string | null) {
   return Boolean(a && b && a.toLowerCase() === b.toLowerCase());
@@ -262,6 +269,27 @@ function isAtomicCapabilitySupported(atomic: unknown) {
   );
 }
 
+function isBatchCapabilitySupported(chainCapabilities: unknown) {
+  if (!chainCapabilities || typeof chainCapabilities !== "object") {
+    return false;
+  }
+
+  const capability = chainCapabilities as WalletChainCapabilities;
+  return capability.atomicBatch?.supported === true || isAtomicCapabilitySupported(capability.atomic);
+}
+
+function getChainCapabilities(capabilities: unknown, chainId: number) {
+  if (!capabilities || typeof capabilities !== "object") {
+    return undefined;
+  }
+
+  const byChain = capabilities as Record<string, WalletChainCapabilities | undefined>;
+  const chainIdHex = `0x${chainId.toString(16)}`;
+  const chainIdDecimal = String(chainId);
+
+  return byChain[chainIdHex] || byChain[chainIdHex.toUpperCase()] || byChain[chainIdDecimal] || byChain["0x0"];
+}
+
 function toRpcQuantity(value?: bigint) {
   return `0x${(value || 0n).toString(16)}`;
 }
@@ -387,16 +415,26 @@ export function useDustSweep(): UseDustSweepReturn {
           return;
         }
 
-        const result = await request({
-          method: "wallet_getCapabilities",
-          params: [address, [chainIdHex]],
-        });
-        const capabilities = result as Record<
-          string,
-          { atomic?: { status?: string; supported?: boolean | string } } | undefined
-        >;
-        const chainCapabilities = capabilities[chainIdHex] || capabilities["0x0"];
-        if (!cancelled) setSupportsWalletSendCalls(isAtomicCapabilitySupported(chainCapabilities?.atomic));
+        const capabilityParamSets: unknown[][] = [
+          [address, [chainIdHex]],
+          [address],
+        ];
+        let supported = false;
+
+        for (const params of capabilityParamSets) {
+          try {
+            const result = await request({
+              method: "wallet_getCapabilities",
+              params,
+            });
+            supported = isBatchCapabilitySupported(getChainCapabilities(result, base.id));
+            if (supported) break;
+          } catch {
+            // Some wallets only accept the older one-argument form. Try the next shape.
+          }
+        }
+
+        if (!cancelled) setSupportsWalletSendCalls(supported);
       } catch {
         if (!cancelled) setSupportsWalletSendCalls(false);
       }
@@ -675,6 +713,7 @@ export function useDustSweep(): UseDustSweepReturn {
     data: Hex;
     value: bigint;
     usePaymasterCapabilities: boolean;
+    requireAtomic?: boolean;
   }) => {
     if (!walletClient) {
       throw new Error("Wallet client unavailable");
@@ -696,6 +735,7 @@ export function useDustSweep(): UseDustSweepReturn {
       }) => Promise<WalletCallsStatusResult>;
     };
 
+    const requireAtomic = args.requireAtomic ?? true;
     const calls = [
       ...buildApprovalCalls(args.approvalRequirements, args.approvalSpender),
       {
@@ -714,7 +754,7 @@ export function useDustSweep(): UseDustSweepReturn {
           account: args.account,
           chain: base,
           calls,
-          forceAtomic: true,
+          forceAtomic: requireAtomic,
           version: "2.0.0",
           ...(capabilities ? { capabilities } : {}),
         });
@@ -735,7 +775,7 @@ export function useDustSweep(): UseDustSweepReturn {
           throwOnFailure: true,
           timeout: 180_000,
         });
-        if (status.atomic === false) {
+        if (requireAtomic && status.atomic === false) {
           throw new Error(ATOMIC_BATCH_UNSUPPORTED_MESSAGE);
         }
         const hash = getLatestCallsStatusTxHash(status);
@@ -758,7 +798,7 @@ export function useDustSweep(): UseDustSweepReturn {
       params: [
         {
           version: "2.0.0",
-          atomicRequired: true,
+          atomicRequired: requireAtomic,
           chainId: `0x${base.id.toString(16)}`,
           from: args.account,
           calls: calls.map((call) => ({
@@ -789,7 +829,7 @@ export function useDustSweep(): UseDustSweepReturn {
       const hash = getLatestCallsStatusTxHash(status);
 
       if (hash) {
-        if (status?.atomic === false) {
+        if (requireAtomic && status?.atomic === false) {
           throw new Error(ATOMIC_BATCH_UNSUPPORTED_MESSAGE);
         }
         return hash;
@@ -945,14 +985,34 @@ export function useDustSweep(): UseDustSweepReturn {
             data: canonicalCalldata,
             value: txValue,
             usePaymasterCapabilities: walletStatus.isCoinbaseSmartWallet && Boolean(paymasterUrl),
+            requireAtomic: true,
           });
-        } catch (bundleError) {
-          if (isRejectedByUser(bundleError)) {
-            throw bundleError;
+        } catch (strictBundleError) {
+          if (isRejectedByUser(strictBundleError)) {
+            throw strictBundleError;
           }
 
-          console.warn("Bundled DustSweep sendCalls failed.", bundleError);
-          throw new Error(ATOMIC_BATCH_UNSUPPORTED_MESSAGE);
+          console.warn("Atomic DustSweep sendCalls failed; retrying wallet-compatible batch mode.", strictBundleError);
+
+          try {
+            hash = await sendAtomicSweepCalls({
+              approvalRequirements,
+              approvalSpender,
+              account: address,
+              to: sweepTarget,
+              data: canonicalCalldata,
+              value: txValue,
+              usePaymasterCapabilities: walletStatus.isCoinbaseSmartWallet && Boolean(paymasterUrl),
+              requireAtomic: false,
+            });
+          } catch (compatibleBundleError) {
+            if (isRejectedByUser(compatibleBundleError)) {
+              throw compatibleBundleError;
+            }
+
+            console.warn("Compatible DustSweep wallet_sendCalls failed.", compatibleBundleError);
+            throw new Error(WALLET_BATCH_UNSUPPORTED_MESSAGE);
+          }
         }
       } else {
         hash = await sendSweepTransaction();
