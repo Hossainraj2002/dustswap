@@ -136,7 +136,7 @@ export function parseDustSweepError(error: unknown) {
     lower.includes("wallet_sendcalls") ||
     lower.includes("eip-7702")
   ) {
-    return "This wallet cannot combine token approvals and the sweep into one Base transaction. Use a wallet/account with atomic batch support, or pre-approve the selected tokens with exact caps.";
+    return "This wallet rejected approval+sweep batching. Use a wallet with EIP-5792/EIP-7702 batch support, or pre-approve the selected tokens with exact caps.";
   }
   if (lower.includes("transfer_from_failed")) return "Permit2 could not pull one token. Refresh balances, approve tokens, and try again.";
   if (lower.includes("transfer amount exceeds balance")) return "One token balance changed. Refresh and try again.";
