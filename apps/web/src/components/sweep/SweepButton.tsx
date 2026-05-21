@@ -56,7 +56,7 @@ export function SweepButton({
         href={`https://basescan.org/tx/${txHash}`}
         target="_blank"
         rel="noreferrer"
-        className="flex min-h-[52px] w-full items-center justify-center gap-2 rounded-2xl bg-emerald-500 px-4 text-base font-bold text-white shadow-[0_8px_24px_rgba(16,185,129,0.3)] transition-all hover:bg-emerald-600 hover:shadow-[0_12px_32px_rgba(16,185,129,0.4)]"
+        className="flex min-h-[44px] w-full items-center justify-center gap-2 rounded-[8px] bg-emerald-500 px-4 text-base font-semibold text-white shadow-[0_8px_22px_rgba(16,185,129,0.26)] transition-all hover:bg-emerald-600"
       >
         <CheckIcon />
         {visualState.label}
@@ -71,15 +71,15 @@ export function SweepButton({
       onClick={onClick}
       disabled={disabled || isBusy}
       className={cx(
-        "flex min-h-[52px] w-full items-center justify-center gap-2.5 rounded-2xl px-4 text-base font-bold transition-all",
+        "flex min-h-[44px] w-full items-center justify-center gap-2.5 rounded-[8px] px-4 text-base font-semibold transition-all",
         isPreview
-          ? "bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-[0_8px_24px_rgba(37,99,235,0.32)] hover:-translate-y-0.5 hover:shadow-[0_12px_32px_rgba(37,99,235,0.4)]"
+          ? "bg-yellow-300 text-slate-950 shadow-[0_8px_22px_rgba(234,179,8,0.24)] hover:bg-yellow-400"
           : visualState.state === "ready"
-            ? "bg-blue-600 text-white shadow-[0_8px_24px_rgba(37,99,235,0.28)] hover:-translate-y-0.5 hover:bg-blue-700 hover:shadow-[0_12px_32px_rgba(37,99,235,0.36)]"
+            ? "bg-yellow-300 text-slate-950 shadow-[0_8px_22px_rgba(234,179,8,0.24)] hover:bg-yellow-400"
             : visualState.state === "error"
-              ? "bg-red-500 text-white shadow-[0_8px_24px_rgba(239,68,68,0.24)] hover:bg-red-600"
+              ? "bg-red-500 text-white shadow-[0_8px_22px_rgba(239,68,68,0.22)] hover:bg-red-600"
               : visualState.state === "loading" || isBusy
-                ? "cursor-wait bg-blue-500 text-white opacity-90"
+                ? "cursor-wait bg-yellow-100 text-slate-500"
                 : "cursor-not-allowed bg-slate-100 text-slate-400",
       )}
     >

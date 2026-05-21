@@ -96,19 +96,29 @@ export type UseDustSweepReturn = {
   error: string | null;
   quoteError: string | null;
   autoMode: boolean;
+  autoSelectionUsd: number;
+  batchMode: boolean;
+  smartRouting: boolean;
+  removeFailedTokens: boolean;
   routeMaxCap: number;
   supportsWalletSendCalls: boolean;
   outputTokens: Token[];
   walletStatus: ReturnType<typeof useWalletWhitelist>;
+  quoteFailedTokenAddresses: string[];
   setTokenOut: (token: Token | null) => void;
   setSlippageBps: (value: number) => void;
   setAutoMode: (value: boolean) => void;
+  setAutoSelectionUsd: (value: number) => void;
+  setBatchMode: (value: boolean) => void;
+  setSmartRouting: (value: boolean) => void;
+  setRemoveFailedTokens: (value: boolean) => void;
   setSelectedTokens: (tokens: SelectedToken[]) => void;
   addToken: (token: SelectedToken) => void;
   selectAllTokens: () => void;
   removeToken: (address: string) => void;
   clearSelectedTokens: () => void;
   clearUnavailableTokens: () => void;
+  removeUnavailableToken: (address: string) => void;
   refreshTokens: () => Promise<void>;
   refreshQuote: () => Promise<void>;
   previewSweep: () => Promise<void>;
@@ -350,12 +360,17 @@ export function useDustSweep(): UseDustSweepReturn {
   const [quote, setQuote] = useState<DustSweepQuoteResponse | null>(null);
   const [slippageBps, setSlippageBps] = useState(50);
   const [autoMode, setAutoMode] = useState(false);
+  const [autoSelectionUsd, setAutoSelectionUsd] = useState(100);
+  const [batchMode, setBatchMode] = useState(true);
+  const [smartRouting, setSmartRouting] = useState(true);
+  const [removeFailedTokens, setRemoveFailedTokens] = useState(false);
   const [isQuoting, setIsQuoting] = useState(false);
   const [isSweeping, setIsSweeping] = useState(false);
   const [sweepStep, setSweepStep] = useState<SweepStep>("idle");
   const [txHash, setTxHash] = useState<Hex | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [quoteError, setQuoteError] = useState<string | null>(null);
+  const [quoteFailedTokenAddresses, setQuoteFailedTokenAddresses] = useState<string[]>([]);
   const [supportsWalletSendCalls, setSupportsWalletSendCalls] = useState(false);
 
   const configuredRouteCap = getCapForLane(DUST_SWEEP_EXECUTION_LANE);
@@ -395,8 +410,12 @@ export function useDustSweep(): UseDustSweepReturn {
 
   useEffect(() => {
     if (!autoMode) return;
-    setSelectedTokens(swappableTokens.slice(0, configuredRouteCap));
-  }, [autoMode, configuredRouteCap, swappableTokens]);
+    setSelectedTokens(
+      swappableTokens
+        .filter((token) => (token.valueUSD ?? 0) <= autoSelectionUsd)
+        .slice(0, configuredRouteCap),
+    );
+  }, [autoMode, autoSelectionUsd, configuredRouteCap, swappableTokens]);
 
   useEffect(() => {
     if (!address || !walletClient) {
@@ -454,6 +473,13 @@ export function useDustSweep(): UseDustSweepReturn {
     setQuoteError(null);
   }, [selectedTokens, tokenOut, slippageBps]);
 
+  useEffect(() => {
+    const selected = new Set(selectedTokens.map((token) => token.address.toLowerCase()));
+    setQuoteFailedTokenAddresses((current) =>
+      current.filter((address) => selected.has(address.toLowerCase())),
+    );
+  }, [selectedTokens]);
+
   const refreshTokens = useCallback(async () => {
     await refetchBalances();
   }, [refetchBalances]);
@@ -466,6 +492,7 @@ export function useDustSweep(): UseDustSweepReturn {
 
     setIsQuoting(true);
     setQuoteError(null);
+    setQuoteFailedTokenAddresses([]);
 
     try {
       const response = await fetch("/api/dustsweep/quote", {
@@ -498,10 +525,14 @@ export function useDustSweep(): UseDustSweepReturn {
             reason: skippedByAddress.get(token.address.toLowerCase()) || "NO_LIQUIDITY" as UnavailableReason,
           }));
         if (failedTokens.length > 0) {
+          const failedAddresses = failedTokens.map((token) => token.address.toLowerCase());
           setUnavailableTokens((current) => mergeUnavailableTokens(current, failedTokens));
-          setSelectedTokens((current) =>
-            current.filter((token) => !skippedByAddress.has(token.address.toLowerCase())),
-          );
+          setQuoteFailedTokenAddresses(failedAddresses);
+          if (removeFailedTokens) {
+            setSelectedTokens((current) =>
+              current.filter((token) => !skippedByAddress.has(token.address.toLowerCase())),
+            );
+          }
         }
 
         const message =
@@ -527,10 +558,14 @@ export function useDustSweep(): UseDustSweepReturn {
         }));
 
       if (failedTokens.length > 0) {
+        const failedAddresses = failedTokens.map((token) => token.address.toLowerCase());
         setUnavailableTokens((current) => mergeUnavailableTokens(current, failedTokens));
-        setSelectedTokens((current) =>
-          current.filter((token) => routedAddresses.has(token.address.toLowerCase())),
-        );
+        setQuoteFailedTokenAddresses(failedAddresses);
+        if (removeFailedTokens) {
+          setSelectedTokens((current) =>
+            current.filter((token) => routedAddresses.has(token.address.toLowerCase())),
+          );
+        }
       }
 
       setQuote(nextQuote);
@@ -544,9 +579,19 @@ export function useDustSweep(): UseDustSweepReturn {
     } finally {
       setIsQuoting(false);
     }
-  }, [address, selectedTokens, slippageBps, tokenOut]);
+  }, [address, removeFailedTokens, selectedTokens, slippageBps, tokenOut]);
 
-  // Quote ONLY fires on explicit user action (previewSweep), not on token selection
+  useEffect(() => {
+    if (!address || !tokenOut || selectedTokens.length === 0) {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      void refreshQuote();
+    }, 450);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [address, refreshQuote, selectedTokens, slippageBps, tokenOut]);
 
   const addToken = useCallback((token: SelectedToken) => {
     setAutoMode(false);
@@ -568,15 +613,29 @@ export function useDustSweep(): UseDustSweepReturn {
     setSelectedTokens((current) =>
       current.filter((token) => !isSameAddress(token.address, tokenAddress)),
     );
+    setQuoteFailedTokenAddresses((current) =>
+      current.filter((address) => !isSameAddress(address, tokenAddress)),
+    );
   }, []);
 
   const clearSelectedTokens = useCallback(() => {
     setAutoMode(false);
     setSelectedTokens([]);
+    setQuoteFailedTokenAddresses([]);
   }, []);
 
   const clearUnavailableTokens = useCallback(() => {
     setUnavailableTokens([]);
+    setQuoteFailedTokenAddresses([]);
+  }, []);
+
+  const removeUnavailableToken = useCallback((tokenAddress: string) => {
+    setUnavailableTokens((current) =>
+      current.filter((token) => !isSameAddress(token.address, tokenAddress)),
+    );
+    setQuoteFailedTokenAddresses((current) =>
+      current.filter((address) => !isSameAddress(address, tokenAddress)),
+    );
   }, []);
 
   const resetSweepState = useCallback(() => {
@@ -965,7 +1024,7 @@ export function useDustSweep(): UseDustSweepReturn {
       const paymasterUrl = process.env.NEXT_PUBLIC_PAYMASTER_URL;
       const txValue = buildTx.value ? BigInt(buildTx.value) : 0n;
       const sweepTarget = buildTx.routerAddress || buildTx.contractAddress;
-      const shouldTryBundledV2 = lane === "owned_v2" && approvalRequirements.length > 0;
+      const shouldTryBundledV2 = batchMode && lane === "owned_v2" && approvalRequirements.length > 0;
 
       const sendSweepTransaction = async () =>
         (await walletClient.sendTransaction({
@@ -1023,6 +1082,13 @@ export function useDustSweep(): UseDustSweepReturn {
           }
         }
       } else {
+        if (lane === "owned_v2" && approvalRequirements.length > 0) {
+          currentStep = "approving";
+          setSweepStep(currentStep);
+          await sendTokenApprovals(approvalRequirements, approvalSpender);
+          currentStep = "pending";
+          setSweepStep(currentStep);
+        }
         hash = await sendSweepTransaction();
       }
 
@@ -1063,6 +1129,7 @@ export function useDustSweep(): UseDustSweepReturn {
     }
   }, [
     address,
+    batchMode,
     getTokenApprovalRequirements,
     publicClient,
     quote,
@@ -1094,19 +1161,29 @@ export function useDustSweep(): UseDustSweepReturn {
     error: error || balances.error,
     quoteError,
     autoMode,
+    autoSelectionUsd,
+    batchMode,
+    smartRouting,
+    removeFailedTokens,
     routeMaxCap,
     supportsWalletSendCalls,
     outputTokens,
     walletStatus,
+    quoteFailedTokenAddresses,
     setTokenOut,
     setSlippageBps,
     setAutoMode,
+    setAutoSelectionUsd,
+    setBatchMode,
+    setSmartRouting,
+    setRemoveFailedTokens,
     setSelectedTokens,
     addToken,
     selectAllTokens,
     removeToken,
     clearSelectedTokens,
     clearUnavailableTokens,
+    removeUnavailableToken,
     refreshTokens,
     refreshQuote,
     previewSweep: refreshQuote,

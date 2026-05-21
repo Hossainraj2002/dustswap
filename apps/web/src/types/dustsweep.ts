@@ -216,9 +216,11 @@ export type DustSweepRecordResponse = {
 export type SweepButtonVisualState =
   | { state: "disabled"; label: "Select tokens" }
   | { state: "disabled"; label: "Select output token" }
+  | { state: "disabled"; label: "No route available" }
   | { state: "preview"; label: "Preview Sweep" }
-  | { state: "ready"; label: "Sweep Now" }
+  | { state: "ready"; label: "Sweep" }
   | { state: "loading"; label: "Getting best route..." }
+  | { state: "loading"; label: "Finding route..." }
   | { state: "approving"; label: "Approve tokens..." }
   | { state: "signing"; label: "Sign in wallet..." }
   | { state: "pending"; label: "Sweeping..." }

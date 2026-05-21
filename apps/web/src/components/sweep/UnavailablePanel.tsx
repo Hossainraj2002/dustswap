@@ -9,6 +9,8 @@ function reasonBadge(reason: UnavailableToken["reason"]) {
   if (reason === "BALANCE_CHANGED") return "Balance changed";
   if (reason === "QUOTE_FAILED") return "No route";
   if (reason === "NATIVE_WRAP_REQUIRED") return "Wrap to WETH";
+  if (reason === "UNKNOWN_PRICE") return "No price";
+  if (reason === "SPAM_OR_DENYLISTED") return "Blocked";
   return "Too small";
 }
 
@@ -24,43 +26,47 @@ function InfoIcon() {
 export function UnavailablePanel({
   tokens,
   onClearAll,
+  onRemove,
 }: {
   tokens: UnavailableToken[];
   onClearAll: () => void;
+  onRemove: (address: string) => void;
 }) {
   if (tokens.length === 0) return null;
 
   return (
-    <div className="rounded-2xl border border-slate-200 bg-slate-50/70 px-4 py-3">
+    <div className="rounded-[8px] bg-white px-3 py-3">
       <div className="mb-2 flex items-center justify-between gap-3">
-        <h3 className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-slate-400">
-          <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <circle cx="12" cy="12" r="10" />
-            <line x1="4.93" y1="4.93" x2="19.07" y2="19.07" />
-          </svg>
-          Not Sweepable
-        </h3>
+        <h3 className="text-sm font-medium text-slate-600">Unavailable for sweep:</h3>
         <button
           type="button"
           onClick={onClearAll}
-          className="rounded-full px-2 py-0.5 text-[11px] font-semibold text-slate-400 transition-colors hover:bg-slate-200 hover:text-slate-600"
+          className="min-h-0 rounded-[6px] px-1.5 py-1 text-sm font-medium text-yellow-700 transition hover:bg-yellow-50"
         >
-          Clear
+          Clear All
         </button>
       </div>
 
-      <div className="flex flex-wrap gap-1.5">
+      <div className="flex flex-wrap gap-2">
         {tokens.map((token) => (
           <div
             key={token.address}
             title={reasonBadge(token.reason)}
-            className="group inline-flex h-7 items-center gap-1 rounded-full border border-slate-200 bg-white px-2 text-[10px] font-medium text-slate-500 shadow-sm"
+            className="inline-flex h-[30px] items-center gap-1.5 rounded-[7px] border border-slate-200 bg-slate-50 px-1.5 text-sm text-slate-600 shadow-sm"
           >
             <TokenLogo token={token} size="sm" muted />
-            <span className="font-semibold text-slate-600">{token.symbol}</span>
-            <span className="text-slate-300">
+            <span className="font-semibold">{token.symbol}</span>
+            <span className="text-red-400">
               <InfoIcon />
             </span>
+            <button
+              type="button"
+              onClick={() => onRemove(token.address)}
+              className="flex h-6 w-6 items-center justify-center rounded-[6px] text-lg leading-none text-slate-500 transition hover:bg-slate-200 hover:text-slate-900"
+              aria-label={`Remove unavailable ${token.symbol}`}
+            >
+              &times;
+            </button>
           </div>
         ))}
       </div>
