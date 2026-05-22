@@ -89,6 +89,20 @@ type ClaimVerificationState = {
 };
 
 const FOOTPRINT_DROP_COUNTDOWN_DURATION_MS = 7 * 24 * 60 * 60 * 1000;
+const UTC_MONTH_LABELS = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
+];
 
 function cx(...parts: Array<string | false | null | undefined>) {
   return parts.filter(Boolean).join(" ");
@@ -597,6 +611,20 @@ function formatCountdownUnit(value: number) {
   return value.toString().padStart(2, "0");
 }
 
+function formatUtcCountdownEndLabel(endMs: number) {
+  if (!Number.isFinite(endMs)) {
+    return "Ends soon";
+  }
+
+  const date = new Date(endMs);
+  const month = UTC_MONTH_LABELS[date.getUTCMonth()] ?? "";
+  const day = date.getUTCDate();
+  const hour = formatCountdownUnit(date.getUTCHours());
+  const minute = formatCountdownUnit(date.getUTCMinutes());
+
+  return `Ends ${month} ${day}, ${hour}:${minute} UTC`;
+}
+
 function FootprintDropEndTrimBar({
   countdownEndsAt,
 }: {
@@ -608,11 +636,16 @@ function FootprintDropEndTrimBar({
       ? parsed
       : Date.now() + FOOTPRINT_DROP_COUNTDOWN_DURATION_MS;
   }, [countdownEndsAt]);
-  const [now, setNow] = useState(() => Date.now());
+  const [now, setNow] = useState<number | null>(null);
 
   useEffect(() => {
-    const timer = window.setInterval(() => {
+    const updateNow = () => {
       setNow(Date.now());
+    };
+
+    updateNow();
+    const timer = window.setInterval(() => {
+      updateNow();
     }, 1000);
 
     return () => {
@@ -620,19 +653,30 @@ function FootprintDropEndTrimBar({
     };
   }, []);
 
-  const remainingMs = Math.max(0, countdownEndMs - now);
-  const totalSeconds = Math.floor(remainingMs / 1000);
-  const days = Math.floor(totalSeconds / 86_400);
-  const hours = Math.floor((totalSeconds % 86_400) / 3_600);
-  const minutes = Math.floor((totalSeconds % 3_600) / 60);
-  const seconds = totalSeconds % 60;
+  const remainingMs = now === null ? null : Math.max(0, countdownEndMs - now);
+  const totalSeconds = remainingMs === null ? null : Math.floor(remainingMs / 1000);
+  const days = totalSeconds === null ? 0 : Math.floor(totalSeconds / 86_400);
+  const hours =
+    totalSeconds === null ? 0 : Math.floor((totalSeconds % 86_400) / 3_600);
+  const minutes =
+    totalSeconds === null ? 0 : Math.floor((totalSeconds % 3_600) / 60);
+  const seconds = totalSeconds === null ? 0 : totalSeconds % 60;
   const progressPercent = Math.max(
     0,
-    Math.min(100, (remainingMs / FOOTPRINT_DROP_COUNTDOWN_DURATION_MS) * 100)
+    Math.min(
+      100,
+      remainingMs === null
+        ? 100
+        : (remainingMs / FOOTPRINT_DROP_COUNTDOWN_DURATION_MS) * 100
+    )
   );
-  const countdownLabel = `${formatCountdownUnit(days)}d ${formatCountdownUnit(
-    hours
-  )}h ${formatCountdownUnit(minutes)}m ${formatCountdownUnit(seconds)}s`;
+  const countdownLabel =
+    totalSeconds === null
+      ? "--d --h --m --s"
+      : `${formatCountdownUnit(days)}d ${formatCountdownUnit(
+          hours
+        )}h ${formatCountdownUnit(minutes)}m ${formatCountdownUnit(seconds)}s`;
+  const countdownEndLabel = formatUtcCountdownEndLabel(countdownEndMs);
 
   return (
     <div className="rounded-[22px] border border-black bg-black p-1 shadow-[0_20px_48px_rgba(15,23,42,0.16)]">
@@ -651,7 +695,7 @@ function FootprintDropEndTrimBar({
               Footprint Drop end timer
             </p>
             <p className="truncate text-sm font-semibold text-white sm:text-[15px]">
-              Ends in 7 days
+              {countdownEndLabel}
             </p>
           </div>
 

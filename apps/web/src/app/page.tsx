@@ -1,8 +1,10 @@
 import FootprintDropLanding from "@/components/landing/FootprintDropLanding";
 
 const FOOTPRINT_DROP_COUNTDOWN_DURATION_MS = 7 * 24 * 60 * 60 * 1000;
+const FOOTPRINT_DROP_COUNTDOWN_START_AT = "2026-05-19T00:00:00.000Z";
 const FOOTPRINT_DROP_COUNTDOWN_END_AT = new Date(
-  Date.now() + FOOTPRINT_DROP_COUNTDOWN_DURATION_MS
+  new Date(FOOTPRINT_DROP_COUNTDOWN_START_AT).getTime() +
+    FOOTPRINT_DROP_COUNTDOWN_DURATION_MS
 ).toISOString();
 
 type HomePageProps = {
