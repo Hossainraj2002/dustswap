@@ -58,7 +58,7 @@ export function TokenToPanel({
             <button
               type="button"
               onClick={onOpenSelect}
-              className="inline-flex h-9 items-center gap-1.5 rounded-[7px] border border-yellow-300 bg-yellow-50 px-2 text-sm font-semibold text-slate-900 shadow-sm transition hover:bg-yellow-100"
+              className="inline-flex h-9 items-center gap-1.5 rounded-[7px] border border-blue-300 bg-blue-50 px-2 text-sm font-semibold text-blue-800 shadow-sm transition hover:bg-blue-100"
             >
               {tokenOut ? <TokenLogo token={tokenOut} size="sm" /> : null}
               <span>{tokenOut?.symbol || "Select"}</span>

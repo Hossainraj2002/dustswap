@@ -1243,7 +1243,7 @@ export function QuestBoard() {
     >
       <PremiumQuestBackground />
 
-      <div className="relative z-10 mx-auto flex w-full max-w-5xl flex-col gap-3 px-3 py-3 sm:px-5 sm:py-5">
+      <div className="relative z-10 mx-auto flex w-full max-w-5xl flex-col gap-3 px-3 py-3 sm:px-5 sm:py-5 xl:max-w-6xl 2xl:max-w-[1360px]">
         <section className="overflow-hidden rounded-[30px] border border-sky-100/90 bg-[radial-gradient(circle_at_top_left,rgba(0,82,255,0.16),transparent_34%),radial-gradient(circle_at_bottom_right,rgba(14,165,233,0.18),transparent_36%),linear-gradient(135deg,#ffffff_0%,#f0f7ff_55%,#e0f2fe_100%)] shadow-[0_24px_80px_rgba(0,82,255,0.1)] backdrop-blur-xl">
           <div className="flex flex-col gap-4 p-4 sm:p-5">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -1358,7 +1358,7 @@ export function QuestBoard() {
           </div>
 
           {isLoading ? (
-            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
               {Array.from({ length: 6 }).map((_, index) => (
                 <div
                   key={index}
@@ -1383,14 +1383,14 @@ export function QuestBoard() {
               {onchainSections.map((section) => (
                 <section key={section.key} className="space-y-2.5">
                   <SectionBadge label={section.label} count={section.quests.length} />
-                  <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                  <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
                     {section.quests.map((quest) => renderQuestCard(quest))}
                   </div>
                 </section>
               ))}
             </div>
           ) : (
-            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
               {filteredQuests.map((quest) => renderQuestCard(quest))}
             </div>
           )}

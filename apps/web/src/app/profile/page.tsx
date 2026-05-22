@@ -1446,7 +1446,7 @@ function ProfilePageContent() {
           className="pointer-events-none select-none bg-[radial-gradient(circle_at_top_left,rgba(56,189,248,0.14),transparent_28%),radial-gradient(circle_at_top_right,rgba(251,191,36,0.12),transparent_22%),linear-gradient(180deg,#f8fafc,#fef7ed_45%,#eff6ff)] px-3 py-4 pb-16 sm:px-6 sm:py-8 blur-sm opacity-60"
           style={{ minHeight: "calc(100dvh - 4rem)" }}
         >
-          <div className="mx-auto flex w-full max-w-4xl flex-col gap-3 sm:gap-5">
+          <div className="mx-auto flex w-full max-w-4xl flex-col gap-3 sm:gap-5 xl:max-w-5xl 2xl:max-w-6xl">
 
             {/* Profile card skeleton */}
             <div className="rounded-[28px] border border-white/70 bg-white/82 px-4 py-3 shadow-[0_20px_70px_rgba(15,23,42,0.08)] backdrop-blur sm:px-5 sm:py-4">
@@ -1460,7 +1460,7 @@ function ProfilePageContent() {
                   <div className="mt-1 h-3 w-20 rounded-full bg-slate-100" />
                 </div>
               </div>
-              <div className="mt-3 grid grid-cols-2 gap-2">
+              <div className="mt-3 grid grid-cols-2 gap-2 xl:grid-cols-4">
                 {(["sky", "amber", "sky", "emerald"] as const).map((accent, i) => {
                   const cls = {
                     sky: "border-sky-200 bg-sky-50",
@@ -1560,7 +1560,7 @@ function ProfilePageContent() {
       className="bg-[radial-gradient(circle_at_top_left,rgba(56,189,248,0.14),transparent_28%),radial-gradient(circle_at_top_right,rgba(251,191,36,0.12),transparent_22%),linear-gradient(180deg,#f8fafc,#fef7ed_45%,#eff6ff)] px-3 py-4 pb-16 sm:px-6 sm:py-8"
       style={{ minHeight: "calc(100dvh - 4rem)" }}
     >
-      <div className="mx-auto flex w-full max-w-4xl flex-col gap-3 sm:gap-5">
+      <div className="mx-auto flex w-full max-w-4xl flex-col gap-3 sm:gap-5 xl:max-w-5xl 2xl:max-w-6xl">
         {toast ? (
           <div
             className={`rounded-[18px] border px-4 py-3 text-sm shadow-[0_16px_36px_rgba(15,23,42,0.08)] ${
@@ -1657,7 +1657,7 @@ function ProfilePageContent() {
             </div>
           </div>
 
-          <div className="mt-3 grid grid-cols-2 gap-2">
+          <div className="mt-3 grid grid-cols-2 gap-2 xl:grid-cols-4">
             <MiniMetric
               label="Total PP"
               value={`${formatNumber(balance?.totalPoints || 0)} PP`}

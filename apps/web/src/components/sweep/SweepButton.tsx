@@ -73,13 +73,13 @@ export function SweepButton({
       className={cx(
         "flex min-h-[44px] w-full items-center justify-center gap-2.5 rounded-[8px] px-4 text-base font-semibold transition-all",
         isPreview
-          ? "bg-yellow-300 text-slate-950 shadow-[0_8px_22px_rgba(234,179,8,0.24)] hover:bg-yellow-400"
+          ? "bg-blue-600 text-white shadow-[0_8px_22px_rgba(37,99,235,0.24)] hover:bg-blue-700"
           : visualState.state === "ready"
-            ? "bg-yellow-300 text-slate-950 shadow-[0_8px_22px_rgba(234,179,8,0.24)] hover:bg-yellow-400"
+            ? "bg-blue-600 text-white shadow-[0_8px_22px_rgba(37,99,235,0.24)] hover:bg-blue-700"
             : visualState.state === "error"
               ? "bg-red-500 text-white shadow-[0_8px_22px_rgba(239,68,68,0.22)] hover:bg-red-600"
               : visualState.state === "loading" || isBusy
-                ? "cursor-wait bg-yellow-100 text-slate-500"
+                ? "cursor-wait bg-blue-50 text-blue-500"
                 : "cursor-not-allowed bg-slate-100 text-slate-400",
       )}
     >

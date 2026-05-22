@@ -396,8 +396,9 @@ export function useDustSweep(): UseDustSweepReturn {
   }, [balances.swappableTokens, balances.unavailableTokens]);
 
   useEffect(() => {
-    setUnavailableTokens(balances.unavailableTokens);
-  }, [balances.unavailableTokens]);
+    setUnavailableTokens([]);
+    setQuoteFailedTokenAddresses([]);
+  }, [address]);
 
   useEffect(() => {
     if (!isConnected || !address) {
@@ -478,6 +479,9 @@ export function useDustSweep(): UseDustSweepReturn {
     setQuoteFailedTokenAddresses((current) =>
       current.filter((address) => selected.has(address.toLowerCase())),
     );
+    setUnavailableTokens((current) =>
+      current.filter((token) => selected.has(token.address.toLowerCase())),
+    );
   }, [selectedTokens]);
 
   const refreshTokens = useCallback(async () => {
@@ -493,6 +497,7 @@ export function useDustSweep(): UseDustSweepReturn {
     setIsQuoting(true);
     setQuoteError(null);
     setQuoteFailedTokenAddresses([]);
+    setUnavailableTokens([]);
 
     try {
       const response = await fetch("/api/dustsweep/quote", {
@@ -613,6 +618,9 @@ export function useDustSweep(): UseDustSweepReturn {
     setSelectedTokens((current) =>
       current.filter((token) => !isSameAddress(token.address, tokenAddress)),
     );
+    setUnavailableTokens((current) =>
+      current.filter((token) => !isSameAddress(token.address, tokenAddress)),
+    );
     setQuoteFailedTokenAddresses((current) =>
       current.filter((address) => !isSameAddress(address, tokenAddress)),
     );
@@ -621,6 +629,7 @@ export function useDustSweep(): UseDustSweepReturn {
   const clearSelectedTokens = useCallback(() => {
     setAutoMode(false);
     setSelectedTokens([]);
+    setUnavailableTokens([]);
     setQuoteFailedTokenAddresses([]);
   }, []);
 

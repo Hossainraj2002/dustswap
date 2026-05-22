@@ -41,7 +41,7 @@ export function UnavailablePanel({
         <button
           type="button"
           onClick={onClearAll}
-          className="min-h-0 rounded-[6px] px-1.5 py-1 text-sm font-medium text-yellow-700 transition hover:bg-yellow-50"
+          className="min-h-0 rounded-[6px] px-1.5 py-1 text-sm font-medium text-blue-700 transition hover:bg-blue-50"
         >
           Clear All
         </button>

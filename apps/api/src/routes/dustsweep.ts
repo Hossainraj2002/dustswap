@@ -3584,14 +3584,11 @@ dustsweepRoutes.get("/tokens/:address", async (c) => {
     const result = await runtimeCache.getOrSet(runtimeKey, 30_000, async () => {
       // ── Wallet-first discovery: fetch ALL balances, not just whitelisted ──
       // Whitelist is used as metadata/liquidity HINTS, not a visibility gate.
-      const [whitelist, erc20Balances, nativeBalanceHex] = await Promise.all([
+      const [whitelist, erc20Balances] = await Promise.all([
         loadWhitelist(),
         alchemyRpc<{ tokenBalances?: AlchemyBalance[] }>(
           "alchemy_getTokenBalances",
           [userAddress, "erc20"],
-        ),
-        baseRpcRequest<Hex>("eth_getBalance", [userAddress, "latest"], { timeoutMs: 5_000 }).catch(
-          () => "0x0" as Hex,
         ),
       ]);
 
@@ -3670,15 +3667,9 @@ dustsweepRoutes.get("/tokens/:address", async (c) => {
           continue;
         }
 
-        // Skip sub-cent tokens with a known price
+        // Token discovery only exposes assets that can be selected.
+        // Sub-cent known-price balances stay hidden.
         if (valueUSD < MIN_VALUE_USD && priceUSD > 0) {
-          unavailable.push({
-            ...baseToken,
-            status: "BELOW_THRESHOLD",
-            reason: `Worth less than $${MIN_VALUE_USD}`,
-            bestDex,
-            liquidityUSD,
-          });
           continue;
         }
 
@@ -3693,13 +3684,7 @@ dustsweepRoutes.get("/tokens/:address", async (c) => {
               status: "SWAPPABLE",
             });
           } else {
-            unavailable.push({
-              ...baseToken,
-              status: "UNKNOWN_PRICE",
-              reason: "Price data unavailable",
-              bestDex,
-              liquidityUSD,
-            });
+            continue;
           }
           continue;
         }
@@ -3711,37 +3696,6 @@ dustsweepRoutes.get("/tokens/:address", async (c) => {
           liquidityUSD,
           status: "SWAPPABLE",
         });
-      }
-
-      // ── Native ETH row ──
-      try {
-        const nativeBalance = BigInt(nativeBalanceHex || "0");
-        if (nativeBalance > 0n) {
-          const ethBalanceFormatted = formatUnits(nativeBalance, 18);
-          const ethPrice = prices[WETH_ADDRESS.toLowerCase()] || 0;
-          const ethValueUSD = Number(ethBalanceFormatted) * ethPrice;
-
-          if (ethValueUSD >= MIN_VALUE_USD || ethPrice === 0) {
-            unavailable.push({
-              address: "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE" as Address,
-              symbol: "ETH",
-              name: "Ether",
-              decimals: 18,
-              logoURI: "https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/info/logo.png",
-              balance: nativeBalance.toString(),
-              balanceFormatted: ethBalanceFormatted,
-              valueUSD: Math.round(ethValueUSD * 10000) / 10000,
-              isNative: true,
-              wrapRequired: true,
-              bestDex: "GENERIC",
-              liquidityUSD: 0,
-              status: "NATIVE_WRAP_REQUIRED",
-              reason: "NATIVE_WRAP_REQUIRED",
-            });
-          }
-        }
-      } catch {
-        // Native balance fetch failed — skip silently
       }
 
       swappable.sort((a, b) => b.valueUSD - a.valueUSD);

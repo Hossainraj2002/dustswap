@@ -20,6 +20,14 @@ function shortAddress(address: string) {
   return `${address.slice(0, 4)}...${address.slice(-6)}`;
 }
 
+function BlueAlertIcon() {
+  return (
+    <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-blue-600 text-[12px] font-bold text-white">
+      !
+    </span>
+  );
+}
+
 function getSweepButtonState(args: {
   selectedCount: number;
   hasTokenOut: boolean;
@@ -101,11 +109,11 @@ export default function DustSweepPage() {
 
   const tokenOutBalanceUSD = useMemo(() => {
     if (!sweep.tokenOut) return 0;
-    const token = [...sweep.swappableTokens, ...sweep.unavailableTokens].find(
+    const token = [...sweep.outputTokens, ...sweep.swappableTokens].find(
       (item) => item.address.toLowerCase() === sweep.tokenOut?.address.toLowerCase(),
     );
     return token?.valueUSD ?? 0;
-  }, [sweep.swappableTokens, sweep.tokenOut, sweep.unavailableTokens]);
+  }, [sweep.outputTokens, sweep.swappableTokens, sweep.tokenOut]);
 
   const buttonState = getSweepButtonState({
     selectedCount: sweep.selectedTokens.length,
@@ -128,7 +136,7 @@ export default function DustSweepPage() {
   }
 
   return (
-    <div className="min-h-screen bg-[#f7f7f5] px-3 py-5 sm:px-6 sm:py-8">
+    <div className="min-h-screen bg-gradient-to-b from-blue-50 via-white to-slate-50 px-3 py-5 sm:px-6 sm:py-8">
       <WalletGateModal
         isOpen={shouldShowWalletGate}
         walletName={sweep.walletStatus.walletName}
@@ -146,6 +154,7 @@ export default function DustSweepPage() {
         outputTokens={sweep.outputTokens}
         selectedOutputToken={sweep.tokenOut}
         onSelectToken={sweep.addToken}
+        onRemoveToken={sweep.removeToken}
         onSelectOutputToken={sweep.setTokenOut}
         onSelectAll={sweep.selectAllTokens}
         onClose={() => setTokenModalMode(null)}
@@ -179,7 +188,7 @@ export default function DustSweepPage() {
           <WalletConnectButton
             connectedLabel={address ? shortAddress(address) : undefined}
             showDisconnect
-            className="rounded-[8px] border border-yellow-200 bg-yellow-100 px-3 py-1.5 text-xs font-semibold text-slate-900 shadow-sm hover:border-yellow-300 hover:bg-yellow-200 hover:text-slate-950"
+            className="rounded-[8px] border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-semibold text-blue-700 shadow-sm hover:border-blue-300 hover:bg-blue-100 hover:text-blue-800"
           />
         </div>
 
@@ -277,8 +286,8 @@ export default function DustSweepPage() {
 
           {/* High price impact warning */}
           {sweep.quote?.routes.some((route) => route.priceImpactBps > 500) ? (
-            <div className="flex items-start gap-2.5 rounded-[8px] border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-              <span className="mt-0.5 text-base">⚠️</span>
+            <div className="flex items-start gap-2.5 rounded-[8px] border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800">
+              <BlueAlertIcon />
               <span>High price impact detected. Review the route carefully before sweeping.</span>
             </div>
           ) : null}

@@ -47,6 +47,21 @@ function ChevronDownIcon() {
   );
 }
 
+function PlusIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className="h-4 w-4">
+      <path
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+        d="M12 5v14M5 12h14"
+      />
+    </svg>
+  );
+}
+
 export function TokenFromPanel({
   selectedTokens,
   onRemove,
@@ -89,7 +104,7 @@ export function TokenFromPanel({
             onClick={onToggleAuto}
             className={cx(
               "min-h-0 rounded-[6px] px-1.5 py-1 text-sm font-semibold transition",
-              autoMode ? "bg-yellow-200 text-slate-950" : "text-yellow-700 hover:bg-yellow-50",
+              autoMode ? "bg-blue-600 text-white shadow-sm" : "text-blue-700 hover:bg-blue-50",
             )}
           >
             Auto
@@ -108,8 +123,19 @@ export function TokenFromPanel({
 
       <div className="min-h-[100px] rounded-[8px] bg-slate-50 p-2">
         {sorted.length === 0 ? (
-          <div className="flex min-h-[58px] items-center justify-center rounded-[6px] border border-dashed border-slate-200 text-sm text-slate-400">
-            Select tokens or use Auto
+          <div className="flex min-h-[74px] items-center justify-between gap-3 rounded-[6px] border border-dashed border-blue-100 bg-white px-3">
+            <div className="min-w-0">
+              <p className="font-mono text-3xl font-semibold leading-none text-slate-950">0</p>
+              <p className="mt-1 truncate text-sm text-slate-500">Select tokens or use Auto</p>
+            </div>
+            <button
+              type="button"
+              onClick={onAddMore}
+              className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-[7px] border border-blue-300 bg-blue-50 px-3 text-sm font-semibold text-blue-700 shadow-sm transition hover:bg-blue-100"
+            >
+              <PlusIcon />
+              Select tokens
+            </button>
           </div>
         ) : (
           <div className="flex flex-wrap gap-2">
@@ -123,7 +149,7 @@ export function TokenFromPanel({
                     "inline-flex h-[30px] max-w-full items-center gap-1.5 rounded-[7px] border px-1.5 text-sm shadow-sm",
                     failed
                       ? "border-red-200 bg-red-50 text-red-800"
-                      : "border-yellow-200 bg-yellow-50 text-slate-900",
+                      : "border-blue-200 bg-blue-50 text-slate-900",
                   )}
                   title={failed ? `${token.symbol} has no current route` : token.symbol}
                 >
@@ -137,7 +163,7 @@ export function TokenFromPanel({
                     onClick={() => onRemove(token.address)}
                     className={cx(
                       "flex h-6 w-6 items-center justify-center rounded-[6px] text-lg leading-none transition",
-                      failed ? "text-red-400 hover:bg-red-100 hover:text-red-700" : "text-yellow-700 hover:bg-yellow-100",
+                      failed ? "text-red-400 hover:bg-red-100 hover:text-red-700" : "text-blue-700 hover:bg-blue-100",
                     )}
                     aria-label={`Remove ${token.symbol}`}
                   >
@@ -150,7 +176,7 @@ export function TokenFromPanel({
               <button
                 type="button"
                 onClick={onAddMore}
-                className="inline-flex h-[30px] items-center gap-1.5 rounded-[7px] bg-white px-3 text-xs font-medium text-slate-500 shadow-sm ring-1 ring-slate-200 transition hover:bg-yellow-50 hover:text-slate-900 hover:ring-yellow-200"
+                className="inline-flex h-[30px] items-center gap-1.5 rounded-[7px] bg-white px-3 text-xs font-medium text-slate-500 shadow-sm ring-1 ring-slate-200 transition hover:bg-blue-50 hover:text-slate-900 hover:ring-blue-200"
               >
                 Add more assets
                 <ChevronDownIcon />

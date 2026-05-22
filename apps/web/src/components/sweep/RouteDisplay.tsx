@@ -26,6 +26,29 @@ function formatUsd(value: number) {
   return `$${value.toFixed(2)}`;
 }
 
+const GENERIC_DEX_ICON = "/dex/generic.svg";
+
+const DEX_ICONS: Record<string, string> = {
+  UNISWAP_V3: "/dex/uniswap.svg",
+  UNISWAP_V4: "/dex/uniswap.svg",
+  AERODROME: "/dex/aerodrome.svg",
+  PANCAKESWAP_V3: "/dex/pancake.svg",
+  BASESWAP: "/dex/baseswap.svg",
+  GENERIC: GENERIC_DEX_ICON,
+};
+
+function getDexIcon(dexName: string) {
+  return DEX_ICONS[dexName] || GENERIC_DEX_ICON;
+}
+
+function formatDexName(dexName: string) {
+  if (dexName.startsWith("UNISWAP")) return "Uniswap";
+  if (dexName === "PANCAKESWAP_V3") return "PancakeSwap";
+  if (dexName === "AERODROME") return "Aerodrome";
+  if (dexName === "BASESWAP") return "BaseSwap";
+  return dexName.replace(/_/g, " ");
+}
+
 function BoltIcon() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true" className="h-4 w-4">
@@ -69,21 +92,24 @@ export function RouteDisplay({
 }) {
   if (!quote || !tokenOut) return null;
 
-  const routeTokens = quote.routes
+  const routeItems = quote.routes
     .slice(0, 6)
-    .map((route) =>
-      selectedTokens.find((item) => item.address.toLowerCase() === route.tokenIn.toLowerCase()),
-    )
-    .filter(Boolean) as SelectedToken[];
+    .map((route) => ({
+      route,
+      token: selectedTokens.find((item) => item.address.toLowerCase() === route.tokenIn.toLowerCase()),
+    }))
+    .filter((item): item is { route: DustSweepQuoteResponse["routes"][number]; token: SelectedToken } =>
+      Boolean(item.token),
+    );
   const providerCount = new Set(quote.routes.map((route) => route.dexName)).size || 1;
-  const remainder = quote.routes.length - routeTokens.length;
+  const remainder = quote.routes.length - routeItems.length;
 
   return (
-    <div className="rounded-[8px] border border-yellow-300 bg-yellow-50 px-3 py-3 shadow-sm">
+    <div className="rounded-[8px] border border-blue-300 bg-blue-50 px-3 py-3 shadow-sm">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="flex h-7 w-7 items-center justify-center rounded-full bg-yellow-300 text-slate-950">
+            <span className="flex h-7 w-7 items-center justify-center rounded-full bg-blue-600 text-white">
               <BoltIcon />
             </span>
             <span className="font-semibold text-slate-950">Smart Routing</span>
@@ -113,18 +139,31 @@ export function RouteDisplay({
         </div>
       </div>
 
-      <div className="my-2 h-px bg-yellow-200" />
+      <div className="my-2 h-px bg-blue-200" />
 
       <div className="flex flex-wrap items-center gap-1.5 text-xs text-slate-600">
-        {routeTokens.map((token) => (
-          <span key={token.address} className="inline-flex items-center gap-1.5">
-            <span className="inline-flex items-center gap-1 rounded-full bg-white px-1.5 py-0.5 shadow-sm">
-              <TokenLogo token={token} size="sm" />
-              <span className="font-semibold">{token.symbol}</span>
+        {routeItems.map(({ token, route }) => {
+          const dexLabel = formatDexName(route.dexName);
+
+          return (
+            <span key={token.address} className="inline-flex items-center gap-1.5">
+              <span className="inline-flex items-center gap-1 rounded-full bg-white px-1.5 py-0.5 shadow-sm">
+                <TokenLogo token={token} size="sm" />
+                <span className="font-semibold">{token.symbol}</span>
+                <img
+                  src={getDexIcon(route.dexName)}
+                  alt={dexLabel}
+                  title={dexLabel}
+                  className="h-5 w-5 rounded-full border border-blue-100 bg-white object-contain p-0.5"
+                />
+                <span className="max-w-[74px] truncate text-[11px] font-medium text-blue-700">
+                  {dexLabel}
+                </span>
+              </span>
+              <span className="text-slate-400">-&gt;</span>
             </span>
-            <span className="text-slate-400">-&gt;</span>
-          </span>
-        ))}
+          );
+        })}
         {remainder > 0 ? (
           <span className="rounded-full bg-white px-2 py-1 text-xs font-medium text-slate-500 shadow-sm">
             +{remainder} more

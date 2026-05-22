@@ -86,8 +86,8 @@ function NetworkButton({
       className={cx(
         "flex h-[60px] w-[60px] items-center justify-center rounded-[8px] border transition",
         active
-          ? "border-yellow-400 bg-yellow-100 shadow-sm"
-          : "border-transparent bg-yellow-50 hover:border-yellow-200",
+          ? "border-blue-500 bg-blue-50 shadow-sm"
+          : "border-transparent bg-blue-50/70 hover:border-blue-200",
       )}
       title={label}
     >
@@ -127,8 +127,8 @@ function AssetRow({
       title={mutedReason}
       className={cx(
         "group flex min-h-[62px] w-full items-center justify-between gap-3 rounded-[8px] px-2 py-2 text-left transition",
-        selected && "bg-yellow-100 ring-1 ring-yellow-300",
-        !selected && !disabled && "hover:bg-yellow-50",
+        selected && "bg-blue-50 ring-1 ring-blue-300",
+        !selected && !disabled && "hover:bg-blue-50",
         disabled && "cursor-not-allowed opacity-50",
       )}
     >
@@ -157,6 +157,7 @@ export function TokenSelectModal({
   outputTokens,
   selectedOutputToken,
   onSelectToken,
+  onRemoveToken,
   onSelectOutputToken,
   onSelectAll,
   onClose,
@@ -170,6 +171,7 @@ export function TokenSelectModal({
   outputTokens: Token[];
   selectedOutputToken: Token | null;
   onSelectToken: (token: SwappableToken) => void;
+  onRemoveToken: (address: string) => void;
   onSelectOutputToken: (token: Token) => void;
   onSelectAll: () => void;
   onClose: () => void;
@@ -224,7 +226,7 @@ export function TokenSelectModal({
               value={query}
               onChange={(event) => setQuery(event.target.value)}
               placeholder="Search for a token or paste address"
-              className="h-10 w-full rounded-[8px] border border-transparent bg-slate-50 px-4 pr-11 text-base text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-yellow-300 focus:bg-white"
+              className="h-10 w-full rounded-[8px] border border-transparent bg-slate-50 px-4 pr-11 text-base text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-blue-300 focus:bg-white"
             />
             <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-slate-400">
               <SearchIcon />
@@ -252,8 +254,8 @@ export function TokenSelectModal({
                     className={cx(
                       "inline-flex min-h-[34px] items-center gap-1.5 rounded-[7px] border px-2.5 text-sm font-semibold transition",
                       selectedOutputToken?.address.toLowerCase() === token.address.toLowerCase()
-                        ? "border-yellow-400 bg-yellow-100 text-slate-950"
-                        : "border-yellow-100 bg-yellow-50 text-slate-800 hover:border-yellow-300",
+                        ? "border-blue-400 bg-blue-50 text-blue-700"
+                        : "border-blue-100 bg-blue-50 text-slate-800 hover:border-blue-300",
                     )}
                   >
                     <TokenLogo token={token} size="sm" />
@@ -276,7 +278,7 @@ export function TokenSelectModal({
                 <button
                   type="button"
                   onClick={onSelectAll}
-                  className="min-h-0 rounded-[6px] px-1.5 py-1 text-sm font-medium text-yellow-700 transition hover:bg-yellow-50"
+                  className="min-h-0 rounded-[6px] px-1.5 py-1 text-sm font-medium text-blue-700 transition hover:bg-blue-50"
                 >
                   Select all
                 </button>
@@ -304,7 +306,11 @@ export function TokenSelectModal({
                         onSelectOutputToken(token);
                         onClose();
                       } else {
-                        onSelectToken(token as SwappableToken);
+                        if (selected) {
+                          onRemoveToken(token.address);
+                        } else {
+                          onSelectToken(token as SwappableToken);
+                        }
                       }
                     }}
                   />

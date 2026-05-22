@@ -14,13 +14,13 @@ function Toggle({
   onChange: (value: boolean) => void;
 }) {
   return (
-    <div className="grid h-10 w-[150px] grid-cols-2 rounded-[8px] bg-yellow-50 p-1">
+    <div className="grid h-10 w-[150px] grid-cols-2 rounded-[8px] bg-blue-50 p-1">
       <button
         type="button"
         onClick={() => onChange(false)}
         className={cx(
           "min-h-0 rounded-[7px] text-sm font-medium transition",
-          !value ? "bg-yellow-300 text-slate-950 shadow-sm" : "text-slate-500 hover:text-slate-900",
+          !value ? "bg-blue-600 text-white shadow-sm" : "text-slate-500 hover:text-slate-900",
         )}
       >
         Off
@@ -30,7 +30,7 @@ function Toggle({
         onClick={() => onChange(true)}
         className={cx(
           "min-h-0 rounded-[7px] text-sm font-medium transition",
-          value ? "bg-yellow-300 text-slate-950 shadow-sm" : "text-slate-500 hover:text-slate-900",
+          value ? "bg-blue-600 text-white shadow-sm" : "text-slate-500 hover:text-slate-900",
         )}
       >
         On
@@ -127,13 +127,13 @@ export function SlippageSettings({
 
         <div className="space-y-4">
           <SettingRow label="Slippage" info="Maximum accepted price movement before the sweep reverts.">
-            <div className="flex h-10 w-[150px] items-center rounded-[8px] bg-yellow-50 p-1">
+            <div className="flex h-10 w-[150px] items-center rounded-[8px] bg-blue-50 p-1">
               <button
                 type="button"
                 onClick={() => onChange(50)}
                 className={cx(
                   "min-h-0 h-8 rounded-[7px] px-3 text-sm font-medium transition",
-                  slippageBps === 50 ? "bg-yellow-300 text-slate-950 shadow-sm" : "text-slate-600",
+                  slippageBps === 50 ? "bg-blue-600 text-white shadow-sm" : "text-slate-600",
                 )}
               >
                 Auto
@@ -174,7 +174,7 @@ export function SlippageSettings({
                   onAutoSelectionUsdChange(parsed);
                 }
               }}
-              className="h-10 w-[150px] rounded-[8px] bg-yellow-50 px-3 text-center text-sm font-medium text-slate-950 outline-none ring-1 ring-transparent transition focus:ring-yellow-300"
+              className="h-10 w-[150px] rounded-[8px] bg-blue-50 px-3 text-center text-sm font-medium text-slate-950 outline-none ring-1 ring-transparent transition focus:ring-blue-300"
             />
           </SettingRow>
 
