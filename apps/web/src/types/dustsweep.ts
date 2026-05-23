@@ -24,6 +24,27 @@ export type DustSweepSignatureMode = "none" | "permit2_witness";
 export type SweepStep = "idle" | "approving" | "signing" | "pending" | "success" | "error";
 
 export type WalletSupportTier = "tier1" | "tier2" | "blocked" | "unknown";
+export type DustSweepWalletKey =
+  | "metamask"
+  | "tokenpocket"
+  | "coinbase"
+  | "walletconnect"
+  | "injected"
+  | "unknown";
+export type DustSweepExecutionStrategy =
+  | "metamask_7702"
+  | "tokenpocket_existing"
+  | "coinbase_paymaster"
+  | "generic_capability";
+export type DustSweepAtomicStatus = "ready" | "supported" | "unsupported" | "unknown";
+
+export type DustSweepWalletProfile = {
+  walletKey: DustSweepWalletKey;
+  walletName: string;
+  executionStrategy: DustSweepExecutionStrategy;
+  atomicStatus: DustSweepAtomicStatus;
+  batchNotice: string | null;
+};
 
 export type Token = {
   address: Address;

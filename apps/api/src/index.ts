@@ -15,6 +15,7 @@ import { questsRoutes } from "./routes/quests";
 import { swapsRoutes } from "./routes/swaps";
 import { dustsweepRoutes } from "./routes/dustsweep";
 import { pointsEngine } from "./services/pointsEngine";
+import { repostQuestRewardScheduler } from "./services/repostQuestRewards";
 import tokens from "./routes/tokens";
 import { getAllowedAppOrigins, isAllowedAppOrigin } from "./config/appOrigins";
 import { getDatabaseDiagnostics } from "./services/postgres";
@@ -51,6 +52,7 @@ app.route("/api/swaps", swapsRoutes);
 app.route("/api/dustsweep", dustsweepRoutes);
 
 pointsEngine.startReferralLeaderboardSnapshotScheduler();
+repostQuestRewardScheduler.start();
 
 app.get("/health/db", async (c) => {
   const startedAt = Date.now();

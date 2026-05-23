@@ -3036,7 +3036,7 @@ export class QuestEngine {
       throw new Error(`Failed to load pending quest: ${questError?.message || "not found"}`);
     }
 
-    const quest = questRow as QuestRecord;
+    const quest = normalizeQuestRecord(questRow as QuestRecord);
     if (quest.platform !== "x" || quest.action_type !== "repost") {
       throw new Error("Only X repost quests can be completed from pending review");
     }

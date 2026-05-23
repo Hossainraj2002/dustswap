@@ -124,6 +124,9 @@ export default function DustSweepPage() {
     hasQuoteError: Boolean(sweep.quoteError),
     sweepStep: sweep.sweepStep,
   });
+  const walletModeNotice =
+    sweep.executionNotice ||
+    (sweep.batchMode && sweep.selectedTokens.length > 0 ? sweep.walletProfile.batchNotice : null);
 
   const shouldShowWalletGate =
     isConnected &&
@@ -289,6 +292,12 @@ export default function DustSweepPage() {
             <div className="flex items-start gap-2.5 rounded-[8px] border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800">
               <BlueAlertIcon />
               <span>High price impact detected. Review the route carefully before sweeping.</span>
+            </div>
+          ) : null}
+
+          {walletModeNotice ? (
+            <div className="rounded-[8px] border border-blue-200 bg-blue-50 px-4 py-3 text-sm font-medium text-blue-700">
+              {walletModeNotice}
             </div>
           ) : null}
 
