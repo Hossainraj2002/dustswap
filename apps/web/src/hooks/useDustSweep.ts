@@ -72,6 +72,11 @@ type WalletSendCall = {
 };
 
 type WalletRpcRequest = (args: { method: string; params?: unknown[] }) => Promise<unknown>;
+type WalletRpcProvider = EthereumFlags & {
+  request?: WalletRpcRequest;
+  providers?: WalletRpcProvider[];
+  selectedProvider?: WalletRpcProvider;
+};
 
 type WalletCallsStatusResult = {
   status?: string | number;
@@ -158,7 +163,7 @@ function normalizeWalletSignal(value?: string | null) {
 
 function getEthereumFlags(): EthereumFlags {
   if (typeof window === "undefined") return {};
-  return ((window as Window & { ethereum?: EthereumFlags }).ethereum ?? {}) as EthereumFlags;
+  return ((window as Window & { ethereum?: WalletRpcProvider }).ethereum ?? {}) as EthereumFlags;
 }
 
 function includesWalletSignal(value: string, ...needles: string[]) {
@@ -317,8 +322,8 @@ function isBatchFallbackError(error: unknown) {
   );
 }
 
-function getBatchFallbackNotice(walletName?: string | null) {
-  return walletName?.toLowerCase().includes("metamask")
+function getBatchFallbackNotice(walletName?: string | null, walletKey?: DustSweepWalletKey) {
+  return walletKey === "metamask" || walletName?.toLowerCase().includes("metamask")
     ? "MetaMask batch was not ready, using standard approvals."
     : "Wallet batch was not ready, using standard approvals.";
 }
@@ -497,20 +502,12 @@ function toRpcQuantity(value?: bigint) {
 }
 
 function buildSendCallsCapabilities(args: {
-  account: Address;
-  useMetaMaskPermissions: boolean;
   usePaymasterCapabilities: boolean;
 }) {
   const capabilities: Record<string, unknown> = {};
 
   if (args.usePaymasterCapabilities) {
     Object.assign(capabilities, buildBasePaymasterCapabilities());
-  }
-
-  if (args.useMetaMaskPermissions) {
-    capabilities.permissions = {
-      account: args.account,
-    };
   }
 
   return Object.keys(capabilities).length > 0 ? capabilities : undefined;
@@ -520,24 +517,59 @@ function delay(ms: number) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
-function getWalletRequest(walletClient: unknown): WalletRpcRequest | null {
+function getWindowEthereumProviders(walletKey?: DustSweepWalletKey): WalletRpcProvider[] {
+  if (typeof window === "undefined") {
+    return [];
+  }
+
+  const ethereum = (window as Window & { ethereum?: WalletRpcProvider }).ethereum;
+  if (!ethereum) {
+    return [];
+  }
+
+  const providers = [
+    ethereum.selectedProvider,
+    ...(Array.isArray(ethereum.providers) ? ethereum.providers : []),
+    ethereum,
+  ].filter(Boolean) as WalletRpcProvider[];
+  const uniqueProviders = providers.filter(
+    (provider, index) => providers.findIndex((candidate) => candidate === provider) === index,
+  );
+
+  if (walletKey === "metamask") {
+    return uniqueProviders.filter((provider) => provider.isMetaMask);
+  }
+
+  if (walletKey === "tokenpocket") {
+    return uniqueProviders.filter((provider) => provider.isTokenPocket);
+  }
+
+  if (walletKey === "injected" || walletKey === "unknown") {
+    return uniqueProviders;
+  }
+
+  return [];
+}
+
+function getWalletRequestCandidates(walletClient: unknown, walletKey?: DustSweepWalletKey): WalletRpcRequest[] {
+  const candidates: WalletRpcRequest[] = [];
   const clientRequest = (walletClient as { request?: WalletRpcRequest } | null)?.request;
   if (typeof clientRequest === "function") {
-    return (args) => clientRequest.call(walletClient, args);
+    candidates.push((args) => clientRequest.call(walletClient, args));
   }
 
-  if (typeof window === "undefined") {
-    return null;
+  for (const provider of getWindowEthereumProviders(walletKey)) {
+    if (typeof provider.request === "function") {
+      const request = provider.request;
+      candidates.push((args) => request.call(provider, args));
+    }
   }
 
-  const ethereum = (window as Window & {
-    ethereum?: { request?: WalletRpcRequest };
-  }).ethereum;
-  if (typeof ethereum?.request === "function") {
-    return (args) => ethereum.request!.call(ethereum, args);
-  }
+  return candidates;
+}
 
-  return null;
+function getWalletRequest(walletClient: unknown, walletKey?: DustSweepWalletKey): WalletRpcRequest | null {
+  return getWalletRequestCandidates(walletClient, walletKey)[0] ?? null;
 }
 
 function mergeUnavailableTokens(current: UnavailableToken[], additions: UnavailableToken[]) {
@@ -672,8 +704,8 @@ export function useDustSweep(): UseDustSweepReturn {
 
     async function detectCapabilities() {
       try {
-        const request = getWalletRequest(walletClient);
-        if (!request) {
+        const requests = getWalletRequestCandidates(walletClient, walletProfileBase.walletKey);
+        if (requests.length === 0) {
           if (!cancelled) {
             setSupportsWalletSendCalls(false);
             setAtomicStatus("unknown");
@@ -688,19 +720,22 @@ export function useDustSweep(): UseDustSweepReturn {
         let supported = false;
         let detectedAtomicStatus: DustSweepAtomicStatus = "unknown";
 
-        for (const params of capabilityParamSets) {
-          try {
-            const result = await request({
-              method: "wallet_getCapabilities",
-              params,
-            });
-            const chainCapabilities = getChainCapabilities(result, base.id);
-            detectedAtomicStatus = getBatchCapabilityStatus(chainCapabilities);
-            supported = isBatchCapabilitySupported(chainCapabilities);
-            if (supported) break;
-          } catch {
-            // Some wallets only accept the older one-argument form. Try the next shape.
+        for (const request of requests) {
+          for (const params of capabilityParamSets) {
+            try {
+              const result = await request({
+                method: "wallet_getCapabilities",
+                params,
+              });
+              const chainCapabilities = getChainCapabilities(result, base.id);
+              detectedAtomicStatus = getBatchCapabilityStatus(chainCapabilities);
+              supported = isBatchCapabilitySupported(chainCapabilities);
+              if (supported) break;
+            } catch {
+              // Some wallet providers or wrapper clients don't support this method/shape.
+            }
           }
+          if (supported) break;
         }
 
         if (!cancelled) {
@@ -720,7 +755,7 @@ export function useDustSweep(): UseDustSweepReturn {
     return () => {
       cancelled = true;
     };
-  }, [address, walletClient]);
+  }, [address, walletClient, walletProfileBase.walletKey]);
 
   useEffect(() => {
     setQuote(null);
@@ -1043,8 +1078,8 @@ export function useDustSweep(): UseDustSweepReturn {
     to: Address;
     data: Hex;
     value: bigint;
-    useMetaMaskPermissions: boolean;
     usePaymasterCapabilities: boolean;
+    walletKey: DustSweepWalletKey;
     requireAtomic?: boolean;
   }) => {
     if (!walletClient) {
@@ -1078,8 +1113,6 @@ export function useDustSweep(): UseDustSweepReturn {
       },
     ];
     const capabilities = buildSendCallsCapabilities({
-      account: args.account,
-      useMetaMaskPermissions: args.useMetaMaskPermissions,
       usePaymasterCapabilities: args.usePaymasterCapabilities,
     });
 
@@ -1127,28 +1160,49 @@ export function useDustSweep(): UseDustSweepReturn {
       }
     }
 
-    const request = getWalletRequest(walletClient);
-    if (!request) {
+    const requests = getWalletRequestCandidates(walletClient, args.walletKey);
+    if (requests.length === 0) {
       throw new Error("wallet_sendCalls is unavailable");
     }
 
-    const sendCallsResult = await request({
-      method: "wallet_sendCalls",
-      params: [
-        {
-          version: "2.0.0",
-          atomicRequired: requireAtomic,
-          chainId: `0x${base.id.toString(16)}`,
-          from: args.account,
-          calls: calls.map((call) => ({
-            to: call.to,
-            data: call.data,
-            value: toRpcQuantity(call.value),
-          })),
-          ...(capabilities ? { capabilities } : {}),
-        },
-      ],
-    });
+    let sendCallsResult: unknown;
+    let requestForStatus: WalletRpcRequest | null = null;
+    let lastSendCallsError: unknown;
+    for (const request of requests) {
+      try {
+        sendCallsResult = await request({
+          method: "wallet_sendCalls",
+          params: [
+            {
+              version: "2.0.0",
+              atomicRequired: requireAtomic,
+              chainId: `0x${base.id.toString(16)}`,
+              from: args.account,
+              calls: calls.map((call) => ({
+                to: call.to,
+                data: call.data,
+                value: toRpcQuantity(call.value),
+              })),
+              ...(capabilities ? { capabilities } : {}),
+            },
+          ],
+        });
+        requestForStatus = request;
+        break;
+      } catch (error) {
+        if (isRejectedByUser(error) || isWalletLockedError(error)) {
+          throw error;
+        }
+        lastSendCallsError = error;
+      }
+    }
+
+    if (!requestForStatus) {
+      throw lastSendCallsError instanceof Error
+        ? lastSendCallsError
+        : new Error("wallet_sendCalls is unavailable");
+    }
+
     const immediateHash = getSendCallsResultTxHash(sendCallsResult);
     if (immediateHash) {
       return immediateHash;
@@ -1161,7 +1215,7 @@ export function useDustSweep(): UseDustSweepReturn {
 
     const deadline = Date.now() + 180_000;
     while (Date.now() < deadline) {
-      const status = (await request({
+      const status = (await requestForStatus({
         method: "wallet_getCallsStatus",
         params: [callId],
       })) as WalletCallsStatusResult | null;
@@ -1301,7 +1355,9 @@ export function useDustSweep(): UseDustSweepReturn {
       const usesMetaMask7702 = walletProfile.executionStrategy === "metamask_7702";
       const usesTokenPocketExisting = walletProfile.executionStrategy === "tokenpocket_existing";
       const shouldTryBundledV2 =
-        batchMode && hasV2Approvals && (supportsWalletSendCalls || usesTokenPocketExisting);
+        batchMode &&
+        hasV2Approvals &&
+        (supportsWalletSendCalls || usesMetaMask7702 || usesTokenPocketExisting);
 
       const sendSweepTransaction = async () =>
         (await walletClient.sendTransaction({
@@ -1329,8 +1385,14 @@ export function useDustSweep(): UseDustSweepReturn {
         return sendSweepTransaction();
       };
 
-      if (batchMode && hasV2Approvals && !supportsWalletSendCalls && !usesTokenPocketExisting) {
-        setExecutionNotice(getBatchFallbackNotice(walletProfile.walletName));
+      if (
+        batchMode &&
+        hasV2Approvals &&
+        !supportsWalletSendCalls &&
+        !usesMetaMask7702 &&
+        !usesTokenPocketExisting
+      ) {
+        setExecutionNotice(getBatchFallbackNotice(walletProfile.walletName, walletProfile.walletKey));
       }
 
       let hash: Hex;
@@ -1343,8 +1405,8 @@ export function useDustSweep(): UseDustSweepReturn {
             to: sweepTarget,
             data: canonicalCalldata,
             value: txValue,
-            useMetaMaskPermissions: usesMetaMask7702,
             usePaymasterCapabilities: walletStatus.isCoinbaseSmartWallet && Boolean(paymasterUrl),
+            walletKey: walletProfile.walletKey,
             requireAtomic: true,
           });
         } catch (strictBundleError) {
@@ -1362,8 +1424,8 @@ export function useDustSweep(): UseDustSweepReturn {
               to: sweepTarget,
               data: canonicalCalldata,
               value: txValue,
-              useMetaMaskPermissions: usesMetaMask7702,
               usePaymasterCapabilities: walletStatus.isCoinbaseSmartWallet && Boolean(paymasterUrl),
+              walletKey: walletProfile.walletKey,
               requireAtomic: false,
             });
           } catch (compatibleBundleError) {
@@ -1373,7 +1435,7 @@ export function useDustSweep(): UseDustSweepReturn {
 
             console.warn("Compatible DustSweep wallet_sendCalls failed.", compatibleBundleError);
             if (isBatchFallbackError(strictBundleError) || isBatchFallbackError(compatibleBundleError)) {
-              setExecutionNotice(getBatchFallbackNotice(walletProfile.walletName));
+              setExecutionNotice(getBatchFallbackNotice(walletProfile.walletName, walletProfile.walletKey));
               hash = await sendStandardSweepWithApprovals();
             } else {
               throw new Error(WALLET_BATCH_UNSUPPORTED_MESSAGE);
@@ -1439,6 +1501,7 @@ export function useDustSweep(): UseDustSweepReturn {
     waitForSuccessfulTransaction,
     walletClient,
     walletProfile.executionStrategy,
+    walletProfile.walletKey,
     walletProfile.walletName,
     walletStatus,
   ]);
