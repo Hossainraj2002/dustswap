@@ -21,3 +21,15 @@ Operational note:
 
 - The bot reads historical `CLAIM_SUCCESS` entries from the private log channel on startup and keeps all claim state in Discord, not in the DustSwap app database.
 - Non-token campaign IDs and the max-claims value currently default to the values above in code, so you can override them later in Railway without changing the main API service.
+
+One-time backfill:
+
+- Dry run: `pnpm backfill:early-bot`
+- Apply the backfill: `pnpm backfill:early-bot -- --apply`
+- Optional test batch: `pnpm backfill:early-bot -- --apply --limit=25`
+
+Backfill behavior:
+
+- Scans historical messages in the submit channel oldest-first.
+- Reconstructs missing `CLAIM_SUCCESS` log entries for valid past submissions.
+- Adds the role only for members who still do not have it.

@@ -10,6 +10,7 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "start:early-bot": "node dist/bots/earlyContributorBot.js",
+    "backfill:early-bot": "ts-node src/scripts/backfillEarlyContributorClaims.ts",
     "lint": "eslint src --ext .ts",
     "grant-existing-user-reward": "ts-node src/scripts/grantExistingUserReward.ts",
     "sync-dustsweep-whitelist": "ts-node src/scripts/syncDustSweepWhitelist.ts",

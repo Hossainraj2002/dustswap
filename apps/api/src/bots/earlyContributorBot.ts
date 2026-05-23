@@ -2,67 +2,24 @@ import "dotenv/config";
 
 import { createServer } from "node:http";
 import {
-  ChannelType,
   Client,
   Events,
   GatewayIntentBits,
-  PermissionFlagsBits,
-  type Guild,
   type Message,
-  type Role,
-  type TextChannel,
-  type User,
 } from "discord.js";
-
-const CAMPAIGN_NAME = "Early Contributor";
-const CLAIM_SUCCESS_HEADER = "CLAIM_SUCCESS";
-const DEFAULT_CONFIG = {
-  guildId: "1494584551630962808",
-  submitChannelId: "1495705489672241272",
-  logChannelId: "1507650151337037844",
-  roleId: "1495670418407948351",
-  maxClaims: 5000,
-};
-
-const CLAIM_SUCCESS_REGEX =
-  /^CLAIM_SUCCESS\r?\nCampaign: Early Contributor\r?\nDiscord ID: (?<discordUserId>\d+)\r?\nDiscord User: (?<discordUser>[^\r\n]+)\r?\nTweet ID: (?<tweetId>\d+)\r?\nTweet URL: (?<tweetUrl>https:\/\/x\.com\/[A-Za-z0-9_]{1,15}\/status\/\d+)\r?\nRole ID: (?<roleId>\d+)\r?\nClaim Number: (?<claimNumber>\d+)\/(?<maxClaims>\d+)\r?\nTime: (?<timestamp>[^\r\n]+)$/;
-
-type BotConfig = {
-  botToken: string;
-  guildId: string;
-  submitChannelId: string;
-  logChannelId: string;
-  roleId: string;
-  maxClaims: number;
-};
-
-type NormalizedTweetLink = {
-  tweetId: string;
-  tweetUrl: string;
-};
-
-type ParsedClaimSuccess = {
-  discordUserId: string;
-  discordUser: string;
-  tweetId: string;
-  tweetUrl: string;
-  roleId: string;
-  claimNumber: number;
-  maxClaims: number;
-  timestamp: string;
-};
-
-type RuntimeState = {
-  config: BotConfig;
-  guild: Guild;
-  submitChannel: TextChannel;
-  logChannel: TextChannel;
-  role: Role;
-  claimedDiscordUserIds: Set<string>;
-  claimedTweetIds: Set<string>;
-  processedLogMessageIds: Set<string>;
-  successfulClaimCount: number;
-};
+import {
+  CAMPAIGN_NAME,
+  applyClaimSuccessToState,
+  buildClaimSuccessLog,
+  formatDiscordUser,
+  getRoleAssignmentStatus,
+  initializeState,
+  isUnknownMemberError,
+  loadConfig,
+  normalizeTweetLink,
+  parseClaimSuccessLog,
+  type RuntimeState,
+} from "./earlyContributorBotCore";
 
 const DEBUG_LOGGING_ENABLED = /^(1|true|yes|on)$/i.test(
   process.env.EARLY_CONTRIBUTOR_BOT_DEBUG?.trim() || ""
@@ -80,302 +37,6 @@ function logDebug(message: string) {
   if (DEBUG_LOGGING_ENABLED) {
     console.log(`[Early Contributor Bot][debug] ${message}`);
   }
-}
-
-function readStringEnv(name: string, fallback?: string) {
-  const value = process.env[name]?.trim();
-  if (value) {
-    return value;
-  }
-
-  if (fallback !== undefined) {
-    logWarn(`${name} not set. Using default ${fallback}.`);
-    return fallback;
-  }
-
-  throw new Error(`${name} is required.`);
-}
-
-function validateSnowflake(name: string, value: string) {
-  if (!/^\d+$/.test(value)) {
-    throw new Error(`${name} must be a Discord snowflake.`);
-  }
-}
-
-function loadConfig(): BotConfig {
-  const botToken = readStringEnv("DISCORD_BOT_TOKEN");
-  const guildId = readStringEnv("DISCORD_GUILD_ID", DEFAULT_CONFIG.guildId);
-  const submitChannelId = readStringEnv(
-    "DISCORD_EARLY_SUBMIT_CHANNEL_ID",
-    DEFAULT_CONFIG.submitChannelId
-  );
-  const logChannelId = readStringEnv(
-    "DISCORD_EARLY_LOG_CHANNEL_ID",
-    DEFAULT_CONFIG.logChannelId
-  );
-  const roleId = readStringEnv("DISCORD_EARLY_ROLE_ID", DEFAULT_CONFIG.roleId);
-  const maxClaimsRaw = process.env.DISCORD_EARLY_MAX_CLAIMS?.trim();
-
-  validateSnowflake("DISCORD_GUILD_ID", guildId);
-  validateSnowflake("DISCORD_EARLY_SUBMIT_CHANNEL_ID", submitChannelId);
-  validateSnowflake("DISCORD_EARLY_LOG_CHANNEL_ID", logChannelId);
-  validateSnowflake("DISCORD_EARLY_ROLE_ID", roleId);
-
-  let maxClaims = DEFAULT_CONFIG.maxClaims;
-  if (!maxClaimsRaw) {
-    logWarn(
-      `DISCORD_EARLY_MAX_CLAIMS not set. Using default ${DEFAULT_CONFIG.maxClaims}.`
-    );
-  } else {
-    const parsed = Number.parseInt(maxClaimsRaw, 10);
-    if (!Number.isSafeInteger(parsed) || parsed <= 0) {
-      throw new Error("DISCORD_EARLY_MAX_CLAIMS must be a positive integer.");
-    }
-    maxClaims = parsed;
-  }
-
-  return {
-    botToken,
-    guildId,
-    submitChannelId,
-    logChannelId,
-    roleId,
-    maxClaims,
-  };
-}
-
-function normalizeTweetLink(content: string): NormalizedTweetLink | null {
-  const matches = content.match(/https?:\/\/[^\s<>()]+/gi) ?? [];
-
-  for (const match of matches) {
-    const candidate = match.replace(/[),.!?]+$/g, "");
-
-    let url: URL;
-    try {
-      url = new URL(candidate);
-    } catch {
-      continue;
-    }
-
-    const hostname = url.hostname.toLowerCase();
-    if (
-      hostname !== "x.com" &&
-      hostname !== "twitter.com" &&
-      hostname !== "www.x.com" &&
-      hostname !== "www.twitter.com"
-    ) {
-      continue;
-    }
-
-    const parts = url.pathname
-      .replace(/\/+$/g, "")
-      .split("/")
-      .filter(Boolean);
-
-    if (parts.length !== 3 || parts[1]?.toLowerCase() !== "status") {
-      continue;
-    }
-
-    const username = parts[0] ?? "";
-    const tweetId = parts[2] ?? "";
-
-    if (!/^[A-Za-z0-9_]{1,15}$/.test(username) || !/^\d+$/.test(tweetId)) {
-      continue;
-    }
-
-    return {
-      tweetId,
-      tweetUrl: `https://x.com/${username}/status/${tweetId}`,
-    };
-  }
-
-  return null;
-}
-
-function formatDiscordUser(user: User) {
-  if (user.discriminator && user.discriminator !== "0") {
-    return `${user.username}#${user.discriminator}`;
-  }
-
-  return user.globalName ? `${user.username} (${user.globalName})` : user.username;
-}
-
-function buildClaimSuccessLog(args: {
-  discordUserId: string;
-  discordUser: string;
-  tweetId: string;
-  tweetUrl: string;
-  roleId: string;
-  claimNumber: number;
-  maxClaims: number;
-  timestamp: string;
-}) {
-  return [
-    CLAIM_SUCCESS_HEADER,
-    `Campaign: ${CAMPAIGN_NAME}`,
-    `Discord ID: ${args.discordUserId}`,
-    `Discord User: ${args.discordUser}`,
-    `Tweet ID: ${args.tweetId}`,
-    `Tweet URL: ${args.tweetUrl}`,
-    `Role ID: ${args.roleId}`,
-    `Claim Number: ${args.claimNumber}/${args.maxClaims}`,
-    `Time: ${args.timestamp}`,
-  ].join("\n");
-}
-
-function parseClaimSuccessLog(content: string): ParsedClaimSuccess | null {
-  const match = content.match(CLAIM_SUCCESS_REGEX);
-  if (!match?.groups) {
-    return null;
-  }
-
-  const claimNumber = Number.parseInt(match.groups.claimNumber, 10);
-  const maxClaims = Number.parseInt(match.groups.maxClaims, 10);
-
-  if (!Number.isSafeInteger(claimNumber) || !Number.isSafeInteger(maxClaims)) {
-    return null;
-  }
-
-  return {
-    discordUserId: match.groups.discordUserId,
-    discordUser: match.groups.discordUser,
-    tweetId: match.groups.tweetId,
-    tweetUrl: match.groups.tweetUrl,
-    roleId: match.groups.roleId,
-    claimNumber,
-    maxClaims,
-    timestamp: match.groups.timestamp,
-  };
-}
-
-function isUnknownMemberError(error: unknown) {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    (error as { code?: number }).code === 10007
-  );
-}
-
-function applyClaimSuccessToState(
-  state: RuntimeState,
-  messageId: string,
-  claim: ParsedClaimSuccess
-) {
-  if (state.processedLogMessageIds.has(messageId)) {
-    return false;
-  }
-
-  state.processedLogMessageIds.add(messageId);
-  state.claimedDiscordUserIds.add(claim.discordUserId);
-  state.claimedTweetIds.add(claim.tweetId);
-  state.successfulClaimCount += 1;
-  return true;
-}
-
-async function loadClaimHistory(state: RuntimeState) {
-  let before: string | undefined;
-
-  while (true) {
-    const batch = await state.logChannel.messages.fetch({
-      limit: 100,
-      before,
-    });
-
-    if (batch.size === 0) {
-      break;
-    }
-
-    for (const logMessage of batch.values()) {
-      const parsed = parseClaimSuccessLog(logMessage.content);
-      if (!parsed) {
-        continue;
-      }
-
-      applyClaimSuccessToState(state, logMessage.id, parsed);
-    }
-
-    before = batch.last()?.id;
-    if (!before) {
-      break;
-    }
-  }
-}
-
-async function initializeState(client: Client<true>, config: BotConfig): Promise<RuntimeState> {
-  const guild = await client.guilds.fetch(config.guildId);
-  const submitChannelRaw = await client.channels.fetch(config.submitChannelId);
-  const logChannelRaw = await client.channels.fetch(config.logChannelId);
-  const role = await guild.roles.fetch(config.roleId);
-
-  if (!submitChannelRaw) {
-    throw new Error(`Submit channel not found: ${config.submitChannelId}`);
-  }
-  if (submitChannelRaw.type !== ChannelType.GuildText) {
-    throw new Error(
-      `Submit channel must be a guild text channel: ${config.submitChannelId}`
-    );
-  }
-  if (submitChannelRaw.guildId !== guild.id) {
-    throw new Error(
-      `Submit channel ${config.submitChannelId} does not belong to guild ${guild.id}.`
-    );
-  }
-
-  if (!logChannelRaw) {
-    throw new Error(`Log channel not found: ${config.logChannelId}`);
-  }
-  if (logChannelRaw.type !== ChannelType.GuildText) {
-    throw new Error(`Log channel must be a guild text channel: ${config.logChannelId}`);
-  }
-  if (logChannelRaw.guildId !== guild.id) {
-    throw new Error(`Log channel ${config.logChannelId} does not belong to guild ${guild.id}.`);
-  }
-
-  if (!role) {
-    throw new Error(`Role not found: ${config.roleId}`);
-  }
-
-  const submitChannel = submitChannelRaw as TextChannel;
-  const logChannel = logChannelRaw as TextChannel;
-
-  const state: RuntimeState = {
-    config,
-    guild,
-    submitChannel,
-    logChannel,
-    role,
-    claimedDiscordUserIds: new Set<string>(),
-    claimedTweetIds: new Set<string>(),
-    processedLogMessageIds: new Set<string>(),
-    successfulClaimCount: 0,
-  };
-
-  await loadClaimHistory(state);
-
-  const botMember = await guild.members.fetchMe();
-  const canManageRoles = botMember.permissions.has(PermissionFlagsBits.ManageRoles);
-  const roleIsAssignable = role.position < botMember.roles.highest.position;
-
-  logInfo(`Bot logged in as ${client.user.username}`);
-  logInfo(`Guild ID loaded: ${guild.id}`);
-  logInfo(`Submit channel loaded: ${submitChannel.name} (${submitChannel.id})`);
-  logInfo(`Log channel loaded: ${logChannel.name} (${logChannel.id})`);
-  logInfo(`Role loaded: ${role.name} (${role.id})`);
-  logInfo(
-    `Existing successful claims loaded: ${state.successfulClaimCount}/${config.maxClaims}`
-  );
-
-  if (!canManageRoles) {
-    logWarn("Bot is missing the Manage Roles permission.");
-  }
-  if (!roleIsAssignable) {
-    logWarn(
-      `Bot cannot assign role ${role.id}. Move the bot role above "${role.name}" in Discord.`
-    );
-  }
-
-  return state;
 }
 
 async function safeReply(message: Message, content: string) {
@@ -440,12 +101,8 @@ async function processClaimMessage(state: RuntimeState, message: Message) {
       return;
     }
 
-    const botMember = state.guild.members.me ?? (await state.guild.members.fetchMe());
-    const roleIsAssignable =
-      botMember.permissions.has(PermissionFlagsBits.ManageRoles) &&
-      state.role.position < botMember.roles.highest.position;
-
-    if (!roleIsAssignable) {
+    const roleStatus = await getRoleAssignmentStatus(state.guild, state.role);
+    if (!roleStatus.roleIsAssignable) {
       logWarn(
         `Role assignment blocked. Bot cannot assign role ${state.role.id} in guild ${state.guild.id}.`
       );
@@ -579,7 +236,7 @@ function startHealthServer() {
 
 async function main() {
   logInfo("Bootstrapping bot process...");
-  const config = loadConfig();
+  const config = loadConfig({ logPrefix: "[Early Contributor Bot]" });
   logInfo(
     `Config loaded: guild=${config.guildId}, submit=${config.submitChannelId}, log=${config.logChannelId}, role=${config.roleId}, maxClaims=${config.maxClaims}`
   );
@@ -602,6 +259,28 @@ async function main() {
     try {
       logInfo("Discord client connected. Loading guild, channels, role, and claim history...");
       runtimeState = await initializeState(readyClient, config);
+      const roleStatus = await getRoleAssignmentStatus(runtimeState.guild, runtimeState.role);
+      logInfo(`Bot logged in as ${readyClient.user.username}`);
+      logInfo(`Guild ID loaded: ${runtimeState.guild.id}`);
+      logInfo(
+        `Submit channel loaded: ${runtimeState.submitChannel.name} (${runtimeState.submitChannel.id})`
+      );
+      logInfo(
+        `Log channel loaded: ${runtimeState.logChannel.name} (${runtimeState.logChannel.id})`
+      );
+      logInfo(`Role loaded: ${runtimeState.role.name} (${runtimeState.role.id})`);
+      logInfo(
+        `Existing successful claims loaded: ${runtimeState.successfulClaimCount}/${config.maxClaims}`
+      );
+
+      if (!roleStatus.canManageRoles) {
+        logWarn("Bot is missing the Manage Roles permission.");
+      }
+      if (!roleStatus.roleIsBelowBot) {
+        logWarn(
+          `Bot cannot assign role ${runtimeState.role.id}. Move the bot role above "${runtimeState.role.name}" in Discord.`
+        );
+      }
     } catch (error) {
       console.error("[Early Contributor Bot] Startup failed:", error);
       await readyClient.destroy();
