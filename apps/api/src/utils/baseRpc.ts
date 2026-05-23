@@ -1,4 +1,4 @@
-import { createPublicClient, fallback, http } from "viem";
+import { createPublicClient, custom } from "viem";
 import { base } from "viem/chains";
 
 const BASE_PUBLIC_RPC_URL = "https://mainnet.base.org";
@@ -53,6 +53,8 @@ export type RpcRequestOptions = {
   providerLabel?: string;
 };
 
+type RpcParams = ReadonlyArray<unknown> | Record<string, unknown>;
+
 function splitEnv(value?: string) {
   return String(value || "")
     .split(",")
@@ -66,6 +68,10 @@ function unique(values: string[]) {
 
 function isHttpsUrl(value: string) {
   return value.startsWith("https://");
+}
+
+function normalizeRpcParams(params?: RpcParams) {
+  return params ?? [];
 }
 
 function getRotationCalls() {
@@ -206,26 +212,32 @@ function getOrderedAlchemyRpcEndpoints() {
 // Typed as any to avoid cross-package viem client incompatibilities in this workspace.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function createBasePublicClient(timeoutMs = 20_000): any {
-  const transports = getOrderedBaseRpcEndpoints().map((endpoint) =>
-    http(endpoint.url, {
-      timeout: timeoutMs,
-      fetchOptions: endpoint.headers
-        ? {
-            headers: endpoint.headers,
-          }
-        : undefined,
-    }),
-  );
-
   return createPublicClient({
     chain: base,
-    transport: transports.length === 1 ? transports[0] : fallback(transports),
+    transport: custom(
+      {
+        async request({
+          method,
+          params,
+        }: {
+          method: string;
+          params?: RpcParams;
+        }) {
+          return baseRpcRequest(method, normalizeRpcParams(params), { timeoutMs });
+        },
+      },
+      {
+        key: "base-rotating-rpc",
+        name: "Base Rotating RPC",
+        retryCount: 0,
+      },
+    ),
   });
 }
 
 export async function alchemyRpcRequest<T>(
   method: string,
-  params: unknown[],
+  params: RpcParams = [],
   opts: RpcRequestOptions = {},
 ): Promise<T> {
   const endpoints = getOrderedAlchemyRpcEndpoints();
@@ -251,7 +263,7 @@ export async function alchemyRpcRequest<T>(
           jsonrpc: "2.0",
           id: requestId++,
           method,
-          params,
+          params: normalizeRpcParams(params),
         }),
         signal: combinedSignal,
       });
@@ -292,7 +304,7 @@ export async function alchemyRpcRequest<T>(
 
 export async function baseRpcRequest<T>(
   method: string,
-  params: unknown[],
+  params: RpcParams = [],
   opts: RpcRequestOptions = {},
 ): Promise<T> {
   let lastTransport: Error | null = null;
@@ -314,7 +326,7 @@ export async function baseRpcRequest<T>(
           jsonrpc: "2.0",
           id: requestId++,
           method,
-          params,
+          params: normalizeRpcParams(params),
         }),
         signal: combinedSignal,
       });

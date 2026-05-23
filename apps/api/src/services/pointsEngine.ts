@@ -140,12 +140,20 @@ const SPIN_FUNCTION_SELECTOR = encodeFunctionData({
   .slice(0, 10)
   .toLowerCase();
 
-const baseClient = createPublicClient({
-  chain: base,
-  transport: http("https://mainnet.base.org"),
-});
+function createBaseReadClient(endpoint: BaseRpcEndpoint) {
+  return createPublicClient({
+    chain: base,
+    transport: http(endpoint.url, {
+      fetchOptions: endpoint.headers
+        ? {
+            headers: endpoint.headers,
+          }
+        : undefined,
+    }),
+  });
+}
 
-type BasePublicClient = typeof baseClient;
+type BasePublicClient = ReturnType<typeof createBaseReadClient>;
 
 function isSameBaseRpcEndpoint(a: BaseRpcEndpoint, b: BaseRpcEndpoint) {
   return (
@@ -171,16 +179,7 @@ async function readFromBaseRpc<T>(
   let lastError: Error | null = null;
 
   for (const endpoint of getOrderedBaseRpcEndpoints()) {
-    const client = createPublicClient({
-      chain: base,
-      transport: http(endpoint.url, {
-        fetchOptions: endpoint.headers
-          ? {
-              headers: endpoint.headers,
-            }
-          : undefined,
-      }),
-    });
+    const client = createBaseReadClient(endpoint);
 
     try {
       return await operation(client);

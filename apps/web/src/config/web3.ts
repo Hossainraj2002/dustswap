@@ -1,8 +1,9 @@
-import { fallback, http } from "wagmi";
+import { http } from "wagmi";
 import { base, mainnet, arbitrum, optimism, polygon, bsc, avalanche } from "wagmi/chains";
 import type { Chain } from "wagmi/chains";
 
 export const DEFAULT_SOURCE_CHAIN_ID = base.id;
+const DEFAULT_RPC_ROTATION_CALLS = 100;
 
 export const INITIAL_WAGMI_CHAINS = [
   base,
@@ -74,7 +75,53 @@ export function getRpcUrlForChain(chainId: number) {
   return getRpcUrlsForChain(chainId)[0];
 }
 
-const customFetchFn = async (url: string | URL | globalThis.Request, init?: RequestInit) => {
+function getRpcRotationCalls() {
+  const parsed = Number(
+    process.env.NEXT_PUBLIC_BASE_RPC_ROTATION_CALLS || DEFAULT_RPC_ROTATION_CALLS,
+  );
+  return Number.isFinite(parsed) && parsed > 0
+    ? Math.floor(parsed)
+    : DEFAULT_RPC_ROTATION_CALLS;
+}
+
+const rpcRotationStateByKey = new Map<
+  string,
+  {
+    activeIndex: number;
+    activeCalls: number;
+  }
+>();
+
+function getOrderedRpcUrls(rpcUrls: string[]) {
+  if (rpcUrls.length <= 1) {
+    return rpcUrls;
+  }
+
+  const key = rpcUrls.join("|");
+  const existing = rpcRotationStateByKey.get(key);
+  const state =
+    existing ||
+    {
+      activeIndex: Math.floor(Math.random() * rpcUrls.length),
+      activeCalls: 0,
+    };
+
+  const first = rpcUrls[state.activeIndex % rpcUrls.length];
+  state.activeCalls += 1;
+
+  if (state.activeCalls >= getRpcRotationCalls()) {
+    state.activeCalls = 0;
+    state.activeIndex = (state.activeIndex + 1) % rpcUrls.length;
+  }
+
+  rpcRotationStateByKey.set(key, state);
+  return [first, ...rpcUrls.filter((url) => url !== first)];
+}
+
+async function fetchWithAllowanceRetry(
+  url: string,
+  init?: RequestInit,
+) {
   const maxRetries = 3;
   for (let i = 0; i < maxRetries; i++) {
     const response = await fetch(url, init);
@@ -100,31 +147,68 @@ const customFetchFn = async (url: string | URL | globalThis.Request, init?: Requ
     return response;
   }
   return fetch(url, init);
-};
+}
+
+function shouldRetryRpcResponse(response: Response) {
+  return response.status === 429 || response.status >= 500;
+}
+
+function resolveFetchUrl(input: string | URL | globalThis.Request) {
+  if (typeof input === "string") {
+    return input;
+  }
+
+  if (input instanceof URL) {
+    return input.toString();
+  }
+
+  return input.url;
+}
+
+function createRotatingRpcFetch(rpcUrls: string[]) {
+  return async (input: string | URL | globalThis.Request, init?: RequestInit) => {
+    const fallbackUrl = resolveFetchUrl(input);
+    const orderedUrls = rpcUrls.length > 0 ? getOrderedRpcUrls(rpcUrls) : [fallbackUrl];
+    let lastError: Error | null = null;
+
+    for (let i = 0; i < orderedUrls.length; i++) {
+      const rpcUrl = orderedUrls[i];
+
+      try {
+        const response = await fetchWithAllowanceRetry(rpcUrl, init);
+        if (shouldRetryRpcResponse(response) && i < orderedUrls.length - 1) {
+          continue;
+        }
+        return response;
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+      }
+    }
+
+    if (lastError) {
+      throw lastError;
+    }
+
+    return fetchWithAllowanceRetry(fallbackUrl, init);
+  };
+}
 
 export function getWagmiTransports(chains: readonly Chain[]) {
   return Object.fromEntries(
     chains.map((chain) => {
       const rpcUrls = getRpcUrlsForChain(chain.id);
-      const transports =
+      const transport =
         rpcUrls.length > 0
-          ? rpcUrls.map((url) =>
-              http(url, {
-                // @ts-ignore - viem supports fetchFn to override the default fetch
-                fetchFn: customFetchFn,
-              }),
-            )
-          : [
-              http(undefined, {
-                // @ts-ignore - viem supports fetchFn to override the default fetch
-                fetchFn: customFetchFn,
-              }),
-            ];
+          ? http(rpcUrls[0], {
+              // @ts-ignore - viem supports fetchFn to override the default fetch
+              fetchFn: createRotatingRpcFetch(rpcUrls),
+            })
+          : http(undefined, {
+              // @ts-ignore - viem supports fetchFn to override the default fetch
+              fetchFn: createRotatingRpcFetch([]),
+            });
 
-      return [
-        chain.id,
-        transports.length === 1 ? transports[0] : fallback(transports),
-      ];
+      return [chain.id, transport];
     }),
   );
 }

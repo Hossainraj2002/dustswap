@@ -12,6 +12,7 @@ import {
   zksync,
   type Chain,
 } from "viem/chains";
+import { createBasePublicClient } from "../utils/baseRpc";
 
 type SwapChainConfig = {
   id: number;
@@ -173,10 +174,14 @@ export function getPublicClientForSwapChain(chainId: number) {
     return existing;
   }
 
-  const client = createPublicClient({
-    chain: config.chain,
-    transport: http(getRpcUrl(config)),
-  });
-  clientByChainId.set(chainId, client);
+  const client =
+    chainId === base.id
+      ? createBasePublicClient()
+      : createPublicClient({
+          chain: config.chain,
+          transport: http(getRpcUrl(config)),
+        });
+
+  clientByChainId.set(chainId, client as PublicClient);
   return client;
 }
