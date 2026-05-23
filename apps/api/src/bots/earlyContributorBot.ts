@@ -1,5 +1,6 @@
 import "dotenv/config";
 
+import { createServer } from "node:http";
 import {
   ChannelType,
   Client,
@@ -63,12 +64,22 @@ type RuntimeState = {
   successfulClaimCount: number;
 };
 
+const DEBUG_LOGGING_ENABLED = /^(1|true|yes|on)$/i.test(
+  process.env.EARLY_CONTRIBUTOR_BOT_DEBUG?.trim() || ""
+);
+
 function logInfo(message: string) {
   console.log(`[Early Contributor Bot] ${message}`);
 }
 
 function logWarn(message: string) {
   console.warn(`[Early Contributor Bot] ${message}`);
+}
+
+function logDebug(message: string) {
+  if (DEBUG_LOGGING_ENABLED) {
+    console.log(`[Early Contributor Bot][debug] ${message}`);
+  }
 }
 
 function readStringEnv(name: string, fallback?: string) {
@@ -374,17 +385,30 @@ async function safeReply(message: Message, content: string) {
       allowedMentions: { repliedUser: false },
     });
   } catch (error) {
-    console.error(
-      `[Early Contributor Bot] Failed to reply to message ${message.id}:`,
-      error
-    );
+    console.error(`[Early Contributor Bot] Failed to reply to message ${message.id}:`, error);
+
+    try {
+      if ("send" in message.channel) {
+        await message.channel.send(content);
+      }
+    } catch (fallbackError) {
+      console.error(
+        `[Early Contributor Bot] Fallback send also failed for message ${message.id}:`,
+        fallbackError
+      );
+    }
   }
 }
 
 async function processClaimMessage(state: RuntimeState, message: Message) {
   try {
+    logDebug(
+      `Processing message ${message.id} from ${message.author.id} in channel ${message.channelId}`
+    );
+
     const normalizedTweet = normalizeTweetLink(message.content);
     if (!normalizedTweet) {
+      logDebug(`Message ${message.id} did not include a valid X/Twitter status URL.`);
       await safeReply(
         message,
         "⚠️ Please submit a valid X/Twitter post link. Example: https://x.com/username/status/123456789"
@@ -393,6 +417,7 @@ async function processClaimMessage(state: RuntimeState, message: Message) {
     }
 
     if (state.claimedDiscordUserIds.has(message.author.id)) {
+      logDebug(`User ${message.author.id} already claimed.`);
       await safeReply(
         message,
         "⚠️ You already claimed the Early Contributor role."
@@ -401,11 +426,13 @@ async function processClaimMessage(state: RuntimeState, message: Message) {
     }
 
     if (state.claimedTweetIds.has(normalizedTweet.tweetId)) {
+      logDebug(`Tweet ${normalizedTweet.tweetId} was already claimed.`);
       await safeReply(message, "⚠️ This tweet link was already used for a claim.");
       return;
     }
 
     if (state.successfulClaimCount >= state.config.maxClaims) {
+      logDebug(`Claim cap reached at ${state.successfulClaimCount}/${state.config.maxClaims}.`);
       await safeReply(
         message,
         `⚠️ Early Contributor claim is full. All ${state.config.maxClaims.toLocaleString()} spots have been claimed.`
@@ -437,6 +464,7 @@ async function processClaimMessage(state: RuntimeState, message: Message) {
     });
 
     if (!member) {
+      logDebug(`User ${message.author.id} is not a current guild member.`);
       await safeReply(
         message,
         "⚠️ You must still be a member of this Discord server to claim the role."
@@ -487,6 +515,9 @@ async function processClaimMessage(state: RuntimeState, message: Message) {
         maxClaims: state.config.maxClaims,
         timestamp,
       });
+      logInfo(
+        `Claim success #${claimNumber}/${state.config.maxClaims}: user=${message.author.id} tweet=${normalizedTweet.tweetId}`
+      );
     } catch (error) {
       console.error(
         `[Early Contributor Bot] Failed to write claim log for user ${message.author.id}:`,
@@ -528,8 +559,33 @@ async function processClaimMessage(state: RuntimeState, message: Message) {
   }
 }
 
+function startHealthServer() {
+  const port = Number.parseInt(process.env.PORT ?? "", 10);
+  if (!Number.isSafeInteger(port) || port <= 0) {
+    logDebug("No PORT provided. Health server not started.");
+    return;
+  }
+
+  const server = createServer((_req, res) => {
+    res.statusCode = 200;
+    res.setHeader("content-type", "application/json");
+    res.end(JSON.stringify({ ok: true, service: "early-contributor-bot" }));
+  });
+
+  server.listen(port, () => {
+    logInfo(`Health server listening on port ${port}`);
+  });
+}
+
 async function main() {
+  logInfo("Bootstrapping bot process...");
   const config = loadConfig();
+  logInfo(
+    `Config loaded: guild=${config.guildId}, submit=${config.submitChannelId}, log=${config.logChannelId}, role=${config.roleId}, maxClaims=${config.maxClaims}`
+  );
+
+  startHealthServer();
+
   const client = new Client({
     intents: [
       GatewayIntentBits.Guilds,
@@ -544,6 +600,7 @@ async function main() {
 
   client.once(Events.ClientReady, async (readyClient: Client<true>) => {
     try {
+      logInfo("Discord client connected. Loading guild, channels, role, and claim history...");
       runtimeState = await initializeState(readyClient, config);
     } catch (error) {
       console.error("[Early Contributor Bot] Startup failed:", error);
@@ -554,6 +611,11 @@ async function main() {
 
   client.on(Events.MessageCreate, (message: Message<boolean>) => {
     if (!runtimeState || !message.inGuild() || message.guildId !== runtimeState.guild.id) {
+      if (DEBUG_LOGGING_ENABLED && message.inGuild()) {
+        logDebug(
+          `Ignoring message ${message.id}: initialized=${Boolean(runtimeState)} guild=${message.guildId}`
+        );
+      }
       return;
     }
 
@@ -566,6 +628,9 @@ async function main() {
     }
 
     if (message.author.bot || message.channelId !== runtimeState.config.submitChannelId) {
+      if (DEBUG_LOGGING_ENABLED && !message.author.bot) {
+        logDebug(`Ignoring message ${message.id} from channel ${message.channelId}.`);
+      }
       return;
     }
 
@@ -585,8 +650,20 @@ async function main() {
     console.error("[Early Contributor Bot] Client error:", error);
   });
 
+  client.on(Events.Warn, (warning: string) => {
+    console.warn("[Early Contributor Bot] Client warning:", warning);
+  });
+
   await client.login(config.botToken);
 }
+
+process.on("unhandledRejection", (reason) => {
+  console.error("[Early Contributor Bot] Unhandled rejection:", reason);
+});
+
+process.on("uncaughtException", (error) => {
+  console.error("[Early Contributor Bot] Uncaught exception:", error);
+});
 
 void main().catch((error) => {
   console.error(
