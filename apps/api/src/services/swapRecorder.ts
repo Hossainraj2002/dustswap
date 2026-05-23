@@ -695,7 +695,7 @@ async function resolveAuthorizedEip7702Addresses(
 
   try {
     const addresses = await Promise.all(
-      authorizationList.map(async (authorization) =>
+      authorizationList.map(async (authorization: SignedAuthorizationList[number]) =>
         normalizeAddress(
           await recoverAuthorizationAddress({
             authorization,
