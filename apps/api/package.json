@@ -6,8 +6,10 @@
   "main": "dist/index.js",
   "scripts": {
     "dev": "nodemon --exec ts-node src/index.ts",
+    "dev:early-bot": "nodemon --exec ts-node src/bots/earlyContributorBot.ts",
     "build": "tsc",
     "start": "node dist/index.js",
+    "start:early-bot": "node dist/bots/earlyContributorBot.js",
     "lint": "eslint src --ext .ts",
     "grant-existing-user-reward": "ts-node src/scripts/grantExistingUserReward.ts",
     "sync-dustsweep-whitelist": "ts-node src/scripts/syncDustSweepWhitelist.ts",
@@ -22,6 +24,7 @@
     "@aws-sdk/client-s3": "^3.1037.0",
     "@aws-sdk/s3-request-presigner": "^3.1037.0",
     "@base-org/account": "2.4.0",
+    "discord.js": "^14.25.1",
     "@hono/node-server": "^1.13.7",
     "@lifi/sdk": "^3.16.2",
     "@supabase/supabase-js": "^2.39.0",
