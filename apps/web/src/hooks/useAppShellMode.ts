@@ -13,6 +13,11 @@ const BOTTOM_GAP_TOP_SAMPLE_THRESHOLD = 2;
 const BROWSER_BAR_STORAGE_KEY = 'ds-mobile-shell-browser-bar';
 const SMART_WALLET_STORAGE_KEY_PREFIX = 'ds-smart-wallet-capability';
 const STARTUP_DETECTION_WINDOW_MS = 800;
+const SMART_WALLET_TOP_NAV_ENABLED = ['1', 'true', 'yes', 'on'].includes(
+  String(process.env.NEXT_PUBLIC_SMART_WALLET_TOP_NAV_ENABLED || '')
+    .trim()
+    .toLowerCase()
+);
 
 const useIsomorphicLayoutEffect =
   typeof window === 'undefined' ? useEffect : useLayoutEffect;
@@ -200,10 +205,12 @@ export function useAppShellMode({ enabled }: UseAppShellModeOptions): AppShellMo
       return;
     }
 
-    const cachedSmartWalletCapability = readSmartWalletCapability(address, chainId);
-    if (cachedSmartWalletCapability === true) {
-      setBrowserMode('bottom');
-      return;
+    if (SMART_WALLET_TOP_NAV_ENABLED) {
+      const cachedSmartWalletCapability = readSmartWalletCapability(address, chainId);
+      if (cachedSmartWalletCapability === true) {
+        setBrowserMode('bottom');
+        return;
+      }
     }
 
     if (!window.visualViewport) {
@@ -251,7 +258,14 @@ export function useAppShellMode({ enabled }: UseAppShellModeOptions): AppShellMo
       return;
     }
 
-    if (!enabled || !isMobileViewport() || !isConnected || !address || !chainId) {
+    if (
+      !SMART_WALLET_TOP_NAV_ENABLED ||
+      !enabled ||
+      !isMobileViewport() ||
+      !isConnected ||
+      !address ||
+      !chainId
+    ) {
       setSmartWalletCapable(false);
       return;
     }
@@ -316,5 +330,5 @@ export function useAppShellMode({ enabled }: UseAppShellModeOptions): AppShellMo
     walletClient,
   ]);
 
-  return smartWalletCapable ? 'top' : browserMode;
+  return SMART_WALLET_TOP_NAV_ENABLED && smartWalletCapable ? 'top' : browserMode;
 }
