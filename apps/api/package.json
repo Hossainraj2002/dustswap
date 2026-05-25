@@ -7,9 +7,11 @@
   "scripts": {
     "dev": "nodemon --exec ts-node src/index.ts",
     "dev:early-bot": "nodemon --exec ts-node src/bots/earlyContributorBot.ts",
+    "dev:booster-og-backfill": "nodemon --exec ts-node src/bots/boosterOgBackfill.ts",
     "build": "tsc",
     "start": "node dist/index.js",
     "start:early-bot": "node dist/bots/earlyContributorBot.js",
+    "start:booster-og-backfill": "node dist/bots/boosterOgBackfill.js",
     "backfill:early-bot": "ts-node src/scripts/backfillEarlyContributorClaims.ts",
     "lint": "eslint src --ext .ts",
     "grant-existing-user-reward": "ts-node src/scripts/grantExistingUserReward.ts",

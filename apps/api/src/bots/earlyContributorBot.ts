@@ -20,6 +20,7 @@ import {
   parseClaimSuccessLog,
   type RuntimeState,
 } from "./earlyContributorBotCore";
+import { loadBoosterOgConfig, startBoosterOgRoleWatcher } from "./boosterOgRole";
 
 const DEBUG_LOGGING_ENABLED = /^(1|true|yes|on)$/i.test(
   process.env.EARLY_CONTRIBUTOR_BOT_DEBUG?.trim() || ""
@@ -251,6 +252,17 @@ async function main() {
       GatewayIntentBits.GuildMembers,
     ],
   });
+
+  try {
+    const boosterOgConfig = loadBoosterOgConfig({ logPrefix: "[Booster OG]" });
+    startBoosterOgRoleWatcher(client, boosterOgConfig);
+  } catch (error) {
+    console.error(
+      `[Early Contributor Bot] Booster OG watcher disabled: ${
+        error instanceof Error ? error.message : String(error)
+      }`
+    );
+  }
 
   let runtimeState: RuntimeState | null = null;
   let claimQueue = Promise.resolve();
