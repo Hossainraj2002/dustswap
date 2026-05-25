@@ -201,10 +201,6 @@ export function TokenSelectModal({
         .sort((a, b) => (b.valueUSD ?? 0) - (a.valueUSD ?? 0)),
     [query, swappableTokens],
   );
-  const visibleUnavailable = useMemo(
-    () => unavailableTokens.filter((token) => tokenMatchesSearch(token, query)),
-    [query, unavailableTokens],
-  );
   const visibleOutputTokens = useMemo(
     () => outputTokens.filter((token) => tokenMatchesSearch(token, query)),
     [outputTokens, query],
@@ -214,6 +210,18 @@ export function TokenSelectModal({
     mode === "multi" && selectedOutputToken && tokenMatchesSearch(selectedOutputToken, query)
       ? selectedOutputToken
       : null;
+  const disabledOutputAddress = disabledOutputToken?.address.toLowerCase() ?? null;
+  const visibleUnavailable = useMemo(
+    () =>
+      unavailableTokens.filter(
+        (token) =>
+          tokenMatchesSearch(token, query) &&
+          token.address.toLowerCase() !== disabledOutputAddress,
+      ),
+    [disabledOutputAddress, query, unavailableTokens],
+  );
+  const visibleDiscoveredCount =
+    visibleSwappable.length + visibleUnavailable.length + (disabledOutputToken ? 1 : 0);
 
   if (!isOpen) return null;
 
@@ -283,7 +291,9 @@ export function TokenSelectModal({
               <p className="text-sm font-medium text-slate-500">
                 {mode === "single" ? "Your tokens" : "Base"}
                 {mode === "multi" ? (
-                  <span className="ml-2 text-xs text-slate-400">{visibleSwappable.length} tokens</span>
+                  <span className="ml-2 text-xs text-slate-400">
+                    {visibleSwappable.length} sweepable / {visibleDiscoveredCount} discovered
+                  </span>
                 ) : null}
               </p>
               {mode === "multi" && visibleSwappable.length > 0 ? (
@@ -331,7 +341,15 @@ export function TokenSelectModal({
 
               {mode === "multi" && visibleUnavailable.length > 0 ? (
                 <div className="pt-3">
-                  <p className="mb-2 text-sm font-medium text-slate-500">Unavailable</p>
+                  <div className="mb-2">
+                    <p className="text-sm font-medium text-slate-500">
+                      Hidden / unavailable
+                      <span className="ml-2 text-xs text-slate-400">{visibleUnavailable.length} tokens</span>
+                    </p>
+                    <p className="text-xs text-slate-400">
+                      Below $0.01, no price, output assets, native ETH, or risk-filtered.
+                    </p>
+                  </div>
                   <div className="space-y-1">
                     {visibleUnavailable.map((token) => (
                       <AssetRow

@@ -105,6 +105,12 @@ export type UnavailableToken = Token & {
 export type SelectedToken = SwappableToken;
 
 export type DustSweepTokensResponse = {
+  discovery?: {
+    erc20BalanceCount?: number;
+    alchemyPageCount?: number;
+    truncated?: boolean;
+    maxErc20Balances?: number;
+  };
   swappable: SwappableToken[];
   unavailable: UnavailableToken[];
   hidden?: UnavailableToken[];

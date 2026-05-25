@@ -93,8 +93,9 @@ const MIN_VALUE_USD = Number(process.env.DUST_SWEEP_MIN_VALUE_USD || "0.01");
 const MIN_WL_LIQUIDITY_USD = Number(process.env.DUST_SWEEP_WHITELIST_MIN_LIQUIDITY_USD || "1000");
 const DISCOVERY_MAX_ERC20_BALANCES = Math.max(
   50,
-  Math.min(500, Number(process.env.DUST_SWEEP_DISCOVERY_MAX_ERC20_BALANCES || "250")),
+  Math.min(500, Number(process.env.DUST_SWEEP_DISCOVERY_MAX_ERC20_BALANCES || "500")),
 );
+const ALCHEMY_TOKEN_BALANCE_PAGE_SIZE = 100;
 const NATIVE_ETH_LOGO_URI = "https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/info/logo.png";
 const DEX = {
   UNISWAP_V3: 0,
@@ -610,6 +611,17 @@ type AlchemyBalance = {
   tokenBalance: string;
 };
 
+type AlchemyTokenBalancesResponse = {
+  tokenBalances?: AlchemyBalance[];
+  pageKey?: string;
+};
+
+type AlchemyTokenBalanceDiscovery = {
+  tokenBalances: AlchemyBalance[];
+  pageCount: number;
+  truncated: boolean;
+};
+
 type TokenWhitelistRow = {
   address: string;
   symbol: string;
@@ -767,6 +779,49 @@ function bestDexFromSource(source?: string | null) {
 
 async function alchemyRpc<T>(method: string, params: unknown[]): Promise<T> {
   return alchemyRpcRequest<T>(method, params, { timeoutMs: 10_000 });
+}
+
+async function fetchAlchemyTokenBalances(holder: Address): Promise<AlchemyTokenBalanceDiscovery> {
+  const tokenBalances: AlchemyBalance[] = [];
+  const seen = new Set<string>();
+  let pageKey: string | undefined;
+  let pageCount = 0;
+
+  while (tokenBalances.length < DISCOVERY_MAX_ERC20_BALANCES) {
+    const maxCount = Math.min(
+      ALCHEMY_TOKEN_BALANCE_PAGE_SIZE,
+      DISCOVERY_MAX_ERC20_BALANCES - tokenBalances.length,
+    );
+    const options: { maxCount: number; pageKey?: string } = { maxCount };
+    if (pageKey) options.pageKey = pageKey;
+
+    const response = await alchemyRpc<AlchemyTokenBalancesResponse>(
+      "alchemy_getTokenBalances",
+      [holder, "erc20", options],
+    );
+    pageCount += 1;
+
+    for (const balance of response.tokenBalances || []) {
+      if (!isAddress(balance.contractAddress)) continue;
+      const key = balance.contractAddress.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      tokenBalances.push(balance);
+      if (tokenBalances.length >= DISCOVERY_MAX_ERC20_BALANCES) break;
+    }
+
+    const nextPageKey =
+      typeof response.pageKey === "string" && response.pageKey.trim().length > 0
+        ? response.pageKey.trim()
+        : undefined;
+    if (!nextPageKey || nextPageKey === pageKey) {
+      return { tokenBalances, pageCount, truncated: false };
+    }
+
+    pageKey = nextPageKey;
+  }
+
+  return { tokenBalances, pageCount, truncated: Boolean(pageKey) };
 }
 
 async function loadWhitelist() {
@@ -1009,28 +1064,34 @@ async function fetchTokenMarketHintsDexScreener(addresses: Address[]): Promise<R
 async function fetchCoinGeckoTokenPrices(addresses: Address[]): Promise<Record<string, number>> {
   if (addresses.length === 0) return {};
 
-  try {
-    const url = new URL("https://api.coingecko.com/api/v3/simple/token_price/base");
-    url.searchParams.set("contract_addresses", addresses.map((a) => a.toLowerCase()).join(","));
-    url.searchParams.set("vs_currencies", "usd");
-    const response = await fetch(url, {
-      headers: { Accept: "application/json" },
-      signal: AbortSignal.timeout(6_000),
-    });
-    if (!response.ok) return {};
+  const prices: Record<string, number> = {};
+  const batchSize = 75;
 
-    const data = (await response.json()) as Record<string, { usd?: number }>;
-    const prices: Record<string, number> = {};
-    for (const [address, value] of Object.entries(data)) {
-      const priceUSD = Number(value.usd || 0);
-      if (Number.isFinite(priceUSD) && priceUSD > 0) {
-        prices[address.toLowerCase()] = priceUSD;
+  for (let i = 0; i < addresses.length; i += batchSize) {
+    const batch = addresses.slice(i, i + batchSize);
+    try {
+      const url = new URL("https://api.coingecko.com/api/v3/simple/token_price/base");
+      url.searchParams.set("contract_addresses", batch.map((a) => a.toLowerCase()).join(","));
+      url.searchParams.set("vs_currencies", "usd");
+      const response = await fetch(url, {
+        headers: { Accept: "application/json" },
+        signal: AbortSignal.timeout(6_000),
+      });
+      if (!response.ok) continue;
+
+      const data = (await response.json()) as Record<string, { usd?: number }>;
+      for (const [address, value] of Object.entries(data)) {
+        const priceUSD = Number(value.usd || 0);
+        if (Number.isFinite(priceUSD) && priceUSD > 0) {
+          prices[address.toLowerCase()] = priceUSD;
+        }
       }
+    } catch {
+      // Price discovery is best-effort; DexScreener and quote checks still apply.
     }
-    return prices;
-  } catch {
-    return {};
   }
+
+  return prices;
 }
 
 async function fetchTokenMarketHints(addresses: Address[]): Promise<Record<string, TokenMarketHint>> {
@@ -3901,16 +3962,13 @@ async function handleDustSweepTokensRequest(c: Context, rawAddress?: string) {
 
       // ── Wallet-first discovery: fetch ALL balances, not just whitelisted ──
       // Whitelist is used as metadata/liquidity HINTS, not a visibility gate.
-      const [whitelist, erc20Balances, nativeBalance] = await Promise.all([
+      const [whitelist, erc20Discovery, nativeBalance] = await Promise.all([
         loadWhitelist(),
-        alchemyRpc<{ tokenBalances?: AlchemyBalance[] }>(
-          "alchemy_getTokenBalances",
-          [userAddress, "erc20"],
-        ),
+        fetchAlchemyTokenBalances(userAddress),
         readNativeBalance(userAddress).catch(() => 0n),
       ]);
 
-      const nonZero = (erc20Balances.tokenBalances || []).filter((balance) => {
+      const nonZero = erc20Discovery.tokenBalances.filter((balance) => {
         try {
           return BigInt(balance.tokenBalance || "0") > 0n;
         } catch {
@@ -4112,6 +4170,12 @@ async function handleDustSweepTokensRequest(c: Context, rawAddress?: string) {
       const payload = {
         chainId: BASE_CHAIN_ID,
         refreshedAt: new Date().toISOString(),
+        discovery: {
+          erc20BalanceCount: nonZero.length,
+          alchemyPageCount: erc20Discovery.pageCount,
+          truncated: erc20Discovery.truncated,
+          maxErc20Balances: DISCOVERY_MAX_ERC20_BALANCES,
+        },
         swappable,
         unavailable,
         hidden,
