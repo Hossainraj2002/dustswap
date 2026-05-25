@@ -16,7 +16,23 @@ export type UnavailableReason =
   | "QUOTE_FAILED"
   | "UNKNOWN_PRICE"
   | "SPAM_OR_DENYLISTED"
-  | "NATIVE_WRAP_REQUIRED";
+  | "NATIVE_WRAP_REQUIRED"
+  | "OUTPUT_ASSET";
+
+export type TokenDiscoveryStatus =
+  | "DISCOVERED"
+  | "PRICED"
+  | "LIQUIDITY_PENDING"
+  | "SWAPPABLE"
+  | "NOT_SWEEPABLE"
+  | "HIDDEN"
+  | "SPAM"
+  | "UNKNOWN_PRICE"
+  | "NO_LIQUIDITY"
+  | "NATIVE_WRAP_REQUIRED"
+  | "EXCLUDED_OUTPUT_ASSET";
+
+export type TokenPriceConfidence = "HIGH" | "MEDIUM" | "LOW" | "NONE";
 
 export type DustSweepExecutionLane = "owned_v1" | "owned_v2" | "basket_aggregator";
 export type DustSweepSignatureMode = "none" | "permit2_witness";
@@ -55,6 +71,16 @@ export type Token = {
   balance?: string;
   balanceFormatted?: string;
   valueUSD?: number;
+  status?: TokenDiscoveryStatus;
+  sourceType?: "native" | "wallet" | "protocol";
+  priceUSD?: number;
+  priceSource?: "canonical" | "coingecko" | "dexscreener" | "none";
+  priceConfidence?: TokenPriceConfidence;
+  liquidityUSD?: number;
+  riskScore?: number;
+  riskReasons?: string[];
+  isNative?: boolean;
+  wrapRequired?: boolean;
 };
 
 export type SwappableToken = Token & {
@@ -63,7 +89,7 @@ export type SwappableToken = Token & {
   valueUSD: number;
   bestDex: DustSweepDexName;
   liquidityUSD: number;
-  status?: "SWAPPABLE" | "NATIVE_WRAP_REQUIRED";
+  status?: TokenDiscoveryStatus;
   isNative?: boolean;
   wrapRequired?: boolean;
 };
@@ -73,7 +99,7 @@ export type UnavailableToken = Token & {
   balanceFormatted: string;
   valueUSD: number;
   reason: UnavailableReason;
-  status?: string;
+  status?: TokenDiscoveryStatus;
 };
 
 export type SelectedToken = SwappableToken;
@@ -81,6 +107,11 @@ export type SelectedToken = SwappableToken;
 export type DustSweepTokensResponse = {
   swappable: SwappableToken[];
   unavailable: UnavailableToken[];
+  hidden?: UnavailableToken[];
+  suspicious?: UnavailableToken[];
+  excludedOutputAssets?: UnavailableToken[];
+  refreshedAt?: string;
+  chainId?: number;
 };
 
 export type DustSweepRoute = {

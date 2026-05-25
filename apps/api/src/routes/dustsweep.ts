@@ -1,5 +1,5 @@
 import { randomBytes } from "crypto";
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import {
   concatHex,
   decodeAbiParameters,
@@ -91,6 +91,11 @@ const TWO_HOP_FEE_PAIRS = [
 ] as const;
 const MIN_VALUE_USD = Number(process.env.DUST_SWEEP_MIN_VALUE_USD || "0.01");
 const MIN_WL_LIQUIDITY_USD = Number(process.env.DUST_SWEEP_WHITELIST_MIN_LIQUIDITY_USD || "1000");
+const DISCOVERY_MAX_ERC20_BALANCES = Math.max(
+  50,
+  Math.min(500, Number(process.env.DUST_SWEEP_DISCOVERY_MAX_ERC20_BALANCES || "250")),
+);
+const NATIVE_ETH_LOGO_URI = "https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/info/logo.png";
 const DEX = {
   UNISWAP_V3: 0,
   UNISWAP_V4: 1,
@@ -665,6 +670,69 @@ type QuoteSkippedToken = {
   message?: string;
 };
 
+type TokenDiscoveryStatus =
+  | "DISCOVERED"
+  | "PRICED"
+  | "LIQUIDITY_PENDING"
+  | "NOT_SWEEPABLE"
+  | "HIDDEN"
+  | "SPAM"
+  | "UNKNOWN_PRICE"
+  | "NO_LIQUIDITY"
+  | "NATIVE_WRAP_REQUIRED"
+  | "EXCLUDED_OUTPUT_ASSET";
+
+type DiscoveryUnavailableReason =
+  | "NO_LIQUIDITY"
+  | "NOT_WHITELISTED"
+  | "BELOW_THRESHOLD"
+  | "BALANCE_CHANGED"
+  | "QUOTE_FAILED"
+  | "UNKNOWN_PRICE"
+  | "SPAM_OR_DENYLISTED"
+  | "NATIVE_WRAP_REQUIRED"
+  | "OUTPUT_ASSET";
+
+type PriceConfidence = "HIGH" | "MEDIUM" | "LOW" | "NONE";
+
+type TokenMarketHint = {
+  priceUSD: number;
+  liquidityUSD: number;
+  bestDex: string;
+  source: "canonical" | "coingecko" | "dexscreener" | "none";
+  confidence: PriceConfidence;
+};
+
+type TokenRiskResult = {
+  riskScore: number;
+  hiddenByDefault: boolean;
+  blockedFromSweep: boolean;
+  reasons: string[];
+};
+
+type DiscoveryTokenResult = {
+  address: Address;
+  symbol: string;
+  name: string;
+  decimals: number;
+  logoURI?: string;
+  balance: string;
+  balanceFormatted: string;
+  valueUSD: number;
+  bestDex: string;
+  liquidityUSD: number;
+  status: TokenDiscoveryStatus;
+  isNative?: boolean;
+  wrapRequired?: boolean;
+  sourceType: "native" | "wallet";
+  priceUSD: number;
+  priceSource: TokenMarketHint["source"];
+  priceConfidence: PriceConfidence;
+  riskScore: number;
+  riskReasons: string[];
+  reason?: DiscoveryUnavailableReason;
+};
+
 function getFeeBps() {
   const parsed = Number(process.env.DUST_SWEEP_FEE_BPS || "200");
   return Number.isFinite(parsed) ? parsed : 200;
@@ -784,18 +852,24 @@ async function fetchTokenPricesDexScreener(addresses: Address[]): Promise<Record
         quoteToken?: { address?: string };
         liquidity?: { usd?: number };
       }>;
-      // DexScreener returns pairs — pick highest-liquidity price per token
-      const bestByToken = new Map<string, number>();
+      // DexScreener returns pairs; use the highest-liquidity pair, not the highest price.
+      const bestByToken = new Map<string, { price: number; liquidity: number }>();
       for (const pair of pairs) {
         const price = Number(pair.priceUsd || 0);
         if (!price) continue;
         const tokenAddr = (pair.baseToken?.address || "").toLowerCase();
         if (!tokenAddr) continue;
-        const existing = bestByToken.get(tokenAddr) ?? 0;
-        if (price > existing) bestByToken.set(tokenAddr, price);
+        const liquidity = Number(pair.liquidity?.usd || 0);
+        const existing = bestByToken.get(tokenAddr);
+        if (!existing || liquidity > existing.liquidity) {
+          bestByToken.set(tokenAddr, {
+            price,
+            liquidity: Number.isFinite(liquidity) ? liquidity : 0,
+          });
+        }
       }
-      for (const [addr, price] of bestByToken) {
-        prices[addr] = price;
+      for (const [addr, hint] of bestByToken) {
+        prices[addr] = hint.price;
       }
     } catch {
       // ignore batch failure, try next batch
@@ -805,6 +879,11 @@ async function fetchTokenPricesDexScreener(addresses: Address[]): Promise<Record
 }
 
 async function fetchTokenPrices(addresses: Address[]) {
+  const marketHints = await fetchTokenMarketHints(addresses);
+  return Object.fromEntries(
+    Object.entries(marketHints).map(([address, hint]) => [address, hint.priceUSD]),
+  );
+
   const prices: Record<string, number> = {
     [USDC_ADDRESS.toLowerCase()]: 1,
     [USDBC_ADDRESS.toLowerCase()]: 1,
@@ -842,8 +921,9 @@ async function fetchTokenPrices(addresses: Address[]) {
       if (response.ok) {
         const data = (await response.json()) as Record<string, { usd?: number }>;
         for (const [address, value] of Object.entries(data)) {
-          if (value.usd && value.usd > 0) {
-            prices[address.toLowerCase()] = value.usd;
+          const priceUsd = Number(value.usd || 0);
+          if (priceUsd > 0) {
+            prices[address.toLowerCase()] = priceUsd;
           }
         }
       }
@@ -853,6 +933,167 @@ async function fetchTokenPrices(addresses: Address[]) {
   }
 
   return prices;
+}
+
+function emptyMarketHint(): TokenMarketHint {
+  return {
+    priceUSD: 0,
+    liquidityUSD: 0,
+    bestDex: "GENERIC",
+    source: "none",
+    confidence: "NONE",
+  };
+}
+
+function isNativeTokenAddress(address: string) {
+  return address.toLowerCase() === NATIVE_TOKEN_SENTINEL.toLowerCase();
+}
+
+function isOutputAssetAddress(address: string) {
+  const key = address.toLowerCase();
+  return key === USDC_ADDRESS.toLowerCase() || key === WETH_ADDRESS.toLowerCase();
+}
+
+async function fetchTokenMarketHintsDexScreener(addresses: Address[]): Promise<Record<string, TokenMarketHint>> {
+  const hints: Record<string, TokenMarketHint> = {};
+  const batchSize = 30;
+
+  for (let i = 0; i < addresses.length; i += batchSize) {
+    const batch = addresses.slice(i, i + batchSize);
+    try {
+      const response = await fetch(
+        `https://api.dexscreener.com/tokens/v1/base/${batch.join(",")}`,
+        {
+          headers: {
+            Accept: "application/json",
+            "User-Agent": "DustSwap/1.0 (+https://app.dustswap.wtf)",
+          },
+          signal: AbortSignal.timeout(8_000),
+        },
+      );
+      if (!response.ok) continue;
+
+      const pairs = (await response.json()) as Array<{
+        priceUsd?: string;
+        dexId?: string;
+        baseToken?: { address?: string };
+        liquidity?: { usd?: number };
+      }>;
+
+      for (const pair of pairs) {
+        const priceUSD = Number(pair.priceUsd || 0);
+        const liquidityUSD = Number(pair.liquidity?.usd || 0);
+        const tokenAddress = pair.baseToken?.address;
+        if (!tokenAddress || !Number.isFinite(priceUSD) || priceUSD <= 0) continue;
+
+        const key = tokenAddress.toLowerCase();
+        const existing = hints[key];
+        if (existing && existing.liquidityUSD >= liquidityUSD) continue;
+
+        hints[key] = {
+          priceUSD,
+          liquidityUSD: Number.isFinite(liquidityUSD) ? liquidityUSD : 0,
+          bestDex: bestDexFromSource(`dexscreener:${pair.dexId || ""}`),
+          source: "dexscreener",
+          confidence: liquidityUSD >= MIN_WL_LIQUIDITY_USD ? "HIGH" : "MEDIUM",
+        };
+      }
+    } catch {
+      // Discovery is fail-open. Quote validation still runs on demand.
+    }
+  }
+
+  return hints;
+}
+
+async function fetchCoinGeckoTokenPrices(addresses: Address[]): Promise<Record<string, number>> {
+  if (addresses.length === 0) return {};
+
+  try {
+    const url = new URL("https://api.coingecko.com/api/v3/simple/token_price/base");
+    url.searchParams.set("contract_addresses", addresses.map((a) => a.toLowerCase()).join(","));
+    url.searchParams.set("vs_currencies", "usd");
+    const response = await fetch(url, {
+      headers: { Accept: "application/json" },
+      signal: AbortSignal.timeout(6_000),
+    });
+    if (!response.ok) return {};
+
+    const data = (await response.json()) as Record<string, { usd?: number }>;
+    const prices: Record<string, number> = {};
+    for (const [address, value] of Object.entries(data)) {
+      const priceUSD = Number(value.usd || 0);
+      if (Number.isFinite(priceUSD) && priceUSD > 0) {
+        prices[address.toLowerCase()] = priceUSD;
+      }
+    }
+    return prices;
+  } catch {
+    return {};
+  }
+}
+
+async function fetchTokenMarketHints(addresses: Address[]): Promise<Record<string, TokenMarketHint>> {
+  const hints: Record<string, TokenMarketHint> = {};
+  const uniqueAddresses = Array.from(new Set(addresses.map((address) => address.toLowerCase())))
+    .filter((address): address is Address => isAddress(address));
+
+  if (uniqueAddresses.length === 0) return hints;
+
+  for (const stable of [USDC_ADDRESS, USDBC_ADDRESS, USDT_ADDRESS, DAI_ADDRESS]) {
+    hints[stable.toLowerCase()] = {
+      priceUSD: 1,
+      liquidityUSD: 50_000_000,
+      bestDex: "GENERIC",
+      source: "canonical",
+      confidence: "HIGH",
+    };
+  }
+
+  if (
+    uniqueAddresses.some(
+      (address) =>
+        address.toLowerCase() === WETH_ADDRESS.toLowerCase() ||
+        isNativeTokenAddress(address),
+    )
+  ) {
+    const ethUsd = await fetchEthUsdPrice();
+    const ethHint: TokenMarketHint = {
+      priceUSD: ethUsd,
+      liquidityUSD: 50_000_000,
+      bestDex: "UNISWAP_V3",
+      source: "canonical",
+      confidence: "HIGH",
+    };
+    hints[WETH_ADDRESS.toLowerCase()] = ethHint;
+    hints[NATIVE_TOKEN_SENTINEL.toLowerCase()] = ethHint;
+  }
+
+  const dexNeeded = uniqueAddresses.filter(
+    (address) => !isNativeTokenAddress(address) && (hints[address.toLowerCase()]?.priceUSD || 0) === 0,
+  );
+  const dexHints = await fetchTokenMarketHintsDexScreener(dexNeeded);
+  for (const [address, hint] of Object.entries(dexHints)) {
+    const existing = hints[address];
+    if (!existing || existing.priceUSD === 0 || hint.liquidityUSD > existing.liquidityUSD) {
+      hints[address] = hint;
+    }
+  }
+
+  const coingeckoNeeded = uniqueAddresses.filter(
+    (address) => !isNativeTokenAddress(address) && (hints[address.toLowerCase()]?.priceUSD || 0) === 0,
+  );
+  const coingeckoPrices = await fetchCoinGeckoTokenPrices(coingeckoNeeded);
+  for (const [address, priceUSD] of Object.entries(coingeckoPrices)) {
+    hints[address] = {
+      ...emptyMarketHint(),
+      priceUSD,
+      source: "coingecko",
+      confidence: "MEDIUM",
+    };
+  }
+
+  return hints;
 }
 
 async function getCachedTokenResult(address: Address) {
@@ -888,6 +1129,75 @@ async function setCachedTokenResult(address: Address, payload: unknown) {
   } catch {
     // Optional cache table.
   }
+}
+
+async function readNativeBalance(holder: Address) {
+  const result = await baseRpcRequest<Hex>("eth_getBalance", [holder, "latest"], {
+    timeoutMs: 5_000,
+  });
+  return BigInt(result);
+}
+
+function getRiskClassification(args: {
+  symbol: string;
+  name: string;
+  tokenAddress: Address;
+  hasMetadata: boolean;
+  priceUSD: number;
+  liquidityUSD: number;
+  isVerifiedHint: boolean;
+}): TokenRiskResult {
+  const reasons: string[] = [];
+  let riskScore = 0;
+  const label = `${args.symbol} ${args.name}`.toLowerCase();
+  const fallbackSymbol = `${args.tokenAddress.slice(0, 6)}...${args.tokenAddress.slice(-4)}`.toLowerCase();
+
+  if (!args.hasMetadata || args.symbol.toLowerCase() === fallbackSymbol) {
+    riskScore += 25;
+    reasons.push("missing_metadata");
+  }
+
+  if (args.priceUSD <= 0) {
+    riskScore += 20;
+    reasons.push("unknown_price");
+  }
+
+  if (args.liquidityUSD <= 0) {
+    riskScore += 15;
+    reasons.push("no_liquidity_hint");
+  }
+
+  if (!args.isVerifiedHint) {
+    riskScore += 10;
+    reasons.push("unverified_contract");
+  }
+
+  if (
+    /airdrop|claim|reward|voucher|bonus|visit|http|www\.|\.com|\.xyz|\.top|\.vip|\.app|t\.me|telegram/.test(label)
+  ) {
+    riskScore += 80;
+    reasons.push("spammy_name");
+  }
+
+  if (args.symbol.length > 24 || args.name.length > 80) {
+    riskScore += 20;
+    reasons.push("suspicious_metadata_length");
+  }
+
+  return {
+    riskScore,
+    hiddenByDefault: riskScore >= 45 || args.priceUSD <= 0,
+    blockedFromSweep: riskScore >= 80,
+    reasons,
+  };
+}
+
+function roundUsd(value: number) {
+  return Number.isFinite(value) ? Math.round(value * 10000) / 10000 : 0;
+}
+
+function sortByValueDesc(a: DiscoveryTokenResult, b: DiscoveryTokenResult) {
+  return b.valueUSD - a.valueUSD;
 }
 
 async function callContract(to: Address, data: Hex, signal?: AbortSignal) {
@@ -3571,25 +3881,33 @@ dustsweepRoutes.post("/admin/sync-whitelist-pool-events", async (c) => {
   }
 });
 
-dustsweepRoutes.get("/tokens/:address", async (c) => {
-  const rawAddress = c.req.param("address");
+async function handleDustSweepTokensRequest(c: Context, rawAddress?: string) {
   if (!rawAddress || !isAddress(rawAddress)) {
     return c.json(errorJson("A valid wallet address is required"), 400);
   }
 
+  const requestedChainId = Number(c.req.query("chainId") || BASE_CHAIN_ID);
+  if (requestedChainId !== BASE_CHAIN_ID) {
+    return c.json(errorJson("DustSweep discovery is Base-only for this release"), 400);
+  }
+
   const userAddress = normalizeAddress(rawAddress);
-  const runtimeKey = `dustsweep:tokens:${userAddress.toLowerCase()}`;
+  const runtimeKey = `dustsweep:tokens:${BASE_CHAIN_ID}:${userAddress.toLowerCase()}`;
 
   try {
     const result = await runtimeCache.getOrSet(runtimeKey, 30_000, async () => {
+      const cached = await getCachedTokenResult(userAddress);
+      if (cached) return cached;
+
       // ── Wallet-first discovery: fetch ALL balances, not just whitelisted ──
       // Whitelist is used as metadata/liquidity HINTS, not a visibility gate.
-      const [whitelist, erc20Balances] = await Promise.all([
+      const [whitelist, erc20Balances, nativeBalance] = await Promise.all([
         loadWhitelist(),
         alchemyRpc<{ tokenBalances?: AlchemyBalance[] }>(
           "alchemy_getTokenBalances",
           [userAddress, "erc20"],
         ),
+        readNativeBalance(userAddress).catch(() => 0n),
       ]);
 
       const nonZero = (erc20Balances.tokenBalances || []).filter((balance) => {
@@ -3604,14 +3922,57 @@ dustsweepRoutes.get("/tokens/:address", async (c) => {
       const allAddresses = nonZero
         .map((b) => b.contractAddress)
         .filter((a): a is Address => isAddress(a));
-      const prices = await fetchTokenPrices(allAddresses);
+      const marketAddresses = nativeBalance > 0n
+        ? [...allAddresses, NATIVE_TOKEN_SENTINEL]
+        : allAddresses;
+      const marketHints = await fetchTokenMarketHints(marketAddresses);
 
-      type TokenResult = { valueUSD: number; status?: string; reason?: string; [key: string]: unknown };
-      const swappable: TokenResult[] = [];
-      const unavailable: TokenResult[] = [];
+      const swappable: DiscoveryTokenResult[] = [];
+      const unavailable: DiscoveryTokenResult[] = [];
+      const hidden: DiscoveryTokenResult[] = [];
+      const suspicious: DiscoveryTokenResult[] = [];
+      const excludedOutputAssets: DiscoveryTokenResult[] = [];
+
+      if (nativeBalance > 0n) {
+        const nativeMarket = marketHints[NATIVE_TOKEN_SENTINEL.toLowerCase()] || emptyMarketHint();
+        const balanceFormatted = formatUnits(nativeBalance, 18);
+        const valueUSD = Number(balanceFormatted) * nativeMarket.priceUSD;
+        const nativeToken: DiscoveryTokenResult = {
+          address: NATIVE_TOKEN_SENTINEL,
+          symbol: "ETH",
+          name: "Ethereum",
+          decimals: 18,
+          logoURI: NATIVE_ETH_LOGO_URI,
+          balance: nativeBalance.toString(),
+          balanceFormatted,
+          valueUSD: roundUsd(valueUSD),
+          bestDex: nativeMarket.bestDex,
+          liquidityUSD: nativeMarket.liquidityUSD,
+          status: "NATIVE_WRAP_REQUIRED",
+          isNative: true,
+          wrapRequired: true,
+          sourceType: "native",
+          priceUSD: nativeMarket.priceUSD,
+          priceSource: nativeMarket.source,
+          priceConfidence: nativeMarket.confidence,
+          riskScore: 0,
+          riskReasons: [],
+          reason: "NATIVE_WRAP_REQUIRED",
+        };
+
+        if (nativeToken.valueUSD >= MIN_VALUE_USD) {
+          unavailable.push(nativeToken);
+        } else if (nativeToken.valueUSD > 0) {
+          hidden.push({
+            ...nativeToken,
+            status: "HIDDEN",
+            reason: "BELOW_THRESHOLD",
+          });
+        }
+      }
 
       // ── Process ERC-20 balances ──
-      for (const balance of nonZero.slice(0, 200)) {
+      for (const balance of nonZero.slice(0, DISCOVERY_MAX_ERC20_BALANCES)) {
         if (!isAddress(balance.contractAddress)) continue;
 
         const tokenAddress = normalizeAddress(balance.contractAddress);
@@ -3625,6 +3986,7 @@ dustsweepRoutes.get("/tokens/:address", async (c) => {
         let logoURI: string | undefined;
         let liquidityUSD = 0;
         let bestDex: string = "GENERIC";
+        let hasMetadata = false;
 
         if (whitelistRow) {
           decimals = Number(whitelistRow.decimals ?? 18);
@@ -3633,6 +3995,7 @@ dustsweepRoutes.get("/tokens/:address", async (c) => {
           logoURI = whitelistRow.logo_uri ?? undefined;
           liquidityUSD = Number(whitelistRow.liquidity_usd || 0);
           bestDex = bestDexFromSource(whitelistRow.source);
+          hasMetadata = true;
         } else {
           // Not in whitelist — try on-chain metadata read
           try {
@@ -3640,6 +4003,7 @@ dustsweepRoutes.get("/tokens/:address", async (c) => {
             decimals = meta.decimals;
             symbol = meta.symbol;
             name = meta.name;
+            hasMetadata = true;
           } catch {
             // Keep fallbacks
           }
@@ -3647,10 +4011,22 @@ dustsweepRoutes.get("/tokens/:address", async (c) => {
 
         const rawBalance = BigInt(balance.tokenBalance).toString();
         const balanceFormatted = formatUnits(BigInt(rawBalance), decimals);
-        const priceUSD = prices[key] || 0;
+        const market = marketHints[key] || emptyMarketHint();
+        const priceUSD = market.priceUSD;
+        liquidityUSD = Math.max(liquidityUSD, market.liquidityUSD);
+        bestDex = market.bestDex !== "GENERIC" ? market.bestDex : bestDex;
         const valueUSD = Number(balanceFormatted) * priceUSD;
+        const risk = getRiskClassification({
+          symbol,
+          name,
+          tokenAddress,
+          hasMetadata,
+          priceUSD,
+          liquidityUSD,
+          isVerifiedHint: Boolean(whitelistRow),
+        });
 
-        const baseToken = {
+        const baseToken: DiscoveryTokenResult = {
           address: tokenAddress,
           symbol,
           name,
@@ -3658,49 +4034,93 @@ dustsweepRoutes.get("/tokens/:address", async (c) => {
           logoURI,
           balance: rawBalance,
           balanceFormatted,
-          valueUSD: Math.round(valueUSD * 10000) / 10000,
+          valueUSD: roundUsd(valueUSD),
+          bestDex,
+          liquidityUSD,
+          status: liquidityUSD > 0 ? "PRICED" : "LIQUIDITY_PENDING",
+          sourceType: "wallet",
+          priceUSD,
+          priceSource: market.source,
+          priceConfidence: market.confidence,
+          riskScore: risk.riskScore,
+          riskReasons: risk.reasons,
         };
 
         // ── Classification logic ──
         // Skip output tokens (USDC, WETH) — they're not dust
-        if (key === USDC_ADDRESS.toLowerCase() || key === WETH_ADDRESS.toLowerCase()) {
+        if (isOutputAssetAddress(tokenAddress)) {
+          excludedOutputAssets.push({
+            ...baseToken,
+            status: "EXCLUDED_OUTPUT_ASSET",
+            reason: "OUTPUT_ASSET",
+          });
           continue;
         }
 
         // Token discovery only exposes assets that can be selected.
         // Sub-cent known-price balances stay hidden.
-        if (valueUSD < MIN_VALUE_USD && priceUSD > 0) {
+        if (risk.blockedFromSweep) {
+          suspicious.push({
+            ...baseToken,
+            status: "SPAM",
+            reason: "SPAM_OR_DENYLISTED",
+          });
+          continue;
+        }
+
+        if (baseToken.valueUSD < MIN_VALUE_USD && priceUSD > 0) {
+          hidden.push({
+            ...baseToken,
+            status: "HIDDEN",
+            reason: "BELOW_THRESHOLD",
+          });
           continue;
         }
 
         // Unknown price — still show but classify
         if (priceUSD === 0) {
-          // If it's in the whitelist with liquidity, it's probably sweepable
-          if (whitelistRow && liquidityUSD > MIN_WL_LIQUIDITY_USD) {
-            swappable.push({
-              ...baseToken,
-              bestDex,
-              liquidityUSD,
-              status: "SWAPPABLE",
-            });
-          } else {
-            continue;
-          }
+          hidden.push({
+            ...baseToken,
+            status: "UNKNOWN_PRICE",
+            reason: "UNKNOWN_PRICE",
+          });
           continue;
         }
 
         // Token has price and value — mark as swappable
+        if (risk.hiddenByDefault) {
+          suspicious.push({
+            ...baseToken,
+            status: "HIDDEN",
+            reason: "SPAM_OR_DENYLISTED",
+          });
+          continue;
+        }
+
         swappable.push({
           ...baseToken,
-          bestDex,
-          liquidityUSD,
-          status: "SWAPPABLE",
+          status: liquidityUSD > 0 ? "PRICED" : "LIQUIDITY_PENDING",
         });
       }
 
-      swappable.sort((a, b) => b.valueUSD - a.valueUSD);
+      swappable.sort(sortByValueDesc);
+      unavailable.sort(sortByValueDesc);
+      hidden.sort(sortByValueDesc);
+      suspicious.sort(sortByValueDesc);
+      excludedOutputAssets.sort(sortByValueDesc);
 
-      return { swappable, unavailable };
+      const payload = {
+        chainId: BASE_CHAIN_ID,
+        refreshedAt: new Date().toISOString(),
+        swappable,
+        unavailable,
+        hidden,
+        suspicious,
+        excludedOutputAssets,
+      };
+
+      await setCachedTokenResult(userAddress, payload);
+      return payload;
     });
 
     return c.json(result);
@@ -3708,6 +4128,14 @@ dustsweepRoutes.get("/tokens/:address", async (c) => {
     console.error("[dustsweep/tokens] Error:", error);
     return c.json(errorJson((error as Error).message || "Failed to load tokens"), 500);
   }
+}
+
+dustsweepRoutes.get("/tokens", async (c) => {
+  return handleDustSweepTokensRequest(c, c.req.query("address"));
+});
+
+dustsweepRoutes.get("/tokens/:address", async (c) => {
+  return handleDustSweepTokensRequest(c, c.req.param("address"));
 });
 
 dustsweepRoutes.post("/quote", async (c) => {
@@ -4009,6 +4437,14 @@ dustsweepRoutes.post("/build-tx", async (c) => {
     )
   ) {
     return c.json(errorJson("Invalid route payload"), 400);
+  }
+  if (routes.some((route) => isNativeTokenAddress(route.tokenIn))) {
+    return c.json(
+      errorJson("Native ETH must be wrapped to WETH before sweeping.", {
+        code: "NATIVE_INPUT_UNSUPPORTED",
+      }),
+      400,
+    );
   }
 
   const userAddress = normalizeAddress(body.userAddress);

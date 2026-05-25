@@ -9,6 +9,7 @@ function reasonBadge(reason: UnavailableToken["reason"]) {
   if (reason === "BALANCE_CHANGED") return "Balance changed";
   if (reason === "QUOTE_FAILED") return "No route";
   if (reason === "NATIVE_WRAP_REQUIRED") return "Wrap to WETH";
+  if (reason === "OUTPUT_ASSET") return "Output asset";
   if (reason === "UNKNOWN_PRICE") return "No price";
   if (reason === "SPAM_OR_DENYLISTED") return "Blocked";
   return "Too small";
@@ -37,7 +38,7 @@ export function UnavailablePanel({
   return (
     <div className="rounded-[8px] bg-white px-3 py-3">
       <div className="mb-2 flex items-center justify-between gap-3">
-        <h3 className="text-sm font-medium text-slate-600">Unavailable for sweep:</h3>
+        <h3 className="text-sm font-medium text-slate-600">Hidden or unavailable:</h3>
         <button
           type="button"
           onClick={onClearAll}

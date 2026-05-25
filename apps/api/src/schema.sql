@@ -98,6 +98,152 @@ CREATE TABLE IF NOT EXISTS dustsweep_token_cache (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS chain_registry (
+  chain_id              INTEGER PRIMARY KEY,
+  chain_slug            TEXT NOT NULL UNIQUE,
+  name                  TEXT NOT NULL,
+  native_token_id       TEXT NOT NULL,
+  wrapped_token_address TEXT NOT NULL,
+  explorer_url          TEXT,
+  updated_at            TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+INSERT INTO chain_registry (
+  chain_id,
+  chain_slug,
+  name,
+  native_token_id,
+  wrapped_token_address,
+  explorer_url
+) VALUES (
+  8453,
+  'base',
+  'Base',
+  '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE',
+  '0x4200000000000000000000000000000000000006',
+  'https://basescan.org'
+) ON CONFLICT (chain_id) DO UPDATE SET
+  chain_slug = EXCLUDED.chain_slug,
+  name = EXCLUDED.name,
+  native_token_id = EXCLUDED.native_token_id,
+  wrapped_token_address = EXCLUDED.wrapped_token_address,
+  explorer_url = EXCLUDED.explorer_url,
+  updated_at = NOW();
+
+CREATE TABLE IF NOT EXISTS token_metadata (
+  chain_id              INTEGER NOT NULL,
+  token_address         TEXT NOT NULL,
+  is_native             BOOLEAN NOT NULL DEFAULT FALSE,
+  wrapped_token_address TEXT,
+  name                  TEXT,
+  symbol                TEXT,
+  display_symbol        TEXT,
+  optimized_symbol      TEXT,
+  decimals              INTEGER,
+  logo_url              TEXT,
+  verified_contract     BOOLEAN NOT NULL DEFAULT FALSE,
+  deployed_at           TIMESTAMPTZ,
+  protocol_id           TEXT,
+  updated_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (chain_id, token_address)
+);
+
+CREATE TABLE IF NOT EXISTS token_prices (
+  chain_id      INTEGER NOT NULL,
+  token_address TEXT NOT NULL,
+  price_usd     NUMERIC NOT NULL DEFAULT 0,
+  source        TEXT NOT NULL,
+  confidence    TEXT NOT NULL DEFAULT 'NONE',
+  updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  expires_at    TIMESTAMPTZ NOT NULL,
+  PRIMARY KEY (chain_id, token_address)
+);
+
+CREATE TABLE IF NOT EXISTS token_liquidity (
+  chain_id           INTEGER NOT NULL,
+  token_address      TEXT NOT NULL,
+  has_dex_liquidity  BOOLEAN NOT NULL DEFAULT FALSE,
+  best_venue         TEXT,
+  best_liquidity_usd NUMERIC NOT NULL DEFAULT 0,
+  quoteable_hint     BOOLEAN,
+  updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  expires_at         TIMESTAMPTZ NOT NULL,
+  PRIMARY KEY (chain_id, token_address)
+);
+
+CREATE TABLE IF NOT EXISTS token_risk_flags (
+  chain_id           INTEGER NOT NULL,
+  token_address      TEXT NOT NULL,
+  risk_score         INTEGER NOT NULL DEFAULT 0,
+  hidden_by_default  BOOLEAN NOT NULL DEFAULT FALSE,
+  blocked_from_sweep BOOLEAN NOT NULL DEFAULT FALSE,
+  reasons            JSONB NOT NULL DEFAULT '[]'::jsonb,
+  manual_override    JSONB,
+  updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (chain_id, token_address)
+);
+
+CREATE TABLE IF NOT EXISTS wallet_token_balances (
+  chain_id         INTEGER NOT NULL,
+  wallet_address   TEXT NOT NULL,
+  token_address    TEXT NOT NULL,
+  source_type      TEXT NOT NULL,
+  raw_amount       TEXT NOT NULL,
+  formatted_amount NUMERIC,
+  usd_value        NUMERIC NOT NULL DEFAULT 0,
+  discovered_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  metadata_version TEXT,
+  PRIMARY KEY (chain_id, wallet_address, token_address, source_type)
+);
+
+CREATE TABLE IF NOT EXISTS wallet_discovery_jobs (
+  id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  wallet_address TEXT NOT NULL,
+  chain_id     INTEGER NOT NULL DEFAULT 8453,
+  status       TEXT NOT NULL,
+  started_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  finished_at  TIMESTAMPTZ,
+  error        TEXT,
+  requested_by TEXT
+);
+
+CREATE TABLE IF NOT EXISTS token_quote_cache (
+  chain_id      INTEGER NOT NULL,
+  token_in      TEXT NOT NULL,
+  token_out     TEXT NOT NULL,
+  amount_bucket TEXT NOT NULL,
+  status        TEXT NOT NULL,
+  source        TEXT,
+  payload       JSONB,
+  expires_at    TIMESTAMPTZ NOT NULL,
+  updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (chain_id, token_in, token_out, amount_bucket)
+);
+
+CREATE TABLE IF NOT EXISTS dustsweep_routeability_cache (
+  chain_id      INTEGER NOT NULL,
+  token_in      TEXT NOT NULL,
+  token_out     TEXT NOT NULL,
+  amount_bucket TEXT NOT NULL,
+  source        TEXT,
+  status        TEXT NOT NULL,
+  payload       JSONB,
+  expires_at    TIMESTAMPTZ NOT NULL,
+  updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (chain_id, token_in, token_out, amount_bucket)
+);
+
+CREATE INDEX IF NOT EXISTS idx_wallet_token_balances_wallet_value
+  ON wallet_token_balances(wallet_address, usd_value DESC);
+CREATE INDEX IF NOT EXISTS idx_token_prices_expires
+  ON token_prices(expires_at);
+CREATE INDEX IF NOT EXISTS idx_token_liquidity_expires
+  ON token_liquidity(expires_at);
+CREATE INDEX IF NOT EXISTS idx_token_quote_cache_expires
+  ON token_quote_cache(expires_at);
+CREATE INDEX IF NOT EXISTS idx_routeability_expires
+  ON dustsweep_routeability_cache(expires_at);
+
 -- Point events ledger
 CREATE TABLE IF NOT EXISTS point_events (
   id            SERIAL PRIMARY KEY,
@@ -238,6 +384,15 @@ ALTER TABLE streak_recovery_events ENABLE ROW LEVEL SECURITY;
 ALTER TABLE spin_history   ENABLE ROW LEVEL SECURITY;
 ALTER TABLE referrals      ENABLE ROW LEVEL SECURITY;
 ALTER TABLE sweep_history  ENABLE ROW LEVEL SECURITY;
+ALTER TABLE chain_registry ENABLE ROW LEVEL SECURITY;
+ALTER TABLE token_metadata ENABLE ROW LEVEL SECURITY;
+ALTER TABLE token_prices ENABLE ROW LEVEL SECURITY;
+ALTER TABLE token_liquidity ENABLE ROW LEVEL SECURITY;
+ALTER TABLE token_risk_flags ENABLE ROW LEVEL SECURITY;
+ALTER TABLE wallet_token_balances ENABLE ROW LEVEL SECURITY;
+ALTER TABLE wallet_discovery_jobs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE token_quote_cache ENABLE ROW LEVEL SECURITY;
+ALTER TABLE dustsweep_routeability_cache ENABLE ROW LEVEL SECURITY;
 
 -- Allow service-role access (backend uses service key)
 DROP POLICY IF EXISTS "service_all_users"      ON users;
@@ -248,6 +403,15 @@ DROP POLICY IF EXISTS "service_all_recoveries" ON streak_recovery_events;
 DROP POLICY IF EXISTS "service_all_spin_history" ON spin_history;
 DROP POLICY IF EXISTS "service_all_referrals"  ON referrals;
 DROP POLICY IF EXISTS "service_all_history"    ON sweep_history;
+DROP POLICY IF EXISTS "service_all_chain_registry" ON chain_registry;
+DROP POLICY IF EXISTS "service_all_token_metadata" ON token_metadata;
+DROP POLICY IF EXISTS "service_all_token_prices" ON token_prices;
+DROP POLICY IF EXISTS "service_all_token_liquidity" ON token_liquidity;
+DROP POLICY IF EXISTS "service_all_token_risk_flags" ON token_risk_flags;
+DROP POLICY IF EXISTS "service_all_wallet_token_balances" ON wallet_token_balances;
+DROP POLICY IF EXISTS "service_all_wallet_discovery_jobs" ON wallet_discovery_jobs;
+DROP POLICY IF EXISTS "service_all_token_quote_cache" ON token_quote_cache;
+DROP POLICY IF EXISTS "service_all_routeability_cache" ON dustsweep_routeability_cache;
 CREATE POLICY "service_all_users"         ON users          FOR ALL USING (true);
 CREATE POLICY "service_all_events"        ON point_events   FOR ALL USING (true);
 CREATE POLICY "service_all_checkins"      ON check_ins      FOR ALL USING (true);
@@ -256,6 +420,15 @@ CREATE POLICY "service_all_recoveries"    ON streak_recovery_events FOR ALL USIN
 CREATE POLICY "service_all_spin_history"  ON spin_history   FOR ALL USING (true);
 CREATE POLICY "service_all_referrals"     ON referrals      FOR ALL USING (true);
 CREATE POLICY "service_all_history"       ON sweep_history  FOR ALL USING (true);
+CREATE POLICY "service_all_chain_registry" ON chain_registry FOR ALL USING (true);
+CREATE POLICY "service_all_token_metadata" ON token_metadata FOR ALL USING (true);
+CREATE POLICY "service_all_token_prices" ON token_prices FOR ALL USING (true);
+CREATE POLICY "service_all_token_liquidity" ON token_liquidity FOR ALL USING (true);
+CREATE POLICY "service_all_token_risk_flags" ON token_risk_flags FOR ALL USING (true);
+CREATE POLICY "service_all_wallet_token_balances" ON wallet_token_balances FOR ALL USING (true);
+CREATE POLICY "service_all_wallet_discovery_jobs" ON wallet_discovery_jobs FOR ALL USING (true);
+CREATE POLICY "service_all_token_quote_cache" ON token_quote_cache FOR ALL USING (true);
+CREATE POLICY "service_all_routeability_cache" ON dustsweep_routeability_cache FOR ALL USING (true);
 
 CREATE OR REPLACE FUNCTION adjust_spin_tickets(
   p_user_id INTEGER,

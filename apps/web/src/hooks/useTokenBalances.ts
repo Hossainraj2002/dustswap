@@ -30,9 +30,26 @@ function normalizeTokenPayload(payload: unknown): DustSweepTokensResponse {
   }
 
   const response = data as Partial<DustSweepTokensResponse>;
+  const unavailable = [
+    ...(Array.isArray(response.unavailable) ? response.unavailable : []),
+    ...(Array.isArray(response.hidden) ? response.hidden : []),
+    ...(Array.isArray(response.suspicious) ? response.suspicious : []),
+    ...(Array.isArray(response.excludedOutputAssets) ? response.excludedOutputAssets : []),
+  ];
+  const unavailableByAddress = new Map(
+    unavailable.map((token) => [token.address.toLowerCase(), token]),
+  );
+
   return {
     swappable: Array.isArray(response.swappable) ? response.swappable : [],
-    unavailable: Array.isArray(response.unavailable) ? response.unavailable : [],
+    unavailable: Array.from(unavailableByAddress.values()),
+    hidden: Array.isArray(response.hidden) ? response.hidden : [],
+    suspicious: Array.isArray(response.suspicious) ? response.suspicious : [],
+    excludedOutputAssets: Array.isArray(response.excludedOutputAssets)
+      ? response.excludedOutputAssets
+      : [],
+    refreshedAt: response.refreshedAt,
+    chainId: response.chainId,
   };
 }
 
@@ -54,7 +71,11 @@ export function useTokenBalances(address?: Address): TokenBalanceState {
     setError(null);
 
     try {
-      const response = await fetch(`/api/dustsweep/tokens/${address}`, {
+      const params = new URLSearchParams({
+        address,
+        chainId: "8453",
+      });
+      const response = await fetch(`/api/dustsweep/tokens?${params.toString()}`, {
         cache: "no-store",
       });
       const payload = await response.json().catch(() => null);

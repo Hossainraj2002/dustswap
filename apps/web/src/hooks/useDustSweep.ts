@@ -658,8 +658,7 @@ export function useDustSweep(): UseDustSweepReturn {
       if (
         token.symbol === "USDC" ||
         token.symbol === "USDbC" ||
-        token.symbol === "WETH" ||
-        token.symbol === "ETH"
+        token.symbol === "WETH"
       ) {
         byAddress.set(token.address.toLowerCase(), token);
       }

@@ -47,6 +47,7 @@ function reasonText(reason: UnavailableToken["reason"]) {
   if (reason === "BALANCE_CHANGED") return "Balance changed";
   if (reason === "QUOTE_FAILED") return "Quote failed";
   if (reason === "NATIVE_WRAP_REQUIRED") return "Wrap to WETH required";
+  if (reason === "OUTPUT_ASSET") return "Output asset";
   if (reason === "UNKNOWN_PRICE") return "No price";
   if (reason === "SPAM_OR_DENYLISTED") return "Blocked token";
   return "Below threshold";
@@ -69,6 +70,16 @@ function fmtUSD(value: number | undefined) {
   if (v >= 0.01) return `$${v.toFixed(2)}`;
   if (v > 0) return "<$0.01";
   return "";
+}
+
+function discoveryBadge(token: Token, mutedReason?: string) {
+  if (mutedReason) return mutedReason;
+  if (token.status === "LIQUIDITY_PENDING") return "Quote pending";
+  if (token.status === "PRICED") return token.priceConfidence === "HIGH" ? "High confidence" : "Priced";
+  if (token.status === "UNKNOWN_PRICE") return "No price";
+  if (token.status === "HIDDEN") return "Hidden";
+  if (token.status === "SPAM") return "Blocked";
+  return token.name;
 }
 
 function NetworkButton({
@@ -118,6 +129,7 @@ function AssetRow({
 }) {
   const balance = fmtBalance(token.balanceFormatted);
   const usd = fmtUSD(token.valueUSD);
+  const subtitle = discoveryBadge(token, mutedReason);
 
   return (
     <button
@@ -136,7 +148,7 @@ function AssetRow({
         <TokenLogo token={token} size="md" muted={disabled} />
         <span className="min-w-0">
           <span className="block truncate text-base font-semibold text-slate-950">{token.symbol}</span>
-          <span className="block truncate text-sm text-slate-500">{mutedReason || token.name}</span>
+          <span className="block truncate text-sm text-slate-500">{subtitle}</span>
         </span>
       </span>
       <span className="shrink-0 text-right">

@@ -67,6 +67,137 @@ create table if not exists public.dustsweep_token_cache (
   updated_at timestamptz not null default now()
 );
 
+create table if not exists public.chain_registry (
+  chain_id              integer primary key,
+  chain_slug            text not null unique,
+  name                  text not null,
+  native_token_id       text not null,
+  wrapped_token_address text not null,
+  explorer_url          text,
+  updated_at            timestamptz not null default now()
+);
+
+insert into public.chain_registry (
+  chain_id,
+  chain_slug,
+  name,
+  native_token_id,
+  wrapped_token_address,
+  explorer_url
+) values (
+  8453,
+  'base',
+  'Base',
+  '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE',
+  '0x4200000000000000000000000000000000000006',
+  'https://basescan.org'
+) on conflict (chain_id) do update set
+  chain_slug = excluded.chain_slug,
+  name = excluded.name,
+  native_token_id = excluded.native_token_id,
+  wrapped_token_address = excluded.wrapped_token_address,
+  explorer_url = excluded.explorer_url,
+  updated_at = now();
+
+create table if not exists public.token_metadata (
+  chain_id              integer not null,
+  token_address         text not null,
+  is_native             boolean not null default false,
+  wrapped_token_address text,
+  name                  text,
+  symbol                text,
+  display_symbol        text,
+  optimized_symbol      text,
+  decimals              integer,
+  logo_url              text,
+  verified_contract     boolean not null default false,
+  deployed_at           timestamptz,
+  protocol_id           text,
+  updated_at            timestamptz not null default now(),
+  primary key (chain_id, token_address)
+);
+
+create table if not exists public.token_prices (
+  chain_id      integer not null,
+  token_address text not null,
+  price_usd     numeric not null default 0,
+  source        text not null,
+  confidence    text not null default 'NONE',
+  updated_at    timestamptz not null default now(),
+  expires_at    timestamptz not null,
+  primary key (chain_id, token_address)
+);
+
+create table if not exists public.token_liquidity (
+  chain_id           integer not null,
+  token_address      text not null,
+  has_dex_liquidity  boolean not null default false,
+  best_venue         text,
+  best_liquidity_usd numeric not null default 0,
+  quoteable_hint     boolean,
+  updated_at         timestamptz not null default now(),
+  expires_at         timestamptz not null,
+  primary key (chain_id, token_address)
+);
+
+create table if not exists public.token_risk_flags (
+  chain_id           integer not null,
+  token_address      text not null,
+  risk_score         integer not null default 0,
+  hidden_by_default  boolean not null default false,
+  blocked_from_sweep boolean not null default false,
+  reasons            jsonb not null default '[]'::jsonb,
+  manual_override    jsonb,
+  updated_at         timestamptz not null default now(),
+  primary key (chain_id, token_address)
+);
+
+create table if not exists public.wallet_token_balances (
+  chain_id         integer not null,
+  wallet_address   text not null,
+  token_address    text not null,
+  source_type      text not null,
+  raw_amount       text not null,
+  formatted_amount numeric,
+  usd_value        numeric not null default 0,
+  discovered_at    timestamptz not null default now(),
+  metadata_version text,
+  primary key (chain_id, wallet_address, token_address, source_type)
+);
+
+create table if not exists public.wallet_discovery_jobs (
+  id             uuid primary key default gen_random_uuid(),
+  wallet_address text not null,
+  chain_id       integer not null default 8453,
+  status         text not null,
+  started_at     timestamptz not null default now(),
+  finished_at    timestamptz,
+  error          text,
+  requested_by   text
+);
+
+create table if not exists public.token_quote_cache (
+  chain_id      integer not null,
+  token_in      text not null,
+  token_out     text not null,
+  amount_bucket text not null,
+  status        text not null,
+  source        text,
+  payload       jsonb,
+  expires_at    timestamptz not null,
+  updated_at    timestamptz not null default now(),
+  primary key (chain_id, token_in, token_out, amount_bucket)
+);
+
+create index if not exists idx_wallet_token_balances_wallet_value
+  on public.wallet_token_balances(wallet_address, usd_value desc);
+create index if not exists idx_token_prices_expires
+  on public.token_prices(expires_at);
+create index if not exists idx_token_liquidity_expires
+  on public.token_liquidity(expires_at);
+create index if not exists idx_token_quote_cache_expires
+  on public.token_quote_cache(expires_at);
+
 insert into public.tokens (address, symbol, name, decimals, logo_uri, chain_id, is_active, source, liquidity_usd)
 values
   ('0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', 'USDC', 'USD Coin', 6, 'https://basescan.org/token/images/centre-usdc_28.png', 8453, true, 'default', 50000000),
@@ -101,6 +232,36 @@ create table if not exists public.dustsweep_routeability_cache (
 
 create index if not exists idx_routeability_expires
   on public.dustsweep_routeability_cache(expires_at);
+
+alter table public.chain_registry enable row level security;
+alter table public.token_metadata enable row level security;
+alter table public.token_prices enable row level security;
+alter table public.token_liquidity enable row level security;
+alter table public.token_risk_flags enable row level security;
+alter table public.wallet_token_balances enable row level security;
+alter table public.wallet_discovery_jobs enable row level security;
+alter table public.token_quote_cache enable row level security;
+alter table public.dustsweep_routeability_cache enable row level security;
+
+drop policy if exists "service_all_chain_registry" on public.chain_registry;
+drop policy if exists "service_all_token_metadata" on public.token_metadata;
+drop policy if exists "service_all_token_prices" on public.token_prices;
+drop policy if exists "service_all_token_liquidity" on public.token_liquidity;
+drop policy if exists "service_all_token_risk_flags" on public.token_risk_flags;
+drop policy if exists "service_all_wallet_token_balances" on public.wallet_token_balances;
+drop policy if exists "service_all_wallet_discovery_jobs" on public.wallet_discovery_jobs;
+drop policy if exists "service_all_token_quote_cache" on public.token_quote_cache;
+drop policy if exists "service_all_routeability_cache" on public.dustsweep_routeability_cache;
+
+create policy "service_all_chain_registry" on public.chain_registry for all using (true);
+create policy "service_all_token_metadata" on public.token_metadata for all using (true);
+create policy "service_all_token_prices" on public.token_prices for all using (true);
+create policy "service_all_token_liquidity" on public.token_liquidity for all using (true);
+create policy "service_all_token_risk_flags" on public.token_risk_flags for all using (true);
+create policy "service_all_wallet_token_balances" on public.wallet_token_balances for all using (true);
+create policy "service_all_wallet_discovery_jobs" on public.wallet_discovery_jobs for all using (true);
+create policy "service_all_token_quote_cache" on public.token_quote_cache for all using (true);
+create policy "service_all_routeability_cache" on public.dustsweep_routeability_cache for all using (true);
 
 -- ── NOTE ────────────────────────────────────────────────────────────────────
 -- The `tokens` table is used as a METADATA and LIQUIDITY HINT registry.
