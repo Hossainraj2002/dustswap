@@ -285,6 +285,25 @@ function getErrorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error || "");
 }
 
+function getErrorCode(error: unknown) {
+  if (!error || typeof error !== "object") {
+    return "";
+  }
+
+  const candidate = error as {
+    code?: unknown;
+    cause?: { code?: unknown };
+    data?: { code?: unknown; originalError?: { code?: unknown } };
+  };
+  return String(
+    candidate.code ??
+      candidate.cause?.code ??
+      candidate.data?.code ??
+      candidate.data?.originalError?.code ??
+      "",
+  );
+}
+
 function isWalletLockedError(error: unknown) {
   const lowered = getErrorMessage(error).toLowerCase();
   return (
@@ -296,8 +315,10 @@ function isWalletLockedError(error: unknown) {
 }
 
 function isBatchFallbackError(error: unknown) {
+  const code = getErrorCode(error);
   const lowered = getErrorMessage(error).toLowerCase();
   return (
+    ["4100", "5700", "5710", "5740", "5750", "5760"].includes(code) ||
     lowered.includes("wallet_sendcalls") ||
     lowered.includes("wallet sendcalls") ||
     lowered.includes("wallet_getcallsstatus") ||
@@ -314,7 +335,20 @@ function isBatchFallbackError(error: unknown) {
     lowered.includes("not supported") ||
     lowered.includes("not available") ||
     lowered.includes("unavailable") ||
+    lowered.includes("bundle too large") ||
+    lowered.includes("batch too large") ||
+    lowered.includes("batch size") ||
+    lowered.includes("invalid params") ||
+    lowered.includes("unauthorized") ||
+    lowered.includes("upgrade rejected") ||
+    lowered.includes("atomicity not supported") ||
+    lowered.includes("unsupported chain") ||
+    lowered.includes("unsupported non-optional capability") ||
+    lowered.includes("5700") ||
+    lowered.includes("5710") ||
+    lowered.includes("5740") ||
     lowered.includes("5750") ||
+    lowered.includes("5760") ||
     (lowered.includes("batch") &&
       (lowered.includes("failed") ||
         lowered.includes("rejected") ||
@@ -326,6 +360,46 @@ function getBatchFallbackNotice(walletName?: string | null, walletKey?: DustSwee
   return walletKey === "metamask" || walletName?.toLowerCase().includes("metamask")
     ? "MetaMask batch was not ready, using standard approvals."
     : "Wallet batch was not ready, using standard approvals.";
+}
+
+function getBatchFallbackNoticeForError(args: {
+  walletName?: string | null;
+  walletKey?: DustSweepWalletKey;
+  error: unknown;
+  callCount?: number;
+}) {
+  const prefix =
+    args.walletKey === "metamask" || args.walletName?.toLowerCase().includes("metamask")
+      ? "MetaMask batch"
+      : "Wallet batch";
+  const code = getErrorCode(args.error);
+  const lowered = getErrorMessage(args.error).toLowerCase();
+
+  if (code === "5740" || lowered.includes("bundle too large") || lowered.includes("batch too large")) {
+    return `${prefix} was too large${args.callCount ? ` (${args.callCount} calls)` : ""}, using standard approvals. Try fewer tokens for one-click batch.`;
+  }
+
+  if (code === "5750" || lowered.includes("upgrade rejected")) {
+    return `${prefix} needs the MetaMask smart account upgrade, but the upgrade was rejected. Using standard approvals.`;
+  }
+
+  if (code === "5760" || lowered.includes("atomicity not supported")) {
+    return `${prefix} is not atomic for this account/network right now, using standard approvals.`;
+  }
+
+  if (code === "4100" || lowered.includes("unauthorized")) {
+    return `${prefix} was not authorized for this account, using standard approvals. Reconnect MetaMask and try again.`;
+  }
+
+  if (code === "5710" || lowered.includes("unsupported chain")) {
+    return `${prefix} is not enabled for this network in MetaMask, using standard approvals.`;
+  }
+
+  if (code === "-32602" || lowered.includes("invalid params")) {
+    return `${prefix} rejected the batch request format, using standard approvals.`;
+  }
+
+  return getBatchFallbackNotice(args.walletName, args.walletKey);
 }
 
 function uniqueApprovalRequirements(routes: DustSweepQuoteResponse["routes"]) {
@@ -1111,6 +1185,7 @@ export function useDustSweep(): UseDustSweepReturn {
         dataSuffix: DATA_SUFFIX,
       },
     ];
+    const callCount = calls.length;
     const capabilities = buildSendCallsCapabilities({
       usePaymasterCapabilities: args.usePaymasterCapabilities,
     });
@@ -1138,6 +1213,13 @@ export function useDustSweep(): UseDustSweepReturn {
         if (isWalletLockedError(error)) {
           throw error;
         }
+        console.warn("DustSweep walletClient.sendCalls failed before raw wallet_sendCalls retry.", {
+          walletKey: args.walletKey,
+          requireAtomic,
+          callCount,
+          code: getErrorCode(error),
+          message: getErrorMessage(error),
+        });
       }
 
       if (viemCallId) {
@@ -1192,6 +1274,13 @@ export function useDustSweep(): UseDustSweepReturn {
         if (isRejectedByUser(error) || isWalletLockedError(error)) {
           throw error;
         }
+        console.warn("DustSweep raw wallet_sendCalls provider failed.", {
+          walletKey: args.walletKey,
+          requireAtomic,
+          callCount,
+          code: getErrorCode(error),
+          message: getErrorMessage(error),
+        });
         lastSendCallsError = error;
       }
     }
@@ -1351,6 +1440,8 @@ export function useDustSweep(): UseDustSweepReturn {
       const txValue = buildTx.value ? BigInt(buildTx.value) : 0n;
       const sweepTarget = buildTx.routerAddress || buildTx.contractAddress;
       const hasV2Approvals = lane === "owned_v2" && approvalRequirements.length > 0;
+      const bundledCallCount =
+        hasV2Approvals ? buildApprovalCalls(approvalRequirements, approvalSpender).length + 1 : 1;
       const usesMetaMask7702 = walletProfile.executionStrategy === "metamask_7702";
       const usesTokenPocketExisting = walletProfile.executionStrategy === "tokenpocket_existing";
       const shouldTryBundledV2 =
@@ -1434,7 +1525,14 @@ export function useDustSweep(): UseDustSweepReturn {
 
             console.warn("Compatible DustSweep wallet_sendCalls failed.", compatibleBundleError);
             if (isBatchFallbackError(strictBundleError) || isBatchFallbackError(compatibleBundleError)) {
-              setExecutionNotice(getBatchFallbackNotice(walletProfile.walletName, walletProfile.walletKey));
+              setExecutionNotice(
+                getBatchFallbackNoticeForError({
+                  walletName: walletProfile.walletName,
+                  walletKey: walletProfile.walletKey,
+                  error: compatibleBundleError,
+                  callCount: bundledCallCount,
+                }),
+              );
               hash = await sendStandardSweepWithApprovals();
             } else {
               throw new Error(WALLET_BATCH_UNSUPPORTED_MESSAGE);
@@ -1491,6 +1589,7 @@ export function useDustSweep(): UseDustSweepReturn {
     quote,
     refreshQuote,
     refreshTokens,
+    buildApprovalCalls,
     sendAtomicSweepCalls,
     sendTokenApprovals,
     selectedTokens.length,
