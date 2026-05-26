@@ -386,6 +386,35 @@ function SectionBadge({ label, count }: { label: string; count: number }) {
   );
 }
 
+function CategorySectionIntro({
+  eyebrow,
+  title,
+  description,
+  badgeLabel,
+  count,
+}: {
+  eyebrow: string;
+  title: string;
+  description: string;
+  badgeLabel: string;
+  count: number;
+}) {
+  return (
+    <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+      <div>
+        <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-slate-400">
+          {eyebrow}
+        </p>
+        <h3 className="mt-1 text-lg font-semibold tracking-[-0.02em] text-slate-950">
+          {title}
+        </h3>
+        <p className="mt-1 text-sm text-slate-500">{description}</p>
+      </div>
+      <SectionBadge label={badgeLabel} count={count} />
+    </div>
+  );
+}
+
 export function QuestBoard() {
   const { address, isConnected } = useAccount();
   const { signMessageAsync } = useSignMessage();
@@ -557,29 +586,33 @@ export function QuestBoard() {
     );
   }, [board?.quests]);
 
-  const filteredQuests = useMemo(() => {
+  const activeVisibleQuests = useMemo(() => {
     return visibleQuests.filter((quest) => {
-      if (quest.category !== categoryFilter) {
-        return false;
-      }
-
       if (quest.progressWindow === "once" && quest.progress?.completedAt) {
         return false;
       }
 
       return true;
     });
-  }, [categoryFilter, visibleQuests]);
+  }, [visibleQuests]);
+
+  const socialQuests = useMemo(() => {
+    return activeVisibleQuests.filter((quest) => quest.category === "social");
+  }, [activeVisibleQuests]);
+
+  const onchainQuests = useMemo(() => {
+    return activeVisibleQuests.filter((quest) => quest.category === "onchain");
+  }, [activeVisibleQuests]);
 
   const onchainSections = useMemo(() => {
     return ONCHAIN_WINDOWS.map((section) => ({
       ...section,
-      quests: filteredQuests.filter(
-        (quest) =>
-          quest.category === "onchain" && quest.progressWindow === section.key
-      ),
+      quests: onchainQuests.filter((quest) => quest.progressWindow === section.key),
     })).filter((section) => section.quests.length > 0);
-  }, [filteredQuests]);
+  }, [onchainQuests]);
+
+  const primaryQuests = categoryFilter === "social" ? socialQuests : onchainQuests;
+  const secondaryQuests = categoryFilter === "social" ? onchainQuests : socialQuests;
 
   const completedCount = visibleQuests.filter(
     (quest) => quest.progress?.completedAt
@@ -1236,6 +1269,29 @@ export function QuestBoard() {
     );
   }
 
+  function renderQuestGrid(quests: QuestItem[]) {
+    return (
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+        {quests.map((quest) => renderQuestCard(quest))}
+      </div>
+    );
+  }
+
+  function renderOnchainQuestSections() {
+    return (
+      <div className="space-y-4">
+        {onchainSections.map((section) => (
+          <section key={section.key} className="space-y-2.5">
+            <SectionBadge label={section.label} count={section.quests.length} />
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+              {section.quests.map((quest) => renderQuestCard(quest))}
+            </div>
+          </section>
+        ))}
+      </div>
+    );
+  }
+
   return (
     <div
       className="relative isolate overflow-hidden"
@@ -1372,26 +1428,47 @@ export function QuestBoard() {
                 </div>
               ))}
             </div>
-          ) : filteredQuests.length === 0 ? (
-            <div className="rounded-[24px] border border-dashed border-slate-200/90 bg-white/75 p-7 text-center text-sm text-slate-500 shadow-[0_18px_42px_rgba(148,163,184,0.08)] backdrop-blur-xl">
-              {categoryFilter === "onchain"
-                ? "No active onchain quests are waiting for this wallet right now."
-                : "No active social quests are waiting for this wallet right now."}
-            </div>
-          ) : categoryFilter === "onchain" ? (
-            <div className="space-y-4">
-              {onchainSections.map((section) => (
-                <section key={section.key} className="space-y-2.5">
-                  <SectionBadge label={section.label} count={section.quests.length} />
-                  <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
-                    {section.quests.map((quest) => renderQuestCard(quest))}
-                  </div>
-                </section>
-              ))}
-            </div>
           ) : (
-            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
-              {filteredQuests.map((quest) => renderQuestCard(quest))}
+            <div className="space-y-6">
+              {primaryQuests.length === 0 ? (
+                <div className="rounded-[24px] border border-dashed border-slate-200/90 bg-white/75 p-7 text-center text-sm text-slate-500 shadow-[0_18px_42px_rgba(148,163,184,0.08)] backdrop-blur-xl">
+                  {categoryFilter === "onchain"
+                    ? "No active onchain quests are waiting for this wallet right now."
+                    : "No active social quests are waiting for this wallet right now."}
+                </div>
+              ) : categoryFilter === "onchain" ? (
+                renderOnchainQuestSections()
+              ) : (
+                renderQuestGrid(socialQuests)
+              )}
+
+              {secondaryQuests.length > 0 ? (
+                <section className="space-y-4 rounded-[28px] border border-white/80 bg-white/60 p-4 shadow-[0_20px_50px_rgba(148,163,184,0.08)] backdrop-blur-xl sm:p-5">
+                  {categoryFilter === "social" ? (
+                    <>
+                      <CategorySectionIntro
+                        eyebrow="Continue Into Onchain"
+                        title="Onchain quests are here too"
+                        description="The tab stays the same. This just adds the onchain section at the bottom so you can keep scrolling without changing quest logic."
+                        badgeLabel="Onchain"
+                        count={secondaryQuests.length}
+                      />
+                      {renderOnchainQuestSections()}
+                    </>
+                  ) : (
+                    <>
+                      <CategorySectionIntro
+                        eyebrow="Continue Into Social"
+                        title="Social quests are here too"
+                        description="The tab stays the same. This adds the social quest list at the very bottom without changing how rewards or verification work."
+                        badgeLabel="Social"
+                        count={secondaryQuests.length}
+                      />
+                      {renderQuestGrid(socialQuests)}
+                    </>
+                  )}
+                </section>
+              ) : null}
             </div>
           )}
         </section>
