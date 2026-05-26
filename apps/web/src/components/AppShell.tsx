@@ -15,7 +15,6 @@ import {
 } from 'react';
 import { useAccount } from 'wagmi';
 import {
-  HomeIcon,
   LeaderboardIcon,
   ProfileIcon,
   QuestsIcon,
@@ -42,7 +41,6 @@ interface NavItem {
 }
 
 const NAV_ITEMS = [
-  { icon: HomeIcon, label: 'Airdrop', route: '/' },
   { icon: ProfileIcon, label: 'Profile', route: '/profile' },
   { icon: SpinIcon, label: 'Spin', route: '/spin' },
   { icon: QuestsIcon, label: 'Quests', route: '/quests' },
@@ -110,8 +108,8 @@ function MobileShellNav({
       }
     : { paddingBottom: 'env(safe-area-inset-bottom)' };
   const navRowClassName = isTopNav
-    ? 'grid h-[60px] w-full grid-cols-6 items-center gap-1 px-2'
-    : 'grid h-[82px] w-full grid-cols-6 items-start gap-1 px-2 pt-3';
+    ? 'grid h-[60px] w-full grid-cols-5 items-center gap-1 px-2'
+    : 'grid h-[82px] w-full grid-cols-5 items-start gap-1 px-2 pt-3';
   const navLinkClassName = isTopNav
     ? 'group flex min-w-0 flex-col items-center justify-center gap-1 transition-transform active:scale-95'
     : 'group flex min-w-0 flex-col items-center justify-start gap-2 transition-transform active:scale-95';
@@ -269,9 +267,9 @@ export function AppShell({ children }: AppShellProps) {
         >
           <div className="p-6">
             <Link
-              href="/"
+              href="/profile"
               className="inline-flex rounded-[22px] border border-white/70 bg-white/90 px-4 py-3 shadow-[0_16px_36px_rgba(148,163,184,0.16)] transition-transform duration-200 hover:-translate-y-0.5"
-              aria-label="DustSwap home"
+              aria-label="DustSwap app"
             >
               <Image
                 src="/longlogo.png"

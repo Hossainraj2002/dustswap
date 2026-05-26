@@ -1,29 +1,34 @@
-import FootprintDropLanding from "@/components/landing/FootprintDropLanding";
-
-const FOOTPRINT_DROP_COUNTDOWN_DURATION_MS = 7 * 24 * 60 * 60 * 1000;
-const FOOTPRINT_DROP_COUNTDOWN_START_AT = "2026-05-19T00:00:00.000Z";
-const FOOTPRINT_DROP_COUNTDOWN_END_AT = new Date(
-  new Date(FOOTPRINT_DROP_COUNTDOWN_START_AT).getTime() +
-    FOOTPRINT_DROP_COUNTDOWN_DURATION_MS
-).toISOString();
+import { redirect } from "next/navigation";
 
 type HomePageProps = {
-  searchParams?: Promise<{
-    ref?: string | string[];
-  }>;
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
 };
+
+function buildProfileRedirectUrl(
+  searchParams?: Record<string, string | string[] | undefined>
+) {
+  const nextSearchParams = new URLSearchParams();
+
+  for (const [key, value] of Object.entries(searchParams ?? {})) {
+    if (Array.isArray(value)) {
+      for (const entry of value) {
+        if (entry) {
+          nextSearchParams.append(key, entry);
+        }
+      }
+      continue;
+    }
+
+    if (value) {
+      nextSearchParams.set(key, value);
+    }
+  }
+
+  const query = nextSearchParams.toString();
+  return query ? `/profile?${query}` : "/profile";
+}
 
 export default async function HomePage({ searchParams }: HomePageProps) {
   const resolvedSearchParams = searchParams ? await searchParams : undefined;
-  const rawReferralCode = resolvedSearchParams?.ref;
-  const initialReferralCode = Array.isArray(rawReferralCode)
-    ? rawReferralCode[0] || null
-    : rawReferralCode || null;
-
-  return (
-    <FootprintDropLanding
-      initialReferralCode={initialReferralCode}
-      countdownEndsAt={FOOTPRINT_DROP_COUNTDOWN_END_AT}
-    />
-  );
+  redirect(buildProfileRedirectUrl(resolvedSearchParams));
 }
