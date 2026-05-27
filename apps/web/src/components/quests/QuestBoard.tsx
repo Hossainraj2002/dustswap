@@ -387,28 +387,20 @@ function SectionBadge({ label, count }: { label: string; count: number }) {
 }
 
 function CategorySectionIntro({
-  eyebrow,
   title,
-  description,
   badgeLabel,
   count,
 }: {
-  eyebrow: string;
   title: string;
-  description: string;
   badgeLabel: string;
   count: number;
 }) {
   return (
     <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
       <div>
-        <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-slate-400">
-          {eyebrow}
-        </p>
-        <h3 className="mt-1 text-lg font-semibold tracking-[-0.02em] text-slate-950">
+        <h3 className="text-xl font-semibold tracking-[-0.02em] text-slate-950 sm:text-[1.65rem]">
           {title}
         </h3>
-        <p className="mt-1 text-sm text-slate-500">{description}</p>
       </div>
       <SectionBadge label={badgeLabel} count={count} />
     </div>
@@ -1383,7 +1375,7 @@ export function QuestBoard() {
         ) : null}
 
         <section className="flex flex-col gap-3">
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex flex-col gap-2">
             <div className="inline-flex w-full rounded-[22px] border border-white/80 bg-white/70 p-1 shadow-[0_18px_40px_rgba(148,163,184,0.12)] backdrop-blur-xl sm:w-auto">
               {CATEGORY_TABS.map((category) => (
                 <button
@@ -1400,17 +1392,6 @@ export function QuestBoard() {
                 </button>
               ))}
             </div>
-
-            {categoryFilter !== "social" ? (
-              <button
-                type="button"
-                onClick={() => void handleOnchainRefresh()}
-                disabled={isRefreshing}
-                className="inline-flex items-center justify-center rounded-2xl border border-white/80 bg-white/75 px-4 py-2.5 text-sm font-semibold text-slate-700 shadow-[0_14px_34px_rgba(148,163,184,0.1)] backdrop-blur-xl transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                {isRefreshing ? "Verifying..." : "Verify Progress"}
-              </button>
-            ) : null}
           </div>
 
           {isLoading ? (
@@ -1447,9 +1428,7 @@ export function QuestBoard() {
                   {categoryFilter === "social" ? (
                     <>
                       <CategorySectionIntro
-                        eyebrow="Continue Into Onchain"
-                        title="Onchain quests are here too"
-                        description="The tab stays the same. This just adds the onchain section at the bottom so you can keep scrolling without changing quest logic."
+                        title="Onchain Quests"
                         badgeLabel="Onchain"
                         count={secondaryQuests.length}
                       />
@@ -1458,9 +1437,7 @@ export function QuestBoard() {
                   ) : (
                     <>
                       <CategorySectionIntro
-                        eyebrow="Continue Into Social"
-                        title="Social quests are here too"
-                        description="The tab stays the same. This adds the social quest list at the very bottom without changing how rewards or verification work."
+                        title="Social quests"
                         badgeLabel="Social"
                         count={secondaryQuests.length}
                       />
