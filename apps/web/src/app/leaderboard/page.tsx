@@ -251,8 +251,11 @@ function OverviewMetric({
   };
 
   return (
-    <div className={`flex h-[1.5cm] min-h-[1.5cm] min-w-0 flex-col justify-center rounded-lg border px-2 py-1 shadow-[0_8px_22px_rgba(15,23,42,0.045)] ${tones[tone]}`}>
-      <p className="truncate text-[8px] font-semibold uppercase leading-none text-slate-500">
+    <div
+      data-tone={tone}
+      className={`leaderboard-metric-card flex h-[1.5cm] min-h-[1.5cm] min-w-0 flex-col justify-center rounded-lg border px-2 py-1 shadow-[0_8px_22px_rgba(15,23,42,0.045)] ${tones[tone]}`}
+    >
+      <p className="leaderboard-metric-label truncate text-[8px] font-semibold uppercase leading-none text-slate-500">
         {label}
       </p>
       <p className="mt-1 truncate text-[12px] font-bold leading-none">
@@ -649,7 +652,7 @@ export default function LeaderboardPage() {
 
   return (
     <main
-      className="min-h-[100dvh] bg-[#f6f8fb] px-3 pb-[calc(8rem+env(safe-area-inset-bottom))] pt-4 sm:px-5 sm:pb-16 sm:pt-6 md:px-8 md:pt-8"
+      className="theme-page min-h-[100dvh] bg-[#f6f8fb] px-3 pb-[calc(8rem+env(safe-area-inset-bottom))] pt-4 sm:px-5 sm:pb-16 sm:pt-6 md:px-8 md:pt-8"
       style={{ minHeight: "100dvh" }}
     >
       <section

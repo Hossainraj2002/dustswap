@@ -197,7 +197,7 @@ export function PartnerAdminMemberPage({
   const pendingRows = data?.history.filter((row) => row.status === "pending") || [];
 
   return (
-    <div className="mx-auto flex w-full max-w-7xl flex-col gap-5 px-4 py-6 sm:px-6">
+    <div className="theme-page mx-auto flex w-full max-w-7xl flex-col gap-5 px-4 py-6 sm:px-6">
       <section className="rounded-[32px] border border-white/80 bg-white/88 p-6 shadow-[0_24px_80px_rgba(15,23,42,0.08)]">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div className="flex items-start gap-4">

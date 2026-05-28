@@ -12,7 +12,7 @@ const statusCards = [
 export default function ComingSoonPage() {
   return (
     <main
-      className="relative overflow-hidden px-4 py-8 sm:px-6 lg:px-10"
+      className="theme-page relative overflow-hidden px-4 py-8 sm:px-6 lg:px-10"
       style={{ minHeight: "100dvh" }}
     >
       <div

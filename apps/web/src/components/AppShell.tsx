@@ -22,6 +22,7 @@ import {
   SwapIcon,
 } from '@/components/NavIcons';
 import { ReferralOnboardingModal } from '@/components/referrals/ReferralOnboardingModal';
+import { useTheme } from '@/components/theme/ThemeProvider';
 import { useAppShellMode } from '@/hooks/useAppShellMode';
 import { clearPointsSummaryCache, fetchPointsSummary } from '@/lib/points';
 import {
@@ -152,7 +153,8 @@ function MobileShellNav({
 
 export function AppShell({ children }: AppShellProps) {
   const pathname = usePathname();
-  const isLightShell = true;
+  const { resolvedTheme } = useTheme();
+  const isLightShell = resolvedTheme === 'light';
   const isLandingPage = pathname === '/';
   const isMaintenancePage = pathname === '/maintenance';
   const isShelllessPage = isMaintenancePage;
@@ -245,7 +247,7 @@ export function AppShell({ children }: AppShellProps) {
   return (
     <div
       className={`relative flex min-h-screen transition-colors duration-300 ${
-        isLightShell ? 'bg-[#f2f6fb] text-slate-900' : 'bg-[#06080d] text-white'
+        isLightShell ? 'bg-[#f2f6fb] text-slate-900' : 'bg-[#07111f] text-white'
       }`}
       style={rootStyle}
       data-shell-mode={shellMode}
@@ -253,7 +255,7 @@ export function AppShell({ children }: AppShellProps) {
       {!isLightShell && (
         <div
           aria-hidden="true"
-          className="pointer-events-none fixed inset-0 bg-[radial-gradient(circle_at_top_right,rgba(59,130,246,0.12),transparent_34%),radial-gradient(circle_at_bottom_left,rgba(14,165,233,0.08),transparent_30%)]"
+          className="pointer-events-none fixed inset-0 bg-[radial-gradient(circle_at_top_right,rgba(56,189,248,0.16),transparent_34%),radial-gradient(circle_at_bottom_left,rgba(99,102,241,0.12),transparent_30%),linear-gradient(180deg,#07111f,#081321)]"
         />
       )}
 
@@ -268,7 +270,11 @@ export function AppShell({ children }: AppShellProps) {
           <div className="p-6">
             <Link
               href="/profile"
-              className="inline-flex rounded-[22px] border border-white/70 bg-white/90 px-4 py-3 shadow-[0_16px_36px_rgba(148,163,184,0.16)] transition-transform duration-200 hover:-translate-y-0.5"
+              className={`inline-flex rounded-[22px] border px-4 py-3 transition-transform duration-200 hover:-translate-y-0.5 ${
+                isLightShell
+                  ? 'border-white/70 bg-white/90 shadow-[0_16px_36px_rgba(148,163,184,0.16)]'
+                  : 'border-white/10 bg-white/[0.06] shadow-[0_18px_48px_rgba(0,0,0,0.28)]'
+              }`}
               aria-label="DustSwap app"
             >
               <Image

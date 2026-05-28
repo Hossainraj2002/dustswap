@@ -349,7 +349,7 @@ export function PartnerAdminConsole({
   }
 
   return (
-    <div className="mx-auto flex w-full max-w-7xl flex-col gap-5 px-4 py-6 sm:px-6">
+    <div className="theme-page mx-auto flex w-full max-w-7xl flex-col gap-5 px-4 py-6 sm:px-6">
       <section className="rounded-[32px] border border-white/80 bg-white/88 p-6 shadow-[0_24px_80px_rgba(15,23,42,0.08)]">
         <p className="text-[11px] font-black uppercase tracking-[0.28em] text-sky-600">
           {mode === "overview" ? "Admin Overview" : "Partner Manager"}

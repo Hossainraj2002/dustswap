@@ -70,7 +70,7 @@ export function ReferralPageClient({ params }: ReferralPageClientProps) {
 
   return (
     <div
-      className="bg-[radial-gradient(circle_at_top_left,rgba(56,189,248,0.14),transparent_28%),radial-gradient(circle_at_top_right,rgba(251,191,36,0.12),transparent_22%),linear-gradient(180deg,#f8fafc,#fef7ed_45%,#eff6ff)] px-3 py-4 pb-16 sm:px-6 sm:py-8"
+      className="theme-page bg-[radial-gradient(circle_at_top_left,rgba(56,189,248,0.14),transparent_28%),radial-gradient(circle_at_top_right,rgba(251,191,36,0.12),transparent_22%),linear-gradient(180deg,#f8fafc,#fef7ed_45%,#eff6ff)] px-3 py-4 pb-16 sm:px-6 sm:py-8"
       style={{ minHeight: "calc(100dvh - 4rem)" }}
     >
       <div className="mx-auto flex w-full max-w-xl flex-col gap-3">

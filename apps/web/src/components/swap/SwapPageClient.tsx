@@ -2,6 +2,7 @@
 
 import dynamic from "next/dynamic";
 import { useMemo } from "react";
+import { useTheme } from "@/components/theme/ThemeProvider";
 import { useWalletConnection } from "@/hooks/useWalletConnection";
 
 const OPENOCEAN_REFERRER_ADDRESS =
@@ -11,7 +12,6 @@ const OPENOCEAN_REFERRER_ADDRESS =
 const WIDGET_BASE_CONFIG = {
   variant: "compact",
   subvariant: "default",
-  appearance: "light",
   slippage: 0.03,
   theme: {
     palette: {
@@ -55,15 +55,15 @@ const WIDGET_BASE_CONFIG = {
 
 function OpenOceanWidgetLoading() {
   return (
-    <div className="w-full rounded-[16px] bg-white p-6 shadow-[0px_8px_32px_rgba(0,0,0,0.08)]">
-      <div className="mb-8 h-8 w-24 rounded-xl bg-slate-100" />
+    <div className="w-full rounded-[16px] bg-white p-6 shadow-[0px_8px_32px_rgba(0,0,0,0.08)] dark:border dark:border-white/10 dark:bg-[rgba(11,18,32,0.9)] dark:shadow-[0_24px_80px_rgba(0,0,0,0.34)]">
+      <div className="mb-8 h-8 w-24 rounded-xl bg-slate-100 dark:bg-white/10" />
       <div className="space-y-5">
-        <div className="h-28 rounded-2xl bg-slate-100" />
-        <div className="mx-auto h-11 w-11 rounded-full bg-slate-100" />
-        <div className="h-28 rounded-2xl bg-slate-100" />
-        <div className="h-16 rounded-2xl bg-sky-100" />
+        <div className="h-28 rounded-2xl bg-slate-100 dark:bg-white/10" />
+        <div className="mx-auto h-11 w-11 rounded-full bg-slate-100 dark:bg-white/10" />
+        <div className="h-28 rounded-2xl bg-slate-100 dark:bg-white/10" />
+        <div className="h-16 rounded-2xl bg-sky-100 dark:bg-sky-400/15" />
       </div>
-      <div className="mx-auto mt-8 h-4 w-40 rounded-full bg-slate-100" />
+      <div className="mx-auto mt-8 h-4 w-40 rounded-full bg-slate-100 dark:bg-white/10" />
     </div>
   );
 }
@@ -78,10 +78,45 @@ const OpenOceanWidget = dynamic<{ integrator: string; config: any }>(
 
 export default function SwapPageClient() {
   const { openWalletModal } = useWalletConnection();
+  const { resolvedTheme } = useTheme();
 
   const config = useMemo(
     () => ({
       ...WIDGET_BASE_CONFIG,
+      appearance: resolvedTheme,
+      theme:
+        resolvedTheme === "dark"
+          ? {
+              ...WIDGET_BASE_CONFIG.theme,
+              palette: {
+                primary: { main: "#38bdf8" },
+                secondary: { main: "#facc15" },
+                background: { default: "#07111f", paper: "#0b1220" },
+                text: { primary: "#f8fafc", secondary: "#cbd5e1" },
+                grey: {
+                  200: "#1f2a44",
+                  300: "#334155",
+                  700: "#cbd5e1",
+                  800: "#e2e8f0",
+                },
+              },
+              container: {
+                boxShadow: "0px 24px 80px rgba(0, 0, 0, 0.34)",
+                borderRadius: "16px",
+              },
+              components: {
+                MuiCard: { defaultProps: { variant: "filled" } },
+                MuiTabs: {
+                  styleOverrides: {
+                    root: {
+                      backgroundColor: "#111a2d",
+                      ".MuiTabs-indicator": { backgroundColor: "#38bdf8" },
+                    },
+                  },
+                },
+              },
+            }
+          : WIDGET_BASE_CONFIG.theme,
       referrer: {
         address: OPENOCEAN_REFERRER_ADDRESS,
         fee: "0.25",
@@ -93,7 +128,7 @@ export default function SwapPageClient() {
         usePartialWalletManagement: true,
       },
     }),
-    [openWalletModal]
+    [openWalletModal, resolvedTheme]
   );
 
   return (
@@ -103,7 +138,11 @@ export default function SwapPageClient() {
     >
       <div className="mx-auto flex w-full max-w-[420px] justify-center">
         <div className="dustswap-openocean-widget w-full min-w-0">
-          <OpenOceanWidget integrator="DustSwap" config={config as any} />
+          <OpenOceanWidget
+            key={resolvedTheme}
+            integrator="DustSwap"
+            config={config as any}
+          />
         </div>
       </div>
       <style jsx global>{`

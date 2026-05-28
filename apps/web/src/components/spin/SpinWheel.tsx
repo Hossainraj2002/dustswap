@@ -65,10 +65,11 @@ export function SpinWheel({
                   }}
                 >
                   <div
+                    data-active={active ? "true" : "false"}
                     className={`flex h-[38px] w-[88px] items-center justify-center rounded-full border px-2 py-1 text-center shadow-[0_10px_20px_rgba(255,255,255,0.24)] sm:h-[42px] sm:w-[98px] ${
                       active
-                        ? "border-sky-200 bg-white/95"
-                        : "border-white/60 bg-white/78"
+                        ? "spin-reward-pill border-sky-200 bg-white/95"
+                        : "spin-reward-pill border-white/60 bg-white/78"
                     }`}
                   >
                     <p

@@ -139,7 +139,7 @@ export default function DustSweepPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-blue-50 via-white to-slate-50 px-3 py-5 sm:px-6 sm:py-8">
+    <div className="theme-page min-h-screen bg-gradient-to-b from-blue-50 via-white to-slate-50 px-3 py-5 sm:px-6 sm:py-8">
       <WalletGateModal
         isOpen={shouldShowWalletGate}
         walletName={sweep.walletStatus.walletName}

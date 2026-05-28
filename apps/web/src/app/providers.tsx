@@ -16,6 +16,7 @@ import { useSwapCapture } from "@/hooks/useSwapCapture";
 import { fallbackWagmiConfig, wagmiConfig } from "@/wagmi";
 
 import { WalletInterceptor } from "@/components/WalletInterceptor";
+import { ThemeProvider, useTheme } from "@/components/theme/ThemeProvider";
 
 const appUrl = process.env.NEXT_PUBLIC_APP_URL || "https://app.dustswap.wtf";
 const privyAppId = process.env.NEXT_PUBLIC_PRIVY_APP_ID?.trim() || "";
@@ -35,9 +36,10 @@ function SwapCaptureBootstrap() {
   return null;
 }
 
-export function Providers({ children }: ProvidersProps) {
+function AppProviders({ children }: ProvidersProps) {
   const pathname = usePathname();
   const isMaintenancePage = pathname === "/maintenance";
+  const { resolvedTheme } = useTheme();
   const [queryClient] = useState(
     () =>
       new QueryClient({
@@ -59,7 +61,7 @@ export function Providers({ children }: ProvidersProps) {
         appearance: {
           logo: `${appUrl}/logo.png`,
           showWalletLoginFirst: true,
-          theme: "light",
+          theme: resolvedTheme,
           walletChainType: "ethereum-only",
           walletList: PRIVY_WALLET_LIST,
         },
@@ -89,5 +91,13 @@ export function Providers({ children }: ProvidersProps) {
 
   return (
     <QueryClientProvider client={queryClient}>{appContent}</QueryClientProvider>
+  );
+}
+
+export function Providers({ children }: ProvidersProps) {
+  return (
+    <ThemeProvider>
+      <AppProviders>{children}</AppProviders>
+    </ThemeProvider>
   );
 }

@@ -401,7 +401,7 @@ export function PartnerMemberPage() {
   if (!isConnected) {
     return (
       <div
-        className="relative overflow-hidden bg-[radial-gradient(circle_at_top_left,rgba(56,189,248,0.12),transparent_26%),radial-gradient(circle_at_bottom_right,rgba(251,191,36,0.12),transparent_22%),linear-gradient(180deg,#f8fbff,#fef7ed_46%,#eef6ff)] px-4 py-10"
+        className="theme-page relative overflow-hidden bg-[radial-gradient(circle_at_top_left,rgba(56,189,248,0.12),transparent_26%),radial-gradient(circle_at_bottom_right,rgba(251,191,36,0.12),transparent_22%),linear-gradient(180deg,#f8fbff,#fef7ed_46%,#eef6ff)] px-4 py-10"
         style={{ minHeight: "calc(100dvh - 4rem)" }}
       >
         <div className="mx-auto flex w-full max-w-4xl flex-col items-center justify-center rounded-[34px] border border-white/80 bg-white/82 px-6 py-12 text-center shadow-[0_32px_96px_rgba(15,23,42,0.12)] backdrop-blur">
@@ -428,7 +428,7 @@ export function PartnerMemberPage() {
 
   return (
     <div
-      className="bg-[radial-gradient(circle_at_top_left,rgba(56,189,248,0.14),transparent_28%),radial-gradient(circle_at_top_right,rgba(251,191,36,0.14),transparent_24%),linear-gradient(180deg,#f8fbff,#fef7ed_44%,#eef6ff)] px-4 py-5 pb-16 sm:px-6 sm:py-8"
+      className="theme-page bg-[radial-gradient(circle_at_top_left,rgba(56,189,248,0.14),transparent_28%),radial-gradient(circle_at_top_right,rgba(251,191,36,0.14),transparent_24%),linear-gradient(180deg,#f8fbff,#fef7ed_44%,#eef6ff)] px-4 py-5 pb-16 sm:px-6 sm:py-8"
       style={{ minHeight: "calc(100dvh - 4rem)" }}
     >
       <div className="mx-auto flex w-full max-w-6xl flex-col gap-5">

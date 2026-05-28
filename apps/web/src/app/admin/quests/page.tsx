@@ -542,7 +542,7 @@ export default function AdminQuestsPage() {
   }
 
   return (
-    <div className="mx-auto flex w-full max-w-7xl flex-col gap-5 px-4 py-6 sm:px-6">
+    <div className="theme-page mx-auto flex w-full max-w-7xl flex-col gap-5 px-4 py-6 sm:px-6">
       <section className="rounded-[28px] border border-gray-200 bg-white shadow-sm p-5 sm:p-7">
         <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-sky-600">
           Quest Admin

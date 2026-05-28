@@ -16,6 +16,27 @@ const siteDescription =
   "DustSwap combines swapping, quests, streaks, referrals, and leaderboard progress into one Base-first app.";
 const siteOgImage = `${siteUrl}/og.png`;
 const siteLogo = `${siteUrl}/logo.png`;
+const themeStartupScript = `
+(function () {
+  try {
+    var key = "dustswap-theme";
+    var preference = window.localStorage.getItem(key);
+    if (preference !== "light" && preference !== "dark" && preference !== "system") {
+      preference = "system";
+    }
+    var systemDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+    var resolvedTheme = preference === "system" ? (systemDark ? "dark" : "light") : preference;
+    var root = document.documentElement;
+    root.classList.toggle("dark", resolvedTheme === "dark");
+    root.dataset.theme = resolvedTheme;
+    root.dataset.themePreference = preference;
+    root.style.colorScheme = resolvedTheme;
+  } catch (error) {
+    document.documentElement.dataset.theme = "light";
+    document.documentElement.style.colorScheme = "light";
+  }
+})();
+`;
 const baseEmbed = JSON.stringify({
   version: "1",
   imageUrl: siteOgImage,
@@ -79,8 +100,11 @@ export const viewport: Viewport = {
   maximumScale: 1,
   userScalable: false,
   viewportFit: "cover",
-  themeColor: "#eef4fb",
-  colorScheme: "light",
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#eef4fb" },
+    { media: "(prefers-color-scheme: dark)", color: "#07111f" },
+  ],
+  colorScheme: "light dark",
 };
 
 export default function RootLayout({
@@ -90,7 +114,10 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className={inter.variable} suppressHydrationWarning>
-      <body className="min-h-screen bg-[#eef3f8] font-sans text-slate-900 antialiased">
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: themeStartupScript }} />
+      </head>
+      <body className="min-h-screen bg-[var(--ds-bg-app)] font-sans text-[var(--ds-text-primary)] antialiased">
         <Providers>
           <AppShell>{children}</AppShell>
         </Providers>

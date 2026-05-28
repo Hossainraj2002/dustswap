@@ -559,7 +559,7 @@ export function ProfileSettingsModal({
   }
 
   return (
-    <div className="fixed left-0 right-0 top-0 z-[80] flex items-end justify-center bg-slate-950/42 px-3 pt-[calc(0.75rem+env(safe-area-inset-top))] backdrop-blur-sm bottom-[calc(var(--ds-mobile-fixed-bottom-offset)+10px)] sm:bottom-0 sm:items-center sm:py-6">
+    <div className="fixed left-0 right-0 top-0 z-[80] flex items-end justify-center bg-slate-950/42 px-3 pt-[calc(0.75rem+env(safe-area-inset-top))] backdrop-blur-sm bottom-[calc(var(--ds-mobile-fixed-bottom-offset)+10px)] dark:bg-black/60 sm:bottom-0 sm:items-center sm:py-6">
       <button
         type="button"
         aria-label="Close profile settings"
@@ -571,13 +571,13 @@ export function ProfileSettingsModal({
         }}
       />
 
-      <section className="relative flex max-h-full min-h-0 w-full max-w-lg flex-col overflow-hidden rounded-t-[26px] border border-white bg-white shadow-[0_24px_80px_rgba(15,23,42,0.22)] sm:max-h-[min(720px,calc(100dvh-3rem))] sm:rounded-[26px]">
-        <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-4 py-4">
+      <section className="relative flex max-h-full min-h-0 w-full max-w-lg flex-col overflow-hidden rounded-t-[26px] border border-white bg-white shadow-[0_24px_80px_rgba(15,23,42,0.22)] dark:border-white/10 dark:bg-[#0b1220] dark:shadow-[0_30px_90px_rgba(0,0,0,0.44)] sm:max-h-[min(720px,calc(100dvh-3rem))] sm:rounded-[26px]">
+        <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-4 py-4 dark:border-white/10">
           <div>
-            <h2 className="text-lg font-black tracking-tight text-slate-950">
+            <h2 className="text-lg font-black tracking-tight text-slate-950 dark:text-white">
               Profile settings
             </h2>
-            <p className="mt-1 text-sm leading-5 text-slate-500">
+            <p className="mt-1 text-sm leading-5 text-slate-500 dark:text-slate-400">
               Update how your profile appears on DustSwap.
             </p>
           </div>
@@ -585,7 +585,7 @@ export function ProfileSettingsModal({
             type="button"
             onClick={onClose}
             disabled={isSaving}
-            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-white/10 dark:bg-white/[0.06] dark:text-slate-300 dark:hover:bg-white/[0.1]"
             aria-label="Close profile settings"
           >
             <svg
@@ -606,7 +606,7 @@ export function ProfileSettingsModal({
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4">
-          <div className="rounded-2xl border border-sky-100 bg-sky-50/70 p-3">
+          <div className="rounded-2xl border border-sky-100 bg-sky-50/70 p-3 dark:border-sky-400/20 dark:bg-sky-400/10">
             <div className="flex items-center gap-3">
               {currentPreviewUrl ? (
                 <img
@@ -622,8 +622,8 @@ export function ProfileSettingsModal({
               )}
 
               <div className="min-w-0 flex-1">
-                <p className="text-xs font-bold text-slate-700">PFP upload</p>
-                <p className="mt-1 text-[11px] leading-4 text-slate-500">
+                <p className="text-xs font-bold text-slate-700 dark:text-slate-200">PFP upload</p>
+                <p className="mt-1 text-[11px] leading-4 text-slate-500 dark:text-slate-400">
                   PNG, JPG, JPEG, or WEBP under 1 MB.
                 </p>
                 {!uploadAvailable ? (
@@ -671,7 +671,7 @@ export function ProfileSettingsModal({
 
           <div className="mt-4 grid gap-3">
             <label className="grid gap-1.5">
-              <span className="text-xs font-bold text-slate-600">
+              <span className="text-xs font-bold text-slate-600 dark:text-slate-300">
                 DustSwap username
               </span>
               <input
@@ -683,12 +683,12 @@ export function ProfileSettingsModal({
                 placeholder={inheritedUsername || "username.base.eth"}
                 maxLength={24}
                 disabled={isSaving}
-                className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-950 outline-none transition placeholder:text-slate-400 focus:border-sky-300 focus:ring-2 focus:ring-sky-100 disabled:cursor-not-allowed disabled:opacity-60"
+                className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-950 outline-none transition placeholder:text-slate-400 focus:border-sky-300 focus:ring-2 focus:ring-sky-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-white/10 dark:bg-white/[0.06] dark:text-white dark:placeholder:text-slate-500 dark:focus:border-sky-400 dark:focus:ring-sky-400/20"
               />
             </label>
 
             <label className="grid gap-1.5">
-              <span className="text-xs font-bold text-slate-600">
+              <span className="text-xs font-bold text-slate-600 dark:text-slate-300">
                 Display name
               </span>
               <input
@@ -700,7 +700,7 @@ export function ProfileSettingsModal({
                 placeholder={inheritedDisplayName || "Nickname"}
                 maxLength={32}
                 disabled={isSaving}
-                className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-950 outline-none transition placeholder:text-slate-400 focus:border-sky-300 focus:ring-2 focus:ring-sky-100 disabled:cursor-not-allowed disabled:opacity-60"
+                className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-950 outline-none transition placeholder:text-slate-400 focus:border-sky-300 focus:ring-2 focus:ring-sky-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-white/10 dark:bg-white/[0.06] dark:text-white dark:placeholder:text-slate-500 dark:focus:border-sky-400 dark:focus:ring-sky-400/20"
               />
             </label>
 

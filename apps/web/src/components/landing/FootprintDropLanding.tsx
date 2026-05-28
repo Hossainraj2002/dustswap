@@ -2099,7 +2099,7 @@ export default function FootprintDropLanding({
     authState === "verifying";
 
   return (
-    <div className="relative min-h-screen w-full overflow-x-clip bg-[#f4f8fc] text-slate-900 selection:bg-sky-200">
+    <div className="theme-page relative min-h-screen w-full overflow-x-clip bg-[#f4f8fc] text-slate-900 selection:bg-sky-200">
       <div className="pointer-events-none fixed inset-0 z-0 bg-[radial-gradient(circle_at_top,rgba(191,219,254,0.55),transparent_42%),radial-gradient(circle_at_bottom_left,rgba(125,211,252,0.18),transparent_32%)]" />
       <div className="pointer-events-none fixed inset-x-0 top-0 z-0 h-[440px] bg-[linear-gradient(180deg,rgba(255,255,255,0.68)_0%,rgba(255,255,255,0)_100%)]" />
 

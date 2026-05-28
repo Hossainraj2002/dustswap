@@ -22,7 +22,7 @@ function shortAddress(address: string) {
 }
 
 const DEFAULT_BUTTON_CLASS_NAME =
-  "inline-flex min-h-[44px] items-center justify-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-[0_10px_24px_rgba(148,163,184,0.12)] transition-all duration-200 hover:-translate-y-0.5 hover:border-sky-200 hover:bg-sky-50 hover:text-slate-900";
+  "inline-flex min-h-[44px] items-center justify-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-[0_10px_24px_rgba(148,163,184,0.12)] transition-all duration-200 hover:-translate-y-0.5 hover:border-sky-200 hover:bg-sky-50 hover:text-slate-900 dark:border-white/10 dark:bg-white/[0.06] dark:text-slate-100 dark:shadow-[0_16px_40px_rgba(0,0,0,0.26)] dark:hover:border-sky-400/40 dark:hover:bg-sky-400/10 dark:hover:text-white";
 
 export function WalletConnectButton({
   className,
@@ -109,13 +109,13 @@ export function WalletConnectButton({
       {showDisconnect && isConnected && address && menuOpen ? (
         <div
           role="menu"
-          className="absolute right-0 top-[calc(100%+0.5rem)] z-[80] min-w-[220px] rounded-[20px] border border-slate-200 bg-white p-2 shadow-[0_22px_48px_rgba(15,23,42,0.14)]"
+          className="absolute right-0 top-[calc(100%+0.5rem)] z-[80] min-w-[220px] rounded-[20px] border border-slate-200 bg-white p-2 shadow-[0_22px_48px_rgba(15,23,42,0.14)] dark:border-white/10 dark:bg-[#0b1220] dark:shadow-[0_24px_60px_rgba(0,0,0,0.36)]"
         >
-          <div className="rounded-[16px] bg-slate-50 px-3 py-2">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-slate-400">
+          <div className="rounded-[16px] bg-slate-50 px-3 py-2 dark:bg-white/[0.06]">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-slate-400 dark:text-slate-500">
               Connected
             </p>
-            <p className="mt-1 text-sm font-semibold text-slate-900">
+            <p className="mt-1 text-sm font-semibold text-slate-900 dark:text-white">
               {shortAddress(address)}
             </p>
           </div>
@@ -127,7 +127,7 @@ export function WalletConnectButton({
               setMenuOpen(false);
               void disconnectWallet();
             }}
-            className="mt-2 flex w-full items-center justify-center rounded-[14px] border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 transition-colors hover:border-rose-200 hover:bg-rose-50 hover:text-rose-700"
+            className="mt-2 flex w-full items-center justify-center rounded-[14px] border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 transition-colors hover:border-rose-200 hover:bg-rose-50 hover:text-rose-700 dark:border-white/10 dark:bg-white/[0.04] dark:text-slate-200 dark:hover:border-rose-400/40 dark:hover:bg-rose-400/10 dark:hover:text-rose-200"
           >
             Disconnect
           </button>

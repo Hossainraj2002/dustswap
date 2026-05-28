@@ -19,6 +19,7 @@ import {
   type ProfileSettingsInitialSection,
 } from "@/components/profile/ProfileSettingsModal";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
+import { ThemePreferenceControl } from "@/components/theme/ThemePreferenceControl";
 import { WalletConnectButton } from "@/components/wallet/WalletConnectButton";
 import { useBaseChainSwitch } from "@/hooks/useBaseChainSwitch";
 import { useWalletConnection } from "@/hooks/useWalletConnection";
@@ -1447,7 +1448,7 @@ function ProfilePageContent() {
   if (!isConnected) {
     return (
       <div
-        className="relative overflow-hidden"
+        className="theme-page relative overflow-hidden"
         style={{ minHeight: "calc(100dvh - 4rem)" }}
       >
 
@@ -1533,33 +1534,36 @@ function ProfilePageContent() {
         </div>
 
         {/* ── Layer 2: Glassmorphism connect overlay ── */}
-        <div className="absolute inset-0 flex items-center justify-center bg-gradient-to-b from-white/20 via-slate-100/30 to-white/40 px-4 backdrop-blur-[3px]">
-          <section className="flex w-full max-w-[340px] flex-col items-center rounded-[32px] border border-white/80 bg-white/78 p-8 text-center shadow-[0_32px_80px_rgba(15,23,42,0.16),inset_0_1px_0_rgba(255,255,255,0.9)] backdrop-blur-2xl sm:p-10">
-            <div className="flex h-[76px] items-center justify-center rounded-[22px] border border-white/90 bg-white/90 px-6 shadow-[0_12px_32px_rgba(148,163,184,0.14)] backdrop-blur-xl">
-              <Image
-                src="/longlogo.png"
-                alt="DustSwap"
-                width={160}
-                height={38}
-                priority
-                className="h-auto w-full max-w-[140px] sm:max-w-[160px]"
-              />
-            </div>
-            <h2 className="mt-7 text-xl font-black tracking-tight text-slate-950 sm:text-2xl">
-              Connect your wallet to start your journey at DustSwap
-            </h2>
-            <p className="mt-2.5 max-w-xs text-sm leading-6 text-slate-500">
-              Use <span aria-hidden="true">&bull;</span> Contribute{" "}
-              <span aria-hidden="true">&bull;</span> Earn{" "}
-              <span aria-hidden="true">&bull;</span> Repeat.
-            </p>
-            <div className="mt-7 flex origin-center justify-center scale-105 sm:scale-110">
-              <WalletConnectButton
-                className="bg-[linear-gradient(135deg,#2563eb_0%,#0ea5e9_52%,#ffffff_180%)] text-white shadow-[0_20px_40px_rgba(37,99,235,0.28)] hover:border-transparent hover:text-white"
-                description="Connect your wallet to start your journey at DustSwap."
-              />
-            </div>
-          </section>
+        <div className="absolute inset-0 flex items-center justify-center overflow-y-auto bg-gradient-to-b from-white/20 via-slate-100/30 to-white/40 px-4 py-8 backdrop-blur-[3px] dark:from-slate-950/20 dark:via-slate-950/45 dark:to-slate-950/35">
+          <div className="flex w-full max-w-xl flex-col gap-4">
+            <section className="mx-auto flex w-full max-w-[340px] flex-col items-center rounded-[32px] border border-white/80 bg-white/78 p-8 text-center shadow-[0_32px_80px_rgba(15,23,42,0.16),inset_0_1px_0_rgba(255,255,255,0.9)] backdrop-blur-2xl dark:border-white/10 dark:bg-[rgba(11,18,32,0.82)] dark:shadow-[0_32px_90px_rgba(0,0,0,0.42)] sm:p-10">
+              <div className="flex h-[76px] items-center justify-center rounded-[22px] border border-white/90 bg-white/90 px-6 shadow-[0_12px_32px_rgba(148,163,184,0.14)] backdrop-blur-xl dark:border-white/10 dark:bg-white/[0.08]">
+                <Image
+                  src="/longlogo.png"
+                  alt="DustSwap"
+                  width={160}
+                  height={38}
+                  priority
+                  className="h-auto w-full max-w-[140px] sm:max-w-[160px]"
+                />
+              </div>
+              <h2 className="mt-7 text-xl font-black tracking-tight text-slate-950 dark:text-white sm:text-2xl">
+                Connect your wallet to start your journey at DustSwap
+              </h2>
+              <p className="mt-2.5 max-w-xs text-sm leading-6 text-slate-500 dark:text-slate-300">
+                Use <span aria-hidden="true">&bull;</span> Contribute{" "}
+                <span aria-hidden="true">&bull;</span> Earn{" "}
+                <span aria-hidden="true">&bull;</span> Repeat.
+              </p>
+              <div className="mt-7 flex origin-center justify-center scale-105 sm:scale-110">
+                <WalletConnectButton
+                  className="bg-[linear-gradient(135deg,#2563eb_0%,#0ea5e9_52%,#ffffff_180%)] text-white shadow-[0_20px_40px_rgba(37,99,235,0.28)] hover:border-transparent hover:text-white"
+                  description="Connect your wallet to start your journey at DustSwap."
+                />
+              </div>
+            </section>
+            <ThemePreferenceControl />
+          </div>
         </div>
 
       </div>
@@ -1568,7 +1572,7 @@ function ProfilePageContent() {
 
   return (
     <div
-      className="bg-[radial-gradient(circle_at_top_left,rgba(56,189,248,0.14),transparent_28%),radial-gradient(circle_at_top_right,rgba(251,191,36,0.12),transparent_22%),linear-gradient(180deg,#f8fafc,#fef7ed_45%,#eff6ff)] px-3 py-4 pb-16 sm:px-6 sm:py-8"
+      className="theme-page bg-[radial-gradient(circle_at_top_left,rgba(56,189,248,0.14),transparent_28%),radial-gradient(circle_at_top_right,rgba(251,191,36,0.12),transparent_22%),linear-gradient(180deg,#f8fafc,#fef7ed_45%,#eff6ff)] px-3 py-4 pb-16 sm:px-6 sm:py-8"
       style={{ minHeight: "calc(100dvh - 4rem)" }}
     >
       <div className="mx-auto flex w-full max-w-4xl flex-col gap-3 sm:gap-5 xl:max-w-5xl 2xl:max-w-6xl">
@@ -1709,6 +1713,8 @@ function ProfilePageContent() {
             onDismissModal={handleDismissProfileCompletionModal}
           />
         ) : null}
+
+        <ThemePreferenceControl />
 
         <DailyCheckInModule
           balance={balance}

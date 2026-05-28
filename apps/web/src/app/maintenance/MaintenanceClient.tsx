@@ -74,7 +74,7 @@ export function MaintenanceClient() {
   }
 
   return (
-    <main className="flex min-h-screen items-center justify-center px-6 py-16">
+    <main className="theme-page flex min-h-screen items-center justify-center px-6 py-16">
       <div className="w-full max-w-2xl rounded-[28px] border border-slate-200 bg-white px-6 py-10 shadow-[0_24px_80px_rgba(15,23,42,0.08)] sm:px-10 sm:py-14">
         <div className="mb-6 inline-flex rounded-full border border-sky-200 bg-sky-50 px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em] text-sky-700">
           Scheduled maintenance
