@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { useAccount } from "wagmi";
 import { WalletConnectButton } from "@/components/wallet/WalletConnectButton";
+import { ThemeLongLogo } from "@/components/ThemeLongLogo";
 import { subscribeToDataInvalidation } from "@/lib/clientEvents";
 import {
   fetchLeaderboardHub,
@@ -661,9 +662,10 @@ export default function LeaderboardPage() {
         <div className="flex flex-col gap-3">
           <section className="overflow-hidden rounded-[18px] border border-white/80 bg-[radial-gradient(circle_at_top_left,rgba(14,165,233,0.16),transparent_34%),radial-gradient(circle_at_bottom_right,rgba(245,158,11,0.18),transparent_32%),linear-gradient(135deg,#ffffff_0%,#f7fbff_48%,#fff7ed_100%)] p-2.5 shadow-[0_18px_55px_rgba(15,23,42,0.08)]">
             <div className="flex items-center justify-between gap-3">
-              <img
-                src="/longlogo.png"
+              <ThemeLongLogo
                 alt="DustSwap"
+                width={220}
+                height={52}
                 className="h-7 w-auto min-w-0 max-w-[170px] object-contain sm:h-8 sm:max-w-[220px]"
               />
 

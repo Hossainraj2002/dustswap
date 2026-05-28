@@ -1,6 +1,5 @@
 ﻿"use client";
 
-import Image from "next/image";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { encodeFunctionData, erc20Abi, getAddress, type Address, type Hex } from "viem";
@@ -8,6 +7,7 @@ import { base } from "viem/chains";
 import { createSiweMessage } from "viem/siwe";
 import { useAccount, usePublicClient, useReadContract, useSignMessage, useWalletClient } from "wagmi";
 import { useBaseChainSwitch } from "@/hooks/useBaseChainSwitch";
+import { ThemeLongLogo } from "@/components/ThemeLongLogo";
 import { useWalletConnection } from "@/hooks/useWalletConnection";
 import { DATA_SUFFIX } from "@/lib/builderCode";
 import { emitDataInvalidation } from "@/lib/clientEvents";
@@ -472,8 +472,7 @@ function LandingHeader({
       >
         <div className="mx-auto flex w-full max-w-6xl items-center justify-between px-4 py-3 sm:px-6">
           <Link href="/" aria-label="DustSwap home" className="shrink-0">
-            <Image
-              src="/longlogo.png"
+            <ThemeLongLogo
               alt="DustSwap"
               width={148}
               height={36}
@@ -551,8 +550,7 @@ function LandingHeader({
         style={{ top: "calc(env(safe-area-inset-top) + 72px)" }}
       >
         <div className="mb-3 border-b border-slate-100 px-2 pb-3">
-          <Image
-            src="/longlogo.png"
+          <ThemeLongLogo
             alt="DustSwap"
             width={148}
             height={36}

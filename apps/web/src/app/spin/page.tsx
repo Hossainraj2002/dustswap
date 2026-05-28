@@ -1,12 +1,12 @@
 "use client";
 
-import Image from "next/image";
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { useAccount, usePublicClient, useWalletClient } from "wagmi";
 import { encodeFunctionData } from "viem";
 import { HistoryIcon } from "@/components/NavIcons";
 import { SpinWheel } from "@/components/spin/SpinWheel";
+import { ThemeLongLogo } from "@/components/ThemeLongLogo";
 import { WalletConnectButton } from "@/components/wallet/WalletConnectButton";
 import { useBaseChainSwitch } from "@/hooks/useBaseChainSwitch";
 import { useWalletConnection } from "@/hooks/useWalletConnection";
@@ -664,8 +664,7 @@ export default function SpinPage() {
 
           <section className="overflow-hidden rounded-[30px] border border-white/80 bg-white/82 px-4 py-4 shadow-[0_24px_80px_rgba(148,163,184,0.16)] backdrop-blur-xl sm:px-6 sm:py-6">
             <div className="flex items-start justify-between gap-3">
-              <Image
-                src="/longlogo.png"
+              <ThemeLongLogo
                 alt="DustSwap"
                 width={178}
                 height={42}

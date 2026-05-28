@@ -1,6 +1,5 @@
 "use client";
 
-import Image from "next/image";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { pay } from "@base-org/account/payment";
 import {
@@ -19,6 +18,7 @@ import {
   type ProfileSettingsInitialSection,
 } from "@/components/profile/ProfileSettingsModal";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
+import { ThemeLongLogo } from "@/components/ThemeLongLogo";
 import { WalletConnectButton } from "@/components/wallet/WalletConnectButton";
 import { useBaseChainSwitch } from "@/hooks/useBaseChainSwitch";
 import { useWalletConnection } from "@/hooks/useWalletConnection";
@@ -1537,8 +1537,7 @@ function ProfilePageContent() {
           <div className="flex w-full max-w-xl flex-col gap-4">
             <section className="mx-auto flex w-full max-w-[340px] flex-col items-center rounded-[32px] border border-white/80 bg-white/78 p-8 text-center shadow-[0_32px_80px_rgba(15,23,42,0.16),inset_0_1px_0_rgba(255,255,255,0.9)] backdrop-blur-2xl dark:border-white/10 dark:bg-[rgba(11,18,32,0.82)] dark:shadow-[0_32px_90px_rgba(0,0,0,0.42)] sm:p-10">
               <div className="flex h-[76px] items-center justify-center rounded-[22px] border border-white/90 bg-white/90 px-6 shadow-[0_12px_32px_rgba(148,163,184,0.14)] backdrop-blur-xl dark:border-white/10 dark:bg-white/[0.08]">
-                <Image
-                  src="/longlogo.png"
+                <ThemeLongLogo
                   alt="DustSwap"
                   width={160}
                   height={38}

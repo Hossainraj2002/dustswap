@@ -1,6 +1,5 @@
 'use client';
 
-import Image from 'next/image';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import {
@@ -22,6 +21,7 @@ import {
   SwapIcon,
 } from '@/components/NavIcons';
 import { ReferralOnboardingModal } from '@/components/referrals/ReferralOnboardingModal';
+import { ThemeLongLogo } from '@/components/ThemeLongLogo';
 import { useTheme } from '@/components/theme/ThemeProvider';
 import { useAppShellMode } from '@/hooks/useAppShellMode';
 import { clearPointsSummaryCache, fetchPointsSummary } from '@/lib/points';
@@ -277,8 +277,7 @@ export function AppShell({ children }: AppShellProps) {
               }`}
               aria-label="DustSwap app"
             >
-              <Image
-                src="/longlogo.png"
+              <ThemeLongLogo
                 alt="DustSwap"
                 width={170}
                 height={42}
