@@ -19,6 +19,19 @@ const WIDGET_BASE_CONFIG = {
   defaultToToken: "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
 } as const;
 
+const DUSTSWAP_OPENOCEAN_DARK_THEME = {
+  ...openOceanTheme,
+  palette: {
+    ...openOceanTheme.palette,
+    primary: {
+      main: "#0052ff",
+    },
+    secondary: {
+      main: "#38bdf8",
+    },
+  },
+} as const;
+
 function OpenOceanWidgetLoading() {
   return (
     <div className="w-full rounded-[16px] bg-white p-6 shadow-[0px_8px_32px_rgba(0,0,0,0.08)] dark:border dark:border-white/10 dark:bg-[rgba(11,18,32,0.9)] dark:shadow-[0_24px_80px_rgba(0,0,0,0.34)]">
@@ -49,9 +62,9 @@ export default function SwapPageClient() {
   const config = useMemo(
     () => ({
       ...WIDGET_BASE_CONFIG,
-      // Use OpenOcean's official mode setting, with its bundled dark palette to avoid a light-card flash.
+      // Use OpenOcean's official mode/theme API with only DustSwap's blue accent changed.
       appearance: resolvedTheme,
-      theme: resolvedTheme === "dark" ? openOceanTheme : undefined,
+      theme: resolvedTheme === "dark" ? DUSTSWAP_OPENOCEAN_DARK_THEME : undefined,
       referrer: {
         address: OPENOCEAN_REFERRER_ADDRESS,
         fee: "0.25",
