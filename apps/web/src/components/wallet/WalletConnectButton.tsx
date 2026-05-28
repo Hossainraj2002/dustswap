@@ -23,6 +23,8 @@ function shortAddress(address: string) {
 
 const DEFAULT_BUTTON_CLASS_NAME =
   "inline-flex min-h-[44px] items-center justify-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-[0_10px_24px_rgba(148,163,184,0.12)] transition-all duration-200 hover:-translate-y-0.5 hover:border-sky-200 hover:bg-sky-50 hover:text-slate-900 dark:border-white/10 dark:bg-white/[0.06] dark:text-slate-100 dark:shadow-[0_16px_40px_rgba(0,0,0,0.26)] dark:hover:border-sky-400/40 dark:hover:bg-sky-400/10 dark:hover:text-white";
+const CUSTOM_BUTTON_BASE_CLASS_NAME =
+  "inline-flex min-h-[44px] items-center justify-center gap-2 rounded-full border px-4 py-2 text-sm font-semibold transition-all duration-200";
 
 export function WalletConnectButton({
   className,
@@ -89,7 +91,7 @@ export function WalletConnectButton({
           }
         }}
         className={cx(
-          DEFAULT_BUTTON_CLASS_NAME,
+          className ? CUSTOM_BUTTON_BASE_CLASS_NAME : DEFAULT_BUTTON_CLASS_NAME,
           fullWidth && "w-full",
           className
         )}

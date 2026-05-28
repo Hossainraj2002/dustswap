@@ -24,6 +24,7 @@ import {
   getDiscordConnectUrl,
   verifyDiscordJoin,
 } from "@/lib/quests";
+import { ThemePreferenceControl } from "@/components/theme/ThemePreferenceControl";
 
 type ProfileSettingsModalProps = {
   open: boolean;
@@ -867,6 +868,8 @@ export function ProfileSettingsModal({
               {statusMessage}
             </p>
           ) : null}
+
+          <ThemePreferenceControl variant="compact" className="mt-3" />
         </div>
 
         <div className="flex shrink-0 gap-2 border-t border-slate-200 bg-white px-4 py-4">

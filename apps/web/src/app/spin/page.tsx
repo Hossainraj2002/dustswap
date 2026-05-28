@@ -683,7 +683,7 @@ export default function SpinPage() {
                   <HistoryIcon className="h-4 w-4" />
                 </button>
 
-                <div className="rounded-full border border-sky-100 bg-[linear-gradient(135deg,#eff6ff,#dbeafe)] px-4 py-2 text-right shadow-[0_12px_26px_rgba(59,130,246,0.12)]">
+                <div className="spin-ticket-pill rounded-full border border-sky-100 bg-[linear-gradient(135deg,#eff6ff,#dbeafe)] px-4 py-2 text-right shadow-[0_12px_26px_rgba(59,130,246,0.12)]">
                   <p className="text-[10px] font-black uppercase tracking-[0.24em] text-sky-600">
                     Tickets
                   </p>
@@ -694,7 +694,7 @@ export default function SpinPage() {
               </div>
             </div>
 
-            <div className={`mt-5 rounded-[28px] border px-4 py-4 sm:px-5 sm:py-5 ${messageTone}`}>
+            <div className={`spin-message-panel mt-5 rounded-[28px] border px-4 py-4 sm:px-5 sm:py-5 ${messageTone}`}>
               <p className="text-[10px] font-black uppercase tracking-[0.28em] text-sky-600">
                 Daily Ticket Flow
               </p>

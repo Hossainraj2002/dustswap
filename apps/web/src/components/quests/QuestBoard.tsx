@@ -295,7 +295,7 @@ function formatProgressValue(quest: QuestItem, value: number) {
 function StatusPill({ quest }: { quest: QuestItem }) {
   if (quest.progress?.completedAt) {
     return (
-      <span className="rounded-full border border-emerald-200/90 bg-emerald-50/90 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-emerald-700">
+      <span className="quest-status-pill rounded-full border border-emerald-200/90 bg-emerald-50/90 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-emerald-700">
         Completed
       </span>
     );
@@ -303,7 +303,7 @@ function StatusPill({ quest }: { quest: QuestItem }) {
 
   if (quest.progress?.status === "retry_required") {
     return (
-      <span className="rounded-full border border-amber-200/90 bg-amber-50/90 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-amber-700">
+      <span className="quest-status-pill rounded-full border border-amber-200/90 bg-amber-50/90 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-amber-700">
         Retry
       </span>
     );
@@ -311,7 +311,7 @@ function StatusPill({ quest }: { quest: QuestItem }) {
 
   if (quest.progress?.status === "pending_review") {
     return (
-      <span className="rounded-full border border-sky-200/90 bg-sky-50/90 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-sky-700">
+      <span className="quest-status-pill rounded-full border border-sky-200/90 bg-sky-50/90 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-sky-700">
         Pending Review
       </span>
     );
@@ -319,7 +319,7 @@ function StatusPill({ quest }: { quest: QuestItem }) {
 
   if (quest.progressWindow === "daily" || quest.progressWindow === "weekly") {
     return (
-      <span className="rounded-full border border-sky-200/90 bg-sky-50/90 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-sky-700">
+      <span className="quest-status-pill rounded-full border border-sky-200/90 bg-sky-50/90 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-sky-700">
         {formatResetCountdown(quest.progressWindow)}
       </span>
     );
@@ -327,14 +327,14 @@ function StatusPill({ quest }: { quest: QuestItem }) {
 
   if (quest.endsAt) {
     return (
-      <span className="rounded-full border border-rose-200/90 bg-rose-50/90 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-rose-700">
+      <span className="quest-status-pill rounded-full border border-rose-200/90 bg-rose-50/90 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-rose-700">
         {formatEndCountdown(quest.endsAt)}
       </span>
     );
   }
 
   return (
-    <span className="rounded-full border border-slate-200/90 bg-white/90 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+    <span className="quest-status-pill rounded-full border border-slate-200/90 bg-white/90 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">
       Open
     </span>
   );
@@ -342,7 +342,7 @@ function StatusPill({ quest }: { quest: QuestItem }) {
 
 function WindowPill({ quest }: { quest: QuestItem }) {
   return (
-    <span className="rounded-full border border-slate-200/90 bg-white/90 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-600">
+    <span className="quest-window-pill rounded-full border border-slate-200/90 bg-white/90 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-600">
       {formatWindowLabel(quest.progressWindow)}
     </span>
   );
@@ -364,7 +364,7 @@ function InfoChip({
   value: string;
 }) {
   return (
-    <div className="rounded-2xl border border-slate-200/80 bg-white/85 px-3 py-2 shadow-[0_10px_30px_rgba(148,163,184,0.08)]">
+    <div className="quest-info-chip rounded-2xl border border-slate-200/80 bg-white/85 px-3 py-2 shadow-[0_10px_30px_rgba(148,163,184,0.08)]">
       <p className="text-[9px] font-semibold uppercase tracking-[0.2em] text-slate-400">
         {label}
       </p>
@@ -376,7 +376,7 @@ function InfoChip({
 function SectionBadge({ label, count }: { label: string; count: number }) {
   return (
     <div className="flex items-center gap-2">
-      <span className="rounded-full border border-sky-200/90 bg-white/85 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.22em] text-sky-700 shadow-[0_10px_24px_rgba(59,130,246,0.08)]">
+      <span className="quest-section-badge rounded-full border border-sky-200/90 bg-white/85 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.22em] text-sky-700 shadow-[0_10px_24px_rgba(59,130,246,0.08)]">
         {label}
       </span>
       <span className="text-[11px] font-medium text-slate-500">
@@ -1004,7 +1004,7 @@ export function QuestBoard() {
     return (
       <article
         key={quest.id}
-        className="relative flex flex-col gap-3 overflow-hidden rounded-[24px] border border-white/80 bg-white/72 p-3.5 shadow-[0_18px_48px_rgba(15,23,42,0.08)] backdrop-blur-xl"
+        className="quest-card relative flex flex-col gap-3 overflow-hidden rounded-[24px] border border-white/80 bg-white/72 p-3.5 shadow-[0_18px_48px_rgba(15,23,42,0.08)] backdrop-blur-xl"
       >
         {isDone ? <CompletedStamp /> : null}
 
@@ -1034,7 +1034,7 @@ export function QuestBoard() {
         </div>
 
         {quest.actionType === "swap_volume" || quest.actionType === "swap_count" ? (
-          <div className="rounded-[20px] border border-slate-200/80 bg-white/88 p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.55)]">
+          <div className="quest-action-panel rounded-[20px] border border-slate-200/80 bg-white/88 p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.55)]">
             <div className="flex items-center justify-between text-[13px]">
               <span className="text-slate-500">
                 {quest.actionType === "swap_count" ? "Current swaps" : "Current volume"}
@@ -1063,14 +1063,14 @@ export function QuestBoard() {
                 type="button"
                 onClick={() => void handleOnchainRefresh()}
                 disabled={isRefreshing}
-                className="rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
+                className="quest-outline-action rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
               >
                 {isRefreshing ? "Checking" : "Verify"}
               </button>
             </div>
           </div>
         ) : isDiscordQuest ? (
-          <div className="rounded-[20px] border border-slate-200/80 bg-white/88 p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.55)]">
+          <div className="quest-action-panel rounded-[20px] border border-slate-200/80 bg-white/88 p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.55)]">
             <div className="space-y-3">
               {isDiscordConnected ? (
                 <div className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2.5">
@@ -1119,7 +1119,7 @@ export function QuestBoard() {
                         }
                       }}
                       disabled={!discordInviteUrl}
-                      className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-900 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+                    className="quest-outline-action w-full rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-900 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       Join Discord
                     </button>
@@ -1141,7 +1141,7 @@ export function QuestBoard() {
             </div>
           </div>
         ) : isPostLinkQuest ? (
-          <div className="rounded-[20px] border border-slate-200/80 bg-white/88 p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.55)]">
+          <div className="quest-action-panel rounded-[20px] border border-slate-200/80 bg-white/88 p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.55)]">
             <div className="space-y-2.5">
               {quest.rules.composeText ? (
                 <p className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-[12px] leading-5 text-slate-600">
@@ -1168,7 +1168,7 @@ export function QuestBoard() {
                   }
                 }}
                 disabled={!questUrl}
-                className="w-full rounded-2xl border border-sky-200 bg-white px-4 py-2.5 text-sm font-semibold text-sky-700 transition hover:bg-sky-50 disabled:cursor-not-allowed disabled:opacity-40"
+                className="quest-outline-action w-full rounded-2xl border border-sky-200 bg-white px-4 py-2.5 text-sm font-semibold text-sky-700 transition hover:bg-sky-50 disabled:cursor-not-allowed disabled:opacity-40"
               >
                 {xLocked ? "Connect X" : quest.ctaLabel || (isReplyQuest ? "Open Post" : "Open Composer")}
               </button>
@@ -1211,13 +1211,13 @@ export function QuestBoard() {
             </div>
           </div>
         ) : (
-          <div className="rounded-[20px] border border-slate-200/80 bg-white/88 p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.55)]">
+          <div className="quest-action-panel rounded-[20px] border border-slate-200/80 bg-white/88 p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.55)]">
             <div className="grid gap-2">
               <button
                 type="button"
                 onClick={() => void handleDelayQuestStart(quest)}
                 disabled={(!questUrl && !xLocked) || isPending || isDone || isPendingReview}
-                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-900 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+                className="quest-outline-action w-full rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-900 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {isDone
                   ? "Task Completed"
@@ -1292,7 +1292,7 @@ export function QuestBoard() {
       <PremiumQuestBackground />
 
       <div className="relative z-10 mx-auto flex w-full max-w-5xl flex-col gap-3 px-3 py-3 sm:px-5 sm:py-5 xl:max-w-6xl 2xl:max-w-[1360px]">
-        <section className="overflow-hidden rounded-[30px] border border-sky-100/90 bg-[radial-gradient(circle_at_top_left,rgba(0,82,255,0.16),transparent_34%),radial-gradient(circle_at_bottom_right,rgba(14,165,233,0.18),transparent_36%),linear-gradient(135deg,#ffffff_0%,#f0f7ff_55%,#e0f2fe_100%)] shadow-[0_24px_80px_rgba(0,82,255,0.1)] backdrop-blur-xl">
+        <section className="quest-hero-surface overflow-hidden rounded-[30px] border border-sky-100/90 bg-[radial-gradient(circle_at_top_left,rgba(0,82,255,0.16),transparent_34%),radial-gradient(circle_at_bottom_right,rgba(14,165,233,0.18),transparent_36%),linear-gradient(135deg,#ffffff_0%,#f0f7ff_55%,#e0f2fe_100%)] shadow-[0_24px_80px_rgba(0,82,255,0.1)] backdrop-blur-xl">
           <div className="flex flex-col gap-4 p-4 sm:p-5">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div className="max-w-2xl">
@@ -1306,7 +1306,7 @@ export function QuestBoard() {
 
               <div className="w-full max-w-sm">
                 {!isConnected ? (
-                  <div className="rounded-[24px] border border-white/80 bg-white/82 p-3 shadow-[0_18px_44px_rgba(0,82,255,0.08)]">
+                  <div className="quest-connect-card rounded-[24px] border border-white/80 bg-white/82 p-3 shadow-[0_18px_44px_rgba(0,82,255,0.08)]">
                     <WalletConnectButton
                       fullWidth
                       connectLabel="Connect Wallet"
@@ -1315,7 +1315,7 @@ export function QuestBoard() {
                     />
                   </div>
                 ) : !isXConnected ? (
-                  <div className="rounded-[24px] border border-white/80 bg-white/82 p-3 shadow-[0_18px_44px_rgba(0,82,255,0.08)]">
+                  <div className="quest-connect-card rounded-[24px] border border-white/80 bg-white/82 p-3 shadow-[0_18px_44px_rgba(0,82,255,0.08)]">
                     <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">
                       X Account
                     </p>
@@ -1376,7 +1376,7 @@ export function QuestBoard() {
 
         <section className="flex flex-col gap-3">
           <div className="flex flex-col gap-2">
-            <div className="inline-flex w-full rounded-[22px] border border-white/80 bg-white/70 p-1 shadow-[0_18px_40px_rgba(148,163,184,0.12)] backdrop-blur-xl sm:w-auto">
+            <div className="quest-tabs-surface inline-flex w-full rounded-[22px] border border-white/80 bg-white/70 p-1 shadow-[0_18px_40px_rgba(148,163,184,0.12)] backdrop-blur-xl sm:w-auto">
               {CATEGORY_TABS.map((category) => (
                 <button
                   key={category.key}
@@ -1412,7 +1412,7 @@ export function QuestBoard() {
           ) : (
             <div className="space-y-6">
               {primaryQuests.length === 0 ? (
-                <div className="rounded-[24px] border border-dashed border-slate-200/90 bg-white/75 p-7 text-center text-sm text-slate-500 shadow-[0_18px_42px_rgba(148,163,184,0.08)] backdrop-blur-xl">
+                <div className="quest-empty-state rounded-[24px] border border-dashed border-slate-200/90 bg-white/75 p-7 text-center text-sm text-slate-500 shadow-[0_18px_42px_rgba(148,163,184,0.08)] backdrop-blur-xl">
                   {categoryFilter === "onchain"
                     ? "No active onchain quests are waiting for this wallet right now."
                     : "No active social quests are waiting for this wallet right now."}
@@ -1424,7 +1424,7 @@ export function QuestBoard() {
               )}
 
               {secondaryQuests.length > 0 ? (
-                <section className="space-y-4 rounded-[28px] border border-white/80 bg-white/60 p-4 shadow-[0_20px_50px_rgba(148,163,184,0.08)] backdrop-blur-xl sm:p-5">
+                <section className="quest-secondary-surface space-y-4 rounded-[28px] border border-white/80 bg-white/60 p-4 shadow-[0_20px_50px_rgba(148,163,184,0.08)] backdrop-blur-xl sm:p-5">
                   {categoryFilter === "social" ? (
                     <>
                       <CategorySectionIntro

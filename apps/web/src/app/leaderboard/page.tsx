@@ -344,10 +344,10 @@ function LeaderboardRow({
 }) {
   return (
     <div
-      className={`grid h-[34px] items-center rounded-lg border px-2 transition-colors ${
+      className={`leaderboard-row grid h-[34px] items-center rounded-lg border px-2 transition-colors ${
         isViewer
-          ? "border-sky-200 bg-sky-50/80"
-          : "border-slate-200 bg-white hover:border-slate-300"
+          ? "leaderboard-row-viewer border-sky-200 bg-sky-50/80"
+          : "leaderboard-row-normal border-slate-200 bg-white hover:border-slate-300"
       }`}
       style={{
         ...columns,
@@ -355,7 +355,7 @@ function LeaderboardRow({
         animationDelay: `${animationDelayMs}ms`,
       }}
     >
-      <div className="truncate text-xs font-semibold text-slate-700">#{entry.rank}</div>
+      <div className="leaderboard-row-rank truncate text-xs font-semibold text-slate-700">#{entry.rank}</div>
       <div className="flex min-w-0 items-center gap-2">
         <Avatar
           src={avatarSrc || ""}
@@ -363,11 +363,11 @@ function LeaderboardRow({
           sizeClass="h-6 w-6"
           textClass="text-[9px]"
         />
-        <div className="min-w-0 flex-1 truncate text-xs font-semibold text-slate-950">
+        <div className="leaderboard-row-user min-w-0 flex-1 truncate text-xs font-semibold text-slate-950">
           {label}
         </div>
         {badge ? (
-          <span className="rounded-full border border-sky-200 bg-white px-1.5 py-0 text-[9px] font-semibold text-sky-700">
+          <span className="leaderboard-row-badge rounded-full border border-sky-200 bg-white px-1.5 py-0 text-[9px] font-semibold text-sky-700">
             {badge}
           </span>
         ) : null}
@@ -782,7 +782,7 @@ export default function LeaderboardPage() {
               </div>
             </div>
           ) : (
-            <section className="overflow-hidden rounded-[16px] border border-sky-200/80 bg-white shadow-[0_18px_48px_rgba(0,82,255,0.08)]">
+            <section className="leaderboard-table-card overflow-hidden rounded-[16px] border border-sky-200/80 bg-white shadow-[0_18px_48px_rgba(0,82,255,0.08)]">
               <div className="flex items-center justify-between gap-3 bg-[radial-gradient(circle_at_top_left,rgba(255,255,255,0.22),transparent_34%),linear-gradient(135deg,#0052ff_0%,#0ea5e9_58%,#38bdf8_100%)] px-3 py-2 sm:px-4">
                 <div>
                   <p className="text-sm font-bold text-white">
@@ -798,7 +798,7 @@ export default function LeaderboardPage() {
               </div>
 
               <div
-                className="grid h-[30px] items-center border-y border-sky-100 bg-[linear-gradient(90deg,#eff6ff,#f0f9ff)] px-2 sm:px-3"
+                className="leaderboard-table-header grid h-[30px] items-center border-y border-sky-100 bg-[linear-gradient(90deg,#eff6ff,#f0f9ff)] px-2 sm:px-3"
                 style={boardColumns}
               >
                 {boardHeaders.map((header, index) => (

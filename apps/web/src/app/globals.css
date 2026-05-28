@@ -32,6 +32,7 @@
     --ds-focus: rgba(14, 165, 233, 0.35);
     --ds-accent: #0ea5e9;
     --ds-accent-strong: #0052ff;
+    --ds-accent-soft: #0369a1;
     --ds-success-bg: #ecfdf5;
     --ds-success-text: #047857;
     --ds-warning-bg: #fffbeb;
@@ -68,6 +69,7 @@
     --ds-focus: rgba(56, 189, 248, 0.42);
     --ds-accent: #38bdf8;
     --ds-accent-strong: #60a5fa;
+    --ds-accent-soft: #7dd3fc;
     --ds-success-bg: rgba(16, 185, 129, 0.14);
     --ds-success-text: #6ee7b7;
     --ds-warning-bg: rgba(245, 158, 11, 0.14);
@@ -568,29 +570,42 @@
   }
 
   .dark [class~="bg-white"],
+  .dark [class~="bg-white/25"],
+  .dark [class~="bg-white/40"],
+  .dark [class~="bg-white/42"],
+  .dark [class~="bg-white/50"],
+  .dark [class~="bg-white/60"],
+  .dark [class~="bg-white/65"],
   .dark [class~="bg-white/70"],
   .dark [class~="bg-white/72"],
   .dark [class~="bg-white/75"],
   .dark [class~="bg-white/78"],
   .dark [class~="bg-white/80"],
   .dark [class~="bg-white/82"],
+  .dark [class~="bg-white/84"],
   .dark [class~="bg-white/85"],
+  .dark [class~="bg-white/86"],
   .dark [class~="bg-white/88"],
   .dark [class~="bg-white/90"],
   .dark [class~="bg-white/92"],
+  .dark [class~="bg-white/94"],
   .dark [class~="bg-white/95"],
   .dark [class~="bg-white/96"],
   .dark [class~="bg-[#f8fbff]"],
   .dark [class~="bg-[#fffdf7]"],
+  .dark [class~="bg-[#fff8df]"],
   .dark [class~="bg-[#f6f8fb]"] {
     background-color: var(--ds-bg-elevated);
   }
 
   .dark [class~="bg-slate-50"],
+  .dark [class~="bg-slate-50/80"],
   .dark [class~="bg-slate-100"],
   .dark [class~="bg-gray-50"],
   .dark [class~="bg-gray-100"],
   .dark [class~="bg-sky-50"],
+  .dark [class~="bg-sky-50/40"],
+  .dark [class~="bg-sky-50/70"],
   .dark [class~="bg-blue-50"] {
     background-color: var(--ds-bg-muted);
   }
@@ -717,6 +732,149 @@
     background-color: #0369a1;
   }
 
+  .dark .daily-reset-streak-button {
+    background:
+      linear-gradient(180deg, rgba(148, 163, 184, 0.24), rgba(71, 85, 105, 0.28));
+    border-color: rgba(226, 232, 240, 0.42);
+    color: #ffffff;
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.14),
+      0 12px 28px rgba(2, 6, 23, 0.2);
+  }
+
+  .dark .daily-reset-streak-button:disabled {
+    color: #ffffff;
+    opacity: 0.84;
+  }
+
+  .dark .quest-hero-surface {
+    background:
+      radial-gradient(circle at top left, rgba(56, 189, 248, 0.18), transparent 36%),
+      radial-gradient(circle at bottom right, rgba(20, 184, 166, 0.12), transparent 40%),
+      linear-gradient(135deg, rgba(7, 17, 31, 0.98), rgba(11, 18, 32, 0.94)) !important;
+    border-color: rgba(125, 211, 252, 0.18);
+  }
+
+  .dark .quest-card,
+  .dark .quest-action-panel,
+  .dark .quest-connect-card,
+  .dark .quest-tabs-surface,
+  .dark .quest-secondary-surface,
+  .dark .quest-empty-state {
+    background-color: rgba(15, 23, 42, 0.86);
+    border-color: rgba(148, 163, 184, 0.18);
+    box-shadow:
+      0 20px 48px rgba(2, 6, 23, 0.28),
+      inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  }
+
+  .dark .quest-info-chip {
+    background-color: rgba(2, 6, 23, 0.42);
+    border-color: rgba(148, 163, 184, 0.16);
+  }
+
+  .dark .quest-status-pill,
+  .dark .quest-window-pill,
+  .dark .quest-section-badge {
+    background-color: rgba(15, 23, 42, 0.72);
+    border-color: rgba(226, 232, 240, 0.28);
+    color: #e0f2fe;
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.08),
+      0 8px 18px rgba(2, 6, 23, 0.16);
+  }
+
+  .dark .quest-outline-action {
+    background-color: rgba(2, 6, 23, 0.34);
+    border-color: rgba(148, 163, 184, 0.24);
+    color: #f8fafc;
+  }
+
+  .dark .quest-outline-action:hover {
+    background-color: rgba(15, 23, 42, 0.78);
+    border-color: rgba(125, 211, 252, 0.34);
+  }
+
+  .dark .quest-outline-action:disabled {
+    color: rgba(248, 250, 252, 0.72);
+    opacity: 0.68;
+  }
+
+  .dark .spin-ticket-pill {
+    background:
+      radial-gradient(circle at top left, rgba(255, 255, 255, 0.22), transparent 34%),
+      linear-gradient(135deg, rgba(14, 165, 233, 0.22), rgba(15, 23, 42, 0.86));
+    border-color: rgba(125, 211, 252, 0.28);
+    color: #f8fafc;
+    box-shadow:
+      0 14px 30px rgba(14, 165, 233, 0.12),
+      inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  }
+
+  .dark .spin-ticket-pill p {
+    color: #f8fafc;
+  }
+
+  .dark .spin-ticket-pill p:first-child {
+    color: rgba(186, 230, 253, 0.82);
+  }
+
+  .dark .spin-message-panel {
+    background:
+      radial-gradient(circle at top left, rgba(56, 189, 248, 0.14), transparent 34%),
+      rgba(15, 23, 42, 0.82) !important;
+    border-color: rgba(125, 211, 252, 0.18);
+  }
+
+  .dark .spin-message-panel h1,
+  .dark .spin-message-panel p {
+    color: #f8fafc;
+  }
+
+  .dark .spin-message-panel p:first-child {
+    color: rgba(186, 230, 253, 0.82);
+  }
+
+  .dark .leaderboard-table-card {
+    background-color: rgba(7, 17, 31, 0.92);
+    border-color: rgba(125, 211, 252, 0.22);
+    box-shadow: 0 24px 64px rgba(2, 6, 23, 0.34);
+  }
+
+  .dark .leaderboard-table-header {
+    background: linear-gradient(90deg, rgba(15, 23, 42, 0.96), rgba(8, 47, 73, 0.88));
+    border-color: rgba(125, 211, 252, 0.16);
+  }
+
+  .dark .leaderboard-table-header div {
+    color: rgba(226, 232, 240, 0.78);
+  }
+
+  .dark .leaderboard-row-normal {
+    background-color: rgba(15, 23, 42, 0.74);
+    border-color: rgba(148, 163, 184, 0.16);
+  }
+
+  .dark .leaderboard-row-viewer {
+    background:
+      linear-gradient(90deg, rgba(59, 130, 246, 0.22), rgba(15, 23, 42, 0.82));
+    border-color: rgba(125, 211, 252, 0.38);
+    box-shadow:
+      0 10px 26px rgba(14, 165, 233, 0.16),
+      inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  }
+
+  .dark .leaderboard-row-rank,
+  .dark .leaderboard-row-user {
+    color: #f8fafc;
+  }
+
+  .dark .leaderboard-row-badge {
+    background-color: rgba(15, 23, 42, 0.9);
+    border-color: rgba(226, 232, 240, 0.28);
+    color: #ffffff;
+  }
+
   .dark .spin-wheel-shell {
     background:
       radial-gradient(circle at 50% 12%, rgba(125, 211, 252, 0.28), transparent 28%),
@@ -823,10 +981,25 @@
   }
 
   .dark [class*="linear-gradient(180deg,#f8fafc"],
+  .dark [class*="linear-gradient(180deg,#f8fbff"],
+  .dark [class*="linear-gradient(180deg,#f0f9ff"],
   .dark [class*="linear-gradient(180deg,#f7fbff"],
+  .dark [class*="linear-gradient(180deg,#ffffff"],
+  .dark [class*="linear-gradient(180deg,#fff2e2"],
+  .dark [class*="linear-gradient(180deg,#fff3c4"],
+  .dark [class*="linear-gradient(180deg,#fff5ef"],
+  .dark [class*="linear-gradient(180deg,#fff7ed"],
+  .dark [class*="linear-gradient(180deg,#fffdf7"],
   .dark [class*="linear-gradient(180deg,#fffdf8"],
+  .dark [class*="linear-gradient(180deg,rgba(240,249,255"],
+  .dark [class*="linear-gradient(180deg,rgba(248,250,252"],
+  .dark [class*="linear-gradient(180deg,rgba(255,249,240"],
+  .dark [class*="linear-gradient(180deg,rgba(255,255,255"],
+  .dark [class*="linear-gradient(135deg,#eff6ff"],
   .dark [class*="linear-gradient(135deg,#ffffff"],
   .dark [class*="linear-gradient(135deg,#f8fbff"],
+  .dark [class*="linear-gradient(135deg,rgba(255,255,255"],
+  .dark [class*="linear-gradient(90deg,#eff6ff"],
   .dark [class*="radial-gradient(circle_at_top_left"] {
     background-image:
       radial-gradient(circle at top left, rgba(56, 189, 248, 0.14), transparent 32%),
@@ -857,33 +1030,6 @@
     --tw-gradient-to: #081321 var(--tw-gradient-to-position);
   }
 
-  .dark .dustswap-openocean-widget {
-    color: var(--ds-text-primary);
-  }
-
-  .dark .dustswap-openocean-widget .MuiPaper-root,
-  .dark .dustswap-openocean-widget .MuiCard-root {
-    background-color: #0b1220 !important;
-    color: #f8fafc !important;
-    border-color: rgba(148, 163, 184, 0.18) !important;
-  }
-
-  .dark .dustswap-openocean-widget .MuiInputBase-root,
-  .dark .dustswap-openocean-widget .MuiButtonBase-root:not(.MuiTab-root) {
-    background-color: rgba(15, 23, 42, 0.88) !important;
-    color: #f8fafc !important;
-    border-color: rgba(148, 163, 184, 0.2) !important;
-  }
-
-  .dark .dustswap-openocean-widget .MuiTypography-root,
-  .dark .dustswap-openocean-widget .MuiInputBase-input {
-    color: #f8fafc !important;
-  }
-
-  .dark .dustswap-openocean-widget .MuiTypography-root.MuiTypography-caption,
-  .dark .dustswap-openocean-widget .MuiFormHelperText-root {
-    color: #94a3b8 !important;
-  }
 }
 /* ===== SWAP PAGE STYLES ===== */
 /* Dark theme, glass cards, Syne + DM Sans fonts, electric blue accent */

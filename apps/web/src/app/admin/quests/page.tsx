@@ -335,7 +335,7 @@ function HelpLabel({
         <div className="mt-2 rounded-2xl border border-sky-200 bg-sky-50 px-3 py-3 text-xs leading-6 text-sky-800">
           <p>{help}</p>
           {example ? (
-            <pre className="mt-2 overflow-x-auto whitespace-pre-wrap rounded-2xl border border-gray-200 bg-white px-3 py-3 text-[11px] leading-5 text-sky-100">
+            <pre className="mt-2 overflow-x-auto whitespace-pre-wrap rounded-2xl border border-gray-200 bg-white px-3 py-3 text-[11px] leading-5 text-slate-800 dark:text-sky-100">
               {example}
             </pre>
           ) : null}

@@ -407,7 +407,7 @@ export function DailyCheckInModule({
               type="button"
               onClick={onReset}
               disabled={isResetting || isSaving}
-              className="mt-2.5 w-full rounded-[16px] border border-slate-300/70 bg-white/50 px-4 py-3 text-sm font-semibold text-slate-500 transition hover:bg-white/70 hover:text-slate-700 disabled:cursor-not-allowed disabled:opacity-50 sm:mt-3 sm:rounded-[18px]"
+              className="daily-reset-streak-button mt-2.5 w-full rounded-[16px] border border-slate-300/70 bg-white/50 px-4 py-3 text-sm font-semibold text-slate-500 transition hover:bg-white/70 hover:text-slate-700 disabled:cursor-not-allowed disabled:opacity-50 sm:mt-3 sm:rounded-[18px]"
             >
               {isResetting ? "Resetting..." : "Reset Streak to 0"}
             </button>
@@ -430,7 +430,7 @@ export function DailyCheckInModule({
               type="button"
               onClick={onReset}
               disabled={isResetting || isSaving}
-              className="mt-3 w-full rounded-[18px] border border-slate-300/70 bg-white/65 px-4 py-3 text-sm font-semibold text-slate-600 transition hover:bg-white/80 hover:text-slate-800 disabled:cursor-not-allowed disabled:opacity-50 sm:mt-4"
+              className="daily-reset-streak-button mt-3 w-full rounded-[18px] border border-slate-300/70 bg-white/65 px-4 py-3 text-sm font-semibold text-slate-600 transition hover:bg-white/80 hover:text-slate-800 disabled:cursor-not-allowed disabled:opacity-50 sm:mt-4"
             >
               {isResetting ? "Resetting..." : "Reset Streak to 0"}
             </button>

@@ -19,7 +19,6 @@ import {
   type ProfileSettingsInitialSection,
 } from "@/components/profile/ProfileSettingsModal";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
-import { ThemePreferenceControl } from "@/components/theme/ThemePreferenceControl";
 import { WalletConnectButton } from "@/components/wallet/WalletConnectButton";
 import { useBaseChainSwitch } from "@/hooks/useBaseChainSwitch";
 import { useWalletConnection } from "@/hooks/useWalletConnection";
@@ -1562,7 +1561,6 @@ function ProfilePageContent() {
                 />
               </div>
             </section>
-            <ThemePreferenceControl />
           </div>
         </div>
 
@@ -1713,8 +1711,6 @@ function ProfilePageContent() {
             onDismissModal={handleDismissProfileCompletionModal}
           />
         ) : null}
-
-        <ThemePreferenceControl />
 
         <DailyCheckInModule
           balance={balance}
