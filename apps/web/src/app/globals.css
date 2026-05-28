@@ -717,18 +717,68 @@
     background-color: #0369a1;
   }
 
+  .dark .spin-wheel-shell {
+    background:
+      radial-gradient(circle at 50% 12%, rgba(125, 211, 252, 0.28), transparent 28%),
+      radial-gradient(circle at 50% 88%, rgba(20, 184, 166, 0.18), transparent 34%),
+      linear-gradient(180deg, rgba(15, 23, 42, 0.98), rgba(2, 6, 23, 0.98));
+    box-shadow:
+      0 34px 90px rgba(0, 0, 0, 0.42),
+      0 0 0 1px rgba(148, 163, 184, 0.14);
+  }
+
+  .dark .spin-wheel-face {
+    border-color: rgba(226, 232, 240, 0.34);
+    box-shadow:
+      inset 0 2px 0 rgba(255, 255, 255, 0.28),
+      inset 0 0 42px rgba(186, 230, 253, 0.12),
+      inset 0 -18px 34px rgba(2, 6, 23, 0.36),
+      0 18px 44px rgba(0, 0, 0, 0.28);
+  }
+
+  .dark .spin-wheel-outer-rim {
+    border-color: rgba(241, 245, 249, 0.72);
+  }
+
+  .dark .spin-wheel-inner-rim {
+    border-color: rgba(125, 211, 252, 0.28);
+  }
+
+  .dark .spin-wheel-prize-band {
+    border-color: rgba(226, 232, 240, 0.16);
+    box-shadow:
+      0 0 0 1px rgba(15, 23, 42, 0.32),
+      inset 0 0 34px rgba(2, 6, 23, 0.18);
+  }
+
   .dark .spin-reward-pill {
-    background-color: rgba(248, 250, 252, 0.96);
-    border-color: rgba(255, 255, 255, 0.68);
-    box-shadow: 0 12px 26px rgba(3, 7, 18, 0.22);
+    background-color: transparent;
+    border-color: transparent;
+    box-shadow: none;
+    backdrop-filter: none;
   }
 
   .dark .spin-reward-pill[data-active="true"] {
-    background-color: rgba(255, 255, 255, 0.99);
-    border-color: rgba(125, 211, 252, 0.72);
+    background-color: rgba(255, 255, 255, 0.08);
+    border-color: rgba(125, 211, 252, 0.26);
     box-shadow:
-      0 0 0 1px rgba(125, 211, 252, 0.34),
-      0 16px 34px rgba(14, 165, 233, 0.22);
+      0 10px 22px rgba(14, 165, 233, 0.16),
+      inset 0 1px 0 rgba(255, 255, 255, 0.14);
+    backdrop-filter: blur(6px);
+  }
+
+  .dark .spin-reward-text {
+    text-shadow:
+      0 1px 1px rgba(2, 6, 23, 0.85),
+      0 0 10px rgba(125, 211, 252, 0.16);
+  }
+
+  .dark .spin-center-white {
+    background-color: #ffffff !important;
+    border-color: rgba(226, 232, 240, 0.95) !important;
+    box-shadow:
+      0 16px 36px rgba(0, 0, 0, 0.28),
+      inset 0 1px 0 rgba(255, 255, 255, 0.95);
   }
 
   .dark .leaderboard-metric-card {
