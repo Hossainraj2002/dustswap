@@ -13,6 +13,7 @@ import { profileCompletionRoutes } from "./routes/profileCompletion";
 import { profileSettingsRoutes } from "./routes/profileSettings";
 import { questsRoutes } from "./routes/quests";
 import { swapsRoutes } from "./routes/swaps";
+import { swapownRoutes } from "./routes/swapown";
 import { dustsweepRoutes } from "./routes/dustsweep";
 import { pointsEngine } from "./services/pointsEngine";
 import { repostQuestRewardScheduler } from "./services/repostQuestRewards";
@@ -49,6 +50,7 @@ app.route("/api/profile-completion", profileCompletionRoutes);
 app.route("/api/profile-settings", profileSettingsRoutes);
 app.route("/api/quests", questsRoutes);
 app.route("/api/swaps", swapsRoutes);
+app.route("/api/swapown", swapownRoutes);
 app.route("/api/dustsweep", dustsweepRoutes);
 
 pointsEngine.startReferralLeaderboardSnapshotScheduler();
@@ -111,6 +113,9 @@ app.get("/", (c) => {
       "POST /api/quests/discord/verify": "Verify Discord server membership",
       "POST /api/quests/activities/swap": "Record swap activity for quest progress",
       "POST /api/swaps/record": "Capture and decode an OpenOcean swap transaction",
+      "GET /api/swapown/sources": "Get DustSwap direct-DEX source readiness",
+      "POST /api/swapown/quote": "Build a DustSwap direct-DEX aggregator quote",
+      "POST /api/swapown/build-tx": "Build DustSwap aggregator router calldata",
       "GET /api/dustsweep/tokens?address=0x...&chainId=8453": "Discover wallet tokens",
       "GET /api/dustsweep/tokens/:address": "Get sweepable wallet tokens (legacy path)",
       "POST /api/dustsweep/quote": "Build a DustSweep quote",

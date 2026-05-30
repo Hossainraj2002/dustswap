@@ -14,6 +14,7 @@ import {
   getSwapChainConfig,
   isSupportedSwapChainId,
 } from "../config/swapChains";
+import { getSwapOwnRouterAddress } from "../config/swapownSources";
 import { pointsEngine } from "./pointsEngine";
 import { postgresDb } from "./postgres";
 
@@ -70,6 +71,9 @@ const EIP7702_DELEGATION_MANAGER_ADDRESSES = new Set(
 );
 const SWAP_EVENT_ABI = parseAbi([
   "event Swapped(address indexed sender, address indexed srcToken, address indexed dstToken, address dstReceiver, uint256 amount, uint256 spentAmount, uint256 returnAmount, uint256 minReturnAmount, uint256 guaranteedAmount, address referrer)",
+]);
+const DUSTSWAP_AGGREGATOR_EVENT_ABI = parseAbi([
+  "event DustSwapSwap(address indexed user,address indexed receiver,address indexed tokenIn,address tokenOut,uint256 amountIn,uint256 grossAmountOut,uint256 netAmountOut,uint256 feeAmount,bytes32 referralCode,address referrer,string aggregatorName,string logoURI)",
 ]);
 const ENTRY_POINT_HANDLE_OPS_ABI = parseAbi([
   "function handleOps((address sender,uint256 nonce,bytes initCode,bytes callData,uint256 callGasLimit,uint256 verificationGasLimit,uint256 preVerificationGas,uint256 maxFeePerGas,uint256 maxPriorityFeePerGas,bytes paymasterAndData,bytes signature)[] ops,address beneficiary)",
@@ -159,6 +163,23 @@ type DecodedSwapEvent = {
   minReturnAmount: bigint;
   guaranteedAmount: bigint;
   referrer: string;
+  logIndex: number;
+  emitterAddress: string;
+};
+
+type DecodedDustSwapAggregatorEvent = {
+  user: string;
+  receiver: string;
+  tokenIn: string;
+  tokenOut: string;
+  amountIn: bigint;
+  grossAmountOut: bigint;
+  netAmountOut: bigint;
+  feeAmount: bigint;
+  referralCode: string;
+  referrer: string;
+  aggregatorName: string;
+  logoURI: string;
   logIndex: number;
   emitterAddress: string;
 };
@@ -650,6 +671,69 @@ function decodeSwapEvent(receipt: TransactionReceiptRecord) {
   }
 
   throw new UnprocessableSwapError("Swapped event not found in transaction receipt");
+}
+
+function decodeDustSwapAggregatorEvents(
+  receipt: TransactionReceiptRecord,
+  chainId: number
+): DecodedDustSwapAggregatorEvent[] {
+  const configuredRouter = getSwapOwnRouterAddress(chainId);
+  if (!configuredRouter) {
+    return [];
+  }
+
+  const normalizedRouter = normalizeAddress(configuredRouter);
+  const events: DecodedDustSwapAggregatorEvent[] = [];
+
+  for (const log of receipt.logs) {
+    if (normalizeAddress(log.address) !== normalizedRouter) {
+      continue;
+    }
+
+    try {
+      const decoded = decodeEventLog({
+        abi: DUSTSWAP_AGGREGATOR_EVENT_ABI,
+        data: log.data,
+        topics: log.topics,
+      });
+
+      const args = decoded.args as {
+        user: string;
+        receiver: string;
+        tokenIn: string;
+        tokenOut: string;
+        amountIn: bigint;
+        grossAmountOut: bigint;
+        netAmountOut: bigint;
+        feeAmount: bigint;
+        referralCode: string;
+        referrer: string;
+        aggregatorName: string;
+        logoURI: string;
+      };
+
+      events.push({
+        user: normalizeAddress(args.user),
+        receiver: normalizeAddress(args.receiver),
+        tokenIn: normalizeAddress(args.tokenIn),
+        tokenOut: normalizeAddress(args.tokenOut),
+        amountIn: args.amountIn,
+        grossAmountOut: args.grossAmountOut,
+        netAmountOut: args.netAmountOut,
+        feeAmount: args.feeAmount,
+        referralCode: args.referralCode,
+        referrer: normalizeAddress(args.referrer),
+        aggregatorName: args.aggregatorName,
+        logoURI: args.logoURI,
+        logIndex: Number(log.logIndex),
+        emitterAddress: normalizeAddress(log.address),
+      });
+    } catch {
+      // Ignore unrelated logs emitted by the same transaction.
+    }
+  }
+
+  return events;
 }
 
 function decodeSmartWalletCalls(callData: Hex): SmartWalletExecutionCall[] {
@@ -1436,6 +1520,184 @@ async function mirrorSwapToSweepHistory(args: {
   }
 }
 
+async function recordDustSwapAggregatorSwap(args: {
+  user: UserRow;
+  normalizedAddress: string;
+  normalizedTxHash: string;
+  resolvedChainId: number;
+  chainConfig: SwapChainConfig;
+  client: SwapPublicClient;
+  resolvedTransaction: ResolvedSubmittedTransaction;
+  blockTimestamp: bigint;
+  events: DecodedDustSwapAggregatorEvent[];
+}): Promise<RecordedSwap> {
+  const primaryEvent = args.events[0];
+  if (!primaryEvent) {
+    throw new UnprocessableSwapError("DustSwap swap event not found");
+  }
+
+  const belongsToWallet = args.events.some(
+    (event) =>
+      event.user === args.normalizedAddress ||
+      event.receiver === args.normalizedAddress
+  );
+  const txFrom = args.resolvedTransaction.transaction.from
+    ? normalizeAddress(args.resolvedTransaction.transaction.from)
+    : "";
+
+  if (!belongsToWallet && txFrom !== args.normalizedAddress) {
+    throw new UnprocessableSwapError("DustSwap swap transaction does not belong to this wallet");
+  }
+
+  const receipt = args.resolvedTransaction.receipt;
+  const occurredAt = new Date(Number(args.blockTimestamp) * 1000);
+  const dayKey = getDayKey(occurredAt);
+  const weekKey = getIsoWeekKey(occurredAt);
+  const occurredAtIso = occurredAt.toISOString();
+
+  const [srcToken, primaryDstToken, outputData] = await Promise.all([
+    getTokenMetadata(args.client, args.chainConfig, primaryEvent.tokenIn),
+    getTokenMetadata(args.client, args.chainConfig, primaryEvent.tokenOut),
+    Promise.all(
+      args.events.map(async (event) => {
+        const token = await getTokenMetadata(args.client, args.chainConfig, event.tokenOut);
+        const price = await getTokenPriceUsd(args.chainConfig, event.tokenOut, dayKey);
+        const amountUsdScaled = calculateUsdAmountScaled(
+          event.netAmountOut,
+          token.decimals,
+          price.priceScaled
+        );
+
+        return {
+          event,
+          token,
+          price,
+          amountUsdScaled,
+        };
+      })
+    ),
+  ]);
+
+  const amountUsdScaled = outputData.reduce(
+    (sum, item) => sum + item.amountUsdScaled,
+    0n
+  );
+  const amountUsd = formatScaledDecimal(amountUsdScaled, USD_SCALE);
+  const grossAmountOut = args.events.reduce((sum, event) => sum + event.grossAmountOut, 0n);
+  const netAmountOut = args.events.reduce((sum, event) => sum + event.netAmountOut, 0n);
+  const feeAmount = args.events.reduce((sum, event) => sum + event.feeAmount, 0n);
+  const amountIn = primaryEvent.amountIn;
+  const outputSummaries = outputData.map((item) => ({
+    tokenAddress: item.token.address,
+    tokenSymbol: item.token.symbol,
+    tokenDecimals: item.token.decimals,
+    grossAmountOut: item.event.grossAmountOut.toString(),
+    netAmountOut: item.event.netAmountOut.toString(),
+    feeAmount: item.event.feeAmount.toString(),
+    amountUsd: formatScaledDecimal(item.amountUsdScaled, USD_SCALE),
+    priceSource: item.price.source,
+    priceMetadata: item.price.metadata,
+    referralCode: item.event.referralCode,
+    referrer: item.event.referrer,
+    logIndex: item.event.logIndex,
+  }));
+  const metadata = {
+    source: "dustswap_aggregator",
+    swapMode: args.events.length > 1 ? "basket" : "single",
+    aggregatorName: primaryEvent.aggregatorName || "DustSwap",
+    logoURI: primaryEvent.logoURI || "logo.png",
+    chainId: args.resolvedChainId,
+    chainKey: args.chainConfig.key,
+    chainLabel: args.chainConfig.label,
+    submittedHash: args.normalizedTxHash,
+    submittedKind: args.resolvedTransaction.submittedKind,
+    resolvedTxHash: args.resolvedTransaction.resolvedTxHash,
+    userOperationHash: args.resolvedTransaction.userOperationHash,
+    viaSmartWallet: args.resolvedTransaction.submittedKind === "user_operation",
+    txFrom: txFrom || null,
+    sender: primaryEvent.user,
+    receiver: primaryEvent.receiver,
+    routerAddress: primaryEvent.emitterAddress,
+    referrer: primaryEvent.referrer,
+    referralCode: primaryEvent.referralCode,
+    inputTokenAddress: srcToken.address,
+    outputTokenAddress: primaryDstToken.address,
+    inputTokenSymbol: srcToken.symbol,
+    outputTokenSymbol: primaryDstToken.symbol,
+    amountIn: amountIn.toString(),
+    grossAmountOut: grossAmountOut.toString(),
+    netAmountOut: netAmountOut.toString(),
+    feeAmount: feeAmount.toString(),
+    outputs: outputSummaries,
+    blockNumber: Number(receipt.blockNumber),
+    transactionIndex: Number(receipt.transactionIndex),
+    logIndex: primaryEvent.logIndex,
+  } satisfies Record<string, unknown>;
+
+  await upsertSwapTransaction({
+    user_id: args.user.id,
+    address: args.normalizedAddress,
+    tx_hash: args.resolvedTransaction.resolvedTxHash,
+    chain_id: args.resolvedChainId,
+    router_address: primaryEvent.emitterAddress,
+    sender_address: primaryEvent.user,
+    src_token_address: srcToken.address,
+    src_token_symbol: srcToken.symbol,
+    src_token_decimals: srcToken.decimals,
+    dst_token_address: primaryDstToken.address,
+    dst_token_symbol: primaryDstToken.symbol,
+    dst_token_decimals: primaryDstToken.decimals,
+    dst_receiver: primaryEvent.receiver,
+    referrer: primaryEvent.referrer,
+    amount_raw: amountIn.toString(),
+    spent_amount_raw: amountIn.toString(),
+    return_amount_raw: netAmountOut.toString(),
+    min_return_amount_raw: "0",
+    guaranteed_amount_raw: netAmountOut.toString(),
+    amount_usd: amountUsd,
+    day_key: dayKey,
+    week_key: weekKey,
+    block_number: Number(receipt.blockNumber),
+    block_hash: receipt.blockHash,
+    transaction_index: Number(receipt.transactionIndex),
+    log_index: primaryEvent.logIndex,
+    occurred_at: occurredAtIso,
+    metadata,
+    updated_at: new Date().toISOString(),
+  });
+
+  await upsertDailyVolume(args.user.id, args.normalizedAddress, dayKey, weekKey, amountUsd);
+  await upsertAlltimeVolume(args.user.id, args.normalizedAddress, occurredAtIso, amountUsd);
+  await mirrorSwapToActivityEvents({
+    userId: args.user.id,
+    chainId: args.resolvedChainId,
+    txHash: args.resolvedTransaction.resolvedTxHash,
+    amountUsd,
+    occurredAt: occurredAtIso,
+    srcToken,
+    dstToken: primaryDstToken,
+    metadata,
+  });
+  await mirrorSwapToSweepHistory({
+    userId: args.user.id,
+    chainId: args.resolvedChainId,
+    txHash: args.resolvedTransaction.resolvedTxHash,
+    srcToken,
+    dstToken: primaryDstToken,
+    spentAmount: amountIn,
+    returnAmount: netAmountOut,
+    amountUsd,
+  });
+
+  return {
+    txHash: args.resolvedTransaction.resolvedTxHash,
+    amountUsd: scaledDecimalToNumber(amountUsdScaled, USD_SCALE),
+    dayKey,
+    weekKey,
+    isNew: true,
+  };
+}
+
 export async function recordSwap(input: {
   address: string;
   txHash: string;
@@ -1495,6 +1757,21 @@ export async function recordSwap(input: {
 
   const transaction = resolvedTransaction.transaction;
   const block = await client.getBlock({ blockNumber: receipt.blockNumber });
+
+  const dustSwapAggregatorEvents = decodeDustSwapAggregatorEvents(receipt, resolvedChainId);
+  if (dustSwapAggregatorEvents.length > 0) {
+    return recordDustSwapAggregatorSwap({
+      user,
+      normalizedAddress,
+      normalizedTxHash,
+      resolvedChainId,
+      chainConfig,
+      client,
+      resolvedTransaction,
+      blockTimestamp: block.timestamp,
+      events: dustSwapAggregatorEvents,
+    });
+  }
 
   const decodedSwap = decodeSwapEvent(receipt);
   if (!isExpectedOpenOceanReferrer(decodedSwap.referrer)) {
