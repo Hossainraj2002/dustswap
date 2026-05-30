@@ -30,6 +30,10 @@ const PRIVY_WALLET_NAMES: Record<string, string> = {
   okx_wallet: "OKX Wallet",
   okx: "OKX Wallet",
   zerion: "Zerion",
+  bitget_wallet: "Bitget Wallet",
+  safe: "Safe",
+  uniswap: "Uniswap Wallet",
+  cryptocom: "Crypto.com Wallet",
   im_token: "imToken",
   imtoken: "imToken",
   phantom: "Phantom",
@@ -42,8 +46,17 @@ type EthereumFlags = {
   isTrust?: boolean;
   isTokenPocket?: boolean;
   isOKExWallet?: boolean;
+  isOKXWallet?: boolean;
   isImToken?: boolean;
   isPhantom?: boolean;
+  isRainbow?: boolean;
+  isBitgetWallet?: boolean;
+  isBitKeep?: boolean;
+  isZerion?: boolean;
+  isSafe?: boolean;
+  isUniswapWallet?: boolean;
+  isCryptoCom?: boolean;
+  isCryptoComWallet?: boolean;
 };
 
 function getEthereumFlags(): EthereumFlags {
@@ -57,7 +70,13 @@ function detectInjectedWalletName(connectorId: string | null) {
   if (flags.isRabby) return "Rabby";
   if (flags.isTrust) return "Trust Wallet";
   if (flags.isTokenPocket) return "Token Pocket";
-  if (flags.isOKExWallet) return "OKX Wallet";
+  if (flags.isOKExWallet || flags.isOKXWallet) return "OKX Wallet";
+  if (flags.isRainbow) return "Rainbow";
+  if (flags.isBitgetWallet || flags.isBitKeep) return "Bitget Wallet";
+  if (flags.isZerion) return "Zerion";
+  if (flags.isSafe) return "Safe";
+  if (flags.isUniswapWallet) return "Uniswap Wallet";
+  if (flags.isCryptoCom || flags.isCryptoComWallet) return "Crypto.com Wallet";
   if (flags.isImToken) return "imToken";
   if (flags.isPhantom) return "Phantom";
   if (flags.isMetaMask) return "MetaMask";

@@ -1,6 +1,9 @@
 "use client";
 
-import { useWalletConnection } from "@/hooks/useWalletConnection";
+import {
+  DUST_SWEEP_PRIVY_WALLET_LIST,
+  useWalletConnection,
+} from "@/hooks/useWalletConnection";
 
 export function WalletGateModal({
   isOpen,
@@ -46,7 +49,7 @@ export function WalletGateModal({
         <div className="mt-4 rounded-[8px] bg-slate-50 p-3">
           <p className="text-sm font-medium text-slate-700">Please connect one of these wallets:</p>
           <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
-            {["Coinbase Wallet", "MetaMask", "Rainbow", "WalletConnect"].map((wallet) => (
+            {["Base Account", "MetaMask", "OKX", "Rainbow", "WalletConnect", "Detected"].map((wallet) => (
               <span
                 key={wallet}
                 className="rounded-[8px] border border-slate-200 bg-white px-3 py-2 text-center font-medium text-slate-700"
@@ -61,7 +64,10 @@ export function WalletGateModal({
           <button
             type="button"
             onClick={() => {
-              void walletConnection.openWalletModal("Connect a DustSweep-supported wallet.");
+              void walletConnection.openWalletModal(
+                "Connect a DustSweep-supported wallet.",
+                DUST_SWEEP_PRIVY_WALLET_LIST,
+              );
             }}
             className="h-11 w-full rounded-[8px] bg-blue-600 px-4 text-sm font-semibold text-white transition-colors hover:bg-blue-700"
           >

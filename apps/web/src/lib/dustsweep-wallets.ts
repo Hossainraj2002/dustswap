@@ -1,0 +1,329 @@
+import { base } from "viem/chains";
+import {
+  type DustSweepAtomicStatus,
+  type DustSweepWalletKey,
+  type DustSweepWalletProfile,
+} from "@/types/dustsweep";
+
+export type WalletRpcRequest = (args: {
+  method: string;
+  params?: unknown[];
+}) => Promise<unknown>;
+
+type EthereumFlags = {
+  isAmbire?: boolean;
+  isBitgetWallet?: boolean;
+  isBitKeep?: boolean;
+  isCoinbaseWallet?: boolean;
+  isCryptoCom?: boolean;
+  isCryptoComWallet?: boolean;
+  isImToken?: boolean;
+  isMetaMask?: boolean;
+  isOKExWallet?: boolean;
+  isOKXWallet?: boolean;
+  isOkxWallet?: boolean;
+  isPhantom?: boolean;
+  isRabby?: boolean;
+  isRainbow?: boolean;
+  isSafe?: boolean;
+  isTokenPocket?: boolean;
+  isTrust?: boolean;
+  isTrustWallet?: boolean;
+  isUniswapWallet?: boolean;
+  isZerion?: boolean;
+};
+
+export type WalletRpcProvider = EthereumFlags & {
+  request?: WalletRpcRequest;
+  providers?: WalletRpcProvider[];
+  selectedProvider?: WalletRpcProvider;
+  info?: { name?: string; rdns?: string };
+  name?: string;
+};
+
+type WalletChainCapabilities = {
+  atomic?: { status?: unknown; supported?: unknown };
+  atomicBatch?: { supported?: unknown };
+};
+
+type DustSweepWalletProfileBase = Omit<
+  DustSweepWalletProfile,
+  "atomicStatus" | "batchNotice"
+>;
+
+function normalizeWalletSignal(value?: string | null) {
+  return value?.trim().toLowerCase().replace(/[\s.-]+/g, "_") || "";
+}
+
+function includesWalletSignal(value: string, ...needles: string[]) {
+  return needles.some((needle) => value.includes(needle));
+}
+
+function getEthereumFlags(): EthereumFlags {
+  if (typeof window === "undefined") return {};
+  return ((window as Window & { ethereum?: WalletRpcProvider }).ethereum ??
+    {}) as EthereumFlags;
+}
+
+function buildWalletSignal(args: {
+  walletClientType?: string | null;
+  connectorId?: string | null;
+  connectorName?: string | null;
+  walletName?: string | null;
+}) {
+  return [
+    args.walletClientType,
+    args.connectorId,
+    args.connectorName,
+    args.walletName,
+  ]
+    .map(normalizeWalletSignal)
+    .filter(Boolean)
+    .join("_");
+}
+
+function getInjectedWalletKey(flags: EthereumFlags): DustSweepWalletKey | null {
+  if (flags.isRabby) return "rabby";
+  if (flags.isTrust || flags.isTrustWallet) return "trust";
+  if (flags.isTokenPocket) return "tokenpocket";
+  if (flags.isOKExWallet || flags.isOKXWallet || flags.isOkxWallet) return "okx";
+  if (flags.isRainbow) return "rainbow";
+  if (flags.isBitgetWallet || flags.isBitKeep) return "bitget";
+  if (flags.isZerion) return "zerion";
+  if (flags.isAmbire) return "ambire";
+  if (flags.isImToken) return "imtoken";
+  if (flags.isPhantom) return "phantom";
+  if (flags.isUniswapWallet) return "uniswap";
+  if (flags.isCryptoCom || flags.isCryptoComWallet) return "cryptocom";
+  if (flags.isSafe) return "safe";
+  if (flags.isCoinbaseWallet) return "coinbase";
+  if (flags.isMetaMask) return "metamask";
+  return null;
+}
+
+function getSignalWalletKey(signal: string): DustSweepWalletKey | null {
+  if (includesWalletSignal(signal, "base_account", "coinbase_smart_wallet")) {
+    return "base_account";
+  }
+  if (includesWalletSignal(signal, "rabby", "rabby_wallet")) return "rabby";
+  if (includesWalletSignal(signal, "trust", "trust_wallet")) return "trust";
+  if (includesWalletSignal(signal, "tokenpocket", "token_pocket")) return "tokenpocket";
+  if (includesWalletSignal(signal, "okx", "okex", "okx_wallet")) return "okx";
+  if (includesWalletSignal(signal, "rainbow")) return "rainbow";
+  if (includesWalletSignal(signal, "safe", "gnosis")) return "safe";
+  if (includesWalletSignal(signal, "bitget", "bitkeep", "bitget_wallet")) return "bitget";
+  if (includesWalletSignal(signal, "zerion")) return "zerion";
+  if (includesWalletSignal(signal, "ambire")) return "ambire";
+  if (includesWalletSignal(signal, "imtoken", "im_token")) return "imtoken";
+  if (includesWalletSignal(signal, "phantom")) return "phantom";
+  if (includesWalletSignal(signal, "uniswap", "uniswap_wallet")) return "uniswap";
+  if (includesWalletSignal(signal, "cryptocom", "crypto_com")) return "cryptocom";
+  if (includesWalletSignal(signal, "coinbase", "coinbase_wallet")) {
+    return "coinbase";
+  }
+  if (includesWalletSignal(signal, "walletconnect", "wallet_connect")) return "walletconnect";
+  if (includesWalletSignal(signal, "metamask", "meta_mask")) return "metamask";
+  if (includesWalletSignal(signal, "injected", "detected_ethereum_wallets")) {
+    return "injected";
+  }
+  return null;
+}
+
+function getExecutionStrategy(walletKey: DustSweepWalletKey) {
+  if (walletKey === "base_account" || walletKey === "coinbase") {
+    return "coinbase_paymaster" as const;
+  }
+
+  return "capability_gated_batch" as const;
+}
+
+export function getDustSweepWalletProfileBase(args: {
+  walletClientType?: string | null;
+  connectorId?: string | null;
+  connectorName?: string | null;
+  walletName: string;
+  isCoinbaseSmartWallet: boolean;
+}): DustSweepWalletProfileBase {
+  const combinedSignal = buildWalletSignal(args);
+  const connectorSignal = normalizeWalletSignal(args.connectorId);
+  const signalKey = getSignalWalletKey(combinedSignal);
+  const injectedKey = getInjectedWalletKey(getEthereumFlags());
+  const mayUseInjectedFlags =
+    !combinedSignal ||
+    signalKey === "injected" ||
+    connectorSignal === "injected" ||
+    includesWalletSignal(combinedSignal, "detected_ethereum_wallets");
+
+  let walletKey: DustSweepWalletKey = "unknown";
+  if (signalKey && signalKey !== "injected") {
+    walletKey = signalKey;
+  } else if (args.isCoinbaseSmartWallet) {
+    walletKey = "base_account";
+  } else if (mayUseInjectedFlags && injectedKey) {
+    walletKey = injectedKey;
+  } else if (signalKey === "injected") {
+    walletKey = "injected";
+  }
+
+  return {
+    walletKey,
+    walletName: args.walletName || "Unknown wallet",
+    executionStrategy: getExecutionStrategy(walletKey),
+  };
+}
+
+export function getWalletBatchNotice(
+  walletName: string,
+  walletKey: DustSweepWalletKey,
+  atomicStatus: DustSweepAtomicStatus,
+) {
+  if (atomicStatus === "supported") {
+    return `${walletName} can batch token approvals and the sweep in one atomic request.`;
+  }
+
+  if (atomicStatus === "ready") {
+    return `${walletName} can enable atomic batching through a wallet-managed EIP-7702 upgrade prompt.`;
+  }
+
+  if (walletKey === "rabby" && atomicStatus === "unsupported") {
+    return "Rabby is connected, but public atomic batching is unavailable. DustSweep will use Permit2 approvals and a standard sweep.";
+  }
+
+  if (atomicStatus === "unsupported") {
+    return "Atomic approval+sweep batching is unavailable on this wallet connection. DustSweep will use Permit2 approvals and a standard sweep.";
+  }
+
+  return null;
+}
+
+function getWindowEthereumProviders(walletKey?: DustSweepWalletKey): WalletRpcProvider[] {
+  if (typeof window === "undefined") {
+    return [];
+  }
+
+  const ethereum = (window as Window & { ethereum?: WalletRpcProvider }).ethereum;
+  if (!ethereum) {
+    return [];
+  }
+
+  const providers = [
+    ethereum.selectedProvider,
+    ...(Array.isArray(ethereum.providers) ? ethereum.providers : []),
+    ethereum,
+  ].filter(Boolean) as WalletRpcProvider[];
+  const uniqueProviders = providers.filter(
+    (provider, index) =>
+      providers.findIndex((candidate) => candidate === provider) === index,
+  );
+
+  if (!walletKey || walletKey === "injected" || walletKey === "unknown") {
+    return uniqueProviders;
+  }
+
+  return uniqueProviders.filter((provider) => {
+    const providerSignal = buildWalletSignal({
+      walletClientType: provider.info?.rdns,
+      connectorId: provider.name,
+      connectorName: provider.info?.name,
+      walletName: undefined,
+    });
+    return getInjectedWalletKey(provider) === walletKey || getSignalWalletKey(providerSignal) === walletKey;
+  });
+}
+
+export function getWalletRequestCandidates(
+  walletClient: unknown,
+  walletKey?: DustSweepWalletKey,
+): WalletRpcRequest[] {
+  const candidates: WalletRpcRequest[] = [];
+  const clientRequest = (walletClient as { request?: WalletRpcRequest } | null)?.request;
+  if (typeof clientRequest === "function") {
+    candidates.push((args) => clientRequest.call(walletClient, args));
+  }
+
+  for (const provider of getWindowEthereumProviders(walletKey)) {
+    if (typeof provider.request === "function") {
+      const request = provider.request;
+      candidates.push((args) => request.call(provider, args));
+    }
+  }
+
+  return candidates;
+}
+
+export function getWalletRequest(
+  walletClient: unknown,
+  walletKey?: DustSweepWalletKey,
+): WalletRpcRequest | null {
+  return getWalletRequestCandidates(walletClient, walletKey)[0] ?? null;
+}
+
+export function getAtomicStatus(atomic: unknown): DustSweepAtomicStatus {
+  if (!atomic || typeof atomic !== "object") {
+    return "unknown";
+  }
+
+  const capability = atomic as { status?: unknown; supported?: unknown };
+  const status = typeof capability.status === "string" ? capability.status.toLowerCase() : "";
+  if (status === "ready" || status === "supported" || status === "unsupported") {
+    return status;
+  }
+
+  if (typeof capability.supported === "string") {
+    const supported = capability.supported.toLowerCase();
+    if (supported === "ready" || supported === "supported" || supported === "unsupported") {
+      return supported;
+    }
+  }
+
+  if (capability.supported === true) {
+    return "supported";
+  }
+
+  if (capability.supported === false) {
+    return "unsupported";
+  }
+
+  return "unknown";
+}
+
+export function getBatchCapabilityStatus(
+  chainCapabilities: unknown,
+): DustSweepAtomicStatus {
+  if (!chainCapabilities || typeof chainCapabilities !== "object") {
+    return "unknown";
+  }
+
+  const capability = chainCapabilities as WalletChainCapabilities;
+  const atomicStatus = getAtomicStatus(capability.atomic);
+  if (atomicStatus !== "unknown") {
+    return atomicStatus;
+  }
+
+  if (capability.atomicBatch?.supported === true) {
+    return "ready";
+  }
+
+  if (capability.atomicBatch?.supported === false) {
+    return "unsupported";
+  }
+
+  return "unsupported";
+}
+
+export function isBatchCapabilitySupported(chainCapabilities: unknown) {
+  const status = getBatchCapabilityStatus(chainCapabilities);
+  return status === "ready" || status === "supported";
+}
+
+export function getChainCapabilities(capabilities: unknown, chainId = base.id) {
+  if (!capabilities || typeof capabilities !== "object") {
+    return undefined;
+  }
+
+  const byChain = capabilities as Record<string, WalletChainCapabilities | undefined>;
+  const chainIdHex = `0x${chainId.toString(16)}`;
+  const chainIdDecimal = String(chainId);
+
+  return byChain[chainIdHex] || byChain[chainIdHex.toUpperCase()] || byChain[chainIdDecimal] || byChain["0x0"];
+}

@@ -14,6 +14,7 @@ import { TokenToPanel } from "@/components/sweep/TokenToPanel";
 import { UnavailablePanel } from "@/components/sweep/UnavailablePanel";
 import { WalletGateModal } from "@/components/sweep/WalletGateModal";
 import { useDustSweep } from "@/hooks/useDustSweep";
+import { DUST_SWEEP_PRIVY_WALLET_LIST } from "@/hooks/useWalletConnection";
 import { type SweepButtonVisualState } from "@/types/dustsweep";
 
 function shortAddress(address: string) {
@@ -90,6 +91,7 @@ function DisconnectedView() {
           <WalletConnectButton
             connectLabel="Connect Wallet"
             description="Connect your wallet to use DustSweep."
+            walletList={DUST_SWEEP_PRIVY_WALLET_LIST}
             fullWidth
             className="rounded-2xl bg-blue-600 px-6 py-3 text-sm font-bold text-white shadow-[0_8px_24px_rgba(37,99,235,0.28)] hover:border-blue-600 hover:bg-blue-700 hover:text-white"
           />
@@ -190,6 +192,7 @@ export default function DustSweepPage() {
           </div>
           <WalletConnectButton
             connectedLabel={address ? shortAddress(address) : undefined}
+            walletList={DUST_SWEEP_PRIVY_WALLET_LIST}
             showDisconnect
             className="rounded-[8px] border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-semibold text-blue-700 shadow-sm hover:border-blue-300 hover:bg-blue-100 hover:text-blue-800"
           />

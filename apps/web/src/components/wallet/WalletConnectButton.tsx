@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { type WalletListEntry } from "@privy-io/react-auth";
 import { useAccount } from "wagmi";
 import { useWalletConnection } from "@/hooks/useWalletConnection";
 
@@ -11,6 +12,7 @@ type WalletConnectButtonProps = {
   description?: string;
   fullWidth?: boolean;
   showDisconnect?: boolean;
+  walletList?: WalletListEntry[];
 };
 
 function cx(...parts: Array<string | false | null | undefined>) {
@@ -33,6 +35,7 @@ export function WalletConnectButton({
   description,
   fullWidth = false,
   showDisconnect = false,
+  walletList,
 }: WalletConnectButtonProps) {
   const { address, isConnected } = useAccount();
   const { disconnectWallet, openWalletModal } = useWalletConnection();
@@ -82,7 +85,7 @@ export function WalletConnectButton({
         type="button"
         onClick={() => {
           if (!isConnected) {
-            void openWalletModal(description);
+            void openWalletModal(description, walletList);
             return;
           }
 

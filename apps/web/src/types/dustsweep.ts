@@ -41,17 +41,29 @@ export type SweepStep = "idle" | "approving" | "signing" | "pending" | "success"
 
 export type WalletSupportTier = "tier1" | "tier2" | "blocked" | "unknown";
 export type DustSweepWalletKey =
-  | "metamask"
-  | "tokenpocket"
+  | "ambire"
+  | "base_account"
+  | "bitget"
   | "coinbase"
-  | "walletconnect"
+  | "cryptocom"
+  | "imtoken"
   | "injected"
+  | "metamask"
+  | "okx"
+  | "phantom"
+  | "rabby"
+  | "rainbow"
+  | "safe"
+  | "tokenpocket"
+  | "trust"
+  | "uniswap"
+  | "walletconnect"
+  | "zerion"
   | "unknown";
 export type DustSweepExecutionStrategy =
-  | "metamask_7702"
-  | "tokenpocket_existing"
+  | "capability_gated_batch"
   | "coinbase_paymaster"
-  | "generic_capability";
+  | "permit2_fallback";
 export type DustSweepAtomicStatus = "ready" | "supported" | "unsupported" | "unknown";
 
 export type DustSweepWalletProfile = {

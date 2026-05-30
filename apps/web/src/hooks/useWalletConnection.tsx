@@ -16,10 +16,24 @@ import {
 import { useSetActiveWallet } from "@privy-io/wagmi";
 
 export const PRIVY_WALLET_LIST: WalletListEntry[] = [
+  "detected_ethereum_wallets",
+  "wallet_connect",
+  "base_account",
+  "coinbase_wallet",
+];
+
+export const DUST_SWEEP_PRIVY_WALLET_LIST: WalletListEntry[] = [
   "base_account",
   "metamask",
   "coinbase_wallet",
   "rainbow",
+  "okx_wallet",
+  "phantom",
+  "zerion",
+  "bitget_wallet",
+  "safe",
+  "uniswap",
+  "cryptocom",
   "detected_ethereum_wallets",
   "wallet_connect",
 ];
@@ -43,7 +57,10 @@ type WalletConnectionContextValue = {
   activeWallet: { address?: string; walletClientType?: string } | null;
   disconnectWallet: () => Promise<void>;
   isAvailable: boolean;
-  openWalletModal: (description?: string) => Promise<void>;
+  openWalletModal: (
+    description?: string,
+    walletList?: WalletListEntry[]
+  ) => Promise<void>;
   supportsBaseAccountFeatures: boolean;
 };
 
@@ -73,10 +90,10 @@ function PrivyWalletConnectionProvider({ children }: { children: ReactNode }) {
   });
 
   const openWalletModal = useCallback(
-    async (description?: string) => {
+    async (description?: string, walletList?: WalletListEntry[]) => {
       connectWallet({
         description,
-        walletList: PRIVY_WALLET_LIST,
+        walletList: walletList ?? PRIVY_WALLET_LIST,
       });
     },
     [connectWallet]
