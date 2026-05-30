@@ -201,20 +201,7 @@ contract DustSwapAggregatorRouter is Ownable, ReentrancyGuard {
             params.referralCode
         );
 
-        emit DustSwapSwap(
-            msg.sender,
-            params.receiver,
-            params.tokenIn,
-            params.tokenOut,
-            params.amountIn,
-            grossAmountOut,
-            netAmountOut,
-            feeAmount,
-            params.referralCode,
-            referralRecipients[params.referralCode],
-            AGGREGATOR_NAME,
-            LOGO_URI
-        );
+        _emitSingleSwap(params, grossAmountOut, feeAmount, netAmountOut);
     }
 
     /// @notice Execute a single-input, single-output DustSwap route using Permit2.
@@ -239,20 +226,7 @@ contract DustSwapAggregatorRouter is Ownable, ReentrancyGuard {
             params.referralCode
         );
 
-        emit DustSwapSwap(
-            msg.sender,
-            params.receiver,
-            params.tokenIn,
-            params.tokenOut,
-            params.amountIn,
-            grossAmountOut,
-            netAmountOut,
-            feeAmount,
-            params.referralCode,
-            referralRecipients[params.referralCode],
-            AGGREGATOR_NAME,
-            LOGO_URI
-        );
+        _emitSingleSwap(params, grossAmountOut, feeAmount, netAmountOut);
     }
 
     /// @notice Execute up to 6 input tokens into up to 6 output tokens using ERC-20 allowances.
@@ -601,6 +575,28 @@ contract DustSwapAggregatorRouter is Ownable, ReentrancyGuard {
         }
 
         IERC20(output.token).safeTransfer(receiver, netAmountOut);
+    }
+
+    function _emitSingleSwap(
+        SwapParams calldata params,
+        uint256 grossAmountOut,
+        uint256 feeAmount,
+        uint256 netAmountOut
+    ) internal {
+        emit DustSwapSwap(
+            msg.sender,
+            params.receiver,
+            params.tokenIn,
+            params.tokenOut,
+            params.amountIn,
+            grossAmountOut,
+            netAmountOut,
+            feeAmount,
+            params.referralCode,
+            referralRecipients[params.referralCode],
+            AGGREGATOR_NAME,
+            LOGO_URI
+        );
     }
 
     function _emitBasketOutputSwaps(

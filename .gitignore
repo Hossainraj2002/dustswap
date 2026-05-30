@@ -28,6 +28,7 @@ dist/
 .open-next/
 out/
 build/
+.codex-tools/
 
 # Foundry
 packages/contracts/out/

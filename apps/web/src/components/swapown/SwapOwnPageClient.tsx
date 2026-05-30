@@ -97,6 +97,15 @@ type BuildTxResponse = {
   outputSummaries: QuoteResponse["outputSummaries"];
 };
 
+type SourceStatus = {
+  chainId: number;
+  chainKey: string;
+  minActiveSources: number;
+  activeSourceCount: number;
+  productionReady: boolean;
+  routerAddress?: Address;
+};
+
 type HistoryRow = {
   id?: number;
   tx_hash: string;
@@ -116,6 +125,7 @@ type PendingHistoryRow = {
 };
 
 const PENDING_HISTORY_KEY = "dustswap.swapown.pending";
+const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000" as Address;
 
 function cx(...parts: Array<string | false | null | undefined>) {
   return parts.filter(Boolean).join(" ");
@@ -162,7 +172,7 @@ function TokenPill({ token }: { token: SwapOwnToken }) {
   return (
     <span className="inline-flex min-w-0 items-center gap-2">
       {token.logoURI ? (
-        <img src={token.logoURI} alt="" className="h-5 w-5 rounded-full" />
+        <Image src={token.logoURI} alt="" width={20} height={20} className="rounded-full" />
       ) : (
         <span className="flex h-5 w-5 items-center justify-center rounded-full bg-slate-200 text-[10px] font-bold text-slate-600">
           {token.symbol.slice(0, 1)}
@@ -229,6 +239,7 @@ export default function SwapOwnPageClient() {
   const [history, setHistory] = useState<HistoryRow[]>([]);
   const [pendingRows, setPendingRows] = useState<PendingHistoryRow[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [sourceStatus, setSourceStatus] = useState<SourceStatus | null>(null);
 
   useEffect(() => {
     const chain = getSwapOwnChain(chainId);
@@ -276,6 +287,27 @@ export default function SwapOwnPageClient() {
     void loadHistory();
   }, [loadHistory]);
 
+  useEffect(() => {
+    let active = true;
+    void (async () => {
+      try {
+        const response = await publicApiFetch(buildPublicApiUrl("/api/swapown/sources"));
+        const data = (await response.json()) as { success?: boolean; chains?: SourceStatus[] };
+        if (!active) return;
+        if (response.ok && data.success) {
+          setSourceStatus(data.chains?.find((item) => item.chainId === chainId) ?? null);
+        } else {
+          setSourceStatus(null);
+        }
+      } catch {
+        if (active) setSourceStatus(null);
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [chainId]);
+
   const normalizedOutputs = useMemo(() => {
     if (mode === "single") {
       return outputs.slice(0, 1).map((output) => ({ ...output, shareBps: 10_000 }));
@@ -292,7 +324,7 @@ export default function SwapOwnPageClient() {
     });
   }, [mode, outputs]);
 
-  const canQuote = isConnected && inputs.every((row) => row.amount && Number(row.amount) > 0);
+  const canQuote = Boolean(sourceStatus?.routerAddress) && inputs.every((row) => row.amount && Number(row.amount) > 0);
 
   const addInput = () => {
     if (inputs.length >= 6) return;
@@ -305,11 +337,6 @@ export default function SwapOwnPageClient() {
   };
 
   const refreshQuote = useCallback(async () => {
-    if (!address) {
-      setError("Connect a wallet first");
-      return null;
-    }
-
     setIsQuoting(true);
     setError(null);
     setStatus("Finding direct DustSwap routes...");
@@ -331,7 +358,7 @@ export default function SwapOwnPageClient() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           chainId,
-          takerAddress: address,
+          takerAddress: address || ZERO_ADDRESS,
           inputs: quoteInputs,
           outputs: quoteOutputs,
           slippageBps,
@@ -659,13 +686,21 @@ export default function SwapOwnPageClient() {
               </button>
               <button
                 type="button"
-                disabled={!quote || isSwapping}
+                disabled={!quote || !isConnected || isSwapping}
                 onClick={() => void executeSwap()}
                 className="h-10 self-end rounded-[8px] bg-blue-600 px-5 text-sm font-black text-white shadow-[0_10px_24px_rgba(37,99,235,0.24)] transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:shadow-none"
               >
-                {isSwapping ? "Swapping..." : "Swap"}
+                {isSwapping ? "Swapping..." : isConnected ? "Swap" : "Connect to swap"}
               </button>
             </div>
+
+            {sourceStatus && (!sourceStatus.routerAddress || !sourceStatus.productionReady) ? (
+              <div className="rounded-[8px] border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-800">
+                {!sourceStatus.routerAddress
+                  ? "DustSwap router is not configured for this chain yet."
+                  : `Source readiness: ${sourceStatus.activeSourceCount}/${sourceStatus.minActiveSources}.`}
+              </div>
+            ) : null}
 
             {error ? (
               <div className="rounded-[8px] border border-red-200 bg-red-50 px-3 py-2 text-sm font-semibold text-red-700">
@@ -741,7 +776,11 @@ export default function SwapOwnPageClient() {
           <section className="rounded-[8px] border border-slate-200 bg-white p-4 shadow-sm">
             <div className="mb-3 flex items-center justify-between">
               <p className="text-sm font-black">History</p>
-              <button type="button" onClick={() => void loadHistory()} className="text-xs font-bold text-blue-700">
+              <button
+                type="button"
+                onClick={() => void loadHistory()}
+                className="h-8 rounded-[8px] px-2 text-xs font-bold text-blue-700 hover:bg-blue-50"
+              >
                 Refresh
               </button>
             </div>
