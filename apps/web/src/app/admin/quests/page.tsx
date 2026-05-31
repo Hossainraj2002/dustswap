@@ -21,6 +21,10 @@ function getDisplayError(error: unknown) {
   return message;
 }
 
+function padDateTimePart(value: number, length = 2) {
+  return String(value).padStart(length, "0");
+}
+
 function toDateTimeLocalValue(value?: string | null) {
   if (!value) {
     return "";
@@ -31,21 +35,41 @@ function toDateTimeLocalValue(value?: string | null) {
     return "";
   }
 
-  const offset = date.getTimezoneOffset();
-  const local = new Date(date.getTime() - offset * 60000);
-  return local.toISOString().slice(0, 16);
+  const datePart = [
+    padDateTimePart(date.getUTCFullYear(), 4),
+    padDateTimePart(date.getUTCMonth() + 1),
+    padDateTimePart(date.getUTCDate()),
+  ].join("-");
+  const timePart = [
+    padDateTimePart(date.getUTCHours()),
+    padDateTimePart(date.getUTCMinutes()),
+  ].join(":");
+
+  return `${datePart}T${timePart}`;
 }
 
 function toIsoOrNull(value: string) {
-  return value ? new Date(value).toISOString() : null;
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  const [datePart, timePart = "00:00"] = trimmed.split("T");
+  const [year, month, day] = datePart.split("-").map(Number);
+  const [hour = 0, minute = 0, second = 0] = timePart.split(":").map(Number);
+  const utcTime = Date.UTC(year, month - 1, day, hour, minute, second);
+
+  return Number.isNaN(utcTime) ? null : new Date(utcTime).toISOString();
 }
 
 function formatAdminQuestInstant(value: string | null | undefined) {
   if (!value) {
     return "—";
   }
-  const d = new Date(value);
-  return Number.isNaN(d.getTime()) ? "Invalid date (fix in DB or re-save)" : d.toLocaleString();
+  const utcValue = toDateTimeLocalValue(value);
+  return utcValue
+    ? `${utcValue.replace("T", " ")} UTC`
+    : "Invalid date (fix in DB or re-save)";
 }
 
 function isSwapQuest(form: AdminQuestInput) {
@@ -813,8 +837,8 @@ export default function AdminQuestsPage() {
 
               <label>
                 <HelpLabel
-                  label="Starts at"
-                  help="Optional opening time. Leave empty if the quest should start immediately when published."
+                  label="Starts at (UTC)"
+                  help="Optional UTC opening time. Leave empty if the quest should start immediately when published."
                 />
                 <input
                   type="datetime-local"
@@ -831,8 +855,8 @@ export default function AdminQuestsPage() {
 
               <label>
                 <HelpLabel
-                  label="Ends at"
-                  help="Optional closing time. Leave empty if the quest should stay open until you turn it off."
+                  label="Ends at (UTC)"
+                  help="Optional UTC closing time. Leave empty if the quest should stay open until you turn it off."
                 />
                 <input
                   type="datetime-local"

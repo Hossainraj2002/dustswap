@@ -490,9 +490,6 @@ function getWindowBounds(windowType: QuestProgressWindow, date = getNow()) {
   return null;
 }
 
-/** Max representable instant for open-ended quests (swap filter upper bound). */
-const QUEST_SWAP_OPEN_END_MS = 8640000000000000;
-
 function normalizeQuestTimestamp(value: unknown): string | null {
   if (value == null || value === "") {
     return null;
@@ -534,12 +531,12 @@ function parseQuestInstant(value: string | null | undefined): Date | null {
 
 /**
  * Intersection of progress window (daily/weekly) with quest starts_at / ends_at.
- * For `once`, uses full quest window only (from starts_at or epoch through ends_at or max date).
+ * For `once`, uses full quest window only (from starts_at or epoch through optional ends_at).
  */
 function getQuestSwapOccurredBounds(
   quest: QuestRecord,
   referenceDate: Date
-): { start: Date; end: Date } {
+): { start: Date; end: Date | null } {
   const cycleBounds = getWindowBounds(quest.progress_window, referenceDate);
   const questStart = parseQuestInstant(quest.starts_at);
   const questEnd = parseQuestInstant(quest.ends_at);
@@ -556,9 +553,7 @@ function getQuestSwapOccurredBounds(
     return { start: new Date(startMs), end: new Date(endMs) };
   }
 
-  const start = questStart ?? new Date(0);
-  const end = questEnd ?? new Date(QUEST_SWAP_OPEN_END_MS);
-  return { start, end };
+  return { start: questStart ?? new Date(0), end: questEnd };
 }
 
 function isQuestLive(quest: QuestRecord, now = getNow()) {
@@ -3557,7 +3552,10 @@ export class QuestEngine {
       metadata: Record<string, unknown> | null;
     }> | null;
 
-    if (occurredBounds.end.getTime() <= occurredBounds.start.getTime()) {
+    if (
+      occurredBounds.end &&
+      occurredBounds.end.getTime() <= occurredBounds.start.getTime()
+    ) {
       data = [];
     } else {
       let query = postgresDb
@@ -3566,8 +3564,11 @@ export class QuestEngine {
           "amount_usd, chain_id, src_token_address, dst_token_address, metadata"
         )
         .eq("user_id", userId)
-        .gte("occurred_at", occurredBounds.start.toISOString())
-        .lt("occurred_at", occurredBounds.end.toISOString());
+        .gte("occurred_at", occurredBounds.start.toISOString());
+
+      if (occurredBounds.end) {
+        query = query.lt("occurred_at", occurredBounds.end.toISOString());
+      }
 
       if (chainIds.length > 0) {
         query = query.in("chain_id", chainIds);
