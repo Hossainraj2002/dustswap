@@ -108,13 +108,16 @@ type SourceStatus = {
 
 type DiscoveryTokenPayload = {
   address?: string;
+  tokenAddress?: string;
   symbol?: string;
   name?: string;
   decimals?: number;
   logoURI?: string;
+  image?: string;
   balance?: string;
   balanceFormatted?: string;
   valueUSD?: number;
+  usdValue?: number;
   isNative?: boolean;
   wrapRequired?: boolean;
 };
@@ -194,10 +197,15 @@ function normalizeDiscoveryTokens(payload: unknown): SwapOwnToken[] {
   const buckets = ["swappable", "excludedOutputAssets", "unavailable", "hidden", "suspicious"];
   const byAddress = new Map<string, SwapOwnToken>();
 
-  for (const bucket of buckets) {
-    const tokens = Array.isArray(source[bucket]) ? (source[bucket] as DiscoveryTokenPayload[]) : [];
+  const tokenGroups = [
+    ...buckets.map((bucket) => (Array.isArray(source[bucket]) ? (source[bucket] as DiscoveryTokenPayload[]) : [])),
+    Array.isArray(source.tokens) ? (source.tokens as DiscoveryTokenPayload[]) : [],
+    Array.isArray(source.tokenBalances) ? (source.tokenBalances as DiscoveryTokenPayload[]) : [],
+  ];
+
+  for (const tokens of tokenGroups) {
     for (const token of tokens) {
-      const address = token.address;
+      const address = token.address || token.tokenAddress;
       if (!address || token.isNative || token.wrapRequired) continue;
       if (address.toLowerCase() === NATIVE_TOKEN_SENTINEL) continue;
       if (!/^0x[a-fA-F0-9]{40}$/.test(address)) continue;
@@ -208,10 +216,10 @@ function normalizeDiscoveryTokens(payload: unknown): SwapOwnToken[] {
         symbol: token.symbol || existing?.symbol || "TOKEN",
         name: token.name || token.symbol || existing?.name || "Token",
         decimals: Number(token.decimals ?? existing?.decimals ?? 18),
-        logoURI: token.logoURI || existing?.logoURI,
+        logoURI: token.logoURI || token.image || existing?.logoURI,
         balance: token.balance || existing?.balance,
         balanceFormatted: token.balanceFormatted || existing?.balanceFormatted,
-        valueUSD: Number(token.valueUSD ?? existing?.valueUSD ?? 0),
+        valueUSD: Number(token.valueUSD ?? token.usdValue ?? existing?.valueUSD ?? 0),
         sourceType: "wallet",
       };
       byAddress.set(key, next);
@@ -239,6 +247,28 @@ function mergeTokenLists(fallbackTokens: SwapOwnToken[], walletTokens: SwapOwnTo
     if (leftWallet !== rightWallet) return rightWallet - leftWallet;
     return Number(b.valueUSD || 0) - Number(a.valueUSD || 0);
   });
+}
+
+async function fetchJsonWithTimeout(url: string, timeoutMs: number) {
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await publicApiFetch(url, {
+      cache: "no-store",
+      signal: controller.signal,
+    });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok) {
+      const message =
+        payload && typeof payload === "object" && "error" in payload
+          ? String((payload as { error?: unknown }).error)
+          : `Request failed with status ${response.status}`;
+      throw new Error(message);
+    }
+    return payload;
+  } finally {
+    window.clearTimeout(timeout);
+  }
 }
 
 function readPendingRows(): PendingHistoryRow[] {
@@ -287,16 +317,20 @@ function TokenSelect({
   tokens,
   onChange,
   label,
+  isDiscovering = false,
 }: {
   value: SwapOwnToken;
   tokens: SwapOwnToken[];
   onChange: (token: SwapOwnToken) => void;
   label: string;
+  isDiscovering?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const selected = tokens.find((token) => token.address.toLowerCase() === value.address.toLowerCase()) || value;
+  const shouldShowDiscoveryState = isDiscovering && !tokens.some((token) => token.sourceType === "wallet");
   const visibleTokens = useMemo(() => {
+    if (shouldShowDiscoveryState) return [];
     const normalized = query.trim().toLowerCase();
     if (!normalized) return tokens;
     return tokens.filter(
@@ -305,7 +339,7 @@ function TokenSelect({
         token.name.toLowerCase().includes(normalized) ||
         token.address.toLowerCase().includes(normalized)
     );
-  }, [query, tokens]);
+  }, [query, shouldShowDiscoveryState, tokens]);
 
   return (
     <div className="relative flex min-w-[150px] flex-col gap-1">
@@ -315,7 +349,16 @@ function TokenSelect({
         onClick={() => setOpen((current) => !current)}
         className="flex min-h-11 w-full items-center justify-between gap-2 rounded-[8px] border border-slate-200 bg-white px-3 py-2 text-left text-sm font-semibold text-slate-900 shadow-sm transition hover:border-blue-300 focus:border-blue-400 focus:outline-none"
       >
-        <TokenPill token={selected} />
+        {shouldShowDiscoveryState ? (
+          <span className="inline-flex min-w-0 items-center gap-2 text-slate-500">
+            <span className="flex h-5 w-5 items-center justify-center rounded-full bg-blue-50 text-[10px] font-bold text-blue-700">
+              ...
+            </span>
+            <span className="truncate">Loading assets</span>
+          </span>
+        ) : (
+          <TokenPill token={selected} />
+        )}
         <span className="text-slate-400">v</span>
       </button>
       {open ? (
@@ -327,7 +370,11 @@ function TokenSelect({
             className="mb-2 h-10 w-full rounded-[8px] border border-slate-200 px-3 text-sm font-semibold outline-none focus:border-blue-400"
           />
           <div className="max-h-[300px] space-y-1 overflow-y-auto">
-            {visibleTokens.length ? (
+            {shouldShowDiscoveryState ? (
+              <div className="rounded-[8px] bg-blue-50 px-3 py-6 text-center text-sm font-semibold text-blue-700">
+                Discovering wallet assets...
+              </div>
+            ) : visibleTokens.length ? (
               visibleTokens.map((token) => (
                 <button
                   key={token.address}
@@ -470,28 +517,52 @@ export default function SwapOwnPageClient() {
 
     setTokensLoading(true);
     setTokensError(null);
+    setWalletTokens([]);
+
+    let completed = 0;
+    let successful = 0;
+    const failures: string[] = [];
+    const finishSource = () => {
+      completed += 1;
+      if (!active || completed < 2) return;
+      setTokensLoading(false);
+      if (successful === 0) {
+        setTokensError(failures[0] || "Failed to discover wallet balances");
+      }
+    };
+    const publishTokens = (tokens: SwapOwnToken[]) => {
+      if (!active || !tokens.length) return;
+      setWalletTokens((current) => mergeTokenLists([], [...current, ...tokens]));
+      setTokensLoading(false);
+      setTokensError(null);
+    };
+
     void (async () => {
       try {
         const url = new URL(buildPublicApiUrl("/api/dustsweep/tokens"));
         url.searchParams.set("address", address);
         url.searchParams.set("chainId", String(chainId));
-        const response = await publicApiFetch(url.toString(), { cache: "no-store" });
-        const payload = await response.json().catch(() => null);
-        if (!active) return;
-        if (!response.ok) {
-          const message =
-            payload && typeof payload === "object" && "error" in payload
-              ? String((payload as { error?: unknown }).error)
-              : "Failed to discover wallet balances";
-          throw new Error(message);
-        }
-        setWalletTokens(normalizeDiscoveryTokens(payload));
+        const payload = await fetchJsonWithTimeout(url.toString(), 24_000);
+        successful += 1;
+        publishTokens(normalizeDiscoveryTokens(payload));
       } catch (tokenError) {
-        if (!active) return;
-        setWalletTokens([]);
-        setTokensError(tokenError instanceof Error ? tokenError.message : "Failed to discover wallet balances");
+        failures.push(tokenError instanceof Error ? tokenError.message : "Failed to discover wallet balances");
       } finally {
-        if (active) setTokensLoading(false);
+        finishSource();
+      }
+    })();
+
+    void (async () => {
+      try {
+        const url = new URL(buildPublicApiUrl("/api/tokens/balances"));
+        url.searchParams.set("address", address);
+        const payload = await fetchJsonWithTimeout(url.toString(), 9_000);
+        successful += 1;
+        publishTokens(normalizeDiscoveryTokens(payload));
+      } catch (tokenError) {
+        failures.push(tokenError instanceof Error ? tokenError.message : "Failed to discover token balances");
+      } finally {
+        finishSource();
       }
     })();
 
@@ -802,10 +873,12 @@ export default function SwapOwnPageClient() {
               <div className="mb-2 flex items-center justify-between">
                 <p className="text-sm font-black">From</p>
                 <div className="flex items-center gap-3">
-                  {tokensLoading ? (
+                  {tokensLoading && walletTokens.length === 0 ? (
                     <span className="text-xs font-semibold text-slate-400">Discovering balances...</span>
                   ) : isConnected && chainId === 8453 ? (
-                    <span className="text-xs font-semibold text-slate-400">{walletTokens.length} wallet assets</span>
+                    <span className="text-xs font-semibold text-slate-400">
+                      {walletTokens.length} wallet assets{tokensLoading ? " loading more" : ""}
+                    </span>
                   ) : null}
                   {mode === "basket" ? (
                     <button type="button" onClick={addInput} className="text-xs font-bold text-blue-700">
@@ -859,6 +932,7 @@ export default function SwapOwnPageClient() {
                         label="Token"
                         value={resolvedToken}
                         tokens={tokenOptions}
+                        isDiscovering={tokensLoading && walletTokens.length === 0}
                         onChange={(token) =>
                           setInputs((current) =>
                             current.map((item) => (item.id === row.id ? { ...item, token } : item))
@@ -901,6 +975,7 @@ export default function SwapOwnPageClient() {
                       label="Token"
                       value={resolvedToken}
                       tokens={tokenOptions}
+                      isDiscovering={tokensLoading && walletTokens.length === 0}
                       onChange={(token) =>
                         setOutputs((current) =>
                           current.map((item) => (item.id === row.id ? { ...item, token } : item))

@@ -1,6 +1,12 @@
 {
   "version": 1,
   "skills": {
+    "base-mcp": {
+      "source": "base/skills",
+      "sourceType": "github",
+      "skillPath": "skills/base-mcp/SKILL.md",
+      "computedHash": "68eaa6c2c3c480e5165cc3e0f68e3e9bcfae9d91d55754cc69e7cf32f4755a87"
+    },
     "supabase": {
       "source": "supabase/agent-skills",
       "sourceType": "github",
