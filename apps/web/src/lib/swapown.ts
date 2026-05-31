@@ -7,6 +7,10 @@ export type SwapOwnToken = {
   name: string;
   decimals: number;
   logoURI?: string;
+  balance?: string;
+  balanceFormatted?: string;
+  valueUSD?: number;
+  sourceType?: "fallback" | "wallet";
 };
 
 export type SwapOwnChain = {

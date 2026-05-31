@@ -106,6 +106,19 @@ type SourceStatus = {
   routerAddress?: Address;
 };
 
+type DiscoveryTokenPayload = {
+  address?: string;
+  symbol?: string;
+  name?: string;
+  decimals?: number;
+  logoURI?: string;
+  balance?: string;
+  balanceFormatted?: string;
+  valueUSD?: number;
+  isNative?: boolean;
+  wrapRequired?: boolean;
+};
+
 type HistoryRow = {
   id?: number;
   tx_hash: string;
@@ -126,6 +139,7 @@ type PendingHistoryRow = {
 
 const PENDING_HISTORY_KEY = "dustswap.swapown.pending";
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000" as Address;
+const NATIVE_TOKEN_SENTINEL = "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
 
 function cx(...parts: Array<string | false | null | undefined>) {
   return parts.filter(Boolean).join(" ");
@@ -147,6 +161,84 @@ function formatTokenAmount(raw: string, token?: SwapOwnToken) {
   } catch {
     return "0";
   }
+}
+
+function formatDisplayBalance(value?: string) {
+  const numeric = Number(value || "0");
+  if (!Number.isFinite(numeric) || numeric <= 0) return "0";
+  if (numeric >= 1_000_000) return `${(numeric / 1_000_000).toFixed(2)}M`;
+  if (numeric >= 1_000) return `${(numeric / 1_000).toFixed(2)}K`;
+  if (numeric >= 1) return numeric.toLocaleString(undefined, { maximumFractionDigits: 6 });
+  if (numeric >= 0.000001) return numeric.toPrecision(6);
+  return numeric.toExponential(2);
+}
+
+function formatUsd(value?: number) {
+  const numeric = Number(value || 0);
+  if (!Number.isFinite(numeric) || numeric <= 0) return "";
+  if (numeric >= 1_000_000) return `$${(numeric / 1_000_000).toFixed(2)}M`;
+  if (numeric >= 1_000) return `$${(numeric / 1_000).toFixed(2)}K`;
+  if (numeric >= 1) return `$${numeric.toFixed(2)}`;
+  if (numeric >= 0.01) return `$${numeric.toFixed(2)}`;
+  return "<$0.01";
+}
+
+function normalizeDiscoveryTokens(payload: unknown): SwapOwnToken[] {
+  const data =
+    payload && typeof payload === "object" && "data" in payload && (payload as { data?: unknown }).data
+      ? (payload as { data: unknown }).data
+      : payload;
+  if (!data || typeof data !== "object") return [];
+
+  const source = data as Record<string, unknown>;
+  const buckets = ["swappable", "excludedOutputAssets", "unavailable", "hidden", "suspicious"];
+  const byAddress = new Map<string, SwapOwnToken>();
+
+  for (const bucket of buckets) {
+    const tokens = Array.isArray(source[bucket]) ? (source[bucket] as DiscoveryTokenPayload[]) : [];
+    for (const token of tokens) {
+      const address = token.address;
+      if (!address || token.isNative || token.wrapRequired) continue;
+      if (address.toLowerCase() === NATIVE_TOKEN_SENTINEL) continue;
+      if (!/^0x[a-fA-F0-9]{40}$/.test(address)) continue;
+      const key = address.toLowerCase();
+      const existing = byAddress.get(key);
+      const next: SwapOwnToken = {
+        address: address as Address,
+        symbol: token.symbol || existing?.symbol || "TOKEN",
+        name: token.name || token.symbol || existing?.name || "Token",
+        decimals: Number(token.decimals ?? existing?.decimals ?? 18),
+        logoURI: token.logoURI || existing?.logoURI,
+        balance: token.balance || existing?.balance,
+        balanceFormatted: token.balanceFormatted || existing?.balanceFormatted,
+        valueUSD: Number(token.valueUSD ?? existing?.valueUSD ?? 0),
+        sourceType: "wallet",
+      };
+      byAddress.set(key, next);
+    }
+  }
+
+  return Array.from(byAddress.values()).sort((a, b) => Number(b.valueUSD || 0) - Number(a.valueUSD || 0));
+}
+
+function mergeTokenLists(fallbackTokens: SwapOwnToken[], walletTokens: SwapOwnToken[]) {
+  const byAddress = new Map<string, SwapOwnToken>();
+  for (const token of fallbackTokens) {
+    byAddress.set(token.address.toLowerCase(), { ...token, sourceType: "fallback" });
+  }
+  for (const token of walletTokens) {
+    byAddress.set(token.address.toLowerCase(), {
+      ...byAddress.get(token.address.toLowerCase()),
+      ...token,
+      sourceType: "wallet",
+    });
+  }
+  return Array.from(byAddress.values()).sort((a, b) => {
+    const leftWallet = a.sourceType === "wallet" ? 1 : 0;
+    const rightWallet = b.sourceType === "wallet" ? 1 : 0;
+    if (leftWallet !== rightWallet) return rightWallet - leftWallet;
+    return Number(b.valueUSD || 0) - Number(a.valueUSD || 0);
+  });
 }
 
 function readPendingRows(): PendingHistoryRow[] {
@@ -178,7 +270,14 @@ function TokenPill({ token }: { token: SwapOwnToken }) {
           {token.symbol.slice(0, 1)}
         </span>
       )}
-      <span className="truncate">{token.symbol}</span>
+      <span className="min-w-0">
+        <span className="block truncate">{token.symbol}</span>
+        {token.balanceFormatted ? (
+          <span className="block truncate text-[11px] font-semibold text-slate-400">
+            Bal {formatDisplayBalance(token.balanceFormatted)}
+          </span>
+        ) : null}
+      </span>
     </span>
   );
 }
@@ -194,24 +293,85 @@ function TokenSelect({
   onChange: (token: SwapOwnToken) => void;
   label: string;
 }) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const selected = tokens.find((token) => token.address.toLowerCase() === value.address.toLowerCase()) || value;
+  const visibleTokens = useMemo(() => {
+    const normalized = query.trim().toLowerCase();
+    if (!normalized) return tokens;
+    return tokens.filter(
+      (token) =>
+        token.symbol.toLowerCase().includes(normalized) ||
+        token.name.toLowerCase().includes(normalized) ||
+        token.address.toLowerCase().includes(normalized)
+    );
+  }, [query, tokens]);
+
   return (
-    <label className="flex min-w-[132px] flex-col gap-1">
+    <div className="relative flex min-w-[150px] flex-col gap-1">
       <span className="text-[11px] font-semibold uppercase text-slate-400">{label}</span>
-      <select
-        value={value.address}
-        onChange={(event) => {
-          const next = tokens.find((token) => token.address === event.target.value);
-          if (next) onChange(next);
-        }}
-        className="h-10 rounded-[8px] border border-slate-200 bg-white px-2 text-sm font-semibold text-slate-900 shadow-sm outline-none transition focus:border-blue-400"
+      <button
+        type="button"
+        onClick={() => setOpen((current) => !current)}
+        className="flex min-h-11 w-full items-center justify-between gap-2 rounded-[8px] border border-slate-200 bg-white px-3 py-2 text-left text-sm font-semibold text-slate-900 shadow-sm transition hover:border-blue-300 focus:border-blue-400 focus:outline-none"
       >
-        {tokens.map((token) => (
-          <option key={token.address} value={token.address}>
-            {token.symbol}
-          </option>
-        ))}
-      </select>
-    </label>
+        <TokenPill token={selected} />
+        <span className="text-slate-400">v</span>
+      </button>
+      {open ? (
+        <div className="absolute right-0 top-full z-30 mt-2 w-[320px] max-w-[82vw] rounded-[8px] border border-slate-200 bg-white p-2 shadow-[0_18px_50px_rgba(15,23,42,0.18)]">
+          <input
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Search token or address"
+            className="mb-2 h-10 w-full rounded-[8px] border border-slate-200 px-3 text-sm font-semibold outline-none focus:border-blue-400"
+          />
+          <div className="max-h-[300px] space-y-1 overflow-y-auto">
+            {visibleTokens.length ? (
+              visibleTokens.map((token) => (
+                <button
+                  key={token.address}
+                  type="button"
+                  onClick={() => {
+                    onChange(token);
+                    setOpen(false);
+                    setQuery("");
+                  }}
+                  className={cx(
+                    "flex min-h-[58px] w-full items-center justify-between gap-3 rounded-[8px] px-2 py-2 text-left transition hover:bg-blue-50",
+                    token.address.toLowerCase() === selected.address.toLowerCase() && "bg-blue-50 ring-1 ring-blue-200"
+                  )}
+                >
+                  <span className="flex min-w-0 items-center gap-2">
+                    {token.logoURI ? (
+                      <img src={token.logoURI} alt="" className="h-7 w-7 rounded-full" />
+                    ) : (
+                      <span className="flex h-7 w-7 items-center justify-center rounded-full bg-slate-200 text-xs font-black text-slate-600">
+                        {token.symbol.slice(0, 1)}
+                      </span>
+                    )}
+                    <span className="min-w-0">
+                      <span className="block truncate text-sm font-black">{token.symbol}</span>
+                      <span className="block truncate text-xs font-semibold text-slate-500">{token.name}</span>
+                    </span>
+                  </span>
+                  <span className="shrink-0 text-right">
+                    <span className="block font-mono text-xs font-black text-slate-900">
+                      {formatDisplayBalance(token.balanceFormatted)}
+                    </span>
+                    <span className="block text-xs font-semibold text-slate-400">{formatUsd(token.valueUSD)}</span>
+                  </span>
+                </button>
+              ))
+            ) : (
+              <div className="rounded-[8px] bg-slate-50 px-3 py-6 text-center text-sm font-semibold text-slate-500">
+                No tokens found
+              </div>
+            )}
+          </div>
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -240,6 +400,14 @@ export default function SwapOwnPageClient() {
   const [pendingRows, setPendingRows] = useState<PendingHistoryRow[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [sourceStatus, setSourceStatus] = useState<SourceStatus | null>(null);
+  const [walletTokens, setWalletTokens] = useState<SwapOwnToken[]>([]);
+  const [tokensLoading, setTokensLoading] = useState(false);
+  const [tokensError, setTokensError] = useState<string | null>(null);
+
+  const tokenOptions = useMemo(
+    () => mergeTokenLists(selectedChain.tokens, walletTokens),
+    [selectedChain.tokens, walletTokens]
+  );
 
   useEffect(() => {
     const chain = getSwapOwnChain(chainId);
@@ -289,6 +457,69 @@ export default function SwapOwnPageClient() {
 
   useEffect(() => {
     let active = true;
+    const supportsDiscovery = chainId === 8453;
+
+    if (!address || !supportsDiscovery) {
+      setWalletTokens([]);
+      setTokensError(null);
+      setTokensLoading(false);
+      return () => {
+        active = false;
+      };
+    }
+
+    setTokensLoading(true);
+    setTokensError(null);
+    void (async () => {
+      try {
+        const url = new URL(buildPublicApiUrl("/api/dustsweep/tokens"));
+        url.searchParams.set("address", address);
+        url.searchParams.set("chainId", String(chainId));
+        const response = await publicApiFetch(url.toString(), { cache: "no-store" });
+        const payload = await response.json().catch(() => null);
+        if (!active) return;
+        if (!response.ok) {
+          const message =
+            payload && typeof payload === "object" && "error" in payload
+              ? String((payload as { error?: unknown }).error)
+              : "Failed to discover wallet balances";
+          throw new Error(message);
+        }
+        setWalletTokens(normalizeDiscoveryTokens(payload));
+      } catch (tokenError) {
+        if (!active) return;
+        setWalletTokens([]);
+        setTokensError(tokenError instanceof Error ? tokenError.message : "Failed to discover wallet balances");
+      } finally {
+        if (active) setTokensLoading(false);
+      }
+    })();
+
+    return () => {
+      active = false;
+    };
+  }, [address, chainId]);
+
+  useEffect(() => {
+    if (!walletTokens.length) return;
+    const fallbackAddresses = new Set(selectedChain.tokens.map((token) => token.address.toLowerCase()));
+    const outputAddresses = new Set(outputs.map((output) => output.token.address.toLowerCase()));
+    setInputs((current) =>
+      current.map((row, index) => {
+        const hasWalletBalance = walletTokens.some(
+          (token) => token.address.toLowerCase() === row.token.address.toLowerCase()
+        );
+        if (index > 0 || row.amount || hasWalletBalance || !fallbackAddresses.has(row.token.address.toLowerCase())) {
+          return row;
+        }
+        const discovered = walletTokens.find((token) => !outputAddresses.has(token.address.toLowerCase())) || walletTokens[0];
+        return discovered ? { ...row, token: discovered } : row;
+      })
+    );
+  }, [outputs, selectedChain.tokens, walletTokens]);
+
+  useEffect(() => {
+    let active = true;
     void (async () => {
       try {
         const response = await publicApiFetch(buildPublicApiUrl("/api/swapown/sources"));
@@ -328,12 +559,12 @@ export default function SwapOwnPageClient() {
 
   const addInput = () => {
     if (inputs.length >= 6) return;
-    setInputs((current) => [...current, { id: newId(), token: selectedChain.tokens[0], amount: "" }]);
+    setInputs((current) => [...current, { id: newId(), token: tokenOptions[0] || selectedChain.tokens[0], amount: "" }]);
   };
 
   const addOutput = () => {
     if (outputs.length >= 6) return;
-    setOutputs((current) => [...current, { id: newId(), token: selectedChain.tokens[1] || selectedChain.tokens[0], shareBps: 0 }]);
+    setOutputs((current) => [...current, { id: newId(), token: tokenOptions[1] || tokenOptions[0] || selectedChain.tokens[1] || selectedChain.tokens[0], shareBps: 0 }]);
   };
 
   const refreshQuote = useCallback(async () => {
@@ -570,49 +801,83 @@ export default function SwapOwnPageClient() {
             <div className="rounded-[8px] border border-slate-200 bg-slate-50 p-3">
               <div className="mb-2 flex items-center justify-between">
                 <p className="text-sm font-black">From</p>
-                {mode === "basket" ? (
-                  <button type="button" onClick={addInput} className="text-xs font-bold text-blue-700">
-                    Add input
-                  </button>
-                ) : null}
+                <div className="flex items-center gap-3">
+                  {tokensLoading ? (
+                    <span className="text-xs font-semibold text-slate-400">Discovering balances...</span>
+                  ) : isConnected && chainId === 8453 ? (
+                    <span className="text-xs font-semibold text-slate-400">{walletTokens.length} wallet assets</span>
+                  ) : null}
+                  {mode === "basket" ? (
+                    <button type="button" onClick={addInput} className="text-xs font-bold text-blue-700">
+                      Add input
+                    </button>
+                  ) : null}
+                </div>
               </div>
+              {tokensError ? (
+                <div className="mb-2 rounded-[8px] border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800">
+                  {tokensError}
+                </div>
+              ) : null}
               <div className="space-y-2">
-                {inputs.map((row, index) => (
-                  <div key={row.id} className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_150px_auto]">
-                    <input
-                      value={row.amount}
-                      onChange={(event) => {
-                        const value = event.target.value.replace(/[^0-9.]/g, "");
-                        setInputs((current) =>
-                          current.map((item) => (item.id === row.id ? { ...item, amount: value } : item))
-                        );
-                      }}
-                      placeholder="0.0"
-                      inputMode="decimal"
-                      className="h-11 min-w-0 rounded-[8px] border border-slate-200 bg-white px-3 font-mono text-lg font-semibold outline-none focus:border-blue-400"
-                    />
-                    <TokenSelect
-                      label="Token"
-                      value={row.token}
-                      tokens={selectedChain.tokens}
-                      onChange={(token) =>
-                        setInputs((current) =>
-                          current.map((item) => (item.id === row.id ? { ...item, token } : item))
-                        )
-                      }
-                    />
-                    {mode === "basket" && inputs.length > 1 ? (
-                      <button
-                        type="button"
-                        onClick={() => setInputs((current) => current.filter((item) => item.id !== row.id))}
-                        className="h-11 rounded-[8px] px-2 text-sm font-bold text-red-600 hover:bg-red-50"
-                        aria-label={`Remove input ${index + 1}`}
-                      >
-                        Remove
-                      </button>
-                    ) : null}
-                  </div>
-                ))}
+                {inputs.map((row, index) => {
+                  const resolvedToken =
+                    tokenOptions.find((token) => token.address.toLowerCase() === row.token.address.toLowerCase()) ||
+                    row.token;
+                  return (
+                    <div key={row.id} className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(190px,230px)_auto]">
+                      <div className="relative min-w-0">
+                        <input
+                          value={row.amount}
+                          onChange={(event) => {
+                            const value = event.target.value.replace(/[^0-9.]/g, "");
+                            setInputs((current) =>
+                              current.map((item) => (item.id === row.id ? { ...item, amount: value } : item))
+                            );
+                          }}
+                          placeholder="0.0"
+                          inputMode="decimal"
+                          className="h-11 min-w-0 rounded-[8px] border border-slate-200 bg-white px-3 pr-16 font-mono text-lg font-semibold outline-none focus:border-blue-400"
+                        />
+                        {resolvedToken.balanceFormatted ? (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setInputs((current) =>
+                                current.map((item) =>
+                                  item.id === row.id ? { ...item, amount: resolvedToken.balanceFormatted || "" } : item
+                                )
+                              )
+                            }
+                            className="absolute right-2 top-1/2 h-7 -translate-y-1/2 rounded-[7px] bg-blue-50 px-2 text-xs font-black text-blue-700 hover:bg-blue-100"
+                          >
+                            Max
+                          </button>
+                        ) : null}
+                      </div>
+                      <TokenSelect
+                        label="Token"
+                        value={resolvedToken}
+                        tokens={tokenOptions}
+                        onChange={(token) =>
+                          setInputs((current) =>
+                            current.map((item) => (item.id === row.id ? { ...item, token } : item))
+                          )
+                        }
+                      />
+                      {mode === "basket" && inputs.length > 1 ? (
+                        <button
+                          type="button"
+                          onClick={() => setInputs((current) => current.filter((item) => item.id !== row.id))}
+                          className="h-11 rounded-[8px] px-2 text-sm font-bold text-red-600 hover:bg-red-50"
+                          aria-label={`Remove input ${index + 1}`}
+                        >
+                          Remove
+                        </button>
+                      ) : null}
+                    </div>
+                  );
+                })}
               </div>
             </div>
 
@@ -626,12 +891,16 @@ export default function SwapOwnPageClient() {
                 ) : null}
               </div>
               <div className="space-y-2">
-                {normalizedOutputs.map((row, index) => (
-                  <div key={row.id} className="grid gap-2 sm:grid-cols-[150px_minmax(0,1fr)_auto]">
+                {normalizedOutputs.map((row, index) => {
+                  const resolvedToken =
+                    tokenOptions.find((token) => token.address.toLowerCase() === row.token.address.toLowerCase()) ||
+                    row.token;
+                  return (
+                  <div key={row.id} className="grid gap-2 sm:grid-cols-[minmax(190px,230px)_minmax(0,1fr)_auto]">
                     <TokenSelect
                       label="Token"
-                      value={row.token}
-                      tokens={selectedChain.tokens}
+                      value={resolvedToken}
+                      tokens={tokenOptions}
                       onChange={(token) =>
                         setOutputs((current) =>
                           current.map((item) => (item.id === row.id ? { ...item, token } : item))
@@ -663,7 +932,8 @@ export default function SwapOwnPageClient() {
                       </button>
                     ) : null}
                   </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
 
