@@ -63,7 +63,8 @@ export type DustSweepWalletKey =
 export type DustSweepExecutionStrategy =
   | "capability_gated_batch"
   | "coinbase_paymaster"
-  | "permit2_fallback";
+  | "permit2_fallback"
+  | "tokenpocket_existing";
 export type DustSweepAtomicStatus = "ready" | "supported" | "unsupported" | "unknown";
 
 export type DustSweepWalletProfile = {

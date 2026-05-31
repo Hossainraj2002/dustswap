@@ -140,6 +140,8 @@ const ATOMIC_BATCH_UNSUPPORTED_MESSAGE =
 const WALLET_BATCH_UNSUPPORTED_MESSAGE =
   "This wallet rejected atomic approval+sweep batching. DustSweep will use Permit2 approvals and a standard sweep.";
 const METAMASK_LOCKED_MESSAGE = "Unlock MetaMask and try again. No transaction was sent.";
+const TOKENPOCKET_BATCH_FAILURE_MESSAGE =
+  "TokenPocket batch execution failed. Please retry, reduce selected tokens, or use another supported wallet while we continue improving TokenPocket support.";
 const TOKENPOCKET_EXECUTE_FAILURES_TOPIC =
   "0xc42159347c71974b140767e5ffe0d24cb03d38c0e86462ec59a240394c3b9b4c";
 const WALLET_SEND_CALLS_MAX_CALLS = Math.max(
@@ -191,6 +193,13 @@ function isRejectedByUser(error: unknown) {
 
 function getErrorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error || "");
+}
+
+function getDebugErrorMessage(error: unknown) {
+  return getErrorMessage(error)
+    .replace(/0x[a-fA-F0-9]{64,}/g, "0x[...]")
+    .replace(/0x[a-fA-F0-9]{40}/g, "0x[...]")
+    .slice(0, 240);
 }
 
 function getErrorCode(error: unknown) {
@@ -261,6 +270,15 @@ function isBatchFallbackError(error: unknown) {
       (lowered.includes("failed") ||
         lowered.includes("rejected") ||
         lowered.includes("unsupported")))
+  );
+}
+
+function isTokenPocketConnectorExecutionError(error: unknown) {
+  const lowered = getErrorMessage(error).toLowerCase();
+  return (
+    lowered.includes("unknown connector error") ||
+    lowered.includes("transaction is expected to fail") ||
+    lowered.includes(TOKENPOCKET_BATCH_FAILURE_MESSAGE.toLowerCase())
   );
 }
 
@@ -418,7 +436,16 @@ function appendDataSuffix(data: Hex, dataSuffix?: Hex) {
   return dataSuffix && dataSuffix !== "0x" ? concatHex([data, dataSuffix]) : data;
 }
 
-function normalizeWalletSendCall(call: WalletSendCall): WalletSendCall {
+function normalizeWalletSendCall(call: WalletSendCall, appendSuffix = true): WalletSendCall {
+  if (!appendSuffix) {
+    return {
+      to: call.to,
+      value: call.value,
+      data: call.data,
+      dataSuffix: call.dataSuffix,
+    };
+  }
+
   return {
     to: call.to,
     value: call.value,
@@ -950,6 +977,7 @@ export function useDustSweep(): UseDustSweepReturn {
     usePaymasterCapabilities: boolean;
     walletKey: DustSweepWalletKey;
     requireAtomic?: boolean;
+    appendDataSuffixes?: boolean;
   }) => {
     if (!walletClient) {
       throw new Error("Wallet client unavailable");
@@ -972,7 +1000,9 @@ export function useDustSweep(): UseDustSweepReturn {
     };
 
     const requireAtomic = args.requireAtomic ?? true;
-    const calls = args.calls.map(normalizeWalletSendCall);
+    const calls = args.calls.map((call) =>
+      normalizeWalletSendCall(call, args.appendDataSuffixes ?? true),
+    );
     const callCount = calls.length;
     const capabilities = buildSendCallsCapabilities({
       usePaymasterCapabilities: args.usePaymasterCapabilities,
@@ -1006,7 +1036,7 @@ export function useDustSweep(): UseDustSweepReturn {
           requireAtomic,
           callCount,
           code: getErrorCode(error),
-          message: getErrorMessage(error),
+          message: getDebugErrorMessage(error),
         });
       }
 
@@ -1067,7 +1097,7 @@ export function useDustSweep(): UseDustSweepReturn {
           requireAtomic,
           callCount,
           code: getErrorCode(error),
-          message: getErrorMessage(error),
+          message: getDebugErrorMessage(error),
         });
         lastSendCallsError = error;
       }
@@ -1240,29 +1270,34 @@ export function useDustSweep(): UseDustSweepReturn {
         ? buildApprovalCalls(approvalRequirements, approvalSpender)
         : [];
       const bundledCallCount = approvalCalls.length + 1;
+      const usesTokenPocketExisting =
+        walletProfile.executionStrategy === "tokenpocket_existing";
       const canUseAtomicBatch = batchMode && hasV2Approvals && supportsWalletSendCalls;
-      const canBundleAllCalls = canUseAtomicBatch && bundledCallCount <= WALLET_SEND_CALLS_MAX_CALLS;
+      const canUseTokenPocketBatch = batchMode && hasV2Approvals && usesTokenPocketExisting;
+      const canBundleAllCalls =
+        (canUseAtomicBatch || canUseTokenPocketBatch) &&
+        bundledCallCount <= WALLET_SEND_CALLS_MAX_CALLS;
       const canBundleApprovalsOnly =
         canUseAtomicBatch &&
+        !usesTokenPocketExisting &&
         approvalCalls.length > 0 &&
         approvalCalls.length <= WALLET_SEND_CALLS_MAX_CALLS;
       const usePaymasterCapabilities =
         walletStatus.isCoinbaseSmartWallet && Boolean(paymasterUrl);
 
-      if (process.env.NODE_ENV !== "production") {
-        console.table({
-          dustSweepWalletName: walletProfile.walletName,
-          dustSweepWalletKey: walletProfile.walletKey,
-          dustSweepConnectorId: walletStatus.connectorId,
-          dustSweepAtomicStatus: walletProfile.atomicStatus,
-          dustSweepSupportsWalletSendCalls: supportsWalletSendCalls,
-          dustSweepExecutionStrategy: walletProfile.executionStrategy,
-          dustSweepLane: lane,
-          dustSweepApprovalCallCount: approvalCalls.length,
-          dustSweepFullBundleCallCount: bundledCallCount,
-          dustSweepWalletCallCap: WALLET_SEND_CALLS_MAX_CALLS,
-        });
-      }
+      console.info("DustSweep execution selection", {
+        walletName: walletProfile.walletName,
+        walletKey: walletProfile.walletKey,
+        connectorId: walletStatus.connectorId,
+        atomicStatus: walletProfile.atomicStatus,
+        supportsWalletSendCalls,
+        executionStrategy: walletProfile.executionStrategy,
+        lane,
+        approvalCallCount: approvalCalls.length,
+        fullBundleCallCount: bundledCallCount,
+        walletCallCap: WALLET_SEND_CALLS_MAX_CALLS,
+        tokenPocketCompatibleBatch: canUseTokenPocketBatch,
+      });
 
       const sendSweepTransaction = async (calldata: Hex) =>
         (await walletClient.sendTransaction({
@@ -1316,52 +1351,126 @@ export function useDustSweep(): UseDustSweepReturn {
         return sendSweepTransaction(sweepCalldata);
       };
 
-      if (batchMode && hasV2Approvals && !supportsWalletSendCalls) {
+      if (
+        batchMode &&
+        hasV2Approvals &&
+        !supportsWalletSendCalls &&
+        !usesTokenPocketExisting
+      ) {
         setExecutionNotice(getBatchFallbackNotice(walletProfile.walletName, walletProfile.walletKey));
       }
 
       let hash: Hex;
       if (canBundleAllCalls) {
+        const sweepCalldata = await getCanonicalCalldata();
+        const fullBundleCalls: WalletSendCall[] = [
+          ...approvalCalls,
+          {
+            to: sweepTarget,
+            data: sweepCalldata,
+            value: txValue,
+            dataSuffix: DATA_SUFFIX,
+          },
+        ];
+
         try {
-          const sweepCalldata = await getCanonicalCalldata();
           currentStep = "pending";
           setSweepStep(currentStep);
+          console.info("DustSweep wallet batch attempt", {
+            walletKey: walletProfile.walletKey,
+            requireAtomic: true,
+            callCount: fullBundleCalls.length,
+            tokenPocketCompatibleBatch: usesTokenPocketExisting,
+          });
           hash = await sendAtomicWalletCalls({
             account: address,
-            calls: [
-              ...approvalCalls,
-              {
-                to: sweepTarget,
-                data: sweepCalldata,
-                value: txValue,
-                dataSuffix: DATA_SUFFIX,
-              },
-            ],
+            calls: fullBundleCalls,
             usePaymasterCapabilities,
             walletKey: walletProfile.walletKey,
             requireAtomic: true,
+            appendDataSuffixes: !usesTokenPocketExisting,
           });
         } catch (strictBundleError) {
           if (isRejectedByUser(strictBundleError) || isWalletLockedError(strictBundleError)) {
             throw strictBundleError;
           }
 
-          console.warn("Atomic DustSweep sendCalls failed; falling back.", strictBundleError);
-          if (!isBatchFallbackError(strictBundleError)) {
-            throw new Error(WALLET_BATCH_UNSUPPORTED_MESSAGE);
-          }
-
-          const notice = getBatchFallbackNoticeForError({
-            walletName: walletProfile.walletName,
+          console.warn("Atomic DustSweep sendCalls failed.", {
             walletKey: walletProfile.walletKey,
-            error: strictBundleError,
-            callCount: bundledCallCount,
+            requireAtomic: true,
+            callCount: fullBundleCalls.length,
+            code: getErrorCode(strictBundleError),
+            message: getDebugErrorMessage(strictBundleError),
           });
 
-          hash = canBundleApprovalsOnly
-            ? await sendBundledApprovalsThenSweep(notice)
-            : await sendStandardSweepWithApprovals();
+          if (usesTokenPocketExisting) {
+            console.info("DustSweep TokenPocket strict batch failed; retrying compatible mode.", {
+              walletKey: walletProfile.walletKey,
+              requireAtomic: false,
+              callCount: fullBundleCalls.length,
+            });
+
+            try {
+              hash = await sendAtomicWalletCalls({
+                account: address,
+                calls: fullBundleCalls,
+                usePaymasterCapabilities,
+                walletKey: walletProfile.walletKey,
+                requireAtomic: false,
+                appendDataSuffixes: false,
+              });
+            } catch (compatibleBundleError) {
+              if (isRejectedByUser(compatibleBundleError) || isWalletLockedError(compatibleBundleError)) {
+                throw compatibleBundleError;
+              }
+
+              console.warn("DustSweep TokenPocket compatible batch failed.", {
+                walletKey: walletProfile.walletKey,
+                requireAtomic: false,
+                callCount: fullBundleCalls.length,
+                code: getErrorCode(compatibleBundleError),
+                message: getDebugErrorMessage(compatibleBundleError),
+              });
+
+              setExecutionNotice(TOKENPOCKET_BATCH_FAILURE_MESSAGE);
+              if (
+                isBatchFallbackError(strictBundleError) ||
+                isBatchFallbackError(compatibleBundleError)
+              ) {
+                try {
+                  hash = await sendStandardSweepWithApprovals();
+                } catch (standardFallbackError) {
+                  console.warn("DustSweep TokenPocket standard fallback failed.", {
+                    walletKey: walletProfile.walletKey,
+                    code: getErrorCode(standardFallbackError),
+                    message: getDebugErrorMessage(standardFallbackError),
+                  });
+                  throw new Error(TOKENPOCKET_BATCH_FAILURE_MESSAGE);
+                }
+              } else {
+                throw new Error(TOKENPOCKET_BATCH_FAILURE_MESSAGE);
+              }
+            }
+          } else {
+            if (!isBatchFallbackError(strictBundleError)) {
+              throw new Error(WALLET_BATCH_UNSUPPORTED_MESSAGE);
+            }
+
+            const notice = getBatchFallbackNoticeForError({
+              walletName: walletProfile.walletName,
+              walletKey: walletProfile.walletKey,
+              error: strictBundleError,
+              callCount: bundledCallCount,
+            });
+
+            hash = canBundleApprovalsOnly
+              ? await sendBundledApprovalsThenSweep(notice)
+              : await sendStandardSweepWithApprovals();
+          }
         }
+      } else if (canUseTokenPocketBatch) {
+        setExecutionNotice(TOKENPOCKET_BATCH_FAILURE_MESSAGE);
+        throw new Error(TOKENPOCKET_BATCH_FAILURE_MESSAGE);
       } else if (canBundleApprovalsOnly) {
         hash = await sendBundledApprovalsThenSweep(
           `Approval+sweep needs ${bundledCallCount} wallet calls, so DustSweep will batch approvals first and then send the sweep.`,
@@ -1404,6 +1513,9 @@ export function useDustSweep(): UseDustSweepReturn {
           ? currentStep === "approving"
             ? "Approval cancelled"
             : "Transaction cancelled"
+          : walletProfile.walletKey === "tokenpocket" &&
+              isTokenPocketConnectorExecutionError(sweepError)
+            ? TOKENPOCKET_BATCH_FAILURE_MESSAGE
           : sweepError instanceof Error
             ? parseDustSweepError(sweepError)
             : "Transaction failed";

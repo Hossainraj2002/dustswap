@@ -130,6 +130,10 @@ function getSignalWalletKey(signal: string): DustSweepWalletKey | null {
 }
 
 function getExecutionStrategy(walletKey: DustSweepWalletKey) {
+  if (walletKey === "tokenpocket") {
+    return "tokenpocket_existing" as const;
+  }
+
   if (walletKey === "base_account" || walletKey === "coinbase") {
     return "coinbase_paymaster" as const;
   }
@@ -187,6 +191,10 @@ export function getWalletBatchNotice(
 
   if (walletKey === "rabby" && atomicStatus === "unsupported") {
     return "Rabby is connected, but public atomic batching is unavailable. DustSweep will use Permit2 approvals and a standard sweep.";
+  }
+
+  if (walletKey === "tokenpocket" && atomicStatus === "unsupported") {
+    return null;
   }
 
   if (atomicStatus === "unsupported") {
