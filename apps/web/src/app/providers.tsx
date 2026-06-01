@@ -19,6 +19,9 @@ import { WalletInterceptor } from "@/components/WalletInterceptor";
 import { ThemeProvider, useTheme } from "@/components/theme/ThemeProvider";
 
 const appUrl = process.env.NEXT_PUBLIC_APP_URL || "https://app.dustswap.wtf";
+const appName = "Dustswap";
+const appLogoUrl = `${appUrl}/logo.png`;
+const appChainIds = INITIAL_WAGMI_CHAINS.map((chain) => chain.id);
 const privyAppId = process.env.NEXT_PUBLIC_PRIVY_APP_ID?.trim() || "";
 const hasPrivyAppId = privyAppId.length > 0;
 const privySupportedChains = INITIAL_WAGMI_CHAINS as unknown as PrivyChain[];
@@ -59,7 +62,7 @@ function AppProviders({ children }: ProvidersProps) {
       appId={privyAppId}
       config={{
         appearance: {
-          logo: `${appUrl}/logo.png`,
+          logo: appLogoUrl,
           showWalletLoginFirst: true,
           theme: resolvedTheme,
           walletChainType: "ethereum-only",
@@ -69,6 +72,22 @@ function AppProviders({ children }: ProvidersProps) {
         loginMethods: ["wallet"],
         supportedChains: privySupportedChains,
         walletConnectCloudProjectId,
+        externalWallets: {
+          baseAccount: {
+            config: {
+              appName,
+              appLogoUrl,
+              appChainIds,
+            },
+          },
+          coinbaseWallet: {
+            config: {
+              appName,
+              appLogoUrl,
+              appChainIds,
+            },
+          },
+        },
       }}
     >
       <PrivyWagmiProvider config={wagmiConfig} reconnectOnMount>
