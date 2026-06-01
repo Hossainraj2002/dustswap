@@ -3,6 +3,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { useAccount, useConnection, useWalletClient } from "wagmi";
 import { useWalletConnection } from "@/hooks/useWalletConnection";
+import {
+  mergeEthereumProviderCandidates,
+  type EthereumProviderCandidate,
+} from "@/lib/ethereumProviders";
 import { type WalletWhitelistStatus } from "@/types/dustsweep";
 
 // ── Capability-based wallet support (~99% coverage) ──
@@ -42,7 +46,7 @@ const PRIVY_WALLET_NAMES: Record<string, string> = {
   embedded: "Privy Embedded Wallet",
 };
 
-type EthereumFlags = {
+type EthereumFlags = EthereumProviderCandidate & {
   isMetaMask?: boolean;
   isRabby?: boolean;
   isTrust?: boolean;
@@ -62,8 +66,7 @@ type EthereumFlags = {
 };
 
 function getEthereumFlags(): EthereumFlags {
-  if (typeof window === "undefined") return {};
-  return ((window as Window & { ethereum?: EthereumFlags }).ethereum ?? {}) as EthereumFlags;
+  return mergeEthereumProviderCandidates<EthereumFlags>();
 }
 
 function detectInjectedWalletName(connectorId: string | null) {
@@ -82,6 +85,15 @@ function detectInjectedWalletName(connectorId: string | null) {
   if (flags.isImToken) return "imToken";
   if (flags.isPhantom) return "Phantom";
   if (flags.isMetaMask) return "MetaMask";
+
+  const injectedSignal = [flags.info?.name, flags.info?.rdns, flags.name]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+  if (injectedSignal.includes("okx") || injectedSignal.includes("okex")) {
+    return "OKX Wallet";
+  }
+
   if (connectorId === "walletConnect") return "WalletConnect";
   if (connectorId === "safe") return "Safe";
   if (connectorId === "coinbaseWallet" || connectorId === "baseAccount") {

@@ -1,5 +1,10 @@
 import { base } from "viem/chains";
 import {
+  getEthereumProviderCandidates,
+  mergeEthereumProviderCandidates,
+  type EthereumProviderCandidate,
+} from "@/lib/ethereumProviders";
+import {
   type DustSweepAtomicStatus,
   type DustSweepWalletKey,
   type DustSweepWalletProfile,
@@ -33,7 +38,7 @@ type EthereumFlags = {
   isZerion?: boolean;
 };
 
-export type WalletRpcProvider = EthereumFlags & {
+export type WalletRpcProvider = EthereumFlags & EthereumProviderCandidate & {
   request?: WalletRpcRequest;
   providers?: WalletRpcProvider[];
   selectedProvider?: WalletRpcProvider;
@@ -59,10 +64,12 @@ function includesWalletSignal(value: string, ...needles: string[]) {
   return needles.some((needle) => value.includes(needle));
 }
 
+function getRawEthereumProviders(): WalletRpcProvider[] {
+  return getEthereumProviderCandidates<WalletRpcProvider>();
+}
+
 function getEthereumFlags(): EthereumFlags {
-  if (typeof window === "undefined") return {};
-  return ((window as Window & { ethereum?: WalletRpcProvider }).ethereum ??
-    {}) as EthereumFlags;
+  return mergeEthereumProviderCandidates<WalletRpcProvider>() as EthereumFlags;
 }
 
 function buildWalletSignal(args: {
@@ -215,24 +222,7 @@ export function getWalletBatchNotice(
 }
 
 function getWindowEthereumProviders(walletKey?: DustSweepWalletKey): WalletRpcProvider[] {
-  if (typeof window === "undefined") {
-    return [];
-  }
-
-  const ethereum = (window as Window & { ethereum?: WalletRpcProvider }).ethereum;
-  if (!ethereum) {
-    return [];
-  }
-
-  const providers = [
-    ethereum.selectedProvider,
-    ...(Array.isArray(ethereum.providers) ? ethereum.providers : []),
-    ethereum,
-  ].filter(Boolean) as WalletRpcProvider[];
-  const uniqueProviders = providers.filter(
-    (provider, index) =>
-      providers.findIndex((candidate) => candidate === provider) === index,
-  );
+  const uniqueProviders = getRawEthereumProviders();
 
   if (!walletKey || walletKey === "injected" || walletKey === "unknown") {
     return uniqueProviders;

@@ -14,12 +14,13 @@ import {
   useConnectWallet,
 } from "@privy-io/react-auth";
 import { useSetActiveWallet } from "@privy-io/wagmi";
+import { hasInjectedOkxWallet } from "@/lib/ethereumProviders";
 
 export const PRIVY_WALLET_LIST: WalletListEntry[] = [
   "detected_ethereum_wallets",
-  "wallet_connect",
   "base_account",
   "coinbase_wallet",
+  "wallet_connect",
 ];
 
 export const DUST_SWEEP_PRIVY_WALLET_LIST: WalletListEntry[] = [
@@ -44,6 +45,28 @@ const BASE_ACCOUNT_FEATURE_WALLET_CLIENT_TYPES = new Set([
   "base_wallet",
   "coinbase_smart_wallet",
 ]);
+
+function uniqueWalletList(walletList: WalletListEntry[]) {
+  return walletList.filter(
+    (wallet, index) => walletList.indexOf(wallet) === index
+  );
+}
+
+function getRuntimeWalletList(walletList: WalletListEntry[]) {
+  if (!hasInjectedOkxWallet()) {
+    return walletList;
+  }
+
+  return uniqueWalletList([
+    "detected_ethereum_wallets",
+    ...walletList.filter(
+      (wallet) =>
+        wallet !== "detected_ethereum_wallets" &&
+        wallet !== "okx_wallet" &&
+        wallet !== "wallet_connect"
+    ),
+  ]);
+}
 
 export function supportsBaseAccountFeatures(
   wallet: { walletClientType?: string } | null | undefined
@@ -93,9 +116,11 @@ function PrivyWalletConnectionProvider({ children }: { children: ReactNode }) {
 
   const openWalletModal = useCallback(
     async (description?: string, walletList?: WalletListEntry[]) => {
+      const nextWalletList = getRuntimeWalletList(walletList ?? PRIVY_WALLET_LIST);
       connectWallet({
         description,
-        walletList: walletList ?? PRIVY_WALLET_LIST,
+        walletList: nextWalletList,
+        walletChainType: "ethereum-only",
       });
     },
     [connectWallet]
