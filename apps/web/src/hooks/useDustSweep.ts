@@ -682,6 +682,13 @@ export function useDustSweep(): UseDustSweepReturn {
     setQuote(null);
     setQuoteError(null);
     setExecutionNotice(null);
+    if (selectedTokens.length > 0) {
+      setTxHash(null);
+      setError(null);
+      setSweepStep((current) =>
+        current === "success" || current === "error" ? "idle" : current,
+      );
+    }
   }, [selectedTokens, tokenOut, slippageBps]);
 
   useEffect(() => {
