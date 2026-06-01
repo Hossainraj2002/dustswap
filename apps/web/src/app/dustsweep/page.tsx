@@ -43,6 +43,7 @@ function getSweepButtonState(args: {
   if (args.sweepStep === "approving") return { state: "approving", label: "Approve tokens..." };
   if (args.sweepStep === "signing") return { state: "signing", label: "Sign in wallet..." };
   if (args.sweepStep === "pending") return { state: "pending", label: "Sweeping..." };
+  if (args.isLoading && args.selectedCount === 0) return { state: "loading", label: "Finding balances..." };
   if (args.selectedCount === 0) return { state: "disabled", label: "Select tokens" };
   if (!args.hasTokenOut) return { state: "disabled", label: "Select output token" };
   if (args.isQuoting) return { state: "loading", label: "Finding route..." };
@@ -102,6 +103,46 @@ function DisconnectedView() {
 }
 
 /* ─── Main connected view ───────────────────────────────────────────────── */
+function BalanceScanStatus({
+  isLoading,
+  message,
+  discoveredCount,
+  elapsedMs,
+}: {
+  isLoading: boolean;
+  message: string;
+  discoveredCount: number;
+  elapsedMs?: number;
+}) {
+  if (!isLoading) return null;
+
+  const seconds = elapsedMs ? Math.max(1, Math.round(elapsedMs / 1000)) : null;
+
+  return (
+    <div className="rounded-[8px] border border-blue-100 bg-white px-4 py-3 shadow-sm">
+      <div className="flex items-center gap-3">
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[8px] bg-blue-50 text-blue-600">
+          <span className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center justify-between gap-3">
+            <p className="truncate text-sm font-semibold text-slate-900">{message}</p>
+            <span className="shrink-0 rounded-full bg-blue-50 px-2 py-0.5 text-[11px] font-semibold text-blue-700">
+              {discoveredCount > 0 ? `${discoveredCount} found` : "Scanning"}
+            </span>
+          </div>
+          <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-100">
+            <div className="h-full w-2/5 animate-pulse rounded-full bg-blue-500" />
+          </div>
+          <p className="mt-2 text-xs text-slate-500">
+            Checking wallet balances, token prices, and route hints{seconds ? ` for ${seconds}s` : ""}.
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function DustSweepPage() {
   const { address, isConnected } = useAccount();
   const sweep = useDustSweep();
@@ -200,6 +241,13 @@ export default function DustSweepPage() {
 
         {/* ── Main card ── */}
         <div className="space-y-3">
+          <BalanceScanStatus
+            isLoading={sweep.isLoading}
+            message={sweep.balanceScan.message}
+            discoveredCount={sweep.balanceScan.discoveredCount}
+            elapsedMs={sweep.balanceScan.elapsedMs}
+          />
+
           {/* From panel */}
           <TokenFromPanel
             selectedTokens={sweep.selectedTokens}

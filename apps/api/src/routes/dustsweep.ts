@@ -89,13 +89,46 @@ const TWO_HOP_FEE_PAIRS = [
   [2500, 500],
   [2500, 2500],
 ] as const;
+function boundedEnvNumber(key: string, fallback: number, min: number, max: number) {
+  const parsed = Number(process.env[key] || fallback);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(min, Math.min(max, Math.floor(parsed)));
+}
+
+function optionalBoundedEnvNumber(key: string, min: number, max: number) {
+  const raw = process.env[key]?.trim();
+  if (!raw) return null;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) return null;
+  return Math.max(min, Math.min(max, Math.floor(parsed)));
+}
+
 const MIN_VALUE_USD = Number(process.env.DUST_SWEEP_MIN_VALUE_USD || "0.01");
 const MIN_WL_LIQUIDITY_USD = Number(process.env.DUST_SWEEP_WHITELIST_MIN_LIQUIDITY_USD || "1000");
-const DISCOVERY_MAX_ERC20_BALANCES = Math.max(
-  50,
-  Math.min(500, Number(process.env.DUST_SWEEP_DISCOVERY_MAX_ERC20_BALANCES || "500")),
-);
 const ALCHEMY_TOKEN_BALANCE_PAGE_SIZE = 100;
+const DISCOVERY_RUNTIME_CACHE_TTL_MS = boundedEnvNumber("DUST_SWEEP_RUNTIME_CACHE_TTL_MS", 30_000, 5_000, 300_000);
+const DISCOVERY_DB_CACHE_TTL_MS = boundedEnvNumber("DUST_SWEEP_DB_CACHE_TTL_MS", 90_000, 30_000, 600_000);
+const DISCOVERY_MARKET_HINT_CONCURRENCY = boundedEnvNumber("DUST_SWEEP_MARKET_HINT_CONCURRENCY", 4, 1, 8);
+const DISCOVERY_MARKET_HINT_TIMEOUT_MS = boundedEnvNumber("DUST_SWEEP_MARKET_HINT_TIMEOUT_MS", 3_500, 1_000, 8_000);
+const DISCOVERY_METADATA_CONCURRENCY = boundedEnvNumber("DUST_SWEEP_METADATA_CONCURRENCY", 10, 1, 24);
+const ERC20_METADATA_CACHE_TTL_MS = boundedEnvNumber("DUST_SWEEP_METADATA_CACHE_TTL_MS", 24 * 60 * 60_000, 60_000, 7 * 24 * 60 * 60_000);
+const WHITELIST_CACHE_TTL_MS = boundedEnvNumber("DUST_SWEEP_WHITELIST_CACHE_TTL_MS", 5 * 60_000, 30_000, 30 * 60_000);
+const DISCOVERY_MAX_ERC20_BALANCES = optionalBoundedEnvNumber(
+  "DUST_SWEEP_DISCOVERY_MAX_ERC20_BALANCES",
+  50,
+  10_000,
+);
+const DISCOVERY_TARGET_NONZERO_BALANCES = optionalBoundedEnvNumber(
+  "DUST_SWEEP_DISCOVERY_TARGET_NONZERO_BALANCES",
+  1,
+  10_000,
+);
+const DISCOVERY_ALCHEMY_MAX_PAGES = optionalBoundedEnvNumber(
+  "DUST_SWEEP_ALCHEMY_MAX_PAGES",
+  1,
+  250,
+);
+const DISCOVERY_ALCHEMY_TIMEOUT_MS = boundedEnvNumber("DUST_SWEEP_ALCHEMY_TIMEOUT_MS", 4_000, 1_000, 15_000);
 const NATIVE_ETH_LOGO_URI = "https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/info/logo.png";
 const DEX = {
   UNISWAP_V3: 0,
@@ -619,6 +652,7 @@ type AlchemyTokenBalancesResponse = {
 type AlchemyTokenBalanceDiscovery = {
   tokenBalances: AlchemyBalance[];
   pageCount: number;
+  scannedBalanceCount: number;
   truncated: boolean;
 };
 
@@ -745,6 +779,16 @@ type DiscoveryTokenResult = {
   reason?: DiscoveryUnavailableReason;
 };
 
+type Erc20Metadata = {
+  symbol: string;
+  name: string;
+  decimals: number;
+};
+
+const erc20MetadataCache = new Map<string, { value: Erc20Metadata; expiresAt: number }>();
+let whitelistCache: { value: Map<string, TokenWhitelistRow>; expiresAt: number } | null = null;
+let ethUsdCache: { price: number; expiresAt: number } | null = null;
+
 function getFeeBps() {
   const parsed = Number(process.env.DUST_SWEEP_FEE_BPS || "200");
   return Number.isFinite(parsed) ? parsed : 200;
@@ -778,7 +822,17 @@ function bestDexFromSource(source?: string | null) {
 }
 
 async function alchemyRpc<T>(method: string, params: unknown[]): Promise<T> {
-  return alchemyRpcRequest<T>(method, params, { timeoutMs: 10_000 });
+  return alchemyRpcRequest<T>(method, params, { timeoutMs: DISCOVERY_ALCHEMY_TIMEOUT_MS });
+}
+
+function reachedDiscoveryLimit(count: number, limit: number | null) {
+  return limit !== null && count >= limit;
+}
+
+function discoveryLimitedBalances<T>(balances: T[]) {
+  return DISCOVERY_MAX_ERC20_BALANCES === null
+    ? balances
+    : balances.slice(0, DISCOVERY_MAX_ERC20_BALANCES);
 }
 
 async function fetchAlchemyTokenBalances(holder: Address): Promise<AlchemyTokenBalanceDiscovery> {
@@ -786,11 +840,26 @@ async function fetchAlchemyTokenBalances(holder: Address): Promise<AlchemyTokenB
   const seen = new Set<string>();
   let pageKey: string | undefined;
   let pageCount = 0;
+  let scannedBalanceCount = 0;
+  const targetNonZeroBalances =
+    DISCOVERY_TARGET_NONZERO_BALANCES === null && DISCOVERY_MAX_ERC20_BALANCES === null
+      ? null
+      : Math.min(
+          DISCOVERY_TARGET_NONZERO_BALANCES ?? Number.MAX_SAFE_INTEGER,
+          DISCOVERY_MAX_ERC20_BALANCES ?? Number.MAX_SAFE_INTEGER,
+        );
 
-  while (tokenBalances.length < DISCOVERY_MAX_ERC20_BALANCES) {
+  while (
+    !reachedDiscoveryLimit(tokenBalances.length, targetNonZeroBalances) &&
+    !reachedDiscoveryLimit(pageCount, DISCOVERY_ALCHEMY_MAX_PAGES)
+  ) {
+    const remaining =
+      targetNonZeroBalances === null
+        ? ALCHEMY_TOKEN_BALANCE_PAGE_SIZE
+        : Math.max(1, targetNonZeroBalances - tokenBalances.length);
     const maxCount = Math.min(
       ALCHEMY_TOKEN_BALANCE_PAGE_SIZE,
-      DISCOVERY_MAX_ERC20_BALANCES - tokenBalances.length,
+      remaining,
     );
     const options: { maxCount: number; pageKey?: string } = { maxCount };
     if (pageKey) options.pageKey = pageKey;
@@ -802,12 +871,18 @@ async function fetchAlchemyTokenBalances(holder: Address): Promise<AlchemyTokenB
     pageCount += 1;
 
     for (const balance of response.tokenBalances || []) {
+      scannedBalanceCount += 1;
       if (!isAddress(balance.contractAddress)) continue;
       const key = balance.contractAddress.toLowerCase();
       if (seen.has(key)) continue;
       seen.add(key);
+      try {
+        if (BigInt(balance.tokenBalance || "0") <= 0n) continue;
+      } catch {
+        continue;
+      }
       tokenBalances.push(balance);
-      if (tokenBalances.length >= DISCOVERY_MAX_ERC20_BALANCES) break;
+      if (reachedDiscoveryLimit(tokenBalances.length, targetNonZeroBalances)) break;
     }
 
     const nextPageKey =
@@ -815,16 +890,27 @@ async function fetchAlchemyTokenBalances(holder: Address): Promise<AlchemyTokenB
         ? response.pageKey.trim()
         : undefined;
     if (!nextPageKey || nextPageKey === pageKey) {
-      return { tokenBalances, pageCount, truncated: false };
+      return { tokenBalances, pageCount, scannedBalanceCount, truncated: false };
+    }
+
+    if (
+      reachedDiscoveryLimit(tokenBalances.length, targetNonZeroBalances) ||
+      reachedDiscoveryLimit(pageCount, DISCOVERY_ALCHEMY_MAX_PAGES)
+    ) {
+      return { tokenBalances, pageCount, scannedBalanceCount, truncated: true };
     }
 
     pageKey = nextPageKey;
   }
 
-  return { tokenBalances, pageCount, truncated: Boolean(pageKey) };
+  return { tokenBalances, pageCount, scannedBalanceCount, truncated: Boolean(pageKey) };
 }
 
 async function loadWhitelist() {
+  if (whitelistCache && whitelistCache.expiresAt > Date.now()) {
+    return whitelistCache.value;
+  }
+
   const map = new Map<string, TokenWhitelistRow>();
 
   try {
@@ -864,6 +950,11 @@ async function loadWhitelist() {
       });
     }
   }
+
+  whitelistCache = {
+    value: map,
+    expiresAt: Date.now() + WHITELIST_CACHE_TTL_MS,
+  };
 
   return map;
 }
@@ -1000,6 +1091,22 @@ function emptyMarketHint(): TokenMarketHint {
   };
 }
 
+function setBestMarketHint(
+  hints: Record<string, TokenMarketHint>,
+  address: string,
+  hint: TokenMarketHint,
+) {
+  const key = address.toLowerCase();
+  const existing = hints[key];
+  if (
+    !existing ||
+    hint.liquidityUSD > existing.liquidityUSD ||
+    (existing.priceUSD <= 0 && hint.priceUSD > 0)
+  ) {
+    hints[key] = hint;
+  }
+}
+
 function isNativeTokenAddress(address: string) {
   return address.toLowerCase() === NATIVE_TOKEN_SENTINEL.toLowerCase();
 }
@@ -1012,49 +1119,60 @@ function isOutputAssetAddress(address: string) {
 async function fetchTokenMarketHintsDexScreener(addresses: Address[]): Promise<Record<string, TokenMarketHint>> {
   const hints: Record<string, TokenMarketHint> = {};
   const batchSize = 30;
+  const batches: Address[][] = [];
 
   for (let i = 0; i < addresses.length; i += batchSize) {
-    const batch = addresses.slice(i, i + batchSize);
-    try {
-      const response = await fetch(
-        `https://api.dexscreener.com/tokens/v1/base/${batch.join(",")}`,
-        {
-          headers: {
-            Accept: "application/json",
-            "User-Agent": "DustSwap/1.0 (+https://app.dustswap.wtf)",
+    batches.push(addresses.slice(i, i + batchSize));
+  }
+
+  const batchResults = await pLimit(
+    batches.map((batch) => async () => {
+      const nextHints: Record<string, TokenMarketHint> = {};
+      try {
+        const response = await fetch(
+          `https://api.dexscreener.com/tokens/v1/base/${batch.join(",")}`,
+          {
+            headers: {
+              Accept: "application/json",
+              "User-Agent": "DustSwap/1.0 (+https://app.dustswap.wtf)",
+            },
+            signal: AbortSignal.timeout(DISCOVERY_MARKET_HINT_TIMEOUT_MS),
           },
-          signal: AbortSignal.timeout(8_000),
-        },
-      );
-      if (!response.ok) continue;
+        );
+        if (!response.ok) return nextHints;
 
-      const pairs = (await response.json()) as Array<{
-        priceUsd?: string;
-        dexId?: string;
-        baseToken?: { address?: string };
-        liquidity?: { usd?: number };
-      }>;
+        const pairs = (await response.json()) as Array<{
+          priceUsd?: string;
+          dexId?: string;
+          baseToken?: { address?: string };
+          liquidity?: { usd?: number };
+        }>;
 
-      for (const pair of pairs) {
-        const priceUSD = Number(pair.priceUsd || 0);
-        const liquidityUSD = Number(pair.liquidity?.usd || 0);
-        const tokenAddress = pair.baseToken?.address;
-        if (!tokenAddress || !Number.isFinite(priceUSD) || priceUSD <= 0) continue;
+        for (const pair of pairs) {
+          const priceUSD = Number(pair.priceUsd || 0);
+          const liquidityUSD = Number(pair.liquidity?.usd || 0);
+          const tokenAddress = pair.baseToken?.address;
+          if (!tokenAddress || !Number.isFinite(priceUSD) || priceUSD <= 0) continue;
 
-        const key = tokenAddress.toLowerCase();
-        const existing = hints[key];
-        if (existing && existing.liquidityUSD >= liquidityUSD) continue;
-
-        hints[key] = {
-          priceUSD,
-          liquidityUSD: Number.isFinite(liquidityUSD) ? liquidityUSD : 0,
-          bestDex: bestDexFromSource(`dexscreener:${pair.dexId || ""}`),
-          source: "dexscreener",
-          confidence: liquidityUSD >= MIN_WL_LIQUIDITY_USD ? "HIGH" : "MEDIUM",
-        };
+          setBestMarketHint(nextHints, tokenAddress, {
+            priceUSD,
+            liquidityUSD: Number.isFinite(liquidityUSD) ? liquidityUSD : 0,
+            bestDex: bestDexFromSource(`dexscreener:${pair.dexId || ""}`),
+            source: "dexscreener",
+            confidence: liquidityUSD >= MIN_WL_LIQUIDITY_USD ? "HIGH" : "MEDIUM",
+          });
+        }
+      } catch {
+        // Discovery is fail-open. Quote validation still runs on demand.
       }
-    } catch {
-      // Discovery is fail-open. Quote validation still runs on demand.
+      return nextHints;
+    }),
+    DISCOVERY_MARKET_HINT_CONCURRENCY,
+  );
+
+  for (const result of batchResults) {
+    for (const [address, hint] of Object.entries(result)) {
+      setBestMarketHint(hints, address, hint);
     }
   }
 
@@ -1066,29 +1184,42 @@ async function fetchCoinGeckoTokenPrices(addresses: Address[]): Promise<Record<s
 
   const prices: Record<string, number> = {};
   const batchSize = 75;
+  const batches: Address[][] = [];
 
   for (let i = 0; i < addresses.length; i += batchSize) {
-    const batch = addresses.slice(i, i + batchSize);
-    try {
-      const url = new URL("https://api.coingecko.com/api/v3/simple/token_price/base");
-      url.searchParams.set("contract_addresses", batch.map((a) => a.toLowerCase()).join(","));
-      url.searchParams.set("vs_currencies", "usd");
-      const response = await fetch(url, {
-        headers: { Accept: "application/json" },
-        signal: AbortSignal.timeout(6_000),
-      });
-      if (!response.ok) continue;
+    batches.push(addresses.slice(i, i + batchSize));
+  }
 
-      const data = (await response.json()) as Record<string, { usd?: number }>;
-      for (const [address, value] of Object.entries(data)) {
-        const priceUSD = Number(value.usd || 0);
-        if (Number.isFinite(priceUSD) && priceUSD > 0) {
-          prices[address.toLowerCase()] = priceUSD;
+  const batchResults = await pLimit(
+    batches.map((batch) => async () => {
+      const nextPrices: Record<string, number> = {};
+      try {
+        const url = new URL("https://api.coingecko.com/api/v3/simple/token_price/base");
+        url.searchParams.set("contract_addresses", batch.map((a) => a.toLowerCase()).join(","));
+        url.searchParams.set("vs_currencies", "usd");
+        const response = await fetch(url, {
+          headers: { Accept: "application/json" },
+          signal: AbortSignal.timeout(DISCOVERY_MARKET_HINT_TIMEOUT_MS),
+        });
+        if (!response.ok) return nextPrices;
+
+        const data = (await response.json()) as Record<string, { usd?: number }>;
+        for (const [address, value] of Object.entries(data)) {
+          const priceUSD = Number(value.usd || 0);
+          if (Number.isFinite(priceUSD) && priceUSD > 0) {
+            nextPrices[address.toLowerCase()] = priceUSD;
+          }
         }
+      } catch {
+        // Price discovery is best-effort; DexScreener and quote checks still apply.
       }
-    } catch {
-      // Price discovery is best-effort; DexScreener and quote checks still apply.
-    }
+      return nextPrices;
+    }),
+    Math.min(3, DISCOVERY_MARKET_HINT_CONCURRENCY),
+  );
+
+  for (const result of batchResults) {
+    Object.assign(prices, result);
   }
 
   return prices;
@@ -1130,21 +1261,15 @@ async function fetchTokenMarketHints(addresses: Address[]): Promise<Record<strin
     hints[NATIVE_TOKEN_SENTINEL.toLowerCase()] = ethHint;
   }
 
-  const dexNeeded = uniqueAddresses.filter(
+  const externalNeeded = uniqueAddresses.filter(
     (address) => !isNativeTokenAddress(address) && (hints[address.toLowerCase()]?.priceUSD || 0) === 0,
   );
-  const dexHints = await fetchTokenMarketHintsDexScreener(dexNeeded);
-  for (const [address, hint] of Object.entries(dexHints)) {
-    const existing = hints[address];
-    if (!existing || existing.priceUSD === 0 || hint.liquidityUSD > existing.liquidityUSD) {
-      hints[address] = hint;
-    }
-  }
 
-  const coingeckoNeeded = uniqueAddresses.filter(
-    (address) => !isNativeTokenAddress(address) && (hints[address.toLowerCase()]?.priceUSD || 0) === 0,
-  );
-  const coingeckoPrices = await fetchCoinGeckoTokenPrices(coingeckoNeeded);
+  const [dexHints, coingeckoPrices] = await Promise.all([
+    fetchTokenMarketHintsDexScreener(externalNeeded),
+    fetchCoinGeckoTokenPrices(externalNeeded),
+  ]);
+
   for (const [address, priceUSD] of Object.entries(coingeckoPrices)) {
     hints[address] = {
       ...emptyMarketHint(),
@@ -1154,12 +1279,16 @@ async function fetchTokenMarketHints(addresses: Address[]): Promise<Record<strin
     };
   }
 
+  for (const [address, hint] of Object.entries(dexHints)) {
+    setBestMarketHint(hints, address, hint);
+  }
+
   return hints;
 }
 
 async function getCachedTokenResult(address: Address) {
   try {
-    const cutoff = new Date(Date.now() - 60_000).toISOString();
+    const cutoff = new Date(Date.now() - DISCOVERY_DB_CACHE_TTL_MS).toISOString();
     const { data, error } = await postgresDb
       .from("dustsweep_token_cache")
       .select("payload,updated_at")
@@ -2499,18 +2628,28 @@ async function getLatestBaseBlockNumber() {
 }
 
 async function fetchEthUsdPrice() {
+  if (ethUsdCache && ethUsdCache.expiresAt > Date.now()) {
+    return ethUsdCache.price;
+  }
+
   try {
     const response = await fetch("https://api.coinbase.com/v2/prices/ETH-USD/spot", {
       headers: { Accept: "application/json" },
+      signal: AbortSignal.timeout(2_500),
     });
     if (!response.ok) throw new Error("ETH price unavailable");
     const payload = (await response.json()) as { data?: { amount?: string } };
     const price = Number(payload.data?.amount || 0);
-    if (Number.isFinite(price) && price > 0) return price;
+    if (Number.isFinite(price) && price > 0) {
+      ethUsdCache = { price, expiresAt: Date.now() + 60_000 };
+      return price;
+    }
   } catch {
     // Fallback below.
   }
-  return Number(process.env.DEFAULT_ETH_PRICE_USD || "3500");
+  const fallback = Number(process.env.DEFAULT_ETH_PRICE_USD || "3500");
+  ethUsdCache = { price: fallback, expiresAt: Date.now() + 15_000 };
+  return fallback;
 }
 
 async function getLogsChunk(args: {
@@ -2766,7 +2905,28 @@ async function findMissingTokenApprovals(userAddress: Address, routes: DustSweep
   return approvals;
 }
 
-async function readErc20Metadata(token: Address) {
+function getCachedErc20Metadata(token: Address) {
+  const key = token.toLowerCase();
+  const cached = erc20MetadataCache.get(key);
+  if (!cached) return null;
+  if (cached.expiresAt <= Date.now()) {
+    erc20MetadataCache.delete(key);
+    return null;
+  }
+  return cached.value;
+}
+
+function setCachedErc20Metadata(token: Address, value: Erc20Metadata) {
+  erc20MetadataCache.set(token.toLowerCase(), {
+    value,
+    expiresAt: Date.now() + ERC20_METADATA_CACHE_TTL_MS,
+  });
+}
+
+async function readErc20Metadata(token: Address): Promise<Erc20Metadata> {
+  const cached = getCachedErc20Metadata(token);
+  if (cached) return cached;
+
   const fallbackSymbol = `${token.slice(0, 6)}...${token.slice(-4)}`;
   const [symbolResult, nameResult, decimalsResult] = await Promise.allSettled([
     callContract(
@@ -2815,11 +2975,13 @@ async function readErc20Metadata(token: Address) {
     // Keep fallback.
   }
 
-  return {
+  const metadata = {
     symbol: sanitizeDbText(symbol, fallbackSymbol, 32),
     name: sanitizeDbText(name, symbol || fallbackSymbol, 120),
     decimals: Number.isFinite(decimals) ? decimals : 18,
   };
+  setCachedErc20Metadata(token, metadata);
+  return metadata;
 }
 
 function toTokenUpsertRow(row: TokenWhitelistRow) {
@@ -3942,6 +4104,53 @@ dustsweepRoutes.post("/admin/sync-whitelist-pool-events", async (c) => {
   }
 });
 
+async function loadDiscoveryMetadata(
+  balances: AlchemyBalance[],
+  whitelist: Map<string, TokenWhitelistRow>,
+  marketHints: Record<string, TokenMarketHint>,
+) {
+  const metadataByAddress = new Map<string, Erc20Metadata>();
+  const seen = new Set<string>();
+  const tasks: Array<() => Promise<{ key: string; metadata: Erc20Metadata | null }>> = [];
+
+  for (const balance of discoveryLimitedBalances(balances)) {
+    if (!isAddress(balance.contractAddress)) continue;
+
+    const tokenAddress = normalizeAddress(balance.contractAddress);
+    const key = tokenAddress.toLowerCase();
+    if (seen.has(key) || whitelist.has(key)) continue;
+    seen.add(key);
+
+    const market = marketHints[key];
+    if (
+      !market ||
+      (market.priceUSD <= 0 && market.liquidityUSD <= 0 && !isOutputAssetAddress(tokenAddress))
+    ) {
+      continue;
+    }
+
+    const cached = getCachedErc20Metadata(tokenAddress);
+    if (cached) {
+      metadataByAddress.set(key, cached);
+      continue;
+    }
+
+    tasks.push(async () => ({
+      key,
+      metadata: await readErc20Metadata(tokenAddress).catch(() => null),
+    }));
+  }
+
+  const results = await pLimit(tasks, DISCOVERY_METADATA_CONCURRENCY);
+  for (const result of results) {
+    if (result.metadata) {
+      metadataByAddress.set(result.key, result.metadata);
+    }
+  }
+
+  return metadataByAddress;
+}
+
 async function handleDustSweepTokensRequest(c: Context, rawAddress?: string) {
   if (!rawAddress || !isAddress(rawAddress)) {
     return c.json(errorJson("A valid wallet address is required"), 400);
@@ -3956,7 +4165,8 @@ async function handleDustSweepTokensRequest(c: Context, rawAddress?: string) {
   const runtimeKey = `dustsweep:tokens:${BASE_CHAIN_ID}:${userAddress.toLowerCase()}`;
 
   try {
-    const result = await runtimeCache.getOrSet(runtimeKey, 30_000, async () => {
+    const result = await runtimeCache.getOrSet(runtimeKey, DISCOVERY_RUNTIME_CACHE_TTL_MS, async () => {
+      const startedAt = Date.now();
       const cached = await getCachedTokenResult(userAddress);
       if (cached) return cached;
 
@@ -3964,7 +4174,17 @@ async function handleDustSweepTokensRequest(c: Context, rawAddress?: string) {
       // Whitelist is used as metadata/liquidity HINTS, not a visibility gate.
       const [whitelist, erc20Discovery, nativeBalance] = await Promise.all([
         loadWhitelist(),
-        fetchAlchemyTokenBalances(userAddress),
+        fetchAlchemyTokenBalances(userAddress).catch((error) => {
+          console.warn("[dustsweep/tokens] Alchemy balance discovery failed", {
+            message: error instanceof Error ? error.message : String(error),
+          });
+          return {
+            tokenBalances: [],
+            pageCount: 0,
+            scannedBalanceCount: 0,
+            truncated: false,
+          } satisfies AlchemyTokenBalanceDiscovery;
+        }),
         readNativeBalance(userAddress).catch(() => 0n),
       ]);
 
@@ -3984,6 +4204,7 @@ async function handleDustSweepTokensRequest(c: Context, rawAddress?: string) {
         ? [...allAddresses, NATIVE_TOKEN_SENTINEL]
         : allAddresses;
       const marketHints = await fetchTokenMarketHints(marketAddresses);
+      const metadataByAddress = await loadDiscoveryMetadata(nonZero, whitelist, marketHints);
 
       const swappable: DiscoveryTokenResult[] = [];
       const unavailable: DiscoveryTokenResult[] = [];
@@ -4030,7 +4251,7 @@ async function handleDustSweepTokensRequest(c: Context, rawAddress?: string) {
       }
 
       // ── Process ERC-20 balances ──
-      for (const balance of nonZero.slice(0, DISCOVERY_MAX_ERC20_BALANCES)) {
+      for (const balance of discoveryLimitedBalances(nonZero)) {
         if (!isAddress(balance.contractAddress)) continue;
 
         const tokenAddress = normalizeAddress(balance.contractAddress);
@@ -4055,15 +4276,12 @@ async function handleDustSweepTokensRequest(c: Context, rawAddress?: string) {
           bestDex = bestDexFromSource(whitelistRow.source);
           hasMetadata = true;
         } else {
-          // Not in whitelist — try on-chain metadata read
-          try {
-            const meta = await readErc20Metadata(tokenAddress);
+          const meta = metadataByAddress.get(key);
+          if (meta) {
             decimals = meta.decimals;
             symbol = meta.symbol;
             name = meta.name;
             hasMetadata = true;
-          } catch {
-            // Keep fallbacks
           }
         }
 
@@ -4172,9 +4390,15 @@ async function handleDustSweepTokensRequest(c: Context, rawAddress?: string) {
         refreshedAt: new Date().toISOString(),
         discovery: {
           erc20BalanceCount: nonZero.length,
+          alchemyScannedBalanceCount: erc20Discovery.scannedBalanceCount,
           alchemyPageCount: erc20Discovery.pageCount,
           truncated: erc20Discovery.truncated,
           maxErc20Balances: DISCOVERY_MAX_ERC20_BALANCES,
+          targetNonZeroBalances: DISCOVERY_TARGET_NONZERO_BALANCES,
+          maxAlchemyPages: DISCOVERY_ALCHEMY_MAX_PAGES,
+          marketHintCount: Object.keys(marketHints).length,
+          metadataReadCount: metadataByAddress.size,
+          elapsedMs: Date.now() - startedAt,
         },
         swappable,
         unavailable,

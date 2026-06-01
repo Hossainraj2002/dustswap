@@ -40,6 +40,8 @@ export const DUST_SWEEP_PRIVY_WALLET_LIST: WalletListEntry[] = [
 
 const BASE_ACCOUNT_FEATURE_WALLET_CLIENT_TYPES = new Set([
   "base_account",
+  "base_app",
+  "base_wallet",
   "coinbase_smart_wallet",
 ]);
 

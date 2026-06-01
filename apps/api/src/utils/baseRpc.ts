@@ -4,6 +4,8 @@ import { base } from "viem/chains";
 const BASE_PUBLIC_RPC_URL = "https://mainnet.base.org";
 const BASE_CHAIN_ID = 8453;
 const DEFAULT_ROTATION_CALLS = 100;
+const DEFAULT_ALCHEMY_ROTATION_CALLS = 1;
+const DEFAULT_ALCHEMY_HEDGE_COUNT = 2;
 
 let activeIndex = 0;
 let activeCalls = 0;
@@ -74,9 +76,26 @@ function normalizeRpcParams(params?: RpcParams) {
   return params ?? [];
 }
 
-function getRotationCalls() {
-  const parsed = Number(process.env.BASE_RPC_ROTATION_CALLS || DEFAULT_ROTATION_CALLS);
-  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : DEFAULT_ROTATION_CALLS;
+function getRotationCalls(envValue: string | undefined, fallback: number) {
+  const parsed = Number(envValue || fallback);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback;
+}
+
+function getBaseRotationCalls() {
+  return getRotationCalls(process.env.BASE_RPC_ROTATION_CALLS, DEFAULT_ROTATION_CALLS);
+}
+
+function getAlchemyRotationCalls() {
+  return getRotationCalls(
+    process.env.ALCHEMY_RPC_ROTATION_CALLS,
+    DEFAULT_ALCHEMY_ROTATION_CALLS,
+  );
+}
+
+function getAlchemyHedgeCount(endpointCount: number) {
+  const parsed = Number(process.env.ALCHEMY_RPC_HEDGE_COUNT || DEFAULT_ALCHEMY_HEDGE_COUNT);
+  if (!Number.isFinite(parsed) || parsed <= 1) return 1;
+  return Math.max(1, Math.min(endpointCount, Math.floor(parsed)));
 }
 
 function shouldUsePublicFallback() {
@@ -93,9 +112,14 @@ function isSameEndpoint(a: BaseRpcEndpoint, b: BaseRpcEndpoint) {
 function getPreferredAlchemyKeyUrls() {
   const preferredKeys = [
     ...splitEnv(process.env.ALCHEMY_BASE_RPC_KEYS),
+    ...splitEnv(process.env.ALCHEMY_BASE_RPC_KEY),
     ...splitEnv(process.env.ALCHEMY_API_KEYS),
   ];
-  const fallbackKeys = splitEnv(process.env.ALCHEMY_API_KEY);
+  const fallbackKeys = [
+    ...splitEnv(process.env.ALCHEMY_API_KEY),
+    ...splitEnv(process.env.BASE_ALCHEMY_API_KEYS),
+    ...splitEnv(process.env.BASE_ALCHEMY_API_KEY),
+  ];
 
   return [...preferredKeys, ...fallbackKeys].map(
     (key) => `https://base-mainnet.g.alchemy.com/v2/${key}`,
@@ -168,7 +192,7 @@ export function getRotatingBaseRpcEndpoint() {
   const endpoint = endpoints[activeIndex % endpoints.length];
   activeCalls += 1;
 
-  if (activeCalls >= getRotationCalls()) {
+  if (activeCalls >= getBaseRotationCalls()) {
     activeCalls = 0;
     activeIndex = (activeIndex + 1) % endpoints.length;
   }
@@ -194,7 +218,7 @@ export function getRotatingAlchemyRpcEndpoint() {
   const endpoint = endpoints[alchemyActiveIndex % endpoints.length];
   alchemyActiveCalls += 1;
 
-  if (alchemyActiveCalls >= getRotationCalls()) {
+  if (alchemyActiveCalls >= getAlchemyRotationCalls()) {
     alchemyActiveCalls = 0;
     alchemyActiveIndex = (alchemyActiveIndex + 1) % endpoints.length;
   }
@@ -207,6 +231,57 @@ function getOrderedAlchemyRpcEndpoints() {
   const first = getRotatingAlchemyRpcEndpoint();
   if (!first) return [];
   return [first, ...endpoints.filter((endpoint) => !isSameEndpoint(endpoint, first))];
+}
+
+async function requestAlchemyEndpoint<T>(
+  endpoint: BaseRpcEndpoint,
+  method: string,
+  params: RpcParams,
+  opts: RpcRequestOptions,
+  controller: AbortController,
+): Promise<T> {
+  const timeoutMs = opts.timeoutMs ?? 10_000;
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  const combinedSignal = opts.signal
+    ? AbortSignal.any([opts.signal, controller.signal])
+    : controller.signal;
+
+  try {
+    const response = await fetch(endpoint.url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...endpoint.headers },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: requestId++,
+        method,
+        params: normalizeRpcParams(params),
+      }),
+      signal: combinedSignal,
+    });
+
+    if (!response.ok) {
+      if (response.status === 429) {
+        throw new RpcRateLimitError(`Alchemy rate limited (${response.status})`);
+      }
+      throw new RpcTransportError(`Alchemy ${response.status}`);
+    }
+
+    const payload = (await response.json()) as {
+      result?: T;
+      error?: { code?: number; message?: string };
+    };
+
+    if (payload.error) {
+      if (isDeterministicRpcError(payload.error)) {
+        throw new RpcDeterministicError(payload.error.message || "Alchemy deterministic error");
+      }
+      throw new RpcTransportError(payload.error.message || "Alchemy RPC error");
+    }
+
+    return payload.result as T;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 // Typed as any to avoid cross-package viem client incompatibilities in this workspace.
@@ -246,56 +321,48 @@ export async function alchemyRpcRequest<T>(
   }
 
   let lastTransport: Error | null = null;
+  let endpointsToTry = endpoints;
+  const hedgeCount = getAlchemyHedgeCount(endpoints.length);
 
-  for (const endpoint of endpoints) {
+  if (hedgeCount > 1) {
+    const hedgedControllers: AbortController[] = [];
+    let deterministicError: RpcDeterministicError | null = null;
+    try {
+      const result = await Promise.any(
+        endpoints.slice(0, hedgeCount).map(async (endpoint) => {
+          const controller = new AbortController();
+          hedgedControllers.push(controller);
+          try {
+            return await requestAlchemyEndpoint<T>(endpoint, method, params, opts, controller);
+          } catch (err) {
+            if (err instanceof RpcDeterministicError && !deterministicError) {
+              deterministicError = err;
+            }
+            throw err;
+          }
+        }),
+      );
+      for (const controller of hedgedControllers) controller.abort();
+      return result;
+    } catch (err) {
+      for (const controller of hedgedControllers) controller.abort();
+      if (deterministicError) throw deterministicError;
+      lastTransport = err instanceof Error ? err : new Error(String(err));
+      endpointsToTry = endpoints.slice(hedgeCount);
+    }
+  }
+
+  for (const endpoint of endpointsToTry) {
     const controller = new AbortController();
-    const timeoutMs = opts.timeoutMs ?? 10_000;
-    const timeout = setTimeout(() => controller.abort(), timeoutMs);
-    const combinedSignal = opts.signal
-      ? AbortSignal.any([opts.signal, controller.signal])
-      : controller.signal;
 
     try {
-      const response = await fetch(endpoint.url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...endpoint.headers },
-        body: JSON.stringify({
-          jsonrpc: "2.0",
-          id: requestId++,
-          method,
-          params: normalizeRpcParams(params),
-        }),
-        signal: combinedSignal,
-      });
-
-      if (!response.ok) {
-        if (response.status === 429) {
-          throw new RpcRateLimitError(`Alchemy rate limited (${response.status})`);
-        }
-        throw new RpcTransportError(`Alchemy ${response.status}`);
-      }
-
-      const payload = (await response.json()) as {
-        result?: T;
-        error?: { code?: number; message?: string };
-      };
-
-      if (payload.error) {
-        if (isDeterministicRpcError(payload.error)) {
-          throw new RpcDeterministicError(payload.error.message || "Alchemy deterministic error");
-        }
-        throw new RpcTransportError(payload.error.message || "Alchemy RPC error");
-      }
-
-      return payload.result as T;
+      return await requestAlchemyEndpoint<T>(endpoint, method, params, opts, controller);
     } catch (err) {
       if (err instanceof RpcDeterministicError) throw err;
       if (opts.signal?.aborted) throw err;
 
       lastTransport = err instanceof Error ? err : new Error(String(err));
       continue;
-    } finally {
-      clearTimeout(timeout);
     }
   }
 

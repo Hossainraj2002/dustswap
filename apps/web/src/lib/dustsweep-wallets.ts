@@ -102,7 +102,7 @@ function getInjectedWalletKey(flags: EthereumFlags): DustSweepWalletKey | null {
 }
 
 function getSignalWalletKey(signal: string): DustSweepWalletKey | null {
-  if (includesWalletSignal(signal, "base_account", "coinbase_smart_wallet")) {
+  if (includesWalletSignal(signal, "base_account", "base_app", "base_wallet", "coinbase_smart_wallet")) {
     return "base_account";
   }
   if (includesWalletSignal(signal, "rabby", "rabby_wallet")) return "rabby";

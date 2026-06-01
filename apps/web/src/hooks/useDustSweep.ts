@@ -5,7 +5,7 @@ import { useAccount, useConnection, usePublicClient, useWalletClient } from "wag
 import { base } from "viem/chains";
 import { useBaseChainSwitch } from "@/hooks/useBaseChainSwitch";
 import { concatHex, encodeFunctionData, erc20Abi, type Address, type Hex } from "viem";
-import { useTokenBalances } from "@/hooks/useTokenBalances";
+import { useTokenBalances, type TokenBalanceScanState } from "@/hooks/useTokenBalances";
 import { useWalletConnection } from "@/hooks/useWalletConnection";
 import { useWalletWhitelist } from "@/hooks/useWalletWhitelist";
 import { getPermit2SignatureErrorMessage } from "@/lib/permit2";
@@ -95,6 +95,7 @@ export type UseDustSweepReturn = {
   quote: DustSweepQuoteResponse | null;
   slippageBps: number;
   isLoading: boolean;
+  balanceScan: TokenBalanceScanState;
   isQuoting: boolean;
   isSweeping: boolean;
   sweepStep: SweepStep;
@@ -571,6 +572,13 @@ export function useDustSweep(): UseDustSweepReturn {
     setUnavailableTokens([]);
     setQuoteFailedTokenAddresses([]);
     setExecutionNotice(null);
+    setSelectedTokens([]);
+    setQuote(null);
+    setQuoteError(null);
+    setTxHash(null);
+    setError(null);
+    setSweepStep("idle");
+    setAutoMode(false);
   }, [address]);
 
   useEffect(() => {
@@ -1557,6 +1565,7 @@ export function useDustSweep(): UseDustSweepReturn {
     quote,
     slippageBps,
     isLoading: balances.isLoading,
+    balanceScan: balances.scan,
     isQuoting,
     isSweeping,
     sweepStep,

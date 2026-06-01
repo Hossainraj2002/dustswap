@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { type Address } from "viem";
 import {
   type DustSweepTokensResponse,
@@ -8,11 +8,21 @@ import {
   type UnavailableToken,
 } from "@/types/dustsweep";
 
+export type TokenBalanceScanState = {
+  phase: "idle" | "scanning" | "ready" | "error";
+  message: string;
+  discoveredCount: number;
+  refreshedAt?: string;
+  elapsedMs?: number;
+  walletAddress?: Address;
+};
+
 type TokenBalanceState = {
   swappableTokens: SwappableToken[];
   unavailableTokens: UnavailableToken[];
   isLoading: boolean;
   error: string | null;
+  scan: TokenBalanceScanState;
   refetch: () => Promise<void>;
 };
 
@@ -50,6 +60,7 @@ function normalizeTokenPayload(payload: unknown): DustSweepTokensResponse {
       : [],
     refreshedAt: response.refreshedAt,
     chainId: response.chainId,
+    discovery: response.discovery,
   };
 }
 
@@ -58,17 +69,85 @@ export function useTokenBalances(address?: Address): TokenBalanceState {
   const [unavailableTokens, setUnavailableTokens] = useState<UnavailableToken[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [scan, setScan] = useState<TokenBalanceScanState>({
+    phase: "idle",
+    message: "Connect a wallet to scan balances.",
+    discoveredCount: 0,
+  });
+  const requestSeqRef = useRef(0);
+  const activeControllerRef = useRef<AbortController | null>(null);
+  const activeAddressRef = useRef<string | null>(null);
+  const lastDiscoveredCountRef = useRef(0);
 
   const refetch = useCallback(async () => {
     if (!address) {
+      requestSeqRef.current += 1;
+      activeControllerRef.current?.abort();
+      activeControllerRef.current = null;
+      activeAddressRef.current = null;
+      lastDiscoveredCountRef.current = 0;
       setSwappableTokens([]);
       setUnavailableTokens([]);
       setError(null);
+      setIsLoading(false);
+      setScan({
+        phase: "idle",
+        message: "Connect a wallet to scan balances.",
+        discoveredCount: 0,
+      });
       return;
+    }
+
+    const normalizedAddress = address.toLowerCase();
+    const requestSeq = requestSeqRef.current + 1;
+    requestSeqRef.current = requestSeq;
+    activeControllerRef.current?.abort();
+    const controller = new AbortController();
+    activeControllerRef.current = controller;
+    const isNewAddress = activeAddressRef.current !== normalizedAddress;
+    activeAddressRef.current = normalizedAddress;
+    const startedAt = Date.now();
+    const isCurrentSequence = () =>
+      requestSeqRef.current === requestSeq &&
+      activeAddressRef.current === normalizedAddress;
+    const isCurrentRequest = () => isCurrentSequence() && !controller.signal.aborted;
+
+    if (isNewAddress) {
+      lastDiscoveredCountRef.current = 0;
+      setSwappableTokens([]);
+      setUnavailableTokens([]);
     }
 
     setIsLoading(true);
     setError(null);
+    setScan({
+      phase: "scanning",
+      message: "Finding Base balances...",
+      discoveredCount: lastDiscoveredCountRef.current,
+      walletAddress: address,
+    });
+
+    const slowTimer = window.setTimeout(() => {
+      if (!isCurrentRequest()) return;
+      setScan((current) => ({
+        ...current,
+        phase: "scanning",
+        message: "Still scanning token balances...",
+      }));
+    }, 4_000);
+
+    const verySlowTimer = window.setTimeout(() => {
+      if (!isCurrentRequest()) return;
+      setScan((current) => ({
+        ...current,
+        phase: "scanning",
+        message: "Checking prices and sweep routes...",
+      }));
+    }, 9_000);
+
+    const timeout = window.setTimeout(() => {
+      controller.abort();
+    }, 45_000);
 
     try {
       const params = new URLSearchParams({
@@ -77,8 +156,11 @@ export function useTokenBalances(address?: Address): TokenBalanceState {
       });
       const response = await fetch(`/api/dustsweep/tokens?${params.toString()}`, {
         cache: "no-store",
+        signal: controller.signal,
       });
       const payload = await response.json().catch(() => null);
+
+      if (!isCurrentRequest()) return;
 
       if (!response.ok) {
         const message =
@@ -89,23 +171,57 @@ export function useTokenBalances(address?: Address): TokenBalanceState {
       }
 
       const normalized = normalizeTokenPayload(payload);
+      const discoveredCount =
+        normalized.discovery?.erc20BalanceCount ??
+        normalized.swappable.length + normalized.unavailable.length;
+      lastDiscoveredCountRef.current = discoveredCount;
       setSwappableTokens(normalized.swappable);
       setUnavailableTokens(normalized.unavailable);
+      setScan({
+        phase: "ready",
+        message: "Balances ready.",
+        discoveredCount,
+        refreshedAt: normalized.refreshedAt,
+        elapsedMs: normalized.discovery?.elapsedMs ?? Date.now() - startedAt,
+        walletAddress: address,
+      });
     } catch (fetchError) {
+      if (!isCurrentSequence()) {
+        return;
+      }
       setSwappableTokens([]);
       setUnavailableTokens([]);
-      setError(
-        fetchError instanceof Error
+      const message =
+        controller.signal.aborted
+          ? "Balance scan timed out. Try refreshing."
+          : fetchError instanceof Error
           ? fetchError.message
-          : "Failed to load wallet tokens",
-      );
+          : "Failed to load wallet tokens";
+      setError(message);
+      setScan({
+        phase: "error",
+        message,
+        discoveredCount: 0,
+        walletAddress: address,
+      });
     } finally {
-      setIsLoading(false);
+      window.clearTimeout(slowTimer);
+      window.clearTimeout(verySlowTimer);
+      window.clearTimeout(timeout);
+      if (activeControllerRef.current === controller) {
+        activeControllerRef.current = null;
+      }
+      if (isCurrentSequence()) {
+        setIsLoading(false);
+      }
     }
   }, [address]);
 
   useEffect(() => {
     void refetch();
+    return () => {
+      activeControllerRef.current?.abort();
+    };
   }, [refetch]);
 
   return {
@@ -113,6 +229,7 @@ export function useTokenBalances(address?: Address): TokenBalanceState {
     unavailableTokens,
     isLoading,
     error,
+    scan,
     refetch,
   };
 }

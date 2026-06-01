@@ -120,9 +120,15 @@ export type SelectedToken = SwappableToken;
 export type DustSweepTokensResponse = {
   discovery?: {
     erc20BalanceCount?: number;
+    alchemyScannedBalanceCount?: number;
     alchemyPageCount?: number;
     truncated?: boolean;
-    maxErc20Balances?: number;
+    maxErc20Balances?: number | null;
+    targetNonZeroBalances?: number | null;
+    maxAlchemyPages?: number | null;
+    marketHintCount?: number;
+    metadataReadCount?: number;
+    elapsedMs?: number;
   };
   swappable: SwappableToken[];
   unavailable: UnavailableToken[];
@@ -290,6 +296,7 @@ export type SweepButtonVisualState =
   | { state: "disabled"; label: "No route available" }
   | { state: "preview"; label: "Preview Sweep" }
   | { state: "ready"; label: "Sweep" }
+  | { state: "loading"; label: "Finding balances..." }
   | { state: "loading"; label: "Getting best route..." }
   | { state: "loading"; label: "Finding route..." }
   | { state: "approving"; label: "Approve tokens..." }

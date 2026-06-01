@@ -13,7 +13,9 @@ import { type WalletWhitelistStatus } from "@/types/dustsweep";
 // and any wallet that exposes these standard methods.
 
 const PRIVY_WALLET_NAMES: Record<string, string> = {
+  base_app: "Base App",
   base_account: "Coinbase Smart Wallet",
+  base_wallet: "Base Wallet",
   coinbase_smart_wallet: "Coinbase Smart Wallet",
   smart_wallet: "Smart Wallet",
   coinbase_wallet: "Coinbase Wallet",
@@ -157,8 +159,10 @@ export function useWalletWhitelist(): WalletWhitelistStatus {
     const privyWalletName = getPrivyWalletName(walletClientType);
     const walletName =
       walletClientType === "base_account" ||
+      walletClientType === "base_app" ||
+      walletClientType === "base_wallet" ||
       walletClientType === "coinbase_smart_wallet"
-        ? "Coinbase Smart Wallet"
+        ? (privyWalletName || "Coinbase Smart Wallet")
         : privyWalletName || detectInjectedWalletName(connectorId);
 
     // Capability-based support: any wallet with signTypedData + sendTransaction is supported
@@ -170,6 +174,8 @@ export function useWalletWhitelist(): WalletWhitelistStatus {
       connectorId === "coinbaseWallet" ||
       connectorId === "baseAccount" ||
       walletClientType === "base_account" ||
+      walletClientType === "base_app" ||
+      walletClientType === "base_wallet" ||
       walletClientType === "coinbase_smart_wallet" ||
       walletName.toLowerCase().includes("coinbase");
 
