@@ -539,6 +539,50 @@ const SWAP_ROUTER_02_ABI = [
   },
 ] as const;
 
+const PANCAKE_V3_SWAP_ROUTER_ABI = [
+  {
+    name: "exactInputSingle",
+    type: "function",
+    stateMutability: "payable",
+    inputs: [
+      {
+        name: "params",
+        type: "tuple",
+        components: [
+          { name: "tokenIn", type: "address" },
+          { name: "tokenOut", type: "address" },
+          { name: "fee", type: "uint24" },
+          { name: "recipient", type: "address" },
+          { name: "deadline", type: "uint256" },
+          { name: "amountIn", type: "uint256" },
+          { name: "amountOutMinimum", type: "uint256" },
+          { name: "sqrtPriceLimitX96", type: "uint160" },
+        ],
+      },
+    ],
+    outputs: [{ name: "amountOut", type: "uint256" }],
+  },
+  {
+    name: "exactInput",
+    type: "function",
+    stateMutability: "payable",
+    inputs: [
+      {
+        name: "params",
+        type: "tuple",
+        components: [
+          { name: "path", type: "bytes" },
+          { name: "recipient", type: "address" },
+          { name: "deadline", type: "uint256" },
+          { name: "amountIn", type: "uint256" },
+          { name: "amountOutMinimum", type: "uint256" },
+        ],
+      },
+    ],
+    outputs: [{ name: "amountOut", type: "uint256" }],
+  },
+] as const;
+
 const AERODROME_SWAP_ABI = [
   {
     name: "swapExactTokensForTokens",
@@ -2259,10 +2303,8 @@ function buildV2Route(route: DustSweepRoute, tokenOut: Address, receiver: Addres
     throw new Error("Native ETH must be wrapped to WETH before using owned_v2.");
   }
 
-  if (route.dex === DEX.UNISWAP_V3 || route.dex === DEX.PANCAKESWAP_V3) {
-    const target = route.dex === DEX.UNISWAP_V3
-      ? UNISWAP_V3_SWAP_ROUTER_ADDRESS
-      : PANCAKE_V3_SWAP_ROUTER_ADDRESS;
+  if (route.dex === DEX.UNISWAP_V3) {
+    const target = UNISWAP_V3_SWAP_ROUTER_ADDRESS;
     const v3 = decodeV3DexData(route.dexData as Hex);
     const data = v3.isMultiHop
       ? encodeFunctionData({
@@ -2286,6 +2328,43 @@ function buildV2Route(route: DustSweepRoute, tokenOut: Address, receiver: Addres
               tokenOut,
               fee: v3.fee,
               recipient: receiver,
+              amountIn,
+              amountOutMinimum: amountOutMin,
+              sqrtPriceLimitX96: 0n,
+            },
+          ],
+        });
+
+    return { tokenIn: route.tokenIn, amountIn, target, spender: target, value: 0n, data };
+  }
+
+  if (route.dex === DEX.PANCAKESWAP_V3) {
+    const target = PANCAKE_V3_SWAP_ROUTER_ADDRESS;
+    const v3 = decodeV3DexData(route.dexData as Hex);
+    const data = v3.isMultiHop
+      ? encodeFunctionData({
+          abi: PANCAKE_V3_SWAP_ROUTER_ABI,
+          functionName: "exactInput",
+          args: [
+            {
+              path: v3.path,
+              recipient: receiver,
+              deadline: BigInt(deadline),
+              amountIn,
+              amountOutMinimum: amountOutMin,
+            },
+          ],
+        })
+      : encodeFunctionData({
+          abi: PANCAKE_V3_SWAP_ROUTER_ABI,
+          functionName: "exactInputSingle",
+          args: [
+            {
+              tokenIn: route.tokenIn,
+              tokenOut,
+              fee: v3.fee,
+              recipient: receiver,
+              deadline: BigInt(deadline),
               amountIn,
               amountOutMinimum: amountOutMin,
               sqrtPriceLimitX96: 0n,

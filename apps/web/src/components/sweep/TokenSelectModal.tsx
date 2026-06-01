@@ -168,6 +168,8 @@ export function TokenSelectModal({
   selectedTokens,
   outputTokens,
   selectedOutputToken,
+  discoveredCount,
+  isScanning,
   onSelectToken,
   onRemoveToken,
   onSelectOutputToken,
@@ -182,6 +184,8 @@ export function TokenSelectModal({
   selectedTokens: SelectedToken[];
   outputTokens: Token[];
   selectedOutputToken: Token | null;
+  discoveredCount?: number;
+  isScanning?: boolean;
   onSelectToken: (token: SwappableToken) => void;
   onRemoveToken: (address: string) => void;
   onSelectOutputToken: (token: Token) => void;
@@ -222,6 +226,12 @@ export function TokenSelectModal({
   );
   const visibleDiscoveredCount =
     visibleSwappable.length + visibleUnavailable.length + (disabledOutputToken ? 1 : 0);
+  const walletBalanceCount = Math.max(discoveredCount ?? 0, visibleDiscoveredCount);
+  const discoveryLabel = isScanning
+    ? walletBalanceCount > 0
+      ? `scanning ${walletBalanceCount} balances`
+      : "scanning balances"
+    : `${walletBalanceCount} balances scanned`;
 
   if (!isOpen) return null;
 
@@ -292,7 +302,7 @@ export function TokenSelectModal({
                 {mode === "single" ? "Your tokens" : "Base"}
                 {mode === "multi" ? (
                   <span className="ml-2 text-xs text-slate-400">
-                    {visibleSwappable.length} sweepable / {visibleDiscoveredCount} discovered
+                    {visibleSwappable.length} sweepable / {discoveryLabel}
                   </span>
                 ) : null}
               </p>

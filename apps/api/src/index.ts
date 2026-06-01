@@ -1,5 +1,16 @@
 import dotenv from "dotenv";
+import path from "path";
+dotenv.config({ path: path.resolve(process.cwd(), ".env.local") });
 dotenv.config();
+
+const databaseUrl = process.env.DATABASE_URL || "";
+if (
+  process.env.NODE_ENV !== "production" &&
+  process.env.DATABASE_PUBLIC_URL &&
+  /\.railway\.internal(?::|\/|$)/i.test(databaseUrl)
+) {
+  process.env.DATABASE_URL = process.env.DATABASE_PUBLIC_URL;
+}
 
 import { serve } from "@hono/node-server";
 import { Hono } from "hono";

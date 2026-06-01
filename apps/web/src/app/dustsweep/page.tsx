@@ -199,6 +199,8 @@ export default function DustSweepPage() {
         selectedTokens={sweep.selectedTokens}
         outputTokens={sweep.outputTokens}
         selectedOutputToken={sweep.tokenOut}
+        discoveredCount={sweep.balanceScan.discoveredCount}
+        isScanning={sweep.isLoading}
         onSelectToken={sweep.addToken}
         onRemoveToken={sweep.removeToken}
         onSelectOutputToken={sweep.setTokenOut}
@@ -356,11 +358,7 @@ export default function DustSweepPage() {
           <SweepButton
             visualState={buttonState}
             onClick={() => {
-              if (buttonState.state === "error") {
-                sweep.resetSweepState();
-              } else {
-                void sweep.executeSweep();
-              }
+              void sweep.executeSweep();
             }}
             txHash={sweep.txHash}
           />

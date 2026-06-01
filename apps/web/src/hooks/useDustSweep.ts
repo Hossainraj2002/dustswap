@@ -84,7 +84,7 @@ type WalletCallsStatusResult = {
   status?: string | number;
   statusCode?: number;
   atomic?: boolean;
-  receipts?: Array<{ transactionHash?: unknown }>;
+  receipts?: Array<{ transactionHash?: unknown; status?: unknown }>;
 };
 
 export type UseDustSweepReturn = {
@@ -140,6 +140,10 @@ const ATOMIC_BATCH_UNSUPPORTED_MESSAGE =
   "This wallet cannot combine token approvals and the sweep into one atomic Base request. DustSweep will use Permit2 approvals and a standard sweep.";
 const WALLET_BATCH_UNSUPPORTED_MESSAGE =
   "This wallet rejected atomic approval+sweep batching. DustSweep will use Permit2 approvals and a standard sweep.";
+const BASE_ACCOUNT_SPLIT_BATCH_NOTICE =
+  "Base Account will batch approvals first, then send the sweep in a second wallet request for more reliable estimation.";
+const TOKENPOCKET_SPLIT_BATCH_NOTICE =
+  "TokenPocket estimates DustSweep more reliably when approvals are batched first. DustSweep will send approvals first, then send the sweep after allowances are confirmed.";
 const METAMASK_LOCKED_MESSAGE = "Unlock MetaMask and try again. No transaction was sent.";
 const TOKENPOCKET_BATCH_FAILURE_MESSAGE =
   "TokenPocket batch execution failed. Please retry, reduce selected tokens, or use another supported wallet while we continue improving TokenPocket support.";
@@ -411,6 +415,15 @@ function getLatestCallsStatusTxHash(result: WalletCallsStatusResult | null) {
     .reverse()
     .find((receipt) => isTxHash(receipt?.transactionHash))
     ?.transactionHash as Hex | undefined;
+}
+
+function hasFailedCallsReceipt(result: WalletCallsStatusResult | null) {
+  return Boolean(
+    result?.receipts?.some((receipt) => {
+      const status = receipt?.status;
+      return status === 0 || status === "0" || status === "0x0" || status === false;
+    }),
+  );
 }
 
 function getSendCallsResultTxHash(result: unknown) {
@@ -1057,6 +1070,9 @@ export function useDustSweep(): UseDustSweepReturn {
         if (requireAtomic && status.atomic === false) {
           throw new Error(ATOMIC_BATCH_UNSUPPORTED_MESSAGE);
         }
+        if (hasFailedCallsReceipt(status) || getCallsStatusState(status) === "failure") {
+          throw new Error("Bundled sweep failed");
+        }
         const hash = getLatestCallsStatusTxHash(status);
 
         if (!hash) {
@@ -1138,6 +1154,9 @@ export function useDustSweep(): UseDustSweepReturn {
       if (hash) {
         if (requireAtomic && status?.atomic === false) {
           throw new Error(ATOMIC_BATCH_UNSUPPORTED_MESSAGE);
+        }
+        if (hasFailedCallsReceipt(status)) {
+          throw new Error("Bundled sweep failed");
         }
         return hash;
       }
@@ -1282,12 +1301,16 @@ export function useDustSweep(): UseDustSweepReturn {
         walletProfile.executionStrategy === "tokenpocket_existing";
       const canUseAtomicBatch = batchMode && hasV2Approvals && supportsWalletSendCalls;
       const canUseTokenPocketBatch = batchMode && hasV2Approvals && usesTokenPocketExisting;
+      const shouldSplitBaseAccountBatch =
+        hasV2Approvals && walletProfile.executionStrategy === "coinbase_paymaster";
+      const shouldSplitTokenPocketBatch = hasV2Approvals && usesTokenPocketExisting;
+      const shouldSplitWalletBatch = shouldSplitBaseAccountBatch || shouldSplitTokenPocketBatch;
       const canBundleAllCalls =
+        !shouldSplitWalletBatch &&
         (canUseAtomicBatch || canUseTokenPocketBatch) &&
         bundledCallCount <= WALLET_SEND_CALLS_MAX_CALLS;
       const canBundleApprovalsOnly =
-        canUseAtomicBatch &&
-        !usesTokenPocketExisting &&
+        (canUseAtomicBatch || canUseTokenPocketBatch) &&
         approvalCalls.length > 0 &&
         approvalCalls.length <= WALLET_SEND_CALLS_MAX_CALLS;
       const usePaymasterCapabilities =
@@ -1305,6 +1328,7 @@ export function useDustSweep(): UseDustSweepReturn {
         fullBundleCallCount: bundledCallCount,
         walletCallCap: WALLET_SEND_CALLS_MAX_CALLS,
         tokenPocketCompatibleBatch: canUseTokenPocketBatch,
+        splitWalletBatch: shouldSplitWalletBatch,
       });
 
       const sendSweepTransaction = async (calldata: Hex) =>
@@ -1342,16 +1366,47 @@ export function useDustSweep(): UseDustSweepReturn {
           setExecutionNotice(notice);
         }
 
+        const tokenPocketApprovalBatch = usesTokenPocketExisting;
         currentStep = "approving";
         setSweepStep(currentStep);
-        const approvalHash = await sendAtomicWalletCalls({
-          account: address,
-          calls: approvalCalls,
-          usePaymasterCapabilities,
-          walletKey: walletProfile.walletKey,
-          requireAtomic: true,
-        });
-        await waitForSuccessfulTransaction(approvalHash);
+        try {
+          const approvalHash = await sendAtomicWalletCalls({
+            account: address,
+            calls: approvalCalls,
+            usePaymasterCapabilities,
+            walletKey: walletProfile.walletKey,
+            requireAtomic: !tokenPocketApprovalBatch,
+            appendDataSuffixes: !tokenPocketApprovalBatch,
+          });
+          await waitForSuccessfulTransaction(approvalHash);
+        } catch (approvalBatchError) {
+          if (isRejectedByUser(approvalBatchError) || isWalletLockedError(approvalBatchError)) {
+            throw approvalBatchError;
+          }
+
+          console.warn("DustSweep approval batch failed; falling back to standard approvals.", {
+            walletKey: walletProfile.walletKey,
+            approvalCallCount: approvalCalls.length,
+            code: getErrorCode(approvalBatchError),
+            message: getDebugErrorMessage(approvalBatchError),
+          });
+          setExecutionNotice(
+            `${walletProfile.walletName || "Wallet"} approval batch was not ready, sending approvals one by one before the sweep.`,
+          );
+          return sendStandardSweepWithApprovals();
+        }
+
+        const remainingApprovals = await getTokenApprovalRequirements(quote.routes, approvalSpender);
+        if (remainingApprovals.length > 0) {
+          console.warn("DustSweep approval batch left missing allowances; completing standard approvals.", {
+            walletKey: walletProfile.walletKey,
+            missingApprovalCount: remainingApprovals.length,
+          });
+          setExecutionNotice(
+            `${walletProfile.walletName || "Wallet"} approval batch finished with missing allowances, sending the remaining approvals before the sweep.`,
+          );
+          await sendTokenApprovals(remainingApprovals, approvalSpender);
+        }
 
         const sweepCalldata = await getCanonicalCalldata();
         currentStep = "pending";
@@ -1476,13 +1531,19 @@ export function useDustSweep(): UseDustSweepReturn {
               : await sendStandardSweepWithApprovals();
           }
         }
-      } else if (canUseTokenPocketBatch) {
-        setExecutionNotice(TOKENPOCKET_BATCH_FAILURE_MESSAGE);
-        throw new Error(TOKENPOCKET_BATCH_FAILURE_MESSAGE);
       } else if (canBundleApprovalsOnly) {
         hash = await sendBundledApprovalsThenSweep(
-          `Approval+sweep needs ${bundledCallCount} wallet calls, so DustSweep will batch approvals first and then send the sweep.`,
+          shouldSplitBaseAccountBatch
+            ? BASE_ACCOUNT_SPLIT_BATCH_NOTICE
+            : shouldSplitTokenPocketBatch
+            ? TOKENPOCKET_SPLIT_BATCH_NOTICE
+            : `Approval+sweep needs ${bundledCallCount} wallet calls, so DustSweep will batch approvals first and then send the sweep.`,
         );
+      } else if (canUseTokenPocketBatch) {
+        setExecutionNotice(
+          `TokenPocket approval batching needs ${approvalCalls.length} wallet calls, above the ${WALLET_SEND_CALLS_MAX_CALLS} call cap. DustSweep will send standard approvals and then the sweep.`,
+        );
+        hash = await sendStandardSweepWithApprovals();
       } else if (canUseAtomicBatch) {
         setExecutionNotice(
           `Approval batching needs ${approvalCalls.length} wallet calls, above the ${WALLET_SEND_CALLS_MAX_CALLS} call cap. DustSweep will use Permit2 approvals and a standard sweep.`,

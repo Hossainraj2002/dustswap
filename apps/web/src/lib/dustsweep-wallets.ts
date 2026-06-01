@@ -182,10 +182,20 @@ export function getWalletBatchNotice(
   atomicStatus: DustSweepAtomicStatus,
 ) {
   if (atomicStatus === "supported") {
+    if (walletKey === "base_account" || walletKey === "coinbase") {
+      return `${walletName} can batch token approvals; DustSweep sends approvals first, then the sweep for a reliable Base Account review.`;
+    }
+    if (walletKey === "tokenpocket") {
+      return "TokenPocket can batch token approvals; DustSweep sends approvals first, then the sweep so TokenPocket can estimate gas against confirmed allowances.";
+    }
+
     return `${walletName} can batch token approvals and the sweep in one atomic request.`;
   }
 
   if (atomicStatus === "ready") {
+    if (walletKey === "tokenpocket") {
+      return "TokenPocket can use EIP-7702 batching after wallet upgrade; DustSweep will still split approvals from the sweep to keep gas estimation reliable.";
+    }
     return `${walletName} can enable atomic batching through a wallet-managed EIP-7702 upgrade prompt.`;
   }
 
