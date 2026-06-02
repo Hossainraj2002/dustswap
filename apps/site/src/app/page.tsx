@@ -133,6 +133,14 @@ function IconPath({ d }: { d: string }) {
   );
 }
 
+function XIcon({ className = "h-4 w-4" }: { className?: string }) {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 24 24" className={className} fill="currentColor">
+      <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817-5.97 6.817H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231 5.45-6.231Zm-1.161 17.52h1.833L7.084 4.126H5.117L17.083 19.77Z" />
+    </svg>
+  );
+}
+
 function Eyebrow({ children }: { children: React.ReactNode }) {
   return (
     <p className="text-xs font-black uppercase tracking-[0.22em] text-sky-600">
@@ -237,6 +245,16 @@ function Header() {
               {item.label}
             </a>
           ))}
+          <a
+            href={X_URL}
+            target="_blank"
+            rel="noreferrer"
+            aria-label="DustSwap on X"
+            title="DustSwap on X"
+            className="flex h-9 w-9 items-center justify-center rounded-xl text-slate-600 transition hover:bg-sky-50 hover:text-slate-950 focus:outline-none focus:ring-4 focus:ring-sky-100"
+          >
+            <XIcon />
+          </a>
         </nav>
 
         <div className="hidden md:block">
@@ -263,6 +281,15 @@ function Header() {
                   {item.label}
                 </a>
               ))}
+              <a
+                href={X_URL}
+                target="_blank"
+                rel="noreferrer"
+                className="flex items-center gap-3 rounded-2xl px-4 py-3 text-sm font-bold text-slate-700 hover:bg-sky-50"
+              >
+                <XIcon />
+                <span>X</span>
+              </a>
             </div>
             <div className="mt-3">
               <PrimaryButton>Open App</PrimaryButton>
