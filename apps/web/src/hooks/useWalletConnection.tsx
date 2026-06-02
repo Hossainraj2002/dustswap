@@ -20,6 +20,7 @@ export const PRIVY_WALLET_LIST: WalletListEntry[] = [
   "detected_ethereum_wallets",
   "base_account",
   "coinbase_wallet",
+  "okx_wallet",
   "wallet_connect",
 ];
 
@@ -62,8 +63,7 @@ function getRuntimeWalletList(walletList: WalletListEntry[]) {
     ...walletList.filter(
       (wallet) =>
         wallet !== "detected_ethereum_wallets" &&
-        wallet !== "okx_wallet" &&
-        wallet !== "wallet_connect"
+        wallet !== "okx_wallet"
     ),
   ]);
 }
