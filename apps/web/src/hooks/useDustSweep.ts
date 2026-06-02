@@ -263,6 +263,8 @@ function isBatchFallbackError(error: unknown) {
     lowered.includes("invalid params") ||
     lowered.includes("unauthorized") ||
     lowered.includes("upgrade rejected") ||
+    lowered.includes("third-party contract execution") ||
+    lowered.includes("contact the project") ||
     lowered.includes("atomicity not supported") ||
     lowered.includes("unsupported chain") ||
     lowered.includes("unsupported non-optional capability") ||
@@ -387,8 +389,14 @@ function getCallsStatusState(result: WalletCallsStatusResult | null) {
 
   if (typeof result.status === "string") {
     const normalized = result.status.toLowerCase();
-    if (normalized === "success" || normalized === "failure" || normalized === "pending") {
-      return normalized;
+    if (normalized === "success" || normalized === "confirmed" || normalized === "completed") {
+      return "success" as const;
+    }
+    if (normalized === "failure" || normalized === "failed") {
+      return "failure" as const;
+    }
+    if (normalized === "pending") {
+      return "pending" as const;
     }
   }
 
@@ -411,10 +419,12 @@ function getCallsStatusState(result: WalletCallsStatusResult | null) {
 }
 
 function getLatestCallsStatusTxHash(result: WalletCallsStatusResult | null) {
-  return [...(result?.receipts || [])]
-    .reverse()
-    .find((receipt) => isTxHash(receipt?.transactionHash))
-    ?.transactionHash as Hex | undefined;
+  for (const receipt of [...(result?.receipts || [])].reverse()) {
+    const r = receipt as { transactionHash?: unknown; txHash?: unknown; hash?: unknown };
+    const h = r?.transactionHash ?? r?.txHash ?? r?.hash;
+    if (isTxHash(h)) return h as Hex;
+  }
+  return undefined;
 }
 
 function hasFailedCallsReceipt(result: WalletCallsStatusResult | null) {

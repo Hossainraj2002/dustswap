@@ -18,9 +18,24 @@ import { hasInjectedOkxWallet } from "@/lib/ethereumProviders";
 
 export const PRIVY_WALLET_LIST: WalletListEntry[] = [
   "detected_ethereum_wallets",
-  "base_account",
+  "metamask",
   "coinbase_wallet",
+  "base_account",
+  "rainbow",
   "okx_wallet",
+  "phantom",
+  "zerion",
+  "bitget_wallet",
+  "bybit_wallet",
+  "kraken_wallet",
+  "binance",
+  "binanceus",
+  "haha_wallet",
+  "ronin_wallet",
+  "safe",
+  "uniswap",
+  "cryptocom",
+  "universal_profile",
   "wallet_connect",
 ];
 

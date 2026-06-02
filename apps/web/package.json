@@ -19,15 +19,15 @@
     "@metamask/connect-evm": "^0.9.1",
     "@openocean.finance/widget": "^1.0.59",
     "@privy-io/chains": "^0.1.4",
-    "@privy-io/react-auth": "^3.22.1",
-    "@privy-io/wagmi": "^4.0.5",
+    "@privy-io/react-auth": "^3.28.0",
+    "@privy-io/wagmi": "^4.0.10",
     "@solana/wallet-adapter-react": "^0.15.39",
     "@tanstack/react-query": "^5.72.0",
     "next": "15.1.11",
     "ox": "^0.14.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "viem": "^2.45.0",
+    "viem": "^2.52.0",
     "wagmi": "^3.0.0"
   },
   "devDependencies": {

@@ -1,7 +1,17 @@
 {
   "permissions": {
     "allow": [
-      "Bash(forge build)"
+      "Bash(forge build)",
+      "WebFetch(domain:docs.privy.io)",
+      "WebFetch(domain:github.com)",
+      "Bash(python -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(d.get\\('version',''\\)\\)\")",
+      "Bash(Get-Content \"c:\\\\dustswap\\\\apps\\\\web\\\\node_modules\\\\@privy-io\\\\react-auth\\\\package.json\")",
+      "Bash(Select-String '\"version\"')",
+      "Bash(Select-Object -First 1)",
+      "WebFetch(domain:registry.npmjs.org)",
+      "WebFetch(domain:www.okx.com)",
+      "Bash(grep -oP '\"walletName\":\\\\s*\"OKX[^\"]*\"[^}]{0,500}' \"c:/dustswap/apps/web/node_modules/@privy-io/react-auth/dist/cjs/context-kNwYBe9X.js\")",
+      "Bash(pnpm update *)"
     ]
   }
 }
