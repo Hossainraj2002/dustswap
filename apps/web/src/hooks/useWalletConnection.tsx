@@ -68,8 +68,19 @@ function uniqueWalletList(walletList: WalletListEntry[]) {
   );
 }
 
+function isMobileRuntime() {
+  if (typeof navigator === "undefined") {
+    return false;
+  }
+
+  const userAgent = navigator.userAgent || "";
+  const isIpadOS =
+    navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1;
+  return /Android|iPhone|iPad|iPod|Mobile/i.test(userAgent) || isIpadOS;
+}
+
 function getRuntimeWalletList(walletList: WalletListEntry[]) {
-  if (!hasInjectedOkxWallet()) {
+  if (!hasInjectedOkxWallet() || isMobileRuntime()) {
     return walletList;
   }
 
