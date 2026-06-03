@@ -28,7 +28,8 @@ const privySupportedChains = INITIAL_WAGMI_CHAINS as unknown as PrivyChain[];
 const walletConnectCloudProjectId =
   process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID ||
   process.env.NEXT_PUBLIC_WALLET_CONNECT_PROJECT_ID ||
-  process.env.NEXT_PUBLIC_WC_PROJECT_ID;
+  process.env.NEXT_PUBLIC_WC_PROJECT_ID ||
+  "6f242331a85fc3af5428da560ed78900";
 
 interface ProvidersProps {
   children: ReactNode;
