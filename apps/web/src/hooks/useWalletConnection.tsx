@@ -76,17 +76,58 @@ function isMobileRuntime() {
   const userAgent = navigator.userAgent || "";
   const isIpadOS =
     navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1;
-  return /Android|iPhone|iPad|iPod|Mobile/i.test(userAgent) || isIpadOS;
+  const hasMobilePointer =
+    typeof window !== "undefined" &&
+    typeof window.matchMedia === "function" &&
+    window.matchMedia("(hover: none) and (pointer: coarse)").matches;
+  return (
+    /Android|iPhone|iPad|iPod|Mobile/i.test(userAgent) ||
+    isIpadOS ||
+    hasMobilePointer
+  );
+}
+
+function getMobileWalletList(walletList: WalletListEntry[]) {
+  if (walletList[0] !== "detected_ethereum_wallets") {
+    return walletList;
+  }
+
+  return uniqueWalletList([
+    ...walletList.filter((wallet) => wallet !== "detected_ethereum_wallets"),
+    "detected_ethereum_wallets",
+  ]);
+}
+
+function prioritizeWallet(
+  walletList: WalletListEntry[],
+  walletToPrioritize: WalletListEntry
+) {
+  return uniqueWalletList([
+    walletToPrioritize,
+    ...walletList.filter((wallet) => wallet !== walletToPrioritize),
+  ]);
 }
 
 function getRuntimeWalletList(walletList: WalletListEntry[]) {
-  if (!hasInjectedOkxWallet() || isMobileRuntime()) {
+  const mobileRuntime = isMobileRuntime();
+  const hasOkxInjectedWallet = hasInjectedOkxWallet();
+  const nextWalletList = mobileRuntime
+    ? getMobileWalletList(walletList)
+    : walletList;
+
+  if (mobileRuntime) {
+    return hasOkxInjectedWallet
+      ? prioritizeWallet(nextWalletList, "okx_wallet")
+      : nextWalletList;
+  }
+
+  if (!hasOkxInjectedWallet) {
     return walletList;
   }
 
   return uniqueWalletList([
     "detected_ethereum_wallets",
-    ...walletList.filter(
+    ...nextWalletList.filter(
       (wallet) =>
         wallet !== "detected_ethereum_wallets" &&
         wallet !== "okx_wallet"
