@@ -260,6 +260,8 @@ function isBatchFallbackError(error: unknown) {
     lowered.includes("bundle too large") ||
     lowered.includes("batch too large") ||
     lowered.includes("batch size") ||
+    lowered.includes("cannot estimate gas") ||
+    lowered.includes("contract error") ||
     lowered.includes("invalid params") ||
     lowered.includes("unauthorized") ||
     lowered.includes("upgrade rejected") ||
@@ -285,6 +287,8 @@ function isTokenPocketConnectorExecutionError(error: unknown) {
   return (
     lowered.includes("unknown connector error") ||
     lowered.includes("transaction is expected to fail") ||
+    lowered.includes("cannot estimate gas") ||
+    lowered.includes("contract error") ||
     lowered.includes(TOKENPOCKET_BATCH_FAILURE_MESSAGE.toLowerCase())
   );
 }
@@ -1348,20 +1352,43 @@ export function useDustSweep(): UseDustSweepReturn {
         splitWalletBatch: shouldSplitWalletBatch,
       });
 
-      const sendSweepTransaction = async (calldata: Hex) =>
-        (await walletClient.sendTransaction({
+      const sendSweepTransaction = async (calldata: Hex) => {
+        // TokenPocket's internal eth_estimateGas fails on complex multicall sweeps,
+        // causing "Contract error, cannot estimate gas limit". Pre-estimate via our
+        // publicClient (reliable RPC) and pass an explicit gas limit so TokenPocket
+        // never needs to estimate on its own.
+        let tokenPocketGas: bigint | undefined;
+        if (usesTokenPocketExisting) {
+          try {
+            const fullData = concatHex([calldata, DATA_SUFFIX]);
+            const estimated = await publicClient.estimateGas({
+              account: address,
+              to: sweepTarget,
+              data: fullData,
+              value: txValue,
+            });
+            tokenPocketGas = (estimated * 16n) / 10n; // 60% buffer
+          } catch {
+            // Fallback: generous static estimate scaled by route count
+            tokenPocketGas = 400_000n + BigInt(quote.routes.length) * 200_000n;
+          }
+        }
+
+        return (await walletClient.sendTransaction({
           account: address,
           chain: base,
           to: sweepTarget,
           data: calldata,
           value: txValue,
           dataSuffix: DATA_SUFFIX,
+          ...(tokenPocketGas !== undefined ? { gas: tokenPocketGas } : {}),
           ...(walletStatus.isCoinbaseSmartWallet && paymasterUrl
             ? {
                 capabilities: buildBasePaymasterCapabilities(),
               }
             : {}),
         } as never)) as Hex;
+      };
 
       const sendStandardSweepWithApprovals = async () => {
         if (hasV2Approvals) {
