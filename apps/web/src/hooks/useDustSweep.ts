@@ -78,6 +78,8 @@ type WalletSendCall = {
   data: Hex;
   value?: bigint;
   dataSuffix?: Hex;
+  gas?: bigint;
+  capabilities?: Record<string, unknown>;
 };
 
 type WalletCallsStatusResult = {
@@ -149,6 +151,9 @@ const TOKENPOCKET_BATCH_FAILURE_MESSAGE =
   "TokenPocket batch execution failed. Please retry, reduce selected tokens, or use another supported wallet while we continue improving TokenPocket support.";
 const TOKENPOCKET_EXECUTE_FAILURES_TOPIC =
   "0xc42159347c71974b140767e5ffe0d24cb03d38c0e86462ec59a240394c3b9b4c";
+const APPROVAL_CALL_GAS_LIMIT = 150_000n;
+const TOKENPOCKET_SWEEP_GAS_BASE = 500_000n;
+const TOKENPOCKET_SWEEP_GAS_PER_ROUTE = 250_000n;
 const WALLET_SEND_CALLS_MAX_CALLS = Math.max(
   1,
   Number(process.env.NEXT_PUBLIC_DUST_SWEEP_WALLET_BATCH_CALL_CAP || "50") || 50,
@@ -290,6 +295,21 @@ function isTokenPocketConnectorExecutionError(error: unknown) {
     lowered.includes("cannot estimate gas") ||
     lowered.includes("contract error") ||
     lowered.includes(TOKENPOCKET_BATCH_FAILURE_MESSAGE.toLowerCase())
+  );
+}
+
+function isApprovalBatchStatusUncertainError(error: unknown) {
+  const lowered = getErrorMessage(error).toLowerCase();
+  return (
+    lowered.includes("wallet_getcallsstatus") ||
+    lowered.includes("did not return an id") ||
+    lowered.includes("timed out") ||
+    lowered.includes("without a transaction hash") ||
+    lowered.includes("finished without") ||
+    lowered.includes("transaction receipt") ||
+    lowered.includes("transaction not found") ||
+    lowered.includes("could not be found") ||
+    lowered.includes("unknown bundle id")
   );
 }
 
@@ -460,17 +480,45 @@ function toRpcQuantity(value?: bigint) {
   return `0x${(value || 0n).toString(16)}`;
 }
 
+function buildGasLimitOverrideCapabilities(gas?: bigint) {
+  if (!gas || gas <= 0n) {
+    return undefined;
+  }
+
+  return {
+    gasLimitOverride: {
+      optional: true,
+      value: toRpcQuantity(gas),
+    },
+  };
+}
+
+function mergeCallCapabilities(call: WalletSendCall) {
+  const gasLimitOverride = buildGasLimitOverrideCapabilities(call.gas);
+  if (!gasLimitOverride) {
+    return call.capabilities;
+  }
+
+  return {
+    ...(call.capabilities || {}),
+    ...gasLimitOverride,
+  };
+}
+
 function appendDataSuffix(data: Hex, dataSuffix?: Hex) {
   return dataSuffix && dataSuffix !== "0x" ? concatHex([data, dataSuffix]) : data;
 }
 
 function normalizeWalletSendCall(call: WalletSendCall, appendSuffix = true): WalletSendCall {
+  const capabilities = mergeCallCapabilities(call);
+
   if (!appendSuffix) {
     return {
       to: call.to,
       value: call.value,
       data: call.data,
       dataSuffix: call.dataSuffix,
+      ...(capabilities ? { capabilities } : {}),
     };
   }
 
@@ -478,6 +526,7 @@ function normalizeWalletSendCall(call: WalletSendCall, appendSuffix = true): Wal
     to: call.to,
     value: call.value,
     data: appendDataSuffix(call.data, call.dataSuffix),
+    ...(capabilities ? { capabilities } : {}),
   };
 }
 
@@ -510,6 +559,10 @@ function mergeUnavailableTokens(current: UnavailableToken[], additions: Unavaila
 
 function getCapForLane(lane?: string | null) {
   return lane === "owned_v1" ? V1_MAX_BATCH_SIZE : V2_MAX_BATCH_SIZE;
+}
+
+function getTokenPocketSweepFallbackGas(routeCount: number) {
+  return TOKENPOCKET_SWEEP_GAS_BASE + BigInt(Math.max(1, routeCount)) * TOKENPOCKET_SWEEP_GAS_PER_ROUTE;
 }
 
 export function useDustSweep(): UseDustSweepReturn {
@@ -931,6 +984,22 @@ export function useDustSweep(): UseDustSweepReturn {
     return approvalRequirements;
   }, [address, publicClient]);
 
+  const waitForApprovalRequirementsCleared = useCallback(async (
+    routes: DustSweepQuoteResponse["routes"],
+    spender: Address,
+    timeoutMs = 90_000,
+  ) => {
+    const deadline = Date.now() + timeoutMs;
+    let remaining = await getTokenApprovalRequirements(routes, spender);
+
+    while (remaining.length > 0 && Date.now() < deadline) {
+      await delay(2500);
+      remaining = await getTokenApprovalRequirements(routes, spender);
+    }
+
+    return remaining;
+  }, [getTokenApprovalRequirements]);
+
   const sendTokenApprovals = useCallback(async (
     approvalRequirements: ApprovalRequirement[],
     spender: Address,
@@ -996,6 +1065,7 @@ export function useDustSweep(): UseDustSweepReturn {
             args: [spender, 0n],
           }),
           value: 0n,
+          gas: APPROVAL_CALL_GAS_LIMIT,
         });
       }
 
@@ -1007,6 +1077,7 @@ export function useDustSweep(): UseDustSweepReturn {
           args: [spender, requirement.approvalAmount],
         }),
         value: 0n,
+        gas: APPROVAL_CALL_GAS_LIMIT,
       });
     }
 
@@ -1126,6 +1197,7 @@ export function useDustSweep(): UseDustSweepReturn {
                 to: call.to,
                 data: call.data,
                 value: toRpcQuantity(call.value),
+                ...(call.capabilities ? { capabilities: call.capabilities } : {}),
               })),
               ...(capabilities ? { capabilities } : {}),
             },
@@ -1370,7 +1442,7 @@ export function useDustSweep(): UseDustSweepReturn {
             tokenPocketGas = (estimated * 16n) / 10n; // 60% buffer
           } catch {
             // Fallback: generous static estimate scaled by route count
-            tokenPocketGas = 400_000n + BigInt(quote.routes.length) * 200_000n;
+            tokenPocketGas = getTokenPocketSweepFallbackGas(quote.routes.length);
           }
         }
 
@@ -1413,6 +1485,18 @@ export function useDustSweep(): UseDustSweepReturn {
         const tokenPocketApprovalBatch = usesTokenPocketExisting;
         currentStep = "approving";
         setSweepStep(currentStep);
+        let approvalBatchSettled = false;
+        const waitForTokenPocketAllowanceSettlement = async () => {
+          setExecutionNotice(
+            "Waiting for TokenPocket approval batch to confirm before sending the sweep.",
+          );
+          const remaining = await waitForApprovalRequirementsCleared(
+            quote.routes,
+            approvalSpender,
+          );
+          return remaining.length === 0;
+        };
+
         try {
           const approvalHash = await sendAtomicWalletCalls({
             account: address,
@@ -1422,22 +1506,51 @@ export function useDustSweep(): UseDustSweepReturn {
             requireAtomic: !tokenPocketApprovalBatch,
             appendDataSuffixes: !tokenPocketApprovalBatch,
           });
-          await waitForSuccessfulTransaction(approvalHash);
+          try {
+            await waitForSuccessfulTransaction(approvalHash);
+            approvalBatchSettled = true;
+          } catch (approvalReceiptError) {
+            if (
+              !tokenPocketApprovalBatch ||
+              !isApprovalBatchStatusUncertainError(approvalReceiptError)
+            ) {
+              throw approvalReceiptError;
+            }
+
+            approvalBatchSettled = await waitForTokenPocketAllowanceSettlement();
+            if (!approvalBatchSettled) {
+              throw approvalReceiptError;
+            }
+          }
         } catch (approvalBatchError) {
           if (isRejectedByUser(approvalBatchError) || isWalletLockedError(approvalBatchError)) {
             throw approvalBatchError;
           }
 
-          console.warn("DustSweep approval batch failed; falling back to standard approvals.", {
-            walletKey: walletProfile.walletKey,
-            approvalCallCount: approvalCalls.length,
-            code: getErrorCode(approvalBatchError),
-            message: getDebugErrorMessage(approvalBatchError),
-          });
-          setExecutionNotice(
-            `${walletProfile.walletName || "Wallet"} approval batch was not ready, sending approvals one by one before the sweep.`,
-          );
-          return sendStandardSweepWithApprovals();
+          if (
+            tokenPocketApprovalBatch &&
+            isApprovalBatchStatusUncertainError(approvalBatchError)
+          ) {
+            approvalBatchSettled = await waitForTokenPocketAllowanceSettlement();
+          }
+
+          if (approvalBatchSettled) {
+            console.info("DustSweep TokenPocket approval batch confirmed by allowance state.", {
+              walletKey: walletProfile.walletKey,
+              approvalCallCount: approvalCalls.length,
+            });
+          } else {
+            console.warn("DustSweep approval batch failed; falling back to standard approvals.", {
+              walletKey: walletProfile.walletKey,
+              approvalCallCount: approvalCalls.length,
+              code: getErrorCode(approvalBatchError),
+              message: getDebugErrorMessage(approvalBatchError),
+            });
+            setExecutionNotice(
+              `${walletProfile.walletName || "Wallet"} approval batch was not ready, sending approvals one by one before the sweep.`,
+            );
+            return sendStandardSweepWithApprovals();
+          }
         }
 
         const remainingApprovals = await getTokenApprovalRequirements(quote.routes, approvalSpender);
@@ -1654,6 +1767,7 @@ export function useDustSweep(): UseDustSweepReturn {
     switchToBase,
     tokenOut,
     waitForSuccessfulTransaction,
+    waitForApprovalRequirementsCleared,
     walletClient,
     walletProfile.atomicStatus,
     walletProfile.executionStrategy,
