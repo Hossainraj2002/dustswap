@@ -160,7 +160,7 @@ export function ProfileCompletionTracker({
   const progressValue = guide?.completionPercent ?? 0;
 
   return (
-    <section className="overflow-hidden rounded-[24px] border border-white/80 bg-[radial-gradient(circle_at_top_right,rgba(37,99,235,0.12),transparent_34%),linear-gradient(180deg,rgba(255,255,255,0.98),rgba(239,246,255,0.94))] p-3.5 shadow-[0_20px_60px_rgba(15,23,42,0.08)] sm:rounded-[26px] sm:p-4">
+    <section className="profile-completion-card overflow-hidden rounded-[24px] border border-white/80 bg-[radial-gradient(circle_at_top_right,rgba(37,99,235,0.12),transparent_34%),linear-gradient(180deg,rgba(255,255,255,0.98),rgba(239,246,255,0.94))] p-3.5 shadow-[0_20px_60px_rgba(15,23,42,0.08)] sm:rounded-[26px] sm:p-4">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
           <p className="text-[9px] font-black uppercase tracking-[0.28em] text-sky-600">
@@ -174,7 +174,7 @@ export function ProfileCompletionTracker({
           </p>
         </div>
 
-        <div className="shrink-0 rounded-[16px] border border-sky-200 bg-white/92 px-2.5 py-2 text-right shadow-sm">
+        <div className="profile-completion-progress-card shrink-0 rounded-[16px] border border-sky-200 bg-white/92 px-2.5 py-2 text-right shadow-sm">
           <p className="text-[9px] font-black uppercase tracking-[0.22em] text-slate-500">
             Progress
           </p>
@@ -188,7 +188,7 @@ export function ProfileCompletionTracker({
         </div>
       </div>
 
-      <div className="mt-3 h-2 rounded-full bg-slate-200/80">
+      <div className="profile-completion-track mt-3 h-2 rounded-full bg-slate-200/80">
         <div
           className="h-full rounded-full bg-[linear-gradient(90deg,#2563eb,#38bdf8)] transition-[width] duration-300"
           style={{ width: `${progressValue}%` }}
@@ -218,21 +218,21 @@ export function ProfileCompletionTracker({
                 }
               }}
               disabled={complete}
-              className={`flex min-h-[60px] flex-col items-start justify-center gap-1 rounded-[16px] border px-2.5 py-2 text-left transition ${
+              className={`profile-completion-step flex min-h-[60px] flex-col items-start justify-center gap-1 rounded-[16px] border px-2.5 py-2 text-left transition ${
                 complete
-                  ? "cursor-default border-emerald-200 bg-emerald-50/85 text-emerald-800"
+                  ? "profile-completion-step-complete cursor-default border-emerald-200 bg-emerald-50/85 text-emerald-800"
                   : active
-                    ? "border-sky-300 bg-white text-slate-950 shadow-[0_10px_24px_rgba(37,99,235,0.12)]"
-                    : "border-slate-200 bg-white/88 text-slate-700 hover:border-sky-200 hover:text-slate-950"
+                    ? "profile-completion-step-active border-sky-300 bg-white text-slate-950 shadow-[0_10px_24px_rgba(37,99,235,0.12)]"
+                    : "profile-completion-step-incomplete border-slate-200 bg-white/88 text-slate-700 hover:border-sky-200 hover:text-slate-950"
               }`}
             >
               <span
-                className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full border ${
+                className={`profile-completion-step-icon flex h-7 w-7 shrink-0 items-center justify-center rounded-full border ${
                   complete
-                    ? "border-emerald-200 bg-white text-emerald-600"
+                    ? "profile-completion-step-icon-complete border-emerald-200 bg-white text-emerald-600"
                     : active
-                      ? "border-sky-200 bg-sky-50 text-sky-600"
-                      : "border-slate-200 bg-slate-50 text-slate-400"
+                      ? "profile-completion-step-icon-active border-sky-200 bg-sky-50 text-sky-600"
+                      : "profile-completion-step-icon-incomplete border-slate-200 bg-slate-50 text-slate-400"
                 }`}
               >
                 {complete ? <CheckIcon /> : <CircleIcon />}
@@ -246,8 +246,8 @@ export function ProfileCompletionTracker({
         })}
       </div>
 
-      <div className="mt-3 flex items-center gap-2 rounded-[18px] border border-slate-200/80 bg-white/88 p-2.5">
-        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-sky-200 bg-sky-50 text-sky-600">
+      <div className="profile-completion-reward mt-3 flex items-center gap-2 rounded-[18px] border border-slate-200/80 bg-white/88 p-2.5">
+        <span className="profile-completion-reward-icon flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-sky-200 bg-sky-50 text-sky-600">
           <SparkIcon />
         </span>
 

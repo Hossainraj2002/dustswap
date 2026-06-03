@@ -207,7 +207,7 @@ const PROFILE_FAQ_ITEMS = [
       "Check-In is DustSwap's daily attendance system for users.",
       "By checking in, you earn 100 base PP and a 10% daily boost.",
       "Your points grow faster as your Check-In boost increases.",
-      "You can unlock up to a 300% boost on all of your self-earned PP.",
+      "You can unlock up to a 300% boost on eligible PP.",
     ],
   },
   {

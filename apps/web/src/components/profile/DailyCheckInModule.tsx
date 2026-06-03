@@ -89,7 +89,7 @@ function CompactProgress({ balance }: { balance: PointsBalance }) {
       : balance.rawStreak) >= balance.streakLength;
 
   return (
-    <div className="rounded-[20px] border border-white/70 bg-white/78 p-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.8)] sm:rounded-[22px] sm:p-3">
+    <div className="profile-checkin-progress rounded-[20px] border border-white/70 bg-white/78 p-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.8)] sm:rounded-[22px] sm:p-3">
       <div className="mb-1.5 flex items-center justify-between sm:mb-2">
         <p className="text-[10px] font-black uppercase tracking-[0.24em] text-slate-500">
           30 Day Track
@@ -111,7 +111,7 @@ function CompactProgress({ balance }: { balance: PointsBalance }) {
           return (
             <span
               key={index}
-              className={`relative h-2.5 rounded-full ${
+              className={`profile-checkin-dot relative h-2.5 rounded-full ${
                 balance.streakStatus === "broken"
                   ? isFilled
                     ? "bg-orange-300"
@@ -123,7 +123,7 @@ function CompactProgress({ balance }: { balance: PointsBalance }) {
                     : isFilled
                       ? "bg-sky-400"
                       : "bg-sky-100"
-              } ${isHighlight ? "ring-2 ring-white shadow-[0_0_0_2px_rgba(56,189,248,0.28)]" : ""}`}
+              } ${isFilled ? "profile-checkin-dot-filled" : "profile-checkin-dot-empty"} ${isHighlight ? "profile-checkin-dot-highlight ring-2 ring-white shadow-[0_0_0_2px_rgba(56,189,248,0.28)]" : ""}`}
             />
           );
         })}
@@ -138,7 +138,7 @@ function CompactProgress({ balance }: { balance: PointsBalance }) {
           return (
             <div
               key={day}
-              className={`relative rounded-2xl border px-2 py-2 text-center ${
+              className={`profile-checkin-day relative rounded-2xl border px-2 py-2 text-center ${
                 balance.streakStatus === "broken"
                   ? isFilled
                     ? "border-orange-300/60 bg-[linear-gradient(180deg,#fff2e2,#ffd8b8)] text-orange-800"
@@ -150,7 +150,7 @@ function CompactProgress({ balance }: { balance: PointsBalance }) {
                     : isFilled
                       ? "border-sky-300/70 bg-[linear-gradient(180deg,#dff6ff,#b8e6ff)] text-sky-900"
                       : "border-[#d8e9f5] bg-[#f6fbff] text-[#9fb2c6]"
-              } ${isHighlight ? "shadow-[0_8px_18px_rgba(56,189,248,0.18)]" : ""}`}
+              } ${isFilled ? "profile-checkin-day-filled" : "profile-checkin-day-empty"} ${isHighlight ? "profile-checkin-day-highlight shadow-[0_8px_18px_rgba(56,189,248,0.18)]" : ""}`}
             >
               <p className="text-[10px] font-semibold uppercase tracking-[0.22em]">Day</p>
               <p className="mt-1 text-sm font-black">{day}</p>
@@ -180,7 +180,7 @@ function MiniInfo({
   };
 
   return (
-    <div className="rounded-[18px] border border-white/70 bg-white/78 p-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.8)] sm:rounded-[20px] sm:p-3">
+    <div className="profile-checkin-info rounded-[18px] border border-white/70 bg-white/78 p-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.8)] sm:rounded-[20px] sm:p-3">
       <p className="text-[10px] font-black uppercase tracking-[0.24em] text-slate-500">
         {label}
       </p>
@@ -258,9 +258,9 @@ export function DailyCheckInModule({
 
   return (
     <section
-      className={`relative overflow-hidden rounded-[24px] border p-3.5 shadow-[0_20px_70px_rgba(15,23,42,0.1)] sm:rounded-[28px] sm:p-6 ${
+      className={`profile-checkin-card relative overflow-hidden rounded-[24px] border p-3.5 shadow-[0_20px_70px_rgba(15,23,42,0.1)] sm:rounded-[28px] sm:p-6 ${
         isBrokenStreak
-          ? "border-orange-300/60 bg-[radial-gradient(circle_at_top_left,rgba(251,146,60,0.2),transparent_32%),linear-gradient(180deg,#fff5ef,#ffe5d3)]"
+          ? "profile-checkin-card-broken border-orange-300/60 bg-[radial-gradient(circle_at_top_left,rgba(251,146,60,0.2),transparent_32%),linear-gradient(180deg,#fff5ef,#ffe5d3)]"
           : "border-white/70 bg-[radial-gradient(circle_at_top_left,rgba(56,189,248,0.18),transparent_34%),radial-gradient(circle_at_top_right,rgba(251,191,36,0.14),transparent_30%),linear-gradient(180deg,#fffdf7,#f3fbff)]"
       }`}
     >
@@ -436,7 +436,7 @@ export function DailyCheckInModule({
             </button>
           </div>
         ) : (
-          <div className="mt-2.5 rounded-[20px] border border-white/70 bg-white/78 p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.8)] sm:mt-3 sm:rounded-[22px] sm:p-4">
+          <div className="profile-checkin-action mt-2.5 rounded-[20px] border border-white/70 bg-white/78 p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.8)] sm:mt-3 sm:rounded-[22px] sm:p-4">
             <div className="flex items-start justify-between gap-2.5 sm:gap-3">
               <div>
                 <p className="text-[10px] font-black uppercase tracking-[0.24em] text-slate-500">
@@ -446,19 +446,13 @@ export function DailyCheckInModule({
                   {balance.checkedInToday ? "Already checked today" : "Onchain check-in"}
                 </h3>
               </div>
-              <div className="rounded-full border border-slate-200 bg-[#fbf7ec] px-2.5 py-2 text-right sm:px-3">
-                <p className="text-[10px] font-black uppercase tracking-[0.22em] text-slate-500">
-                  Scope
-                </p>
-                <p className="mt-1 text-xs font-semibold text-slate-700">Self-earned only</p>
-              </div>
             </div>
 
             <button
               type="button"
               onClick={onCheckIn}
               disabled={balance.checkedInToday || isCheckingIn || !walletReady}
-              className="group relative mt-3 flex w-full items-center justify-center overflow-hidden rounded-[20px] border border-transparent bg-[linear-gradient(135deg,#0ea5e9_0%,#22c55e_100%)] px-4 py-3.5 text-sm font-black text-white shadow-[0_16px_42px_rgba(14,165,233,0.22)] transition duration-200 hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-50 sm:mt-4 sm:rounded-[24px] sm:py-4 sm:text-base"
+              className="profile-checkin-button group relative mt-3 flex w-full items-center justify-center overflow-hidden rounded-[20px] border border-transparent bg-[linear-gradient(135deg,#0ea5e9_0%,#22c55e_100%)] px-4 py-3.5 text-sm font-black text-white shadow-[0_16px_42px_rgba(14,165,233,0.22)] transition duration-200 hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-65 sm:mt-4 sm:rounded-[24px] sm:py-4 sm:text-base"
             >
               <span className="absolute inset-0 bg-[linear-gradient(120deg,transparent,rgba(255,255,255,0.22),transparent)] opacity-0 transition duration-300 group-hover:opacity-100" />
               <span className="relative">
