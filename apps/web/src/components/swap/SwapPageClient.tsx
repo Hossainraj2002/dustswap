@@ -5,6 +5,7 @@ import { useMemo } from "react";
 import { openOceanTheme } from "@openocean.finance/widget";
 import { useTheme } from "@/components/theme/ThemeProvider";
 import { useWalletConnection } from "@/hooks/useWalletConnection";
+import { BASE_CHAIN_ID, NATIVE_ETH, USDC_ADDRESS } from "@/lib/tokens";
 
 const OPENOCEAN_REFERRER_ADDRESS =
   process.env.NEXT_PUBLIC_OPENOCEAN_REFERRER_ADDRESS ||
@@ -14,9 +15,13 @@ const WIDGET_BASE_CONFIG = {
   variant: "compact",
   subvariant: "default",
   slippage: 0.03,
-  defaultChain: 8453,
-  defaultFromToken: "0x0000000000000000000000000000000000000000",
-  defaultToToken: "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+  fromChain: BASE_CHAIN_ID,
+  toChain: BASE_CHAIN_ID,
+  fromToken: NATIVE_ETH,
+  toToken: USDC_ADDRESS,
+  defaultChain: BASE_CHAIN_ID,
+  defaultFromToken: NATIVE_ETH,
+  defaultToToken: USDC_ADDRESS,
 } as const;
 
 const DUSTSWAP_OPENOCEAN_DARK_THEME = {

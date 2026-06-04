@@ -8,6 +8,13 @@ import { emitDataInvalidation } from "@/lib/clientEvents";
 import { buildPublicApiUrl, publicApiFetch } from "@/lib/apiBase";
 import { clearPointsSummaryCache } from "@/lib/points";
 import { BASE_CHAIN_ID } from "@/lib/tokens";
+import {
+  SWAP_ROUTE_UNAVAILABLE_ERROR_MESSAGE,
+  getInvalidSwapTxReason,
+  validateWalletSendCalls,
+  type WalletCall,
+  type WalletSendCallsRequest,
+} from "@/lib/swapTxGuard";
 import { isSupportedSwapCaptureChainId } from "@/config/swapChains";
 
 const STORAGE_KEY = "dustswap.swap.capture.queue";
@@ -47,18 +54,6 @@ type SmartWalletCallQueueItem = {
 type EthereumRequestArguments = {
   method?: string;
   params?: unknown[] | Record<string, unknown>;
-};
-
-type WalletCall = {
-  to?: string;
-  value?: string;
-  data?: string;
-};
-
-type WalletSendCallsRequest = {
-  from?: string;
-  chainId?: string | number;
-  calls?: WalletCall[];
 };
 
 type WalletCallsStatusReceipt = {
@@ -319,6 +314,71 @@ function getWalletSendCallsRequest(args: EthereumRequestArguments): WalletSendCa
         : undefined,
     calls,
   };
+}
+
+function getDataLength(data: unknown) {
+  return typeof data === "string" ? data.length : 0;
+}
+
+function getLoggableValue(value: unknown) {
+  if (typeof value === "string" || typeof value === "number" || typeof value === "bigint") {
+    return String(value);
+  }
+
+  return undefined;
+}
+
+function warnBlockedSwapTransaction({
+  reason,
+  method,
+  tx,
+  chainId,
+  callIndex,
+}: {
+  reason: string;
+  method?: string;
+  tx?: WalletCall | Record<string, unknown>;
+  chainId?: number;
+  callIndex?: number;
+}) {
+  if (process.env.NODE_ENV !== "development") {
+    return;
+  }
+
+  console.warn("[DustSwap] Blocked invalid swap transaction", {
+    reason,
+    method,
+    to: typeof tx?.to === "string" ? tx.to : undefined,
+    dataLength: getDataLength(tx?.data),
+    value: getLoggableValue(tx?.value),
+    chainId,
+    callIndex,
+  });
+}
+
+function throwBlockedSwapTransaction({
+  reason,
+  method,
+  tx,
+  chainId,
+  callIndex,
+}: {
+  reason: string;
+  method?: string;
+  tx?: WalletCall | Record<string, unknown>;
+  chainId?: number;
+  callIndex?: number;
+}): never {
+  warnBlockedSwapTransaction({ reason, method, tx, chainId, callIndex });
+  throw new Error(SWAP_ROUTE_UNAVAILABLE_ERROR_MESSAGE);
+}
+
+function shouldGuardSwapWidgetTransaction() {
+  if (typeof window === "undefined") {
+    return false;
+  }
+
+  return window.location.pathname.replace(/\/+$/, "") === "/swap";
 }
 
 function hasOpenOceanCall(calls: WalletCall[]) {
@@ -916,6 +976,18 @@ export function useSwapCapture() {
             provider.chainId,
             (window as Window & { ethereum?: RequestCapableProvider }).ethereum?.chainId
           );
+          const invalidReason = shouldGuardSwapWidgetTransaction()
+            ? getInvalidSwapTxReason(request)
+            : null;
+
+          if (invalidReason) {
+            throwBlockedSwapTransaction({
+              reason: invalidReason,
+              method,
+              tx: request,
+              chainId: resolvedChainId,
+            });
+          }
 
           // Preserve builder code attribution on swap and approval calls,
           // but keep the original wallet method so the widget can track state correctly.
@@ -924,6 +996,29 @@ export function useSwapCapture() {
             request,
             resolvedChainId
           );
+        }
+
+        if (method === "wallet_sendCalls") {
+          const request = getWalletSendCallsRequest(args);
+          const resolvedChainId = resolveChainId(
+            request.chainId,
+            chainId,
+            provider.chainId,
+            (window as Window & { ethereum?: RequestCapableProvider }).ethereum?.chainId
+          );
+          const invalidRequest = shouldGuardSwapWidgetTransaction()
+            ? validateWalletSendCalls(request)
+            : null;
+
+          if (invalidRequest) {
+            throwBlockedSwapTransaction({
+              reason: invalidRequest.reason,
+              method,
+              tx: invalidRequest.call,
+              chainId: resolvedChainId,
+              callIndex: invalidRequest.callIndex,
+            });
+          }
         }
 
         let result = await originalRequest(forwardedArgs);
