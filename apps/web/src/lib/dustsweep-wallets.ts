@@ -1,6 +1,7 @@
 import { base } from "viem/chains";
 import {
   getEthereumProviderCandidates,
+  isOkxEthereumProvider,
   mergeEthereumProviderCandidates,
   type EthereumProviderCandidate,
 } from "@/lib/ethereumProviders";
@@ -93,7 +94,14 @@ function getInjectedWalletKey(flags: EthereumFlags): DustSweepWalletKey | null {
   if (flags.isRabby) return "rabby";
   if (flags.isTrust || flags.isTrustWallet) return "trust";
   if (flags.isTokenPocket) return "tokenpocket";
-  if (flags.isOKExWallet || flags.isOKXWallet || flags.isOkxWallet) return "okx";
+  if (
+    isOkxEthereumProvider(flags) ||
+    flags.isOKExWallet ||
+    flags.isOKXWallet ||
+    flags.isOkxWallet
+  ) {
+    return "okx";
+  }
   if (flags.isRainbow) return "rainbow";
   if (flags.isBitgetWallet || flags.isBitKeep) return "bitget";
   if (flags.isZerion) return "zerion";
@@ -159,6 +167,12 @@ export function getDustSweepWalletProfileBase(args: {
   const connectorSignal = normalizeWalletSignal(args.connectorId);
   const signalKey = getSignalWalletKey(combinedSignal);
   const injectedKey = getInjectedWalletKey(getEthereumFlags());
+  const shouldPreferInjectedOkx =
+    injectedKey === "okx" &&
+    (!signalKey ||
+      signalKey === "metamask" ||
+      signalKey === "walletconnect" ||
+      signalKey === "injected");
   const mayUseInjectedFlags =
     !combinedSignal ||
     signalKey === "injected" ||
@@ -166,7 +180,9 @@ export function getDustSweepWalletProfileBase(args: {
     includesWalletSignal(combinedSignal, "detected_ethereum_wallets");
 
   let walletKey: DustSweepWalletKey = "unknown";
-  if (signalKey && signalKey !== "injected") {
+  if (shouldPreferInjectedOkx) {
+    walletKey = "okx";
+  } else if (signalKey && signalKey !== "injected") {
     walletKey = signalKey;
   } else if (args.isCoinbaseSmartWallet) {
     walletKey = "base_account";
@@ -235,7 +251,11 @@ function getWindowEthereumProviders(walletKey?: DustSweepWalletKey): WalletRpcPr
       connectorName: provider.info?.name,
       walletName: undefined,
     });
-    return getInjectedWalletKey(provider) === walletKey || getSignalWalletKey(providerSignal) === walletKey;
+    return (
+      getInjectedWalletKey(provider) === walletKey ||
+      getSignalWalletKey(providerSignal) === walletKey ||
+      (walletKey === "okx" && isOkxEthereumProvider(provider))
+    );
   });
 }
 

@@ -4,6 +4,8 @@ import { useEffect, useMemo, useState } from "react";
 import { useAccount, useConnection, useWalletClient } from "wagmi";
 import { useWalletConnection } from "@/hooks/useWalletConnection";
 import {
+  hasInjectedOkxWallet,
+  isOkxAppBrowser,
   mergeEthereumProviderCandidates,
   type EthereumProviderCandidate,
 } from "@/lib/ethereumProviders";
@@ -72,6 +74,7 @@ function getEthereumFlags(): EthereumFlags {
 function detectInjectedWalletName(connectorId: string | null) {
   const flags = getEthereumFlags();
 
+  if (isOkxAppBrowser()) return "OKX Wallet";
   if (flags.isRabby) return "Rabby";
   if (flags.isTrust) return "Trust Wallet";
   if (flags.isTokenPocket) return "Token Pocket";
@@ -169,13 +172,28 @@ export function useWalletWhitelist(): WalletWhitelistStatus {
 
   return useMemo<WalletWhitelistStatus>(() => {
     const privyWalletName = getPrivyWalletName(walletClientType);
-    const walletName =
+    const injectedWalletName = detectInjectedWalletName(connectorId);
+    const isOkxRuntime =
+      injectedWalletName === "OKX Wallet" ||
+      isOkxAppBrowser() ||
+      hasInjectedOkxWallet();
+    const shouldPreferOkxRuntimeName =
+      isOkxRuntime &&
+      (!walletClientType ||
+        walletClientType === "metamask" ||
+        walletClientType === "detected_ethereum_wallets" ||
+        walletClientType === "wallet_connect");
+    const isBaseAccountWallet =
       walletClientType === "base_account" ||
       walletClientType === "base_app" ||
       walletClientType === "base_wallet" ||
-      walletClientType === "coinbase_smart_wallet"
+      walletClientType === "coinbase_smart_wallet";
+    const walletName =
+      shouldPreferOkxRuntimeName
+        ? "OKX Wallet"
+        : isBaseAccountWallet
         ? (privyWalletName || "Coinbase Smart Wallet")
-        : privyWalletName || detectInjectedWalletName(connectorId);
+        : privyWalletName || injectedWalletName;
 
     // Capability-based support: any wallet with signTypedData + sendTransaction is supported
     // No brand/connector allowlisting — supports ~99% of wallets
@@ -185,10 +203,7 @@ export function useWalletWhitelist(): WalletWhitelistStatus {
     const isCoinbaseSmartWallet =
       connectorId === "coinbaseWallet" ||
       connectorId === "baseAccount" ||
-      walletClientType === "base_account" ||
-      walletClientType === "base_app" ||
-      walletClientType === "base_wallet" ||
-      walletClientType === "coinbase_smart_wallet" ||
+      isBaseAccountWallet ||
       walletName.toLowerCase().includes("coinbase");
 
     const tier = !isConnected

@@ -1,14 +1,24 @@
 export type EthereumProviderCandidate = {
+  isMetaMask?: boolean;
   isOKExWallet?: boolean;
   isOKXWallet?: boolean;
   isOkxWallet?: boolean;
   info?: { name?: string; rdns?: string };
   name?: string;
+  request?: unknown;
   providers?: EthereumProviderCandidate[];
   selectedProvider?: EthereumProviderCandidate;
 };
 
 const knownOkxProviders = new WeakSet<object>();
+
+export function isOkxAppBrowser() {
+  if (typeof navigator === "undefined") {
+    return false;
+  }
+
+  return /OKApp/i.test(navigator.userAgent || "");
+}
 
 export function getEthereumProviderCandidates<
   TProvider extends EthereumProviderCandidate = EthereumProviderCandidate,
@@ -24,6 +34,17 @@ export function getEthereumProviderCandidates<
   const ethereum = browserWindow.ethereum;
   if (browserWindow.okxwallet && typeof browserWindow.okxwallet === "object") {
     knownOkxProviders.add(browserWindow.okxwallet);
+  }
+  if (isOkxAppBrowser()) {
+    for (const provider of [
+      ethereum?.selectedProvider,
+      ...(Array.isArray(ethereum?.providers) ? ethereum.providers : []),
+      ethereum,
+    ]) {
+      if (provider && typeof provider === "object") {
+        knownOkxProviders.add(provider);
+      }
+    }
   }
 
   const candidates = [
@@ -61,6 +82,10 @@ export function isOkxEthereumProvider(provider: EthereumProviderCandidate) {
   }
 
   if (provider.isOKExWallet || provider.isOKXWallet || provider.isOkxWallet) {
+    return true;
+  }
+
+  if (isOkxAppBrowser() && typeof provider.request === "function") {
     return true;
   }
 
