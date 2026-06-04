@@ -158,6 +158,8 @@ const WALLET_SEND_CALLS_MAX_CALLS = Math.max(
   1,
   Number(process.env.NEXT_PUBLIC_DUST_SWEEP_WALLET_BATCH_CALL_CAP || "50") || 50,
 );
+const TOKENPOCKET_BATCH_APPROVALS_ENABLED =
+  process.env.NEXT_PUBLIC_DUST_SWEEP_TOKENPOCKET_BATCH_APPROVALS === "true";
 
 function isSameAddress(a?: string | null, b?: string | null) {
   return Boolean(a && b && a.toLowerCase() === b.toLowerCase());
@@ -1000,6 +1002,62 @@ export function useDustSweep(): UseDustSweepReturn {
     return remaining;
   }, [getTokenApprovalRequirements]);
 
+  const sendTokenPocketRawTransaction = useCallback(async (args: {
+    to: Address;
+    data: Hex;
+    value?: bigint;
+    gas: bigint;
+  }) => {
+    if (!address || !walletClient) {
+      throw new Error("Wallet client unavailable");
+    }
+
+    const requests = getWalletRequestCandidates(walletClient, "tokenpocket", {
+      preferInjected: true,
+    });
+    if (requests.length === 0) {
+      throw new Error("TokenPocket provider unavailable");
+    }
+
+    const tx = {
+      from: address,
+      to: args.to,
+      data: concatHex([args.data, DATA_SUFFIX]),
+      value: toRpcQuantity(args.value),
+      gas: toRpcQuantity(args.gas),
+      chainId: `0x${base.id.toString(16)}`,
+    };
+    let lastError: unknown;
+
+    for (const request of requests) {
+      try {
+        const result = await request({
+          method: "eth_sendTransaction",
+          params: [tx],
+        });
+        if (isTxHash(result)) {
+          return result;
+        }
+        throw new Error("TokenPocket did not return a transaction hash");
+      } catch (error) {
+        if (isRejectedByUser(error) || isWalletLockedError(error)) {
+          throw error;
+        }
+        lastError = error;
+        console.warn("DustSweep TokenPocket raw transaction failed.", {
+          to: args.to,
+          gas: tx.gas,
+          code: getErrorCode(error),
+          message: getDebugErrorMessage(error),
+        });
+      }
+    }
+
+    throw lastError instanceof Error
+      ? lastError
+      : new Error("TokenPocket transaction failed");
+  }, [address, walletClient]);
+
   const sendTokenApprovals = useCallback(async (
     approvalRequirements: ApprovalRequirement[],
     spender: Address,
@@ -1007,12 +1065,15 @@ export function useDustSweep(): UseDustSweepReturn {
     if (!address || !walletClient || approvalRequirements.length === 0) return;
 
     const paymasterUrl = process.env.NEXT_PUBLIC_PAYMASTER_URL;
+    const usesTokenPocketExisting =
+      walletProfile.executionStrategy === "tokenpocket_existing";
     for (const requirement of approvalRequirements) {
       const txBase = {
         account: address,
         chain: base,
         to: requirement.token,
         dataSuffix: DATA_SUFFIX,
+        ...(usesTokenPocketExisting ? { gas: APPROVAL_CALL_GAS_LIMIT } : {}),
         ...(walletStatus.isCoinbaseSmartWallet && paymasterUrl
           ? {
               capabilities: buildBasePaymasterCapabilities(),
@@ -1021,31 +1082,54 @@ export function useDustSweep(): UseDustSweepReturn {
       };
 
       if (requirement.resetFirst) {
-        const resetHash = (await walletClient.sendTransaction({
-          ...txBase,
-          data: encodeFunctionData({
-            abi: erc20Abi,
-            functionName: "approve",
-            args: [spender, 0n],
-          }),
-        } as never)) as Hex;
-        await waitForSuccessfulTransaction(resetHash);
+        const resetData = encodeFunctionData({
+          abi: erc20Abi,
+          functionName: "approve",
+          args: [spender, 0n],
+        });
+        if (usesTokenPocketExisting) {
+          const resetHash = await sendTokenPocketRawTransaction({
+            to: requirement.token,
+            data: resetData,
+            gas: APPROVAL_CALL_GAS_LIMIT,
+          });
+          await waitForSuccessfulTransaction(resetHash);
+        } else {
+          const resetHash = (await walletClient.sendTransaction({
+            ...txBase,
+            data: resetData,
+          } as never)) as Hex;
+          await waitForSuccessfulTransaction(resetHash);
+        }
+      }
+
+      const approvalData = encodeFunctionData({
+        abi: erc20Abi,
+        functionName: "approve",
+        args: [spender, requirement.approvalAmount],
+      });
+      if (usesTokenPocketExisting) {
+        const approvalHash = await sendTokenPocketRawTransaction({
+          to: requirement.token,
+          data: approvalData,
+          gas: APPROVAL_CALL_GAS_LIMIT,
+        });
+        await waitForSuccessfulTransaction(approvalHash);
+        continue;
       }
 
       const approvalHash = (await walletClient.sendTransaction({
         ...txBase,
-        data: encodeFunctionData({
-          abi: erc20Abi,
-          functionName: "approve",
-          args: [spender, requirement.approvalAmount],
-        }),
+        data: approvalData,
       } as never)) as Hex;
       await waitForSuccessfulTransaction(approvalHash);
     }
   }, [
     address,
+    sendTokenPocketRawTransaction,
     waitForSuccessfulTransaction,
     walletClient,
+    walletProfile.executionStrategy,
     walletStatus.isCoinbaseSmartWallet,
   ]);
 
@@ -1392,8 +1476,16 @@ export function useDustSweep(): UseDustSweepReturn {
       const bundledCallCount = approvalCalls.length + 1;
       const usesTokenPocketExisting =
         walletProfile.executionStrategy === "tokenpocket_existing";
-      const canUseAtomicBatch = batchMode && hasV2Approvals && supportsWalletSendCalls;
-      const canUseTokenPocketBatch = batchMode && hasV2Approvals && usesTokenPocketExisting;
+      const canUseAtomicBatch =
+        batchMode &&
+        hasV2Approvals &&
+        supportsWalletSendCalls &&
+        !usesTokenPocketExisting;
+      const canUseTokenPocketBatch =
+        TOKENPOCKET_BATCH_APPROVALS_ENABLED &&
+        batchMode &&
+        hasV2Approvals &&
+        usesTokenPocketExisting;
       const shouldSplitBaseAccountBatch =
         hasV2Approvals && walletProfile.executionStrategy === "coinbase_paymaster";
       const shouldSplitTokenPocketBatch = hasV2Approvals && usesTokenPocketExisting;
@@ -1421,6 +1513,7 @@ export function useDustSweep(): UseDustSweepReturn {
         fullBundleCallCount: bundledCallCount,
         walletCallCap: WALLET_SEND_CALLS_MAX_CALLS,
         tokenPocketCompatibleBatch: canUseTokenPocketBatch,
+        tokenPocketBatchApprovalsEnabled: TOKENPOCKET_BATCH_APPROVALS_ENABLED,
         splitWalletBatch: shouldSplitWalletBatch,
       });
 
@@ -1444,6 +1537,15 @@ export function useDustSweep(): UseDustSweepReturn {
             // Fallback: generous static estimate scaled by route count
             tokenPocketGas = getTokenPocketSweepFallbackGas(quote.routes.length);
           }
+        }
+
+        if (usesTokenPocketExisting && tokenPocketGas !== undefined) {
+          return sendTokenPocketRawTransaction({
+            to: sweepTarget,
+            data: calldata,
+            value: txValue,
+            gas: tokenPocketGas,
+          });
         }
 
         return (await walletClient.sendTransaction({
@@ -1762,6 +1864,7 @@ export function useDustSweep(): UseDustSweepReturn {
     buildApprovalCalls,
     sendAtomicWalletCalls,
     sendTokenApprovals,
+    sendTokenPocketRawTransaction,
     selectedTokens.length,
     supportsWalletSendCalls,
     switchToBase,

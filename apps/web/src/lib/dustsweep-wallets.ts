@@ -2,6 +2,7 @@ import { base } from "viem/chains";
 import {
   getEthereumProviderCandidates,
   isOkxEthereumProvider,
+  isTokenPocketEthereumProvider,
   mergeEthereumProviderCandidates,
   type EthereumProviderCandidate,
 } from "@/lib/ethereumProviders";
@@ -93,7 +94,9 @@ function buildWalletSignal(args: {
 function getInjectedWalletKey(flags: EthereumFlags): DustSweepWalletKey | null {
   if (flags.isRabby) return "rabby";
   if (flags.isTrust || flags.isTrustWallet) return "trust";
-  if (flags.isTokenPocket) return "tokenpocket";
+  if (isTokenPocketEthereumProvider(flags) || flags.isTokenPocket) {
+    return "tokenpocket";
+  }
   if (
     isOkxEthereumProvider(flags) ||
     flags.isOKExWallet ||
@@ -173,6 +176,12 @@ export function getDustSweepWalletProfileBase(args: {
       signalKey === "metamask" ||
       signalKey === "walletconnect" ||
       signalKey === "injected");
+  const shouldPreferInjectedTokenPocket =
+    injectedKey === "tokenpocket" &&
+    (!signalKey ||
+      signalKey === "metamask" ||
+      signalKey === "walletconnect" ||
+      signalKey === "injected");
   const mayUseInjectedFlags =
     !combinedSignal ||
     signalKey === "injected" ||
@@ -180,7 +189,9 @@ export function getDustSweepWalletProfileBase(args: {
     includesWalletSignal(combinedSignal, "detected_ethereum_wallets");
 
   let walletKey: DustSweepWalletKey = "unknown";
-  if (shouldPreferInjectedOkx) {
+  if (shouldPreferInjectedTokenPocket) {
+    walletKey = "tokenpocket";
+  } else if (shouldPreferInjectedOkx) {
     walletKey = "okx";
   } else if (signalKey && signalKey !== "injected") {
     walletKey = signalKey;
@@ -209,7 +220,7 @@ export function getWalletBatchNotice(
       return `${walletName} can batch token approvals; DustSweep sends approvals first, then the sweep for a reliable Base Account review.`;
     }
     if (walletKey === "tokenpocket") {
-      return "TokenPocket can batch token approvals; DustSweep sends approvals first, then the sweep so TokenPocket can estimate gas against confirmed allowances.";
+      return "TokenPocket estimates DustSweep more reliably with explicit-gas approvals. DustSweep sends approvals first, then the sweep after allowances are confirmed.";
     }
 
     return `${walletName} can batch token approvals and the sweep in one atomic request.`;
@@ -217,7 +228,7 @@ export function getWalletBatchNotice(
 
   if (atomicStatus === "ready") {
     if (walletKey === "tokenpocket") {
-      return "TokenPocket can use EIP-7702 batching after wallet upgrade; DustSweep will still split approvals from the sweep to keep gas estimation reliable.";
+      return "TokenPocket batching is available, but DustSweep uses explicit-gas approvals first to keep TokenPocket gas estimation reliable.";
     }
     return `${walletName} can enable atomic batching through a wallet-managed EIP-7702 upgrade prompt.`;
   }
@@ -254,7 +265,8 @@ function getWindowEthereumProviders(walletKey?: DustSweepWalletKey): WalletRpcPr
     return (
       getInjectedWalletKey(provider) === walletKey ||
       getSignalWalletKey(providerSignal) === walletKey ||
-      (walletKey === "okx" && isOkxEthereumProvider(provider))
+      (walletKey === "okx" && isOkxEthereumProvider(provider)) ||
+      (walletKey === "tokenpocket" && isTokenPocketEthereumProvider(provider))
     );
   });
 }
@@ -262,21 +274,25 @@ function getWindowEthereumProviders(walletKey?: DustSweepWalletKey): WalletRpcPr
 export function getWalletRequestCandidates(
   walletClient: unknown,
   walletKey?: DustSweepWalletKey,
+  options?: { preferInjected?: boolean },
 ): WalletRpcRequest[] {
-  const candidates: WalletRpcRequest[] = [];
+  const clientCandidates: WalletRpcRequest[] = [];
+  const providerCandidates: WalletRpcRequest[] = [];
   const clientRequest = (walletClient as { request?: WalletRpcRequest } | null)?.request;
   if (typeof clientRequest === "function") {
-    candidates.push((args) => clientRequest.call(walletClient, args));
+    clientCandidates.push((args) => clientRequest.call(walletClient, args));
   }
 
   for (const provider of getWindowEthereumProviders(walletKey)) {
     if (typeof provider.request === "function") {
       const request = provider.request;
-      candidates.push((args) => request.call(provider, args));
+      providerCandidates.push((args) => request.call(provider, args));
     }
   }
 
-  return candidates;
+  return options?.preferInjected
+    ? [...providerCandidates, ...clientCandidates]
+    : [...clientCandidates, ...providerCandidates];
 }
 
 export function getWalletRequest(

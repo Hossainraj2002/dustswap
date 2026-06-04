@@ -14,7 +14,12 @@ import {
   useConnectWallet,
 } from "@privy-io/react-auth";
 import { useSetActiveWallet } from "@privy-io/wagmi";
-import { hasInjectedOkxWallet, isOkxAppBrowser } from "@/lib/ethereumProviders";
+import {
+  hasInjectedOkxWallet,
+  hasInjectedTokenPocketWallet,
+  isOkxAppBrowser,
+  isTokenPocketAppBrowser,
+} from "@/lib/ethereumProviders";
 
 export const PRIVY_WALLET_LIST: WalletListEntry[] = [
   "detected_ethereum_wallets",
@@ -111,9 +116,15 @@ function prioritizeWallet(
 function getRuntimeWalletList(walletList: WalletListEntry[]) {
   const mobileRuntime = isMobileRuntime();
   const hasOkxRuntime = hasInjectedOkxWallet() || isOkxAppBrowser();
+  const hasTokenPocketRuntime =
+    hasInjectedTokenPocketWallet() || isTokenPocketAppBrowser();
   const nextWalletList = mobileRuntime
     ? getMobileWalletList(walletList)
     : walletList;
+
+  if (isTokenPocketAppBrowser()) {
+    return prioritizeWallet(nextWalletList, "detected_ethereum_wallets");
+  }
 
   if (isOkxAppBrowser()) {
     return uniqueWalletList([
@@ -127,13 +138,21 @@ function getRuntimeWalletList(walletList: WalletListEntry[]) {
   }
 
   if (mobileRuntime) {
+    if (hasTokenPocketRuntime) {
+      return prioritizeWallet(nextWalletList, "detected_ethereum_wallets");
+    }
+
     return hasOkxRuntime
       ? prioritizeWallet(nextWalletList, "okx_wallet")
       : nextWalletList;
   }
 
-  if (!hasOkxRuntime) {
+  if (!hasOkxRuntime && !hasTokenPocketRuntime) {
     return walletList;
+  }
+
+  if (hasTokenPocketRuntime) {
+    return prioritizeWallet(nextWalletList, "detected_ethereum_wallets");
   }
 
   return uniqueWalletList([

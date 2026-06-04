@@ -5,7 +5,9 @@ import { useAccount, useConnection, useWalletClient } from "wagmi";
 import { useWalletConnection } from "@/hooks/useWalletConnection";
 import {
   hasInjectedOkxWallet,
+  hasInjectedTokenPocketWallet,
   isOkxAppBrowser,
+  isTokenPocketAppBrowser,
   mergeEthereumProviderCandidates,
   type EthereumProviderCandidate,
 } from "@/lib/ethereumProviders";
@@ -75,6 +77,7 @@ function detectInjectedWalletName(connectorId: string | null) {
   const flags = getEthereumFlags();
 
   if (isOkxAppBrowser()) return "OKX Wallet";
+  if (isTokenPocketAppBrowser()) return "Token Pocket";
   if (flags.isRabby) return "Rabby";
   if (flags.isTrust) return "Trust Wallet";
   if (flags.isTokenPocket) return "Token Pocket";
@@ -95,6 +98,12 @@ function detectInjectedWalletName(connectorId: string | null) {
     .toLowerCase();
   if (injectedSignal.includes("okx") || injectedSignal.includes("okex")) {
     return "OKX Wallet";
+  }
+  if (
+    injectedSignal.includes("tokenpocket") ||
+    injectedSignal.includes("token_pocket")
+  ) {
+    return "Token Pocket";
   }
 
   if (connectorId === "walletConnect") return "WalletConnect";
@@ -177,8 +186,18 @@ export function useWalletWhitelist(): WalletWhitelistStatus {
       injectedWalletName === "OKX Wallet" ||
       isOkxAppBrowser() ||
       hasInjectedOkxWallet();
+    const isTokenPocketRuntime =
+      injectedWalletName === "Token Pocket" ||
+      isTokenPocketAppBrowser() ||
+      hasInjectedTokenPocketWallet();
     const shouldPreferOkxRuntimeName =
       isOkxRuntime &&
+      (!walletClientType ||
+        walletClientType === "metamask" ||
+        walletClientType === "detected_ethereum_wallets" ||
+        walletClientType === "wallet_connect");
+    const shouldPreferTokenPocketRuntimeName =
+      isTokenPocketRuntime &&
       (!walletClientType ||
         walletClientType === "metamask" ||
         walletClientType === "detected_ethereum_wallets" ||
@@ -189,7 +208,9 @@ export function useWalletWhitelist(): WalletWhitelistStatus {
       walletClientType === "base_wallet" ||
       walletClientType === "coinbase_smart_wallet";
     const walletName =
-      shouldPreferOkxRuntimeName
+      shouldPreferTokenPocketRuntimeName
+        ? "Token Pocket"
+        : shouldPreferOkxRuntimeName
         ? "OKX Wallet"
         : isBaseAccountWallet
         ? (privyWalletName || "Coinbase Smart Wallet")

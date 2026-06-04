@@ -3,6 +3,7 @@ export type EthereumProviderCandidate = {
   isOKExWallet?: boolean;
   isOKXWallet?: boolean;
   isOkxWallet?: boolean;
+  isTokenPocket?: boolean;
   info?: { name?: string; rdns?: string };
   name?: string;
   request?: unknown;
@@ -11,6 +12,7 @@ export type EthereumProviderCandidate = {
 };
 
 const knownOkxProviders = new WeakSet<object>();
+const knownTokenPocketProviders = new WeakSet<object>();
 
 export function isOkxAppBrowser() {
   if (typeof navigator === "undefined") {
@@ -18,6 +20,14 @@ export function isOkxAppBrowser() {
   }
 
   return /OKApp/i.test(navigator.userAgent || "");
+}
+
+export function isTokenPocketAppBrowser() {
+  if (typeof navigator === "undefined") {
+    return false;
+  }
+
+  return /TokenPocket/i.test(navigator.userAgent || "");
 }
 
 export function getEthereumProviderCandidates<
@@ -30,10 +40,20 @@ export function getEthereumProviderCandidates<
   const browserWindow = window as Window & {
     ethereum?: TProvider;
     okxwallet?: TProvider;
+    tokenpocket?: TProvider | { ethereum?: TProvider };
   };
   const ethereum = browserWindow.ethereum;
+  const tokenPocketProvider =
+    browserWindow.tokenpocket &&
+    typeof browserWindow.tokenpocket === "object" &&
+    "ethereum" in browserWindow.tokenpocket
+      ? browserWindow.tokenpocket.ethereum
+      : browserWindow.tokenpocket;
   if (browserWindow.okxwallet && typeof browserWindow.okxwallet === "object") {
     knownOkxProviders.add(browserWindow.okxwallet);
+  }
+  if (tokenPocketProvider && typeof tokenPocketProvider === "object") {
+    knownTokenPocketProviders.add(tokenPocketProvider);
   }
   if (isOkxAppBrowser()) {
     for (const provider of [
@@ -46,9 +66,22 @@ export function getEthereumProviderCandidates<
       }
     }
   }
+  if (isTokenPocketAppBrowser()) {
+    for (const provider of [
+      tokenPocketProvider,
+      ethereum?.selectedProvider,
+      ...(Array.isArray(ethereum?.providers) ? ethereum.providers : []),
+      ethereum,
+    ]) {
+      if (provider && typeof provider === "object") {
+        knownTokenPocketProviders.add(provider);
+      }
+    }
+  }
 
   const candidates = [
     browserWindow.okxwallet,
+    tokenPocketProvider,
     ethereum?.selectedProvider,
     ...(Array.isArray(ethereum?.providers) ? ethereum.providers : []),
     ethereum,
@@ -71,6 +104,9 @@ export function mergeEthereumProviderCandidates<
 
   if (providers.some(isOkxEthereumProvider)) {
     merged.isOKXWallet = true;
+  }
+  if (providers.some(isTokenPocketEthereumProvider)) {
+    merged.isTokenPocket = true;
   }
 
   return merged;
@@ -103,4 +139,33 @@ export function isOkxEthereumProvider(provider: EthereumProviderCandidate) {
 
 export function hasInjectedOkxWallet() {
   return getEthereumProviderCandidates().some(isOkxEthereumProvider);
+}
+
+export function isTokenPocketEthereumProvider(provider: EthereumProviderCandidate) {
+  if (knownTokenPocketProviders.has(provider)) {
+    return true;
+  }
+
+  if (provider.isTokenPocket) {
+    return true;
+  }
+
+  if (isTokenPocketAppBrowser() && typeof provider.request === "function") {
+    return true;
+  }
+
+  const signal = [
+    provider.info?.name,
+    provider.info?.rdns,
+    provider.name,
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+
+  return signal.includes("tokenpocket") || signal.includes("token_pocket");
+}
+
+export function hasInjectedTokenPocketWallet() {
+  return getEthereumProviderCandidates().some(isTokenPocketEthereumProvider);
 }
