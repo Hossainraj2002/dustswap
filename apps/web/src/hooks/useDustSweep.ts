@@ -1133,6 +1133,61 @@ export function useDustSweep(): UseDustSweepReturn {
     walletStatus.isCoinbaseSmartWallet,
   ]);
 
+  // Sends all approval txs simultaneously so TokenPocket queues them for the
+  // user at once. Each call carries an explicit gas limit so TP never invokes
+  // eth_estimateGas internally (which always fails on approval calls in TP).
+  const sendTokenPocketParallelApprovals = useCallback(async (
+    approvalRequirements: ApprovalRequirement[],
+    spender: Address,
+  ) => {
+    if (!address || approvalRequirements.length === 0) return;
+
+    const needsReset = approvalRequirements.filter(r => r.resetFirst);
+    const noReset = approvalRequirements.filter(r => !r.resetFirst);
+
+    // Fire all direct approvals and all reset-to-zero calls simultaneously.
+    const [directHashes, resetHashes] = await Promise.all([
+      Promise.all(
+        noReset.map(r =>
+          sendTokenPocketRawTransaction({
+            to: r.token,
+            data: encodeFunctionData({ abi: erc20Abi, functionName: "approve", args: [spender, r.approvalAmount] }),
+            gas: APPROVAL_CALL_GAS_LIMIT,
+          }),
+        ),
+      ),
+      Promise.all(
+        needsReset.map(r =>
+          sendTokenPocketRawTransaction({
+            to: r.token,
+            data: encodeFunctionData({ abi: erc20Abi, functionName: "approve", args: [spender, 0n] }),
+            gas: APPROVAL_CALL_GAS_LIMIT,
+          }),
+        ),
+      ),
+    ]);
+
+    // Wait for everything to confirm before proceeding.
+    await Promise.all([
+      ...directHashes.map(h => waitForSuccessfulTransaction(h)),
+      ...resetHashes.map(h => waitForSuccessfulTransaction(h)),
+    ]);
+
+    // Resets must be confirmed before the follow-up approval for those tokens.
+    if (needsReset.length > 0) {
+      const followupHashes = await Promise.all(
+        needsReset.map(r =>
+          sendTokenPocketRawTransaction({
+            to: r.token,
+            data: encodeFunctionData({ abi: erc20Abi, functionName: "approve", args: [spender, r.approvalAmount] }),
+            gas: APPROVAL_CALL_GAS_LIMIT,
+          }),
+        ),
+      );
+      await Promise.all(followupHashes.map(h => waitForSuccessfulTransaction(h)));
+    }
+  }, [address, sendTokenPocketRawTransaction, waitForSuccessfulTransaction]);
+
   const buildApprovalCalls = useCallback((
     approvalRequirements: ApprovalRequirement[],
     spender: Address,
@@ -1482,7 +1537,6 @@ export function useDustSweep(): UseDustSweepReturn {
         supportsWalletSendCalls &&
         !usesTokenPocketExisting;
       const canUseTokenPocketBatch =
-        TOKENPOCKET_BATCH_APPROVALS_ENABLED &&
         batchMode &&
         hasV2Approvals &&
         usesTokenPocketExisting;
@@ -1497,7 +1551,8 @@ export function useDustSweep(): UseDustSweepReturn {
       const canBundleApprovalsOnly =
         (canUseAtomicBatch || canUseTokenPocketBatch) &&
         approvalCalls.length > 0 &&
-        approvalCalls.length <= WALLET_SEND_CALLS_MAX_CALLS;
+        // TP uses parallel eth_sendTransaction (no wallet_sendCalls cap); other wallets respect the cap.
+        (usesTokenPocketExisting || approvalCalls.length <= WALLET_SEND_CALLS_MAX_CALLS);
       const usePaymasterCapabilities =
         walletStatus.isCoinbaseSmartWallet && Boolean(paymasterUrl);
 
@@ -1513,7 +1568,6 @@ export function useDustSweep(): UseDustSweepReturn {
         fullBundleCallCount: bundledCallCount,
         walletCallCap: WALLET_SEND_CALLS_MAX_CALLS,
         tokenPocketCompatibleBatch: canUseTokenPocketBatch,
-        tokenPocketBatchApprovalsEnabled: TOKENPOCKET_BATCH_APPROVALS_ENABLED,
         splitWalletBatch: shouldSplitWalletBatch,
       });
 
@@ -1587,72 +1641,38 @@ export function useDustSweep(): UseDustSweepReturn {
         const tokenPocketApprovalBatch = usesTokenPocketExisting;
         currentStep = "approving";
         setSweepStep(currentStep);
-        let approvalBatchSettled = false;
-        const waitForTokenPocketAllowanceSettlement = async () => {
-          setExecutionNotice(
-            "Waiting for TokenPocket approval batch to confirm before sending the sweep.",
-          );
-          const remaining = await waitForApprovalRequirementsCleared(
-            quote.routes,
-            approvalSpender,
-          );
-          return remaining.length === 0;
-        };
 
         try {
-          const approvalHash = await sendAtomicWalletCalls({
-            account: address,
-            calls: approvalCalls,
-            usePaymasterCapabilities,
-            walletKey: walletProfile.walletKey,
-            requireAtomic: !tokenPocketApprovalBatch,
-            appendDataSuffixes: !tokenPocketApprovalBatch,
-          });
-          try {
+          if (tokenPocketApprovalBatch) {
+            // TokenPocket: fire all approvals simultaneously via individual eth_sendTransaction
+            // calls, each with an explicit gas limit, so TP never runs eth_estimateGas.
+            await sendTokenPocketParallelApprovals(approvalRequirements, approvalSpender);
+          } else {
+            const approvalHash = await sendAtomicWalletCalls({
+              account: address,
+              calls: approvalCalls,
+              usePaymasterCapabilities,
+              walletKey: walletProfile.walletKey,
+              requireAtomic: true,
+              appendDataSuffixes: true,
+            });
             await waitForSuccessfulTransaction(approvalHash);
-            approvalBatchSettled = true;
-          } catch (approvalReceiptError) {
-            if (
-              !tokenPocketApprovalBatch ||
-              !isApprovalBatchStatusUncertainError(approvalReceiptError)
-            ) {
-              throw approvalReceiptError;
-            }
-
-            approvalBatchSettled = await waitForTokenPocketAllowanceSettlement();
-            if (!approvalBatchSettled) {
-              throw approvalReceiptError;
-            }
           }
         } catch (approvalBatchError) {
           if (isRejectedByUser(approvalBatchError) || isWalletLockedError(approvalBatchError)) {
             throw approvalBatchError;
           }
 
-          if (
-            tokenPocketApprovalBatch &&
-            isApprovalBatchStatusUncertainError(approvalBatchError)
-          ) {
-            approvalBatchSettled = await waitForTokenPocketAllowanceSettlement();
-          }
-
-          if (approvalBatchSettled) {
-            console.info("DustSweep TokenPocket approval batch confirmed by allowance state.", {
-              walletKey: walletProfile.walletKey,
-              approvalCallCount: approvalCalls.length,
-            });
-          } else {
-            console.warn("DustSweep approval batch failed; falling back to standard approvals.", {
-              walletKey: walletProfile.walletKey,
-              approvalCallCount: approvalCalls.length,
-              code: getErrorCode(approvalBatchError),
-              message: getDebugErrorMessage(approvalBatchError),
-            });
-            setExecutionNotice(
-              `${walletProfile.walletName || "Wallet"} approval batch was not ready, sending approvals one by one before the sweep.`,
-            );
-            return sendStandardSweepWithApprovals();
-          }
+          console.warn("DustSweep approval batch failed; falling back to standard approvals.", {
+            walletKey: walletProfile.walletKey,
+            approvalCallCount: approvalCalls.length,
+            code: getErrorCode(approvalBatchError),
+            message: getDebugErrorMessage(approvalBatchError),
+          });
+          setExecutionNotice(
+            `${walletProfile.walletName || "Wallet"} approval batch was not ready, sending approvals one by one before the sweep.`,
+          );
+          return sendStandardSweepWithApprovals();
         }
 
         const remainingApprovals = await getTokenApprovalRequirements(quote.routes, approvalSpender);
@@ -1798,11 +1818,6 @@ export function useDustSweep(): UseDustSweepReturn {
             ? TOKENPOCKET_SPLIT_BATCH_NOTICE
             : `Approval+sweep needs ${bundledCallCount} wallet calls, so DustSweep will batch approvals first and then send the sweep.`,
         );
-      } else if (canUseTokenPocketBatch) {
-        setExecutionNotice(
-          `TokenPocket approval batching needs ${approvalCalls.length} wallet calls, above the ${WALLET_SEND_CALLS_MAX_CALLS} call cap. DustSweep will send standard approvals and then the sweep.`,
-        );
-        hash = await sendStandardSweepWithApprovals();
       } else if (canUseAtomicBatch) {
         setExecutionNotice(
           `Approval batching needs ${approvalCalls.length} wallet calls, above the ${WALLET_SEND_CALLS_MAX_CALLS} call cap. DustSweep will use Permit2 approvals and a standard sweep.`,
@@ -1864,6 +1879,7 @@ export function useDustSweep(): UseDustSweepReturn {
     buildApprovalCalls,
     sendAtomicWalletCalls,
     sendTokenApprovals,
+    sendTokenPocketParallelApprovals,
     sendTokenPocketRawTransaction,
     selectedTokens.length,
     supportsWalletSendCalls,

@@ -11,7 +11,10 @@
       "WebFetch(domain:registry.npmjs.org)",
       "WebFetch(domain:www.okx.com)",
       "Bash(grep -oP '\"walletName\":\\\\s*\"OKX[^\"]*\"[^}]{0,500}' \"c:/dustswap/apps/web/node_modules/@privy-io/react-auth/dist/cjs/context-kNwYBe9X.js\")",
-      "Bash(pnpm update *)"
+      "Bash(pnpm update *)",
+      "Bash(Find c:\\\\dustswap\\\\apps\\\\api\\\\src -name \"*.ts\")",
+      "Bash(npx tsc *)",
+      "Bash(node_modules/.bin/tsc --noEmit)"
     ]
   }
 }
