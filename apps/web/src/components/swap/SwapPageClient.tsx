@@ -2,7 +2,6 @@
 
 import dynamic from "next/dynamic";
 import { useMemo } from "react";
-import { openOceanTheme } from "@openocean.finance/widget";
 import { useTheme } from "@/components/theme/ThemeProvider";
 import { useWalletConnection } from "@/hooks/useWalletConnection";
 import { BASE_CHAIN_ID, NATIVE_ETH, USDC_ADDRESS } from "@/lib/tokens";
@@ -25,14 +24,56 @@ const WIDGET_BASE_CONFIG = {
 } as const;
 
 const DUSTSWAP_OPENOCEAN_DARK_THEME = {
-  ...openOceanTheme,
   palette: {
-    ...openOceanTheme.palette,
     primary: {
       main: "#0052ff",
     },
     secondary: {
       main: "#38bdf8",
+    },
+    background: {
+      default: "#222037",
+      paper: "#29273D",
+    },
+    text: {
+      primary: "#ffffff",
+      secondary: "#8C7F8C",
+    },
+    grey: {
+      200: "#EEEFF2",
+      300: "#D5DAE1",
+      700: "#555B62",
+      800: "#373F48",
+    },
+  },
+  shape: {
+    borderRadius: 12,
+    borderRadiusSecondary: 12,
+    borderRadiusTertiary: 24,
+  },
+  typography: {
+    fontFamily: "Inter, sans-serif",
+  },
+  container: {
+    boxShadow: "0px 8px 32px rgba(0, 0, 0, 0.08)",
+    borderRadius: "16px",
+  },
+  playground: {
+    background: "#17122B",
+  },
+  components: {
+    MuiCard: {
+      defaultProps: { variant: "filled" },
+    },
+    MuiTabs: {
+      styleOverrides: {
+        root: {
+          backgroundColor: "#29273D",
+          ".MuiTabs-indicator": {
+            backgroundColor: "#17122b",
+          },
+        },
+      },
     },
   },
 } as const;
