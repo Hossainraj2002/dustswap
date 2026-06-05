@@ -20,6 +20,7 @@ export const BOOSTER_OG_BACKFILL_GRANTED_REASON =
   "Current booster backfill - user is boosting and did not already have OG";
 export const BOOSTER_OG_REMOVED_REASON = "User stopped boosting and OG was bot-managed";
 const DEFAULT_BOOSTER_OG_SYNC_INTERVAL_MINUTES = 30;
+const DEFAULT_BOOSTER_OG_MAX_ACTIVE_GRANTS = 25;
 const DEFAULT_ACTION_DELAY_MS = 350;
 
 const DEFAULT_BOOSTER_OG_CONFIG = {
@@ -29,6 +30,7 @@ const DEFAULT_BOOSTER_OG_CONFIG = {
   logChannelId: "1508507311323218082",
   syncOnStart: true,
   syncIntervalMinutes: DEFAULT_BOOSTER_OG_SYNC_INTERVAL_MINUTES,
+  maxActiveGrants: DEFAULT_BOOSTER_OG_MAX_ACTIVE_GRANTS,
   debug: false,
   actionDelayMs: DEFAULT_ACTION_DELAY_MS,
 } as const;
@@ -61,6 +63,7 @@ export type BoosterOgConfig = {
   logChannelId: string;
   syncOnStart: boolean;
   syncIntervalMinutes: number;
+  maxActiveGrants: number;
   debug: boolean;
   actionDelayMs: number;
   logChannel: TextChannel | null;
@@ -75,6 +78,7 @@ export type BoosterOgReconcileAction =
   | "skipped-not-managed"
   | "skipped-permissions"
   | "skipped-log-channel"
+  | "skipped-cap"
   | "error";
 
 export type BoosterOgReconcileResult = {
@@ -87,6 +91,7 @@ export type BoosterOgSyncSummary = {
   granted: number;
   removed: number;
   skippedNotManaged: number;
+  skippedCap: number;
   errors: number;
 };
 
@@ -365,6 +370,11 @@ export function loadBoosterOgConfig(
       DEFAULT_BOOSTER_OG_CONFIG.syncIntervalMinutes,
       0
     ),
+    maxActiveGrants: parseIntegerEnv(
+      "DISCORD_BOOSTER_OG_MAX_ACTIVE_GRANTS",
+      DEFAULT_BOOSTER_OG_CONFIG.maxActiveGrants,
+      1
+    ),
     debug: parseBooleanEnv("DISCORD_BOOSTER_OG_DEBUG", DEFAULT_BOOSTER_OG_CONFIG.debug),
     actionDelayMs: DEFAULT_BOOSTER_OG_CONFIG.actionDelayMs,
     logChannel: null,
@@ -449,6 +459,13 @@ export async function reconcileBoosterOgRoleForMember(
     );
 
     if (boosting && !hasOg) {
+      if (!managedByBot && managedSet.size >= config.maxActiveGrants) {
+        logInfo(
+          `Skipped OG grant for booster user ID: ${member.id}; bot-managed cap reached (${managedSet.size}/${config.maxActiveGrants})`
+        );
+        return { action: "skipped-cap", memberId: member.id };
+      }
+
       const timestamp = new Date().toISOString();
       try {
         await member.roles.add(
@@ -533,6 +550,19 @@ export async function reconcileBoosterOgRoleForMember(
       return { action: "skipped-not-managed", memberId: member.id };
     }
 
+    if (!boosting && !hasOg && managedByBot) {
+      const timestamp = new Date().toISOString();
+      try {
+        await logChannel.send(buildBoosterOgRemovedLog(member, config, timestamp));
+        managedSet.delete(member.id);
+        logInfo(`Cleared bot-managed OG slot for non-booster user ID: ${member.id}`);
+        return { action: "removed", memberId: member.id };
+      } catch (error) {
+        console.error(`[Booster OG] Failed to write BOOSTER_OG_REMOVED for ${member.id}:`, error);
+        return { action: "error", memberId: member.id };
+      }
+    }
+
     return { action: "none", memberId: member.id };
   } catch (error) {
     console.error(`[Booster OG] Failed to reconcile member ${member.id}:`, error);
@@ -552,6 +582,7 @@ export async function syncBoosterOgRolesForGuild(
     granted: 0,
     removed: 0,
     skippedNotManaged: 0,
+    skippedCap: 0,
     errors: 0,
   };
 
@@ -573,6 +604,11 @@ export async function syncBoosterOgRolesForGuild(
 
     if (result.action === "skipped-not-managed") {
       summary.skippedNotManaged += 1;
+      continue;
+    }
+
+    if (result.action === "skipped-cap") {
+      summary.skippedCap += 1;
       continue;
     }
 
@@ -611,7 +647,7 @@ export function startBoosterOgRoleWatcher(client: Client, config: BoosterOgConfi
     try {
       const summary = await syncBoosterOgRolesForGuild(guild, config, managedSet);
       logInfo(
-        `${label === "startup" ? "Startup" : "Periodic"} sync completed: scanned=${summary.scanned} granted=${summary.granted} removed=${summary.removed} skipped_not_managed=${summary.skippedNotManaged} errors=${summary.errors}`
+        `${label === "startup" ? "Startup" : "Periodic"} sync completed: scanned=${summary.scanned} granted=${summary.granted} removed=${summary.removed} skipped_not_managed=${summary.skippedNotManaged} skipped_cap=${summary.skippedCap} errors=${summary.errors}`
       );
     } catch (error) {
       console.error(`[Booster OG] ${label} sync failed:`, error);
@@ -652,6 +688,7 @@ export function startBoosterOgRoleWatcher(client: Client, config: BoosterOgConfi
 
       managedSet = await loadBoosterOgManagedUsersFromLog(config);
       logInfo(`Loaded bot-managed OG users: ${managedSet.size}`);
+      logInfo(`Bot-managed OG grant cap: ${config.maxActiveGrants}`);
       watcherReady = true;
 
       if (config.syncOnStart) {

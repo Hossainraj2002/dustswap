@@ -30,12 +30,14 @@ Booster OG watcher env:
 - `DISCORD_BOOSTER_OG_LOG_CHANNEL_ID=1508507311323218082`
 - `DISCORD_BOOSTER_OG_SYNC_ON_START=true`
 - `DISCORD_BOOSTER_OG_SYNC_INTERVAL_MINUTES=30`
+- `DISCORD_BOOSTER_OG_MAX_ACTIVE_GRANTS=25`
 - `DISCORD_BOOSTER_OG_DEBUG=false`
 
 Booster OG watcher behavior:
 
 - Uses `dustswap-bot-og-log` as the only persistent storage for bot-managed OG ownership.
 - Grants the custom OG role only when a current booster does not already have OG.
+- Keeps bot-managed booster OG grants capped at 25 active users. When a bot-managed booster stops boosting, that slot opens for a later booster.
 - Removes the custom OG role only when the user is no longer boosting and the OG role was previously granted by this bot.
 
 One-time booster OG backfill:
@@ -50,6 +52,7 @@ Booster OG backfill behavior:
 - Scans all current guild members and filters to current server boosters only.
 - Ignores boosters who already have the custom OG role.
 - Adds the custom OG role only to current boosters who are missing OG.
+- Respects the same 25 active bot-managed OG grant cap as the runtime watcher.
 - Writes `BOOSTER_OG_GRANTED` only when a new active bot-managed grant needs to be created.
 - Never removes OG from anyone.
 

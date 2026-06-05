@@ -36,6 +36,7 @@ type BackfillSummary = {
   ogRolesAdded: number;
   grantLogsWritten: number;
   skippedDuplicateGrantLogs: number;
+  skippedCap: number;
   errors: number;
 };
 
@@ -207,6 +208,7 @@ async function runBackfill(
     ogRolesAdded: 0,
     grantLogsWritten: 0,
     skippedDuplicateGrantLogs: 0,
+    skippedCap: 0,
     errors: 0,
   };
 
@@ -226,12 +228,20 @@ async function runBackfill(
       continue;
     }
 
+    const alreadyManaged = managedSet.has(member.id);
+    if (!alreadyManaged && managedSet.size >= config.maxActiveGrants) {
+      summary.skippedCap += 1;
+      logInfo(
+        `Skipped booster ${member.id}; bot-managed cap reached (${managedSet.size}/${config.maxActiveGrants}).`
+      );
+      continue;
+    }
+
     if (options.limit !== null && summary.ogRolesAdded >= options.limit) {
       logInfo(`Reached backfill limit ${options.limit}. Stopping early.`);
       break;
     }
 
-    const alreadyManaged = managedSet.has(member.id);
     const wouldSkipDuplicateLog = alreadyManaged;
     const timestamp = new Date().toISOString();
 
@@ -242,6 +252,7 @@ async function runBackfill(
         logInfo(`Dry run: would add OG to booster ${member.id} and skip duplicate grant log.`);
       } else {
         summary.grantLogsWritten += 1;
+        managedSet.add(member.id);
         logInfo(`Dry run: would add OG to booster ${member.id} and write grant log.`);
       }
       continue;
@@ -342,6 +353,7 @@ async function main() {
     logInfo(`OG roles added: ${summary.ogRolesAdded}`);
     logInfo(`Grant logs written: ${summary.grantLogsWritten}`);
     logInfo(`Skipped duplicate grant logs: ${summary.skippedDuplicateGrantLogs}`);
+    logInfo(`Skipped by bot-managed cap: ${summary.skippedCap}`);
     logInfo(`Errors: ${summary.errors}`);
     logInfo(`Dry run: ${options.dryRun}`);
   } finally {
