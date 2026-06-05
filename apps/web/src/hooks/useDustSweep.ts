@@ -1133,60 +1133,103 @@ export function useDustSweep(): UseDustSweepReturn {
     walletStatus.isCoinbaseSmartWallet,
   ]);
 
-  // Sends all approval txs simultaneously so TokenPocket queues them for the
-  // user at once. Each call carries an explicit gas limit so TP never invokes
-  // eth_estimateGas internally (which always fails on approval calls in TP).
-  const sendTokenPocketParallelApprovals = useCallback(async (
+  // Sends all approvals as a single wallet_sendCalls batch so TokenPocket shows
+  // them all at once. The gas field is included directly on each call object
+  // (as a hex quantity per EIP-5792), which bypasses TP's internal eth_estimateGas
+  // call that always fails with "Contract error, cannot estimate gas limit".
+  const sendTokenPocketBatchApprovals = useCallback(async (
     approvalRequirements: ApprovalRequirement[],
     spender: Address,
   ) => {
-    if (!address || approvalRequirements.length === 0) return;
+    if (!address || !walletClient || approvalRequirements.length === 0) return;
+
+    const requests = getWalletRequestCandidates(walletClient, "tokenpocket", {
+      preferInjected: true,
+    });
+    if (requests.length === 0) {
+      throw new Error("TokenPocket provider unavailable");
+    }
 
     const needsReset = approvalRequirements.filter(r => r.resetFirst);
     const noReset = approvalRequirements.filter(r => !r.resetFirst);
 
-    // Fire all direct approvals and all reset-to-zero calls simultaneously.
-    const [directHashes, resetHashes] = await Promise.all([
-      Promise.all(
-        noReset.map(r =>
-          sendTokenPocketRawTransaction({
-            to: r.token,
-            data: encodeFunctionData({ abi: erc20Abi, functionName: "approve", args: [spender, r.approvalAmount] }),
-            gas: APPROVAL_CALL_GAS_LIMIT,
-          }),
-        ),
-      ),
-      Promise.all(
-        needsReset.map(r =>
-          sendTokenPocketRawTransaction({
-            to: r.token,
-            data: encodeFunctionData({ abi: erc20Abi, functionName: "approve", args: [spender, 0n] }),
-            gas: APPROVAL_CALL_GAS_LIMIT,
-          }),
-        ),
-      ),
-    ]);
+    const buildRpcCalls = (reqs: ApprovalRequirement[], getAmount: (r: ApprovalRequirement) => bigint) =>
+      reqs.map(r => ({
+        to: r.token as string,
+        data: encodeFunctionData({ abi: erc20Abi, functionName: "approve", args: [spender, getAmount(r)] }),
+        value: toRpcQuantity(0n),
+        // gas as a direct top-level field (EIP-5792) so TP uses it without estimating.
+        gas: toRpcQuantity(APPROVAL_CALL_GAS_LIMIT),
+      }));
 
-    // Wait for everything to confirm before proceeding.
-    await Promise.all([
-      ...directHashes.map(h => waitForSuccessfulTransaction(h)),
-      ...resetHashes.map(h => waitForSuccessfulTransaction(h)),
-    ]);
+    const sendBatch = async (batchCalls: ReturnType<typeof buildRpcCalls>) => {
+      let lastError: unknown;
+      for (const request of requests) {
+        try {
+          const result = await request({
+            method: "wallet_sendCalls",
+            params: [
+              {
+                version: "2.0.0",
+                atomicRequired: false,
+                chainId: `0x${base.id.toString(16)}`,
+                from: address,
+                calls: batchCalls,
+              },
+            ],
+          });
 
-    // Resets must be confirmed before the follow-up approval for those tokens.
+          const immediateHash = getSendCallsResultTxHash(result);
+          if (immediateHash) return immediateHash;
+
+          const callId = resolveSendCallsId(result);
+          if (!callId) throw new Error("wallet_sendCalls did not return an id");
+
+          const deadline = Date.now() + 180_000;
+          while (Date.now() < deadline) {
+            const status = (await request({
+              method: "wallet_getCallsStatus",
+              params: [callId],
+            })) as WalletCallsStatusResult | null;
+
+            const hash = getLatestCallsStatusTxHash(status);
+            if (hash) {
+              if (hasFailedCallsReceipt(status)) throw new Error("Approval batch failed");
+              return hash;
+            }
+            if (getCallsStatusState(status) === "failure") throw new Error("Approval batch failed");
+            await delay(1500);
+          }
+          throw new Error("Approval batch timed out");
+        } catch (error) {
+          if (isRejectedByUser(error) || isWalletLockedError(error)) throw error;
+          lastError = error;
+          console.warn("DustSweep TokenPocket wallet_sendCalls approval batch failed.", {
+            callCount: batchCalls.length,
+            code: getErrorCode(error),
+            message: getDebugErrorMessage(error),
+          });
+        }
+      }
+      throw lastError instanceof Error ? lastError : new Error("TokenPocket wallet_sendCalls failed");
+    };
+
+    // Batch 1: all direct approvals + reset-to-zero for tokens that need it.
+    const firstBatch = [
+      ...buildRpcCalls(noReset, r => r.approvalAmount),
+      ...buildRpcCalls(needsReset, () => 0n),
+    ];
+    const firstHash = await sendBatch(firstBatch);
+    await waitForSuccessfulTransaction(firstHash);
+
+    // Batch 2 (only if needed): follow-up approvals for tokens that were reset.
+    // Resets must be confirmed on-chain before the approval can succeed.
     if (needsReset.length > 0) {
-      const followupHashes = await Promise.all(
-        needsReset.map(r =>
-          sendTokenPocketRawTransaction({
-            to: r.token,
-            data: encodeFunctionData({ abi: erc20Abi, functionName: "approve", args: [spender, r.approvalAmount] }),
-            gas: APPROVAL_CALL_GAS_LIMIT,
-          }),
-        ),
-      );
-      await Promise.all(followupHashes.map(h => waitForSuccessfulTransaction(h)));
+      const followupBatch = buildRpcCalls(needsReset, r => r.approvalAmount);
+      const followupHash = await sendBatch(followupBatch);
+      await waitForSuccessfulTransaction(followupHash);
     }
-  }, [address, sendTokenPocketRawTransaction, waitForSuccessfulTransaction]);
+  }, [address, waitForSuccessfulTransaction, walletClient]);
 
   const buildApprovalCalls = useCallback((
     approvalRequirements: ApprovalRequirement[],
@@ -1644,9 +1687,9 @@ export function useDustSweep(): UseDustSweepReturn {
 
         try {
           if (tokenPocketApprovalBatch) {
-            // TokenPocket: fire all approvals simultaneously via individual eth_sendTransaction
-            // calls, each with an explicit gas limit, so TP never runs eth_estimateGas.
-            await sendTokenPocketParallelApprovals(approvalRequirements, approvalSpender);
+            // TokenPocket: use raw wallet_sendCalls with gas per call so TP shows all
+            // approvals at once and never needs to estimate gas internally.
+            await sendTokenPocketBatchApprovals(approvalRequirements, approvalSpender);
           } else {
             const approvalHash = await sendAtomicWalletCalls({
               account: address,
@@ -1879,7 +1922,7 @@ export function useDustSweep(): UseDustSweepReturn {
     buildApprovalCalls,
     sendAtomicWalletCalls,
     sendTokenApprovals,
-    sendTokenPocketParallelApprovals,
+    sendTokenPocketBatchApprovals,
     sendTokenPocketRawTransaction,
     selectedTokens.length,
     supportsWalletSendCalls,
