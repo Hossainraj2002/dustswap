@@ -216,6 +216,24 @@ partnerRoutes.post("/admin/members/batch", async (c) => {
   }
 });
 
+partnerRoutes.post("/admin/members/remove-pending", async (c) => {
+  const authError = assertAdmin(c);
+  if (authError) {
+    return authError;
+  }
+
+  try {
+    const body = await c.req.json<{
+      addresses?: string[];
+    }>();
+    const data = await partnerProgramService.removePendingMembers(body);
+    return c.json({ success: true, ...data });
+  } catch (error) {
+    const payload = getErrorPayload(error);
+    return c.json(payload.body, payload.status as 400 | 401 | 403 | 404 | 409 | 429 | 500);
+  }
+});
+
 partnerRoutes.get("/admin/members/:address", async (c) => {
   const authError = assertAdmin(c);
   if (authError) {

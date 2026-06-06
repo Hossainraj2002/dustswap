@@ -1,6 +1,7 @@
 import { createHash } from "crypto";
 import { getAddress, isAddress, type Hex } from "viem";
 import { isAllowedAppDomain } from "../config/appOrigins";
+import { dbQuery } from "../lib/db";
 import { runtimeCache } from "../utils/runtimeCache";
 import { createBasePublicClient } from "../utils/baseRpc";
 import { pointsEngine } from "./pointsEngine";
@@ -201,6 +202,14 @@ type PartnerBulkUpsertResult = {
   createdCount: number;
   updatedCount: number;
   addresses: string[];
+};
+
+type PartnerPendingRemovalResult = {
+  processedCount: number;
+  removedCount: number;
+  skippedCount: number;
+  removedAddresses: string[];
+  skippedAddresses: string[];
 };
 
 type PartnerContentSubmissionRow = {
@@ -1627,6 +1636,48 @@ export class PartnerProgramService {
       createdCount,
       updatedCount,
       addresses: normalizedAddresses,
+    };
+  }
+
+  async removePendingMembers(input: {
+    addresses?: string[];
+  }): Promise<PartnerPendingRemovalResult> {
+    const sourceAddresses = Array.isArray(input.addresses) ? input.addresses : [];
+    const normalizedAddresses = Array.from(
+      new Set(sourceAddresses.map((entry) => normalizeAddress(String(entry || ""))))
+    );
+
+    if (!normalizedAddresses.length) {
+      throw new PartnerProgramError("At least one valid pending wallet address is required.", 400);
+    }
+
+    if (normalizedAddresses.length > 500) {
+      throw new PartnerProgramError("You can remove up to 500 pending partners at once.", 400);
+    }
+
+    const result = await dbQuery<{ wallet_address: string }>(
+      `
+        DELETE FROM partner_program_members
+        WHERE wallet_address = ANY($1::varchar[])
+          AND joined_at IS NULL
+          AND status <> 'joined'
+        RETURNING wallet_address
+      `,
+      [normalizedAddresses]
+    );
+
+    const removedAddresses = result.rows.map((row) => normalizeAddress(row.wallet_address));
+    const removedAddressSet = new Set(removedAddresses);
+    const skippedAddresses = normalizedAddresses.filter(
+      (address) => !removedAddressSet.has(address)
+    );
+
+    return {
+      processedCount: normalizedAddresses.length,
+      removedCount: removedAddresses.length,
+      skippedCount: skippedAddresses.length,
+      removedAddresses,
+      skippedAddresses,
     };
   }
 

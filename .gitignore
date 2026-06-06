@@ -47,3 +47,6 @@ pnpm-debug.log*
 # Editor
 .vscode/settings.json
 .idea/
+
+# Docs
+docs/

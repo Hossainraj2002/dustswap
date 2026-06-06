@@ -155,6 +155,16 @@ export type PartnerBatchUpsertResponse = {
   error?: string;
 };
 
+export type PartnerRemovePendingMembersResponse = {
+  success: boolean;
+  processedCount: number;
+  removedCount: number;
+  skippedCount: number;
+  removedAddresses: string[];
+  skippedAddresses: string[];
+  error?: string;
+};
+
 function parseJson<T>(response: Response): Promise<T> {
   return response.text().then((text) => (text ? JSON.parse(text) : {}));
 }
@@ -419,6 +429,27 @@ export async function savePartnerAdminMembersBatch(
   });
 
   return parseJson<PartnerBatchUpsertResponse>(response);
+}
+
+export async function removePendingPartnerMembers(
+  adminToken: string,
+  input: {
+    addresses: string[];
+  }
+) {
+  const response = await publicApiFetch(
+    getPartnerApiUrl("/admin/members/remove-pending"),
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-admin-token": adminToken,
+      },
+      body: JSON.stringify(input),
+    }
+  );
+
+  return parseJson<PartnerRemovePendingMembersResponse>(response);
 }
 
 export async function fetchPartnerAdminMember(

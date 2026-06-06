@@ -7,6 +7,7 @@ import {
   fetchPartnerAdminLeaderboard,
   formatUsd,
   formatUtcDate,
+  removePendingPartnerMembers,
   savePartnerAdminMember,
   savePartnerAdminMembersBatch,
   shortAddress,
@@ -198,6 +199,11 @@ export function PartnerAdminConsole({
   const [formAddressInput, setFormAddressInput] = useState("");
   const [formFeeSharePercent, setFormFeeSharePercent] = useState("50");
   const [formIsAdmin, setFormIsAdmin] = useState(false);
+  const [selectedPendingAddresses, setSelectedPendingAddresses] = useState<string[]>([]);
+  const [removedPendingAddresses, setRemovedPendingAddresses] = useState<string[]>([]);
+  const [isRemovingPending, setIsRemovingPending] = useState(false);
+  const [isPendingCopied, setIsPendingCopied] = useState(false);
+  const [isRemovedCopied, setIsRemovedCopied] = useState(false);
 
   const loadLeaderboard = useCallback(
     async (tokenOverride?: string) => {
@@ -280,10 +286,36 @@ export function PartnerAdminConsole({
     };
   }, [data?.rows]);
 
+  const pendingRows = useMemo(
+    () => (data?.rows || []).filter((row) => row.member.status !== "joined"),
+    [data?.rows]
+  );
+
+  const pendingAddressSet = useMemo(
+    () => new Set(pendingRows.map((row) => row.member.address)),
+    [pendingRows]
+  );
+
+  const pendingWalletText = useMemo(
+    () => pendingRows.map((row) => row.member.address).join("\n"),
+    [pendingRows]
+  );
+
+  const removedPendingWalletText = useMemo(
+    () => removedPendingAddresses.join("\n"),
+    [removedPendingAddresses]
+  );
+
   const parsedAddresses = useMemo(
     () => extractUniqueAddresses(formAddressInput),
     [formAddressInput]
   );
+
+  useEffect(() => {
+    setSelectedPendingAddresses((current) =>
+      current.filter((address) => pendingAddressSet.has(address))
+    );
+  }, [pendingAddressSet]);
 
   async function handleSaveMember() {
     if (!adminToken || !isUnlocked) {
@@ -338,6 +370,108 @@ export function PartnerAdminConsole({
       setError(getDisplayError(saveError));
     } finally {
       setIsSaving(false);
+    }
+  }
+
+  function togglePendingAddress(address: string) {
+    setSelectedPendingAddresses((current) =>
+      current.includes(address)
+        ? current.filter((entry) => entry !== address)
+        : [...current, address]
+    );
+  }
+
+  function selectAllPendingAddresses() {
+    setSelectedPendingAddresses(pendingRows.map((row) => row.member.address));
+  }
+
+  async function handleCopyPendingWallets() {
+    if (!pendingWalletText) {
+      setError("There are no pending wallet addresses to copy.");
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(pendingWalletText);
+      setIsPendingCopied(true);
+      setStatus("Pending whitelist wallet list copied.");
+      window.setTimeout(() => setIsPendingCopied(false), 1600);
+    } catch {
+      setError("Could not copy pending wallet addresses.");
+    }
+  }
+
+  async function handleCopyRemovedWallets() {
+    if (!removedPendingWalletText) {
+      setError("There are no removed wallet addresses to copy yet.");
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(removedPendingWalletText);
+      setIsRemovedCopied(true);
+      setStatus("Removed wallet list copied.");
+      window.setTimeout(() => setIsRemovedCopied(false), 1600);
+    } catch {
+      setError("Could not copy removed wallet addresses.");
+    }
+  }
+
+  async function handleRemovePendingWallets(addresses: string[]) {
+    if (!adminToken || !isUnlocked) {
+      setError("Load the admin with a valid token first.");
+      return;
+    }
+
+    const uniqueAddresses = Array.from(new Set(addresses)).filter((address) =>
+      pendingAddressSet.has(address)
+    );
+
+    if (!uniqueAddresses.length) {
+      setError("Select at least one pending whitelist wallet first.");
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Remove ${uniqueAddresses.length} pending whitelist wallet${
+        uniqueAddresses.length === 1 ? "" : "s"
+      }? Joined partners are protected and will be skipped.`
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    setIsRemovingPending(true);
+    setError(null);
+    setStatus(null);
+
+    try {
+      const response = await removePendingPartnerMembers(adminToken, {
+        addresses: uniqueAddresses,
+      });
+
+      if (!response.success) {
+        throw new Error(response.error || "Failed to remove pending whitelist wallets");
+      }
+
+      const removedAddressSet = new Set(response.removedAddresses);
+      setRemovedPendingAddresses(response.removedAddresses);
+      setSelectedPendingAddresses((current) =>
+        current.filter((address) => !removedAddressSet.has(address))
+      );
+      await loadLeaderboard();
+      setStatus(
+        response.removedCount
+          ? `Removed ${response.removedCount} pending whitelist wallet${
+              response.removedCount === 1 ? "" : "s"
+            }. ${response.skippedCount} skipped.`
+          : "No pending whitelist wallets were removed."
+      );
+    } catch (removeError) {
+      setError(getDisplayError(removeError));
+    } finally {
+      setIsRemovingPending(false);
     }
   }
 
@@ -447,6 +581,207 @@ export function PartnerAdminConsole({
               caption="UTC Monday 00:00 payout boundary."
             />
           </section>
+
+          {mode === "manager" ? (
+            <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
+              <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+                <div>
+                  <p className="text-[11px] font-black uppercase tracking-[0.24em] text-amber-600">
+                    Pending Signature WL
+                  </p>
+                  <h2 className="mt-2 text-xl font-black tracking-tight text-slate-950">
+                    Whitelisted wallets that have not joined yet
+                  </h2>
+                  <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">
+                    These wallets are on the partner whitelist but still have not signed
+                    the join message. Removing here only deletes pending whitelist rows;
+                    already joined partners are skipped by the API.
+                  </p>
+                </div>
+
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => void handleCopyPendingWallets()}
+                    disabled={!pendingRows.length}
+                    className="rounded-[14px] border border-slate-200 bg-white px-3 py-2 text-xs font-black uppercase tracking-[0.14em] text-slate-700 transition hover:border-amber-200 hover:bg-amber-50 hover:text-amber-700 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {isPendingCopied ? "Copied" : "Copy Pending"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={selectAllPendingAddresses}
+                    disabled={!pendingRows.length}
+                    className="rounded-[14px] border border-slate-200 bg-white px-3 py-2 text-xs font-black uppercase tracking-[0.14em] text-slate-700 transition hover:border-sky-200 hover:bg-sky-50 hover:text-sky-700 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    Select All
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedPendingAddresses([])}
+                    disabled={!selectedPendingAddresses.length}
+                    className="rounded-[14px] border border-slate-200 bg-white px-3 py-2 text-xs font-black uppercase tracking-[0.14em] text-slate-700 transition hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    Clear
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void handleRemovePendingWallets(selectedPendingAddresses)}
+                    disabled={!selectedPendingAddresses.length || isRemovingPending}
+                    className="rounded-[14px] bg-rose-600 px-3 py-2 text-xs font-black uppercase tracking-[0.14em] text-white transition hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {isRemovingPending
+                      ? "Removing..."
+                      : `Remove Selected (${selectedPendingAddresses.length})`}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      void handleRemovePendingWallets(
+                        pendingRows.map((row) => row.member.address)
+                      )
+                    }
+                    disabled={!pendingRows.length || isRemovingPending}
+                    className="rounded-[14px] border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-black uppercase tracking-[0.14em] text-rose-700 transition hover:border-rose-300 hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    Remove All Pending
+                  </button>
+                </div>
+              </div>
+
+              <div className="mt-4 grid gap-3 md:grid-cols-3">
+                <SummaryCard
+                  label="Pending WL"
+                  value={pendingRows.length.toString()}
+                  caption="Wallets still waiting for the join signature."
+                />
+                <SummaryCard
+                  label="Selected"
+                  value={selectedPendingAddresses.length.toString()}
+                  caption="Wallets queued for pending whitelist removal."
+                />
+                <SummaryCard
+                  label="Last Removed"
+                  value={removedPendingAddresses.length.toString()}
+                  caption="Wallets available in the copy box below."
+                />
+              </div>
+
+              {pendingRows.length ? (
+                <div className="mt-5 overflow-hidden rounded-[24px] border border-slate-200">
+                  <div className="overflow-x-auto">
+                    <table className="min-w-full divide-y divide-slate-200">
+                      <thead className="bg-slate-50">
+                        <tr className="text-left text-[11px] font-black uppercase tracking-[0.18em] text-slate-500">
+                          <th className="px-4 py-3">Pick</th>
+                          <th className="px-4 py-3">Wallet</th>
+                          <th className="px-4 py-3">Referral</th>
+                          <th className="px-4 py-3">Share</th>
+                          <th className="px-4 py-3">Whitelisted</th>
+                          <th className="px-4 py-3">Users</th>
+                          <th className="px-4 py-3">Remove</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-200 bg-white text-sm text-slate-700">
+                        {pendingRows.map((row) => {
+                          const isSelected = selectedPendingAddresses.includes(
+                            row.member.address
+                          );
+
+                          return (
+                            <tr key={`${row.member.address}-pending`}>
+                              <td className="px-4 py-4 align-top">
+                                <input
+                                  type="checkbox"
+                                  checked={isSelected}
+                                  onChange={() => togglePendingAddress(row.member.address)}
+                                  aria-label={`Select ${row.member.address}`}
+                                  className="h-4 w-4 rounded border-slate-300 text-amber-600 focus:ring-amber-500"
+                                />
+                              </td>
+                              <td className="px-4 py-4 align-top">
+                                <p className="font-mono font-semibold text-slate-900">
+                                  {row.member.address}
+                                </p>
+                                <p className="mt-1 text-xs text-slate-500">
+                                  {shortAddress(row.member.address)}
+                                </p>
+                              </td>
+                              <td className="px-4 py-4 align-top">
+                                <p className="font-mono font-semibold text-slate-900">
+                                  {row.member.referralCode}
+                                </p>
+                              </td>
+                              <td className="px-4 py-4 align-top">
+                                <p className="font-semibold text-slate-900">
+                                  {row.member.currentFeeSharePercent.toFixed(2)}%
+                                </p>
+                              </td>
+                              <td className="px-4 py-4 align-top">
+                                {formatUtcDate(row.member.whitelistedAt)}
+                              </td>
+                              <td className="px-4 py-4 align-top">
+                                <p className="font-semibold text-slate-900">
+                                  {row.metrics.referredUsersTotal} joined
+                                </p>
+                                <p className="mt-1 text-xs text-slate-500">
+                                  {row.metrics.tradedUsersTotal} traded
+                                </p>
+                              </td>
+                              <td className="px-4 py-4 align-top">
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    void handleRemovePendingWallets([row.member.address])
+                                  }
+                                  disabled={isRemovingPending}
+                                  className="rounded-[14px] border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-black uppercase tracking-[0.14em] text-rose-700 transition hover:border-rose-300 hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-60"
+                                >
+                                  Remove
+                                </button>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              ) : (
+                <div className="mt-5 rounded-[24px] border border-dashed border-slate-200 bg-slate-50 px-5 py-6 text-sm leading-7 text-slate-600">
+                  No pending whitelist wallets right now. Every whitelisted partner has joined.
+                </div>
+              )}
+
+              {removedPendingAddresses.length ? (
+                <div className="mt-5 rounded-[24px] border border-emerald-200 bg-emerald-50 p-4">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <p className="text-[11px] font-black uppercase tracking-[0.22em] text-emerald-700">
+                        Removed Wallets
+                      </p>
+                      <p className="mt-1 text-sm leading-6 text-emerald-800">
+                        Copy this latest removed batch before starting another cleanup.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => void handleCopyRemovedWallets()}
+                      className="rounded-[14px] bg-emerald-700 px-3 py-2 text-xs font-black uppercase tracking-[0.14em] text-white transition hover:bg-emerald-800"
+                    >
+                      {isRemovedCopied ? "Copied" : "Copy Removed"}
+                    </button>
+                  </div>
+                  <textarea
+                    readOnly
+                    value={removedPendingWalletText}
+                    rows={Math.min(Math.max(removedPendingAddresses.length, 3), 10)}
+                    className="mt-3 w-full resize-y rounded-[18px] border border-emerald-200 bg-white px-4 py-3 font-mono text-sm text-slate-900 outline-none"
+                  />
+                </div>
+              ) : null}
+            </section>
+          ) : null}
 
           {mode === "manager" ? (
             <section className="grid gap-5 lg:grid-cols-[1fr_1.1fr]">

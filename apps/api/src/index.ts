@@ -107,6 +107,7 @@ app.get("/", (c) => {
       "POST /api/partner/submissions": "Create a signed partner content submission",
       "POST /api/partner/admin/members": "Whitelist or update one partner member",
       "POST /api/partner/admin/members/batch": "Whitelist or update many partner members at once",
+      "POST /api/partner/admin/members/remove-pending": "Remove pending whitelisted partner members",
       "GET /api/profile-completion?address=": "Get profile completion guide state",
       "POST /api/profile-completion/impression": "Record profile completion guide impressions",
       "POST /api/profile-completion/dismiss": "Dismiss the profile completion guide",
