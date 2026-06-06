@@ -45,6 +45,7 @@ export function SweepButton({
   const isBusy =
     visualState.state === "loading" ||
     visualState.state === "approving" ||
+    visualState.state === "setup" ||
     visualState.state === "signing" ||
     visualState.state === "pending";
   const isSuccess = visualState.state === "success" && txHash;

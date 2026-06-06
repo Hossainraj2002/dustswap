@@ -8,7 +8,8 @@ import { concatHex, encodeFunctionData, erc20Abi, type Address, type Hex } from 
 import { useTokenBalances, type TokenBalanceScanState } from "@/hooks/useTokenBalances";
 import { useWalletConnection } from "@/hooks/useWalletConnection";
 import { useWalletWhitelist } from "@/hooks/useWalletWhitelist";
-import { getPermit2SignatureErrorMessage } from "@/lib/permit2";
+import { getPermit2SignatureErrorMessage, PERMIT2_ADDRESS } from "@/lib/permit2";
+import { identifyDelegate, parseEip7702AuthorizedAddress } from "@/lib/eip7702";
 import {
   DUST_SWEEP_EXECUTION_LANE,
   DUST_SWEEP_ROUTER_ADDRESS,
@@ -36,7 +37,10 @@ import {
   type DustSweepWalletKey,
   type DustSweepWalletProfile,
   type DustSweepQuoteResponse,
+  type RecommendedWallet,
   type SelectedToken,
+  type SweepDelegation,
+  type SweepRouteKind,
   type SweepStep,
   type SwappableToken,
   type Token,
@@ -112,6 +116,11 @@ export type UseDustSweepReturn = {
   removeFailedTokens: boolean;
   routeMaxCap: number;
   supportsWalletSendCalls: boolean;
+  routeKind: SweepRouteKind;
+  delegation: SweepDelegation;
+  recommendedWallet: RecommendedWallet | null;
+  isDetectingRoute: boolean;
+  permit2SetupCount: number;
   walletProfile: DustSweepWalletProfile;
   outputTokens: Token[];
   walletStatus: ReturnType<typeof useWalletWhitelist>;
@@ -157,6 +166,14 @@ const TOKENPOCKET_SWEEP_GAS_PER_ROUTE = 250_000n;
 const WALLET_SEND_CALLS_MAX_CALLS = Math.max(
   1,
   Number(process.env.NEXT_PUBLIC_DUST_SWEEP_WALLET_BATCH_CALL_CAP || "50") || 50,
+);
+// Coinbase / Base smart wallets bundle approvals + sweep into ONE atomic
+// wallet_sendCalls for sweeps at or below this token count (one wallet prompt).
+// Above it, DustSweep splits into exactly two prompts: all approvals in one
+// batch, then all sweeps in one batch — so a large sweep never exceeds 2 tx.
+const SINGLE_BATCH_ROUTE_LIMIT = Math.max(
+  1,
+  Number(process.env.NEXT_PUBLIC_DUST_SWEEP_SINGLE_BATCH_LIMIT || "10") || 10,
 );
 const TOKENPOCKET_BATCH_APPROVALS_ENABLED =
   process.env.NEXT_PUBLIC_DUST_SWEEP_TOKENPOCKET_BATCH_APPROVALS === "true";
@@ -598,6 +615,12 @@ export function useDustSweep(): UseDustSweepReturn {
   const [quoteFailedTokenAddresses, setQuoteFailedTokenAddresses] = useState<string[]>([]);
   const [supportsWalletSendCalls, setSupportsWalletSendCalls] = useState(false);
   const [atomicStatus, setAtomicStatus] = useState<DustSweepAtomicStatus>("unknown");
+  const [delegation, setDelegation] = useState<SweepDelegation>({
+    address: null,
+    info: { state: "none" },
+  });
+  const [isDetectingRoute, setIsDetectingRoute] = useState(false);
+  const [permit2SetupCount, setPermit2SetupCount] = useState(0);
 
   const configuredRouteCap = getCapForLane(DUST_SWEEP_EXECUTION_LANE);
   const routeMaxCap = quote?.routeMaxCap ?? configuredRouteCap;
@@ -686,12 +709,16 @@ export function useDustSweep(): UseDustSweepReturn {
     if (!address || !walletClient) {
       setSupportsWalletSendCalls(false);
       setAtomicStatus("unknown");
+      setDelegation({ address: null, info: { state: "none" } });
+      setIsDetectingRoute(false);
       return;
     }
 
     let cancelled = false;
     const chainIdHex = `0x${base.id.toString(16)}`;
+    setIsDetectingRoute(true);
 
+    // (b) Can the connected wallet batch atomically right now? (wallet_getCapabilities)
     async function detectCapabilities() {
       try {
         const requests = getWalletRequestCandidates(walletClient, walletProfileBase.walletKey);
@@ -740,12 +767,56 @@ export function useDustSweep(): UseDustSweepReturn {
       }
     }
 
-    void detectCapabilities();
+    // (a) Is the EOA delegated on Base, and to whom? (eth_getCode on Base).
+    // publicClient is pinned to base.id, so this always reads Base state — 7702
+    // authorization is per-chain, so it must be read on the network we sweep on.
+    async function detectDelegation() {
+      if (!publicClient) {
+        if (!cancelled) setDelegation({ address: null, info: { state: "none" } });
+        return;
+      }
+      try {
+        const code = await publicClient.getCode({ address: address as Address });
+        const delegate = parseEip7702AuthorizedAddress(code);
+        if (!cancelled) {
+          setDelegation({ address: delegate, info: identifyDelegate(delegate) });
+        }
+      } catch {
+        if (!cancelled) setDelegation({ address: null, info: { state: "none" } });
+      }
+    }
+
+    void Promise.allSettled([detectCapabilities(), detectDelegation()]).finally(() => {
+      if (!cancelled) setIsDetectingRoute(false);
+    });
 
     return () => {
       cancelled = true;
     };
-  }, [address, walletClient, walletProfileBase.walletKey]);
+  }, [address, walletClient, walletProfileBase.walletKey, publicClient]);
+
+  // ── Route resolution (single source of truth; UI never derives this) ──
+  // Matrix from docs/eip7702-delegation-aware-workflow.md §4.
+  const routeKind = useMemo<SweepRouteKind>(() => {
+    if (atomicStatus === "ready" || atomicStatus === "supported") {
+      return "batch";
+    }
+    if (
+      delegation.info.state === "known" &&
+      delegation.info.wallet !== "unknown" &&
+      delegation.info.wallet !== walletProfileBase.walletKey
+    ) {
+      return "switch_or_permit2";
+    }
+    return "permit2";
+  }, [atomicStatus, delegation, walletProfileBase.walletKey]);
+
+  const recommendedWallet = useMemo<RecommendedWallet | null>(() => {
+    if (routeKind === "switch_or_permit2" && delegation.info.state === "known") {
+      return { key: delegation.info.wallet, label: delegation.info.label };
+    }
+    return null;
+  }, [routeKind, delegation]);
 
   useEffect(() => {
     setQuote(null);
@@ -985,6 +1056,33 @@ export function useDustSweep(): UseDustSweepReturn {
 
     return approvalRequirements;
   }, [address, publicClient]);
+
+  // For Route C (Permit2), count how many selected tokens still need a one-time
+  // approve(Permit2, max). Drives the "one-time setup for N tokens" UI hint and
+  // the permit2ApprovalsNeeded telemetry field. Permit2 is the spender here.
+  useEffect(() => {
+    if (routeKind !== "permit2" || !quote || quote.routes.length === 0) {
+      setPermit2SetupCount(0);
+      return;
+    }
+
+    let cancelled = false;
+    void (async () => {
+      try {
+        const requirements = await getTokenApprovalRequirements(
+          quote.routes,
+          PERMIT2_ADDRESS,
+        );
+        if (!cancelled) setPermit2SetupCount(requirements.length);
+      } catch {
+        if (!cancelled) setPermit2SetupCount(0);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [routeKind, quote, getTokenApprovalRequirements]);
 
   const waitForApprovalRequirementsCleared = useCallback(async (
     routes: DustSweepQuoteResponse["routes"],
@@ -1476,6 +1574,25 @@ export function useDustSweep(): UseDustSweepReturn {
       }
     }
 
+    // Per-sweep telemetry so KNOWN_DELEGATES and the route matrix become
+    // data-driven (docs/eip7702-delegation-aware-workflow.md §1.5/§7.6).
+    const logSweepTelemetry = (outcome: "success" | "cancelled" | "error") => {
+      console.info("DustSweep route telemetry", {
+        walletKey: walletProfile.walletKey,
+        delegateAddress: delegation.address,
+        delegateLabel:
+          delegation.info.state === "known"
+            ? delegation.info.label
+            : delegation.info.state === "unknown"
+              ? "unknown"
+              : null,
+        atomicStatus: walletProfile.atomicStatus,
+        routeKind,
+        permit2ApprovalsNeeded: permit2SetupCount,
+        outcome,
+      });
+    };
+
     let currentStep: SweepStep = "approving";
     setIsSweeping(true);
     setSweepStep(currentStep);
@@ -1574,17 +1691,31 @@ export function useDustSweep(): UseDustSweepReturn {
       const bundledCallCount = approvalCalls.length + 1;
       const usesTokenPocketExisting =
         walletProfile.executionStrategy === "tokenpocket_existing";
+      const routeCount = quote.routes.length;
+      const exceedsSingleBatchLimit = routeCount > SINGLE_BATCH_ROUTE_LIMIT;
+      // Coinbase / Base smart wallets always support EIP-5792 atomic batching,
+      // even when wallet_getCapabilities probing is flaky inside their in-app
+      // browser. Attempt the bundle for them regardless of the probe result —
+      // sendAtomicWalletCalls falls back to standard approvals if the wallet
+      // genuinely can't batch, so this can only reduce prompts, never break.
+      const canUseWalletSendCalls =
+        supportsWalletSendCalls || walletStatus.isCoinbaseSmartWallet;
       const canUseAtomicBatch =
         batchMode &&
         hasV2Approvals &&
-        supportsWalletSendCalls &&
+        canUseWalletSendCalls &&
         !usesTokenPocketExisting;
       const canUseTokenPocketBatch =
         batchMode &&
         hasV2Approvals &&
         usesTokenPocketExisting;
+      // Below the single-batch limit Coinbase/Base bundle approvals + sweep into
+      // ONE prompt. Only split (approvals batch, then sweep) once the sweep is
+      // large enough that one bundle gets unwieldy — keeping it to two prompts.
       const shouldSplitBaseAccountBatch =
-        hasV2Approvals && walletProfile.executionStrategy === "coinbase_paymaster";
+        hasV2Approvals &&
+        walletProfile.executionStrategy === "coinbase_paymaster" &&
+        exceedsSingleBatchLimit;
       const shouldSplitTokenPocketBatch = hasV2Approvals && usesTokenPocketExisting;
       const shouldSplitWalletBatch = shouldSplitBaseAccountBatch || shouldSplitTokenPocketBatch;
       const canBundleAllCalls =
@@ -1605,8 +1736,13 @@ export function useDustSweep(): UseDustSweepReturn {
         connectorId: walletStatus.connectorId,
         atomicStatus: walletProfile.atomicStatus,
         supportsWalletSendCalls,
+        canUseWalletSendCalls,
+        isCoinbaseSmartWallet: walletStatus.isCoinbaseSmartWallet,
         executionStrategy: walletProfile.executionStrategy,
         lane,
+        routeCount,
+        singleBatchLimit: SINGLE_BATCH_ROUTE_LIMIT,
+        exceedsSingleBatchLimit,
         approvalCallCount: approvalCalls.length,
         fullBundleCallCount: bundledCallCount,
         walletCallCap: WALLET_SEND_CALLS_MAX_CALLS,
@@ -1739,7 +1875,7 @@ export function useDustSweep(): UseDustSweepReturn {
       if (
         batchMode &&
         hasV2Approvals &&
-        !supportsWalletSendCalls &&
+        !canUseWalletSendCalls &&
         !usesTokenPocketExisting
       ) {
         setExecutionNotice(getBatchFallbackNotice(walletProfile.walletName, walletProfile.walletKey));
@@ -1874,6 +2010,7 @@ export function useDustSweep(): UseDustSweepReturn {
       await waitForSuccessfulTransaction(hash);
 
       setSweepStep("success");
+      logSweepTelemetry("success");
       await fetch("/api/dustsweep/record-sweep", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1882,6 +2019,13 @@ export function useDustSweep(): UseDustSweepReturn {
           userAddress: address,
           tokensSwapped: quote.routes.length,
           valueUSD: quote.totalEstimatedOutUSD,
+          walletKey: walletProfile.walletKey,
+          delegateAddress: delegation.address,
+          delegateLabel:
+            delegation.info.state === "known" ? delegation.info.label : null,
+          atomicStatus: walletProfile.atomicStatus,
+          routeKind,
+          permit2ApprovalsNeeded: permit2SetupCount,
         }),
       }).catch(() => null);
 
@@ -1907,6 +2051,7 @@ export function useDustSweep(): UseDustSweepReturn {
             : "Transaction failed";
       setError(message);
       setSweepStep("error");
+      logSweepTelemetry(isRejectedByUser(sweepError) ? "cancelled" : "error");
       return null;
     } finally {
       setIsSweeping(false);
@@ -1914,10 +2059,13 @@ export function useDustSweep(): UseDustSweepReturn {
   }, [
     address,
     batchMode,
+    delegation,
     getTokenApprovalRequirements,
+    permit2SetupCount,
     publicClient,
     quote,
     refreshQuote,
+    routeKind,
     refreshTokens,
     buildApprovalCalls,
     sendAtomicWalletCalls,
@@ -1961,6 +2109,11 @@ export function useDustSweep(): UseDustSweepReturn {
     removeFailedTokens,
     routeMaxCap,
     supportsWalletSendCalls,
+    routeKind,
+    delegation,
+    recommendedWallet,
+    isDetectingRoute,
+    permit2SetupCount,
     walletProfile,
     outputTokens,
     walletStatus,

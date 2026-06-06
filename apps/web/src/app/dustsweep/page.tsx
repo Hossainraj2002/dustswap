@@ -3,6 +3,7 @@
 import Image from "next/image";
 import { useEffect, useMemo, useState } from "react";
 import { useAccount } from "wagmi";
+import { type WalletListEntry } from "@privy-io/react-auth";
 import {
   buildOkxInAppBrowserLink,
   shouldOfferOkxAppDeepLink,
@@ -12,14 +13,40 @@ import { RouteDisplay } from "@/components/sweep/RouteDisplay";
 import { SlippageSettings } from "@/components/sweep/SlippageSettings";
 import { SweepButton } from "@/components/sweep/SweepButton";
 import { SweepDetails } from "@/components/sweep/SweepDetails";
+import { SweepStepper } from "@/components/sweep/SweepStepper";
+import { SwitchOrContinueCard } from "@/components/sweep/SwitchOrContinueCard";
 import { TokenFromPanel } from "@/components/sweep/TokenFromPanel";
 import { TokenSelectModal } from "@/components/sweep/TokenSelectModal";
 import { TokenToPanel } from "@/components/sweep/TokenToPanel";
 import { UnavailablePanel } from "@/components/sweep/UnavailablePanel";
-import { WalletGateModal } from "@/components/sweep/WalletGateModal";
+import { WalletGateNotice } from "@/components/sweep/WalletGateModal";
+import { WalletRouteStatus } from "@/components/sweep/WalletRouteStatus";
 import { useDustSweep } from "@/hooks/useDustSweep";
-import { DUST_SWEEP_PRIVY_WALLET_LIST } from "@/hooks/useWalletConnection";
-import { type SweepButtonVisualState } from "@/types/dustsweep";
+import {
+  DUST_SWEEP_PRIVY_WALLET_LIST,
+  useWalletConnection,
+} from "@/hooks/useWalletConnection";
+import {
+  type DustSweepWalletKey,
+  type SweepButtonVisualState,
+  type SweepRouteKind,
+} from "@/types/dustsweep";
+
+// Maps our internal wallet key to the Privy modal entry so Route B can
+// prioritize the matched wallet when the user chooses "Switch to {wallet}".
+const WALLET_KEY_TO_PRIVY: Partial<Record<DustSweepWalletKey, WalletListEntry>> = {
+  okx: "okx_wallet",
+  metamask: "metamask",
+  coinbase: "coinbase_wallet",
+  base_account: "base_account",
+  rainbow: "rainbow",
+  phantom: "phantom",
+  zerion: "zerion",
+  bitget: "bitget_wallet",
+  safe: "safe",
+  uniswap: "uniswap",
+  cryptocom: "cryptocom",
+};
 
 function shortAddress(address: string) {
   return `${address.slice(0, 4)}...${address.slice(-6)}`;
@@ -41,10 +68,15 @@ function getSweepButtonState(args: {
   isQuoting: boolean;
   hasQuoteError: boolean;
   sweepStep: ReturnType<typeof useDustSweep>["sweepStep"];
+  routeKind: SweepRouteKind;
 }): SweepButtonVisualState {
   if (args.sweepStep === "success") return { state: "success", label: "Swept! View on Basescan" };
   if (args.sweepStep === "error") return { state: "error", label: "Try again" };
-  if (args.sweepStep === "approving") return { state: "approving", label: "Approve tokens..." };
+  if (args.sweepStep === "approving") {
+    return args.routeKind === "batch"
+      ? { state: "approving", label: "Approve tokens..." }
+      : { state: "setup", label: "Approve setup..." };
+  }
   if (args.sweepStep === "signing") return { state: "signing", label: "Sign in wallet..." };
   if (args.sweepStep === "pending") return { state: "pending", label: "Sweeping..." };
   if (args.isLoading && args.selectedCount === 0) return { state: "loading", label: "Finding balances..." };
@@ -175,9 +207,62 @@ function BalanceScanStatus({
 export default function DustSweepPage() {
   const { address, isConnected } = useAccount();
   const sweep = useDustSweep();
+  const walletConnection = useWalletConnection();
   const [tokenModalMode, setTokenModalMode] = useState<"multi" | "single" | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [walletGateDismissed, setWalletGateDismissed] = useState(false);
+  const [routeBContinued, setRouteBContinued] = useState(false);
+
+  // Persist the user's "continue with current wallet" choice per address for the
+  // session so Route B never nags on every quote refresh (2.4).
+  useEffect(() => {
+    if (!address) {
+      setRouteBContinued(false);
+      return;
+    }
+    try {
+      setRouteBContinued(
+        sessionStorage.getItem(`dustsweep:routeb-continue:${address.toLowerCase()}`) === "1",
+      );
+    } catch {
+      setRouteBContinued(false);
+    }
+  }, [address]);
+
+  const handleContinueWithCurrent = () => {
+    if (address) {
+      try {
+        sessionStorage.setItem(`dustsweep:routeb-continue:${address.toLowerCase()}`, "1");
+      } catch {
+        // sessionStorage may be unavailable (private mode); the in-memory flag still applies.
+      }
+    }
+    setRouteBContinued(true);
+  };
+
+  const handleSwitchWallet = async () => {
+    const key = sweep.recommendedWallet?.key;
+    // On a plain mobile browser, route OKX through its in-app browser deep link
+    // (native injected connect) rather than the flaky WalletConnect relay.
+    if (key === "okx" && shouldOfferOkxAppDeepLink()) {
+      window.location.href = buildOkxInAppBrowserLink();
+      return;
+    }
+    try {
+      await walletConnection.disconnectWallet();
+    } catch {
+      // Ignore — reopening the modal lets the user pick a wallet regardless.
+    }
+    const entry = key ? WALLET_KEY_TO_PRIVY[key] : undefined;
+    const list: WalletListEntry[] = entry
+      ? [entry, ...DUST_SWEEP_PRIVY_WALLET_LIST.filter((wallet) => wallet !== entry)]
+      : DUST_SWEEP_PRIVY_WALLET_LIST;
+    await walletConnection.openWalletModal(
+      sweep.recommendedWallet
+        ? `Connect ${sweep.recommendedWallet.label} for one-click batching.`
+        : "Connect a wallet to sweep.",
+      list,
+    );
+  };
 
   const tokenOutBalanceUSD = useMemo(() => {
     if (!sweep.tokenOut) return 0;
@@ -195,16 +280,37 @@ export default function DustSweepPage() {
     isQuoting: sweep.isQuoting,
     hasQuoteError: Boolean(sweep.quoteError),
     sweepStep: sweep.sweepStep,
+    routeKind: sweep.routeKind,
   });
   const walletModeNotice =
     sweep.executionNotice ||
     (sweep.batchMode && sweep.selectedTokens.length > 0 ? sweep.walletProfile.batchNotice : null);
 
-  const shouldShowWalletGate =
-    isConnected &&
-    !sweep.walletStatus.isChecking &&
-    !sweep.walletStatus.isSupported &&
-    !walletGateDismissed;
+  // Truly-blocked = the wallet can't sign typed data at all (no Permit2, no
+  // batch). This is the only remaining hard-stop; everything else has a route.
+  const isTrulyBlocked =
+    isConnected && !sweep.walletStatus.isChecking && !sweep.walletStatus.isSupported;
+
+  // Route B card shows only while delegated-elsewhere AND the user hasn't opted
+  // to continue on the current wallet for this session.
+  const showSwitchCard =
+    !isTrulyBlocked &&
+    sweep.routeKind === "switch_or_permit2" &&
+    !routeBContinued &&
+    Boolean(sweep.recommendedWallet);
+
+  // The chip reflects the path the user will actually take: once they continue
+  // past Route B, surface the Permit2 (Sign & Sweep) status instead.
+  const chipRouteKind: SweepRouteKind =
+    sweep.routeKind === "switch_or_permit2" && routeBContinued
+      ? "permit2"
+      : sweep.routeKind;
+
+  const isExecuting =
+    sweep.sweepStep === "approving" ||
+    sweep.sweepStep === "signing" ||
+    sweep.sweepStep === "pending" ||
+    sweep.sweepStep === "success";
 
   if (!isConnected) {
     return <DisconnectedView />;
@@ -212,13 +318,6 @@ export default function DustSweepPage() {
 
   return (
     <div className="theme-page min-h-screen bg-gradient-to-b from-blue-50 via-white to-slate-50 px-3 py-5 sm:px-6 sm:py-8">
-      <WalletGateModal
-        isOpen={shouldShowWalletGate}
-        walletName={sweep.walletStatus.walletName}
-        reason={sweep.walletStatus.reason}
-        onClose={() => setWalletGateDismissed(true)}
-      />
-
       <TokenSelectModal
         isOpen={tokenModalMode !== null}
         mode={tokenModalMode || "multi"}
@@ -272,6 +371,22 @@ export default function DustSweepPage() {
 
         {/* ── Main card ── */}
         <div className="space-y-3">
+          {/* Delegation-aware route status — decided at connect, shown early. */}
+          {isTrulyBlocked ? (
+            <WalletGateNotice
+              walletName={sweep.walletStatus.walletName}
+              reason={sweep.walletStatus.reason}
+              onSwitchWallet={() => void handleSwitchWallet()}
+            />
+          ) : (
+            <WalletRouteStatus
+              routeKind={chipRouteKind}
+              isDetecting={sweep.isDetectingRoute}
+              recommendedWalletLabel={sweep.recommendedWallet?.label}
+              permit2SetupCount={sweep.permit2SetupCount}
+            />
+          )}
+
           <BalanceScanStatus
             isLoading={sweep.isLoading}
             message={sweep.balanceScan.message}
@@ -381,6 +496,25 @@ export default function DustSweepPage() {
             <div className="rounded-[8px] border border-blue-200 bg-blue-50 px-4 py-3 text-sm font-medium text-blue-700">
               {walletModeNotice}
             </div>
+          ) : null}
+
+          {/* Route B — calm, inline switch/continue card (never blocks). */}
+          {showSwitchCard && sweep.recommendedWallet ? (
+            <SwitchOrContinueCard
+              walletLabel={sweep.recommendedWallet.label}
+              currentWalletName={sweep.walletProfile.walletName}
+              onSwitch={() => void handleSwitchWallet()}
+              onContinue={handleContinueWithCurrent}
+            />
+          ) : null}
+
+          {/* Honest, route-aware step indicator during execution. */}
+          {isExecuting ? (
+            <SweepStepper
+              routeKind={sweep.routeKind === "batch" ? "batch" : "permit2"}
+              sweepStep={sweep.sweepStep}
+              hasSetup={sweep.permit2SetupCount > 0 || sweep.sweepStep === "approving"}
+            />
           ) : null}
 
           {/* Sweep button */}

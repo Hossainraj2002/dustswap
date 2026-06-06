@@ -4757,7 +4757,14 @@ dustsweepRoutes.post("/build-tx", async (c) => {
   const executionLane = getExecutionLane();
   const routeMaxCap = getRouteMaxCap(executionLane);
   const routerAddress = getRouterAddressForLane(executionLane);
-  const v2AuthMode = (process.env.DUST_SWEEP_V2_AUTH_MODE || "allowance").toLowerCase();
+  // owned_v2 auth mode. Defaults to "allowance" (approve + sweepWithAllowance, no
+  // signature) so Coinbase/Base smart wallets can bundle approvals + sweep into a
+  // single atomic wallet_sendCalls. Only an explicit "permit2" opts into the
+  // signature-based flow; any other/typo'd value safely falls back to allowance.
+  const v2AuthMode =
+    process.env.DUST_SWEEP_V2_AUTH_MODE?.toLowerCase() === "permit2"
+      ? "permit2"
+      : "allowance";
 
   if (!body.routes?.length || !body.tokenOut || !body.receiver || !body.deadline || !body.userAddress) {
     return c.json(errorJson("routes, tokenOut, receiver, deadline, and userAddress are required"), 400);

@@ -75,6 +75,29 @@ export type DustSweepWalletProfile = {
   batchNotice: string | null;
 };
 
+// ── EIP-7702 delegation-aware routing ──
+// The three sweep routes derived from the on-chain delegation + the connected
+// wallet's batch capability (see docs/eip7702-delegation-aware-workflow.md §4).
+export type SweepRouteKind = "batch" | "switch_or_permit2" | "permit2";
+
+// Identity of whatever a delegated EOA points to on Base. `state` mirrors the
+// §3 matrix: no delegation, a delegate we can name, or a delegate we cannot.
+export type DelegateIdentity =
+  | { state: "none" }
+  | { state: "known"; wallet: DustSweepWalletKey; label: string }
+  | { state: "unknown"; delegate: Address };
+
+export type SweepDelegation = {
+  address: Address | null;
+  info: DelegateIdentity;
+};
+
+// The wallet the UI should suggest switching to for Route B (one-click batch).
+export type RecommendedWallet = {
+  key: DustSweepWalletKey;
+  label: string;
+};
+
 export type Token = {
   address: Address;
   symbol: string;
@@ -300,6 +323,7 @@ export type SweepButtonVisualState =
   | { state: "loading"; label: "Getting best route..." }
   | { state: "loading"; label: "Finding route..." }
   | { state: "approving"; label: "Approve tokens..." }
+  | { state: "setup"; label: "Approve setup..." }
   | { state: "signing"; label: "Sign in wallet..." }
   | { state: "pending"; label: "Sweeping..." }
   | { state: "success"; label: "Swept! View on Basescan" }
