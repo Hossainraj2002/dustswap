@@ -1,6 +1,6 @@
 "use client";
 
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { type Chain as PrivyChain } from "@privy-io/chains";
@@ -25,11 +25,27 @@ const appChainIds = INITIAL_WAGMI_CHAINS.map((chain) => chain.id);
 const privyAppId = process.env.NEXT_PUBLIC_PRIVY_APP_ID?.trim() || "";
 const hasPrivyAppId = privyAppId.length > 0;
 const privySupportedChains = INITIAL_WAGMI_CHAINS as unknown as PrivyChain[];
+
+// Bug #2B: WalletConnect project id.
+// Privy needs this to create WalletConnect sessions so OKX mobile (and any
+// WC wallet) receives a deep link. Previously three env vars were OR'd together
+// (NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID / _WALLET_CONNECT_ / _WC_), which let a
+// stale id in .env shadow the intended one. Both .env and .env.local are
+// gitignored, so on the Cloudflare build neither reaches the bundle and this
+// hardcoded fallback is what actually ships. We now read ONLY the canonical
+// var and fall back to the known-live id. Set NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID
+// in the Cloudflare dashboard to override it.
+// NOTE: verify this project exists in Reown/WalletConnect Cloud with
+// app.dustswap.wtf (and base.app, if used) in its Allowed Domains — a missing or
+// domain-mismatched id is what produces "Waiting for OKX Wallet… try again".
+const WALLETCONNECT_FALLBACK_PROJECT_ID = "6f242331a85fc3af5428da560ed78900";
+const walletConnectEnvProjectId =
+  process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID?.trim();
 const walletConnectCloudProjectId =
-  process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID ||
-  process.env.NEXT_PUBLIC_WALLET_CONNECT_PROJECT_ID ||
-  process.env.NEXT_PUBLIC_WC_PROJECT_ID ||
-  "6f242331a85fc3af5428da560ed78900";
+  walletConnectEnvProjectId || WALLETCONNECT_FALLBACK_PROJECT_ID;
+const walletConnectProjectIdSource = walletConnectEnvProjectId
+  ? "env"
+  : "fallback";
 
 interface ProvidersProps {
   children: ReactNode;
@@ -44,6 +60,14 @@ function AppProviders({ children }: ProvidersProps) {
   const pathname = usePathname();
   const isMaintenancePage = pathname === "/maintenance";
   const { resolvedTheme } = useTheme();
+
+  // Bug #2B: confirm which WalletConnect id is live without leaking the value.
+  useEffect(() => {
+    console.info(
+      `[DustSwap] WalletConnect projectId resolved (length=${walletConnectCloudProjectId.length}, source=${walletConnectProjectIdSource})`
+    );
+  }, []);
+
   const [queryClient] = useState(
     () =>
       new QueryClient({
