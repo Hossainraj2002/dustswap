@@ -84,6 +84,10 @@ function isDiscordQuest(form: AdminQuestInput) {
   );
 }
 
+function isShareReferralXQuest(form: AdminQuestInput) {
+  return form.actionType === "share_referral_x";
+}
+
 function isOnchainSwapForm(form: AdminQuestInput) {
   return (
     isSwapQuest(form) ||
@@ -169,6 +173,19 @@ function applyDiscordQuestDefaults(form: AdminQuestInput): AdminQuestInput {
   };
 }
 
+function applyShareReferralXQuestDefaults(form: AdminQuestInput): AdminQuestInput {
+  return {
+    ...form,
+    category: "social",
+    platform: "x",
+    actionType: "share_referral_x",
+    verificationType: "x_post_link",
+    progressWindow: "once",
+    targetValue: form.targetValue || 1,
+    ctaLabel: form.ctaLabel || "Share on X",
+  };
+}
+
 function formatSwapQuestRuleSummary(rules: Record<string, any>) {
   const chainValue = getRuleChainValue(rules) as SwapQuestChainOption;
   const tokenAddress = getRuleTokenAddress(rules);
@@ -208,6 +225,13 @@ const EMPTY_FORM: AdminQuestInput = {
 };
 
 function getRulesExample(form: AdminQuestInput) {
+  if (isShareReferralXQuest(form)) {
+    return `{
+  "requireUserReferralLink": true,
+  "requiredAnyOf": ["@DustswapOnBase"]
+}`;
+  }
+
   if (isDiscordQuest(form)) {
     return `{
   "source": "discord_guild_member"
@@ -295,6 +319,13 @@ function getVerificationGuide(form: AdminQuestInput) {
     return {
       recommended: "x_post_link",
       text: "X post quests: use x_post_link. User pastes their post link, and backend verifies the connected X user owns it and includes your required tags or links.",
+    };
+  }
+
+  if (form.platform === "x" && form.actionType === "share_referral_x") {
+    return {
+      recommended: "x_post_link",
+      text: "Share Referral on X quests: use x_post_link. Store the X intent URL template in CTA URL and set requireUserReferralLink in rules so the backend verifies the connected wallet user's own referral code.",
     };
   }
 
@@ -486,11 +517,15 @@ export default function AdminQuestsPage() {
 
     try {
       const parsedRules = rulesText.trim() ? JSON.parse(rulesText) : {};
-      const normalizedForm = isSwapQuest(form)
-        ? applySwapQuestDefaults(form)
-        : isDiscordQuest(form)
-          ? applyDiscordQuestDefaults(form)
-          : form;
+      let normalizedForm = form;
+      if (isSwapQuest(form)) {
+        normalizedForm = applySwapQuestDefaults(form);
+      } else if (isDiscordQuest(form)) {
+        normalizedForm = applyDiscordQuestDefaults(form);
+      } else if (isShareReferralXQuest(form)) {
+        normalizedForm = applyShareReferralXQuestDefaults(form);
+      }
+
       const response = await saveAdminQuest(adminToken, {
         ...normalizedForm,
         rewardPoints: Number(normalizedForm.rewardPoints || 0),
@@ -715,6 +750,7 @@ export default function AdminQuestsPage() {
                     "join_discord",
                     "like",
                     "post",
+                    "share_referral_x",
                     "follow",
                     "repost",
                     "reply",
@@ -760,6 +796,15 @@ export default function AdminQuestsPage() {
                         }
 
                         if (
+                          field.key === "actionType" &&
+                          nextValue === "share_referral_x"
+                        ) {
+                          return applyShareReferralXQuestDefaults(
+                            next as AdminQuestInput
+                          );
+                        }
+
+                        if (
                           (field.key === "platform" && nextValue === "discord") ||
                           (field.key === "actionType" && nextValue === "join_discord") ||
                           (field.key === "verificationType" &&
@@ -788,6 +833,13 @@ export default function AdminQuestsPage() {
 
                         return next as AdminQuestInput;
                       });
+
+                      if (
+                        field.key === "actionType" &&
+                        nextValue === "share_referral_x"
+                      ) {
+                        updateRulesText({ requireUserReferralLink: true });
+                      }
                     }}
                     className="w-full rounded-2xl border border-gray-200 bg-white px-4 py-3 text-sm text-gray-900 outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500 shadow-sm"
                   >
@@ -995,6 +1047,7 @@ export default function AdminQuestsPage() {
                 <code className="ml-1">Discord join tasks</code> use <code>discord_guild_member</code> and never require bot secrets in admin.
                 <code className="ml-1">requiredAnyOf</code> means the post only needs one of those allowed X mentions or hashtags.
                 <code className="ml-1">x_post_link</code> also checks that the tweet author ID matches the connected X account.
+                <code className="ml-1">share_referral_x</code> uses <code>x_post_link</code> and requires the user&apos;s own referral link.
                 <code className="ml-1">externalUrl</code> is the page users open.
                 <code className="ml-1">source</code> is used for onchain swap tracking.
                 <code className="ml-1">chainIds</code>, <code>tokenAddress</code>, and{" "}

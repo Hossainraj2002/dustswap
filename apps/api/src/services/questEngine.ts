@@ -38,6 +38,7 @@ type QuestActionType =
   | "join_discord"
   | "like"
   | "post"
+  | "share_referral_x"
   | "follow"
   | "repost"
   | "reply"
@@ -62,6 +63,7 @@ type QuestRules = {
   requiredAnyOf?: string[];
   requiredHashtags?: string[];
   requiredLinks?: string[];
+  requireUserReferralLink?: boolean;
   composeText?: string;
   externalUrl?: string;
   targetXUserId?: string;
@@ -950,9 +952,120 @@ function listUrlCandidates(tweet: any): string[] {
   }
 
   return urls
-    .flatMap((item) => [item?.url, item?.expanded_url, item?.display_url])
+    .flatMap((item) => [
+      item?.url,
+      item?.expanded_url,
+      item?.expandedUrl,
+      item?.display_url,
+      item?.displayUrl,
+      item?.unwound_url,
+      item?.unwoundUrl,
+    ])
     .filter(Boolean)
     .map((value) => String(value).toLowerCase());
+}
+
+function escapeRegex(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function decodeUrlVariant(value: string) {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
+function buildDecodedTextVariants(value: string) {
+  const variants = new Set<string>();
+  let current = value;
+
+  for (let index = 0; index < 3; index += 1) {
+    if (!current || variants.has(current)) {
+      break;
+    }
+
+    variants.add(current);
+    const decoded = decodeUrlVariant(current);
+    if (decoded === current) {
+      break;
+    }
+    current = decoded;
+  }
+
+  return Array.from(variants);
+}
+
+function listReferralMatchCandidates(tweet: any, text: string) {
+  const urls = tweet?.entities?.urls;
+  const rawCandidates = [
+    text,
+    tweet?.url,
+    tweet?.twitterUrl,
+    ...(Array.isArray(urls)
+      ? urls.flatMap((item) => [
+          item?.url,
+          item?.expanded_url,
+          item?.expandedUrl,
+          item?.display_url,
+          item?.displayUrl,
+          item?.unwound_url,
+          item?.unwoundUrl,
+        ])
+      : []),
+  ]
+    .filter(Boolean)
+    .map((value) => String(value));
+
+  return [
+    ...new Set(
+      rawCandidates.flatMap((candidate) => buildDecodedTextVariants(candidate))
+    ),
+  ];
+}
+
+function containsUserReferralCode(args: {
+  tweet: any;
+  text: string;
+  referralCode: string;
+}) {
+  const referralCode = String(args.referralCode || "").trim().toUpperCase();
+  if (!referralCode) {
+    return false;
+  }
+
+  const escapedCode = escapeRegex(referralCode);
+  const refParamPattern = new RegExp(
+    `(?:^|[?&#\\s])ref=${escapedCode}(?:$|[^a-z0-9-])`,
+    "i"
+  );
+  const referralUrlPattern = new RegExp(
+    `https?:\\/\\/app\\.dustswap\\.wtf\\/?\\?ref=${escapedCode}(?:$|[^a-z0-9-])`,
+    "i"
+  );
+
+  return listReferralMatchCandidates(args.tweet, args.text).some((candidate) => {
+    const decoded = decodeUrlVariant(candidate);
+    return refParamPattern.test(decoded) || referralUrlPattern.test(decoded);
+  });
+}
+
+function listDustswapReferralCodes(tweet: any, text: string) {
+  const codes = new Set<string>();
+  const referralParamPattern =
+    /(?:^|[?&#\s])ref=(DUST-[a-z0-9-]+)(?:$|[^a-z0-9-])/gi;
+
+  for (const candidate of listReferralMatchCandidates(tweet, text)) {
+    const decoded = decodeUrlVariant(candidate);
+    for (const match of decoded.matchAll(referralParamPattern)) {
+      if (match[1]) {
+        codes.add(match[1].toUpperCase());
+      }
+    }
+  }
+
+  return Array.from(codes);
 }
 
 async function fetchOpenOceanData<T>(path: string) {
@@ -2812,6 +2925,12 @@ export class QuestEngine {
     const now = getNow();
     const cycleKey = getCycleKey(quest.progress_window, now);
     const connectedAccount = await xVerificationService.requireConnectedAccount(user.id);
+    const rulesRecord = rules as QuestRules & Record<string, unknown>;
+    const requiresUserReferralLink =
+      quest.action_type === "share_referral_x" ||
+      rules.requireUserReferralLink === true ||
+      rulesRecord.require_user_referral_link === true;
+    const userReferralCode = String(user.referral_code || "").trim().toUpperCase();
 
     const postId = extractPostId(postUrl);
     if (!postId) {
@@ -2820,6 +2939,15 @@ export class QuestEngine {
           ? "Enter a valid X reply link"
           : "Enter a valid X post link"
       );
+    }
+
+    if (requiresUserReferralLink) {
+      const referralLinkUnlocked = await pointsEngine.isReferralLinkUnlocked(address);
+      if (!userReferralCode || !referralLinkUnlocked) {
+        throw new Error(
+          "Complete your first check-in or claim to unlock your referral link."
+        );
+      }
     }
 
     await this.upsertProgress({
@@ -2948,6 +3076,24 @@ export class QuestEngine {
       }
     }
 
+    if (requiresUserReferralLink) {
+      const referralCodesInPost = listDustswapReferralCodes(tweet, text);
+      const includesOwnReferralCode = containsUserReferralCode({
+        tweet,
+        text,
+        referralCode: userReferralCode,
+      });
+      const hasOtherReferralCode = referralCodesInPost.some(
+        (referralCode) => referralCode !== userReferralCode
+      );
+
+      if (!includesOwnReferralCode || hasOtherReferralCode) {
+        throw new Error(
+          "Your X post must include your own Dustswap referral link."
+        );
+      }
+    }
+
     const completed = await this.completeQuest(
       user.id,
       normalizeAddress(address),
@@ -2959,6 +3105,12 @@ export class QuestEngine {
         parentTweetId,
         authorId,
         authorUsername,
+        ...(requiresUserReferralLink
+          ? {
+              requireUserReferralLink: true,
+              referralCode: userReferralCode,
+            }
+          : {}),
         verification_provider: "getx",
         verified_by_api: true,
         verified_at: now.toISOString(),
@@ -2977,6 +3129,12 @@ export class QuestEngine {
         authorId,
         authorUsername,
         verifiedByApi: true,
+        ...(requiresUserReferralLink
+          ? {
+              requireUserReferralLink: true,
+              referralCode: userReferralCode,
+            }
+          : {}),
         rewardedPoints: completed.awardedPoints,
       }
     );

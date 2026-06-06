@@ -1669,6 +1669,7 @@ export class PointsEngine {
       code: "",
       friendsJoined: 0,
       pointsEarned: 0,
+      unlocked: false,
     };
   }
 
@@ -4374,12 +4375,13 @@ export class PointsEngine {
         return this.buildDefaultPointsSummary(normalizedAddress);
       }
 
-      const [balance, stats, referral] = await Promise.all([
+      const [balance, stats, referral, referralUnlocked] = await Promise.all([
         this.buildBalance(user, {
           readOnlyPrice: true,
         }),
         this.getSweepStatsByUserId(user.id),
         this.getReferralStatsByUserId(user.id),
+        this.hasReferralActivation(user),
       ]);
 
       return {
@@ -4396,10 +4398,20 @@ export class PointsEngine {
           success: true,
           code: user.referral_code,
           hasReferrer: user.referred_by !== null,
+          unlocked: referralUnlocked,
           ...referral,
         },
       };
     });
+  }
+
+  async isReferralLinkUnlocked(address: string) {
+    const user = await this.findExistingUser(address);
+    if (!user) {
+      return false;
+    }
+
+    return this.hasReferralActivation(user);
   }
 
   async getUserStats(address: string) {
@@ -4422,10 +4434,14 @@ export class PointsEngine {
       return this.buildDefaultReferralStats();
     }
 
-    const referral = await this.getReferralStatsByUserId(user.id);
+    const [referral, unlocked] = await Promise.all([
+      this.getReferralStatsByUserId(user.id),
+      this.hasReferralActivation(user),
+    ]);
 
     return {
       code: user.referral_code,
+      unlocked,
       ...referral,
     };
   }

@@ -91,6 +91,7 @@ export type ReferralStats = {
   code: string;
   friendsJoined: number;
   pointsEarned: number;
+  unlocked?: boolean;
   hasReferrer?: boolean;
   error?: string;
 };

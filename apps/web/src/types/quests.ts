@@ -7,6 +7,7 @@ export type QuestActionType =
   | "join_discord"
   | "like"
   | "post"
+  | "share_referral_x"
   | "follow"
   | "repost"
   | "reply"
@@ -31,6 +32,7 @@ export type QuestRules = {
   requiredAnyOf?: string[];
   requiredHashtags?: string[];
   requiredLinks?: string[];
+  requireUserReferralLink?: boolean;
   composeText?: string;
   externalUrl?: string;
   source?: string;

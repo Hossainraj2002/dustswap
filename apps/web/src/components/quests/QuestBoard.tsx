@@ -17,7 +17,8 @@ import {
   verifyXPost,
 } from "@/lib/quests";
 import { emitDataInvalidation, subscribeToDataInvalidation } from "@/lib/clientEvents";
-import { clearPointsSummaryCache } from "@/lib/points";
+import { clearPointsSummaryCache, fetchPointsSummary } from "@/lib/points";
+import { buildReferralLink } from "@/lib/referrals";
 import { PremiumQuestBackground } from "@/components/quests/PremiumQuestBackground";
 import { WalletConnectButton } from "@/components/wallet/WalletConnectButton";
 import type { QuestItem } from "@/types/quests";
@@ -27,8 +28,17 @@ type PendingState = Record<string, boolean>;
 type PostInputState = Record<string, string>;
 type QuestInlineErrorState = Record<string, string>;
 type PostVerificationFailureState = Record<string, boolean>;
+type ReferralLinkState = {
+  code: string;
+  unlocked: boolean;
+  isLoading: boolean;
+  error: string | null;
+};
 
 const GENERAL_CAMPAIGN_KEY = "general";
+const SHARE_REFERRAL_PLACEHOLDER_CODE = "DUST-T53WW";
+const SHARE_REFERRAL_PLACEHOLDER_LINK =
+  "https://app.dustswap.wtf/?ref=DUST-T53WW";
 
 const CATEGORY_TABS = [
   { key: "social", label: "Social" },
@@ -115,6 +125,10 @@ function getDiscordConnectMessage(error?: string | null) {
 }
 
 function getPostRequirementHint(quest: QuestItem) {
+  if (isShareReferralXQuest(quest)) {
+    return "Add your own Dustswap referral link.";
+  }
+
   const ruleTokens = Array.isArray(quest.rules.requiredAnyOf)
     ? quest.rules.requiredAnyOf
     : [
@@ -181,6 +195,104 @@ function normalizeQuestUrl(quest: QuestItem) {
   }
 
   return null;
+}
+
+function escapeRegex(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function isShareReferralXQuest(quest: QuestItem) {
+  const rules = quest.rules as QuestItem["rules"] & Record<string, unknown>;
+  return (
+    quest.platform === "x" &&
+    quest.verificationType === "x_post_link" &&
+    (quest.actionType === "share_referral_x" ||
+      quest.rules.requireUserReferralLink === true ||
+      rules.require_user_referral_link === true)
+  );
+}
+
+function replaceReferralLinkTemplate(input: {
+  text: string;
+  referralCode: string;
+  referralLink: string;
+}) {
+  const { text, referralCode, referralLink } = input;
+  const referralCodePattern = "[A-Za-z0-9-]+";
+  const appReferralUrlPattern = new RegExp(
+    `https?:\\/\\/app\\.dustswap\\.wtf\\/?\\?ref=${referralCodePattern}`,
+    "gi"
+  );
+  const placeholderRefPattern = new RegExp(
+    `ref=${escapeRegex(SHARE_REFERRAL_PLACEHOLDER_CODE)}`,
+    "gi"
+  );
+
+  return text
+    .replace(new RegExp(escapeRegex(SHARE_REFERRAL_PLACEHOLDER_LINK), "g"), referralLink)
+    .replace(appReferralUrlPattern, referralLink)
+    .replace(placeholderRefPattern, `ref=${referralCode}`);
+}
+
+function textContainsReferralCode(text: string, referralCode: string) {
+  const escapedCode = escapeRegex(referralCode);
+  return new RegExp(
+    `(?:^|[?&#\\s])ref=${escapedCode}(?:$|[^a-z0-9-])`,
+    "i"
+  ).test(text);
+}
+
+function decodeIntentText(value: string) {
+  let current = value;
+
+  for (let index = 0; index < 2; index += 1) {
+    try {
+      const decoded = decodeURIComponent(current);
+      if (decoded === current) {
+        break;
+      }
+      current = decoded;
+    } catch {
+      break;
+    }
+  }
+
+  return current;
+}
+
+function buildShareReferralXIntentUrl(
+  configuredUrl: string | null,
+  referralCode: string,
+  referralLink: string
+) {
+  if (!configuredUrl || !referralCode || !referralLink) {
+    return null;
+  }
+
+  try {
+    const url = new URL(configuredUrl);
+    const params = new URLSearchParams(url.search);
+    const text = decodeIntentText(params.get("text") || "");
+    if (!text) {
+      return null;
+    }
+
+    const nextText = replaceReferralLinkTemplate({
+      text,
+      referralCode,
+      referralLink,
+    });
+
+    if (!textContainsReferralCode(nextText, referralCode)) {
+      return null;
+    }
+
+    params.set("text", nextText);
+    url.search = params.toString();
+    return url.toString();
+  } catch {
+    return null;
+  }
 }
 
 function getNextResetTime(windowType: QuestItem["progressWindow"], now = new Date()) {
@@ -421,6 +533,12 @@ export function QuestBoard() {
   const [questInlineErrors, setQuestInlineErrors] = useState<QuestInlineErrorState>({});
   const [postVerificationFailures, setPostVerificationFailures] =
     useState<PostVerificationFailureState>({});
+  const [referralLinkState, setReferralLinkState] = useState<ReferralLinkState>({
+    code: "",
+    unlocked: false,
+    isLoading: false,
+    error: null,
+  });
   const [isConnectingX, setIsConnectingX] = useState(false);
   const [isConnectingDiscord, setIsConnectingDiscord] = useState(false);
 
@@ -460,6 +578,59 @@ export function QuestBoard() {
     void loadBoard();
   }, [loadBoard]);
 
+  const loadReferralLinkState = useCallback(
+    async (options?: { silent?: boolean }) => {
+      if (!address) {
+        setReferralLinkState({
+          code: "",
+          unlocked: false,
+          isLoading: false,
+          error: null,
+        });
+        return;
+      }
+
+      const silent = options?.silent ?? false;
+      if (!silent) {
+        setReferralLinkState((current) => ({
+          ...current,
+          isLoading: true,
+          error: null,
+        }));
+      }
+
+      try {
+        const summary = await fetchPointsSummary(address);
+        if (!summary.success) {
+          throw new Error(summary.error || "Failed to load referral link");
+        }
+
+        const code = summary.referral?.code || summary.balance?.referralCode || "";
+        const unlocked =
+          summary.referral?.unlocked === true ||
+          Boolean(summary.balance?.lastCheckIn);
+
+        setReferralLinkState({
+          code,
+          unlocked,
+          isLoading: false,
+          error: null,
+        });
+      } catch (referralError) {
+        setReferralLinkState((current) => ({
+          ...current,
+          isLoading: false,
+          error: getDisplayError(referralError),
+        }));
+      }
+    },
+    [address]
+  );
+
+  useEffect(() => {
+    void loadReferralLinkState();
+  }, [loadReferralLinkState]);
+
   useEffect(() => {
     const interval = window.setInterval(() => {
       setBoard((current) => (current ? { ...current } : current));
@@ -494,6 +665,14 @@ export function QuestBoard() {
       });
     });
   }, [loadBoard]);
+
+  useEffect(() => {
+    return subscribeToDataInvalidation("points", () => {
+      startTransition(() => {
+        void loadReferralLinkState({ silent: true });
+      });
+    });
+  }, [loadReferralLinkState]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -931,6 +1110,18 @@ export function QuestBoard() {
       return;
     }
 
+    if (
+      isShareReferralXQuest(quest) &&
+      (!referralLinkState.code || !referralLinkState.unlocked)
+    ) {
+      clearPostVerificationFailure(quest.id);
+      setQuestInlineError(
+        quest.id,
+        "Complete your first check-in or claim to unlock your referral link."
+      );
+      return;
+    }
+
     const postUrl = postInputs[quest.id]?.trim();
     if (!postUrl) {
       clearPostVerificationFailure(quest.id);
@@ -967,7 +1158,7 @@ export function QuestBoard() {
   }
 
   function renderQuestCard(quest: QuestItem) {
-    const questUrl = normalizeQuestUrl(quest);
+    const configuredQuestUrl = normalizeQuestUrl(quest);
     const countdownLabel = getCountdownLabel(quest.progress?.nextVerificationAt);
     const progressValue = Number(quest.progress?.value || 0);
     const percent = getProgressPercent(progressValue, quest.targetValue);
@@ -987,6 +1178,31 @@ export function QuestBoard() {
     const discordLocked = isDiscordQuest && !isDiscordConnected;
     const isReplyQuest = isXQuest && quest.actionType === "reply";
     const isPostLinkQuest = quest.verificationType === "x_post_link" || isReplyQuest;
+    const isShareReferralQuest = isShareReferralXQuest(quest);
+    const referralLink =
+      isShareReferralQuest && referralLinkState.code
+        ? buildReferralLink(referralLinkState.code)
+        : "";
+    const shareReferralUrl =
+      isShareReferralQuest && referralLinkState.unlocked
+        ? buildShareReferralXIntentUrl(
+            configuredQuestUrl,
+            referralLinkState.code,
+            referralLink
+          )
+        : null;
+    const questUrl = isShareReferralQuest ? shareReferralUrl : configuredQuestUrl;
+    const shareReferralMessage = isShareReferralQuest
+      ? referralLinkState.isLoading
+        ? "Loading your referral link..."
+        : referralLinkState.error
+          ? "Could not load your referral link. Refresh and try again."
+          : !referralLinkState.code || !referralLinkState.unlocked
+            ? "Complete your first check-in or claim to unlock your referral link."
+            : !shareReferralUrl
+              ? "This quest needs an X intent URL template with a referral placeholder."
+              : null
+      : null;
     const discordInviteUrl = getDiscordInviteUrl(quest);
     const postRequirementHint = getPostRequirementHint(quest);
     const showPostRequirementHint =
@@ -1153,6 +1369,11 @@ export function QuestBoard() {
                   {postRequirementHint}
                 </p>
               ) : null}
+              {shareReferralMessage && !xLocked ? (
+                <p className="rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] font-medium leading-5 text-amber-800">
+                  {shareReferralMessage}
+                </p>
+              ) : null}
               <button
                 type="button"
                 onClick={() => {
@@ -1163,11 +1384,15 @@ export function QuestBoard() {
 
                   clearPostVerificationFailure(quest.id);
                   clearQuestInlineError(quest.id);
+                  if (shareReferralMessage) {
+                    setQuestInlineError(quest.id, shareReferralMessage);
+                    return;
+                  }
                   if (questUrl) {
                     openExternal(questUrl);
                   }
                 }}
-                disabled={!questUrl}
+                disabled={!xLocked && !questUrl}
                 className="quest-outline-action w-full rounded-2xl border border-sky-200 bg-white px-4 py-2.5 text-sm font-semibold text-sky-700 transition hover:bg-sky-50 disabled:cursor-not-allowed disabled:opacity-40"
               >
                 {xLocked ? "Connect X" : quest.ctaLabel || (isReplyQuest ? "Open Post" : "Open Composer")}
