@@ -118,56 +118,48 @@ function prioritizeWallet(
   ]);
 }
 
+// Put the injected provider first and drop okx_wallet, so an injected OKX
+// connects natively instead of being routed back through WalletConnect.
+function collapseToInjectedProvider(walletList: WalletListEntry[]) {
+  return uniqueWalletList([
+    "detected_ethereum_wallets",
+    ...walletList.filter(
+      (wallet) =>
+        wallet !== "detected_ethereum_wallets" && wallet !== "okx_wallet"
+    ),
+  ]);
+}
+
 function getRuntimeWalletList(walletList: WalletListEntry[]) {
   const mobileRuntime = isMobileRuntime();
-  const hasOkxRuntime = hasInjectedOkxWallet() || isOkxAppBrowser();
-  const hasTokenPocketRuntime =
+  // OKX is directly available: desktop extension OR the OKX in-app browser. We
+  // detect via the injected provider AND the OKApp user-agent, because some OKX
+  // in-app browser builds expose the provider but NOT the OKApp UA token.
+  const okxNative = hasInjectedOkxWallet() || isOkxAppBrowser();
+  const tokenPocketNative =
     hasInjectedTokenPocketWallet() || isTokenPocketAppBrowser();
   const nextWalletList = mobileRuntime
     ? getMobileWalletList(walletList)
     : walletList;
 
-  if (isTokenPocketAppBrowser()) {
+  // TokenPocket in-app/injected → connect through the injected provider.
+  if (tokenPocketNative) {
     return prioritizeWallet(nextWalletList, "detected_ethereum_wallets");
   }
 
-  if (isOkxAppBrowser()) {
-    return uniqueWalletList([
-      "detected_ethereum_wallets",
-      ...nextWalletList.filter(
-        (wallet) =>
-          wallet !== "detected_ethereum_wallets" &&
-          wallet !== "okx_wallet"
-      ),
-    ]);
+  // Bug #2: when OKX is injected (extension or its in-app browser) connect via
+  // the injected provider and DROP the okx_wallet entry — on mobile AND desktop.
+  // Previously, mobile only collapsed when the OKApp UA matched; if it didn't,
+  // okx_wallet stayed and routed OKX through WalletConnect, stalling on "Waiting
+  // for OKX Wallet…" even though OKX was right there. The injected provider now
+  // always wins when present.
+  if (okxNative) {
+    return collapseToInjectedProvider(nextWalletList);
   }
 
-  if (mobileRuntime) {
-    if (hasTokenPocketRuntime) {
-      return prioritizeWallet(nextWalletList, "detected_ethereum_wallets");
-    }
-
-    return hasOkxRuntime
-      ? prioritizeWallet(nextWalletList, "okx_wallet")
-      : nextWalletList;
-  }
-
-  if (!hasOkxRuntime && !hasTokenPocketRuntime) {
-    return walletList;
-  }
-
-  if (hasTokenPocketRuntime) {
-    return prioritizeWallet(nextWalletList, "detected_ethereum_wallets");
-  }
-
-  return uniqueWalletList([
-    "detected_ethereum_wallets",
-    ...nextWalletList.filter(
-      (wallet) =>
-        wallet !== "detected_ethereum_wallets" &&
-        wallet !== "okx_wallet"
-    ),
-  ]);
+  // No injected wallet. On a plain mobile browser keep okx_wallet so OKX stays
+  // reachable through the WalletConnect deep link; on desktop keep the full list.
+  return nextWalletList;
 }
 
 export function supportsBaseAccountFeatures(

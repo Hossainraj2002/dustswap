@@ -1,8 +1,12 @@
 "use client";
 
 import Image from "next/image";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useAccount } from "wagmi";
+import {
+  buildOkxInAppBrowserLink,
+  shouldOfferOkxAppDeepLink,
+} from "@/lib/ethereumProviders";
 import { WalletConnectButton } from "@/components/wallet/WalletConnectButton";
 import { RouteDisplay } from "@/components/sweep/RouteDisplay";
 import { SlippageSettings } from "@/components/sweep/SlippageSettings";
@@ -54,6 +58,17 @@ function getSweepButtonState(args: {
 
 /* ─── Unconnected landing ───────────────────────────────────────────────── */
 function DisconnectedView() {
+  // Bug #2: on a plain mobile browser, offer a direct "Open in OKX Wallet" link
+  // that routes into OKX's in-app browser (native injected connect) instead of
+  // the flaky WalletConnect relay handshake. Resolved after mount so the
+  // navigator-based check never causes an SSR/hydration mismatch.
+  const [okxAppLink, setOkxAppLink] = useState<string | null>(null);
+  useEffect(() => {
+    if (shouldOfferOkxAppDeepLink()) {
+      setOkxAppLink(buildOkxInAppBrowserLink());
+    }
+  }, []);
+
   return (
     <div className="min-h-screen bg-gradient-to-b from-blue-50 via-white to-slate-50 px-4 py-8">
       <div className="mx-auto flex min-h-[80dvh] max-w-[400px] flex-col items-center justify-center text-center">
@@ -96,6 +111,20 @@ function DisconnectedView() {
             fullWidth
             className="rounded-2xl bg-blue-600 px-6 py-3 text-sm font-bold text-white shadow-[0_8px_24px_rgba(37,99,235,0.28)] hover:border-blue-600 hover:bg-blue-700 hover:text-white"
           />
+
+          {okxAppLink ? (
+            <>
+              <a
+                href={okxAppLink}
+                className="mt-3 flex min-h-[44px] w-full items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-6 py-3 text-sm font-bold text-slate-800 shadow-sm transition-colors hover:border-slate-300 hover:bg-slate-50"
+              >
+                Open in OKX Wallet
+              </a>
+              <p className="mt-2 text-xs text-slate-400">
+                On OKX mobile? Open inside the OKX app for the most reliable connection.
+              </p>
+            </>
+          ) : null}
         </div>
       </div>
     </div>

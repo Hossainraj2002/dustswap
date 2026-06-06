@@ -30,6 +30,42 @@ export function isTokenPocketAppBrowser() {
   return /TokenPocket/i.test(navigator.userAgent || "");
 }
 
+function isMobileUserAgent() {
+  if (typeof navigator === "undefined") {
+    return false;
+  }
+
+  const userAgent = navigator.userAgent || "";
+  const isIpadOS =
+    navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1;
+  return /Android|iPhone|iPad|iPod|Mobile/i.test(userAgent) || isIpadOS;
+}
+
+// Bug #2: on a plain mobile browser the OKX option connects over WalletConnect,
+// whose relay handshake is flaky/blocked (e.g. behind a VPN) and frequently
+// stalls on Privy's "Waiting for OKX Wallet…" screen. The reliable path is to
+// open the dApp inside OKX's own in-app browser, where OKX is injected and
+// connects natively (detected_ethereum_wallets) with no relay involved.
+// We use OKX's universal link so it launches the app when installed and falls
+// back to the store otherwise. See OKX Wallet deep-link docs.
+export function buildOkxInAppBrowserLink(targetUrl?: string) {
+  const dappUrl =
+    targetUrl ||
+    (typeof window !== "undefined"
+      ? window.location.href
+      : "https://app.dustswap.wtf");
+  const innerDeepLink = `okx://wallet/dapp/url?dappUrl=${encodeURIComponent(dappUrl)}`;
+  return `https://www.okx.com/download?deeplink=${encodeURIComponent(innerDeepLink)}`;
+}
+
+// Offer the OKX deep link only on a mobile browser that is NOT already the OKX
+// (or another wallet's) in-app browser, where the native injected flow works.
+export function shouldOfferOkxAppDeepLink() {
+  return (
+    isMobileUserAgent() && !isOkxAppBrowser() && !isTokenPocketAppBrowser()
+  );
+}
+
 export function getEthereumProviderCandidates<
   TProvider extends EthereumProviderCandidate = EthereumProviderCandidate,
 >(): TProvider[] {
