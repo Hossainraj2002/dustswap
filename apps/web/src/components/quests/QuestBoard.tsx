@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { startTransition, useCallback, useEffect, useMemo, useState } from "react";
+import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAccount, useSignMessage } from "wagmi";
 import type { Hex } from "viem";
 import {
@@ -50,6 +50,9 @@ const ONCHAIN_WINDOWS = [
   { key: "daily", label: "Daily" },
   { key: "weekly", label: "Weekly" },
 ] as const;
+const AUTO_ONCHAIN_SYNC_RETRY_DELAYS_MS = [0, 30_000, 120_000] as const;
+const AUTO_ONCHAIN_SYNC_SESSION_KEY = "dustswap.quest.autoSwapSync";
+const AUTO_ONCHAIN_SYNC_SESSION_TTL_MS = 10 * 60 * 1000;
 
 function getDisplayError(error: unknown) {
   const message = (error as Error)?.message || "Request failed";
@@ -58,6 +61,36 @@ function getDisplayError(error: unknown) {
   }
 
   return message;
+}
+
+function getAutoOnchainSyncSessionKey(address: string) {
+  return `${AUTO_ONCHAIN_SYNC_SESSION_KEY}:${address.toLowerCase()}`;
+}
+
+function wasAutoOnchainSyncRecentlyScheduled(address: string) {
+  try {
+    const raw = window.sessionStorage.getItem(getAutoOnchainSyncSessionKey(address));
+    const scheduledAt = raw ? Number(raw) : 0;
+
+    return (
+      Number.isFinite(scheduledAt) &&
+      scheduledAt > 0 &&
+      Date.now() - scheduledAt < AUTO_ONCHAIN_SYNC_SESSION_TTL_MS
+    );
+  } catch {
+    return false;
+  }
+}
+
+function markAutoOnchainSyncScheduled(address: string) {
+  try {
+    window.sessionStorage.setItem(
+      getAutoOnchainSyncSessionKey(address),
+      String(Date.now())
+    );
+  } catch {
+    // Ignore storage failures in private mode; the in-memory guard still applies.
+  }
 }
 
 function formatPoints(points: number) {
@@ -541,6 +574,7 @@ export function QuestBoard() {
   });
   const [isConnectingX, setIsConnectingX] = useState(false);
   const [isConnectingDiscord, setIsConnectingDiscord] = useState(false);
+  const autoSyncedAddressRef = useRef<string | null>(null);
 
   const loadBoard = useCallback(
     async (options?: { silent?: boolean }) => {
@@ -837,44 +871,113 @@ export function QuestBoard() {
     }));
   }
 
+  const syncOnchainProgress = useCallback(
+    async (options?: { force?: boolean; visible?: boolean }) => {
+      if (!address) {
+        if (options?.visible) {
+          setError("Connect your wallet first");
+        }
+        return;
+      }
+
+      const visible = options?.visible ?? false;
+      if (visible) {
+        setIsRefreshing(true);
+        setMessage("Checking your latest swap progress...");
+        setError(null);
+      }
+
+      let syncIssue: string | null = null;
+
+      try {
+        const response = await syncSwapQuestActivity(address, {
+          force: options?.force ?? false,
+        });
+        if (!response.success) {
+          throw new Error(response.error || "Failed to sync recent swaps");
+        }
+
+        const importedCount = response.importedHashes?.length || 0;
+        const completedCount = response.completedQuests?.length || 0;
+
+        if (importedCount > 0 || completedCount > 0) {
+          clearPointsSummaryCache(address);
+          emitDataInvalidation("quests", visible ? "quest-manual-sync" : "quest-auto-sync");
+        } else if (visible) {
+          emitDataInvalidation("quests", "quest-manual-sync");
+        }
+
+        if (importedCount > 0) {
+          emitDataInvalidation(
+            "profile",
+            visible ? "quest-manual-sync:swap-imported" : "quest-auto-sync:swap-imported"
+          );
+          emitDataInvalidation(
+            "leaderboard",
+            visible ? "quest-manual-sync:swap-imported" : "quest-auto-sync:swap-imported"
+          );
+        }
+
+        if (completedCount > 0) {
+          emitDataInvalidation(
+            ["leaderboard", "points"],
+            visible ? "quest-manual-sync:quest-completed" : "quest-auto-sync:quest-completed"
+          );
+        }
+      } catch (syncError) {
+        syncIssue = getDisplayError(syncError);
+      } finally {
+        if (visible) {
+          if (syncIssue) {
+            setError(syncIssue);
+          }
+          setIsRefreshing(false);
+        }
+      }
+    },
+    [address]
+  );
+
+  useEffect(() => {
+    if (!isConnected || !address) {
+      autoSyncedAddressRef.current = null;
+      return;
+    }
+
+    const normalizedAddress = address.toLowerCase();
+    if (!board?.success || onchainQuests.length === 0) {
+      return;
+    }
+
+    if (
+      autoSyncedAddressRef.current === normalizedAddress ||
+      wasAutoOnchainSyncRecentlyScheduled(normalizedAddress)
+    ) {
+      return;
+    }
+
+    autoSyncedAddressRef.current = normalizedAddress;
+    markAutoOnchainSyncScheduled(normalizedAddress);
+    const timerIds = AUTO_ONCHAIN_SYNC_RETRY_DELAYS_MS.map((delayMs) =>
+      window.setTimeout(() => {
+        void syncOnchainProgress({ force: false, visible: false });
+      }, delayMs)
+    );
+
+    return () => {
+      for (const timerId of timerIds) {
+        window.clearTimeout(timerId);
+      }
+    };
+  }, [address, board?.success, isConnected, onchainQuests.length, syncOnchainProgress]);
+
   async function handleOnchainRefresh() {
     if (!address) {
       setError("Connect your wallet first");
       return;
     }
 
-    setIsRefreshing(true);
-    setMessage("Checking your latest swap progress...");
-    let syncIssue: string | null = null;
-
-    try {
-      const response = await syncSwapQuestActivity(address, { force: true });
-      if (!response.success) {
-        throw new Error(response.error || "Failed to sync recent swaps");
-      }
-
-      if ((response.importedHashes?.length || 0) > 0 || (response.completedQuests?.length || 0) > 0) {
-        clearPointsSummaryCache(address);
-      }
-
-      emitDataInvalidation("quests", "quest-manual-sync");
-
-      if ((response.importedHashes?.length || 0) > 0) {
-        emitDataInvalidation("profile", "quest-manual-sync:swap-imported");
-        emitDataInvalidation("leaderboard", "quest-manual-sync:swap-imported");
-      }
-
-      if ((response.completedQuests?.length || 0) > 0) {
-        emitDataInvalidation(["leaderboard", "points"], "quest-manual-sync:quest-completed");
-      }
-    } catch (syncError) {
-      syncIssue = getDisplayError(syncError);
-    } finally {
-      if (syncIssue) {
-        setError(syncIssue);
-      }
-      setIsRefreshing(false);
-    }
+    await syncOnchainProgress({ force: true, visible: true });
   }
 
   function openExternal(url: string) {
