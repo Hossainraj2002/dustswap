@@ -778,8 +778,18 @@ export function useDustSweep(): UseDustSweepReturn {
       try {
         const code = await publicClient.getCode({ address: address as Address });
         const delegate = parseEip7702AuthorizedAddress(code);
+        const info = identifyDelegate(delegate);
+        // Harvest unrecognized delegates at connect time (even if the user never
+        // sweeps) so wallets we can't pre-catalogue (TokenPocket, Bitget, …) can
+        // be identified from real sessions and added to KNOWN_DELEGATES.
+        if (delegate && info.state === "unknown") {
+          console.info("DustSweep unknown 7702 delegate detected", {
+            delegateAddress: delegate,
+            connectedWalletKey: walletProfileBase.walletKey,
+          });
+        }
         if (!cancelled) {
-          setDelegation({ address: delegate, info: identifyDelegate(delegate) });
+          setDelegation({ address: delegate, info });
         }
       } catch {
         if (!cancelled) setDelegation({ address: null, info: { state: "none" } });
@@ -796,18 +806,43 @@ export function useDustSweep(): UseDustSweepReturn {
   }, [address, walletClient, walletProfileBase.walletKey, publicClient]);
 
   // ── Route resolution (single source of truth; UI never derives this) ──
-  // Matrix from docs/eip7702-delegation-aware-workflow.md §4.
+  // Matrix from docs/eip7702-delegation-aware-workflow.md §4, hardened against
+  // wallets that misreport their atomic capability on a foreign-delegated EOA.
   const routeKind = useMemo<SweepRouteKind>(() => {
-    if (atomicStatus === "ready" || atomicStatus === "supported") {
-      return "batch";
-    }
-    if (
+    const isDelegated = delegation.address !== null;
+    const ownKnownDelegate =
+      delegation.info.state === "known" &&
+      delegation.info.wallet === walletProfileBase.walletKey;
+    const knownForeignDelegate =
       delegation.info.state === "known" &&
       delegation.info.wallet !== "unknown" &&
-      delegation.info.wallet !== walletProfileBase.walletKey
-    ) {
+      delegation.info.wallet !== walletProfileBase.walletKey;
+
+    // (1) Known foreign delegation wins over the wallet's self-reported atomic
+    // capability. Some wallets (e.g. TokenPocket) advertise atomic batching but
+    // cannot actually batch on an account delegated to a different wallet — so
+    // trusting wallet_getCapabilities here produces a batch that fails. When we
+    // can name the delegate's owner, offer "switch + Permit2" instead.
+    if (knownForeignDelegate) {
       return "switch_or_permit2";
     }
+
+    // (2) "supported" means the account is already on a batch-capable
+    // implementation → trust it (the working Coinbase / OKX-own batch path).
+    if (atomicStatus === "supported") {
+      return "batch";
+    }
+
+    // (3) "ready" means the wallet would upgrade the account first. That works
+    // on a fresh EOA (or on the wallet's own delegate), but NOT on an account
+    // already delegated elsewhere — overwriting a third-party delegation is what
+    // fails. So only batch when undelegated or on our own impl.
+    if (atomicStatus === "ready" && (!isDelegated || ownKnownDelegate)) {
+      return "batch";
+    }
+
+    // (4) Everything else — delegated to an unrecognized/foreign impl, or no
+    // atomic support — sweeps via Permit2, which ignores delegation entirely.
     return "permit2";
   }, [atomicStatus, delegation, walletProfileBase.walletKey]);
 

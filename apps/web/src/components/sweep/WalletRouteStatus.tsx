@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { type SweepRouteKind } from "@/types/dustsweep";
 
 function cx(...parts: Array<string | false | null | undefined>) {
@@ -131,13 +131,31 @@ export function WalletRouteStatus({
   isDetecting,
   recommendedWalletLabel,
   permit2SetupCount = 0,
+  delegateAddress,
+  atomicStatus,
 }: {
   routeKind: SweepRouteKind;
   isDetecting: boolean;
   recommendedWalletLabel?: string | null;
   permit2SetupCount?: number;
+  delegateAddress?: string | null;
+  atomicStatus?: string;
 }) {
   const [showWhy, setShowWhy] = useState(false);
+  // The raw delegate address is a diagnostic, not user-facing copy. Hide it from
+  // normal users; only surface it when seeding the catalog (env flag or ?debug
+  // in the URL). Resolved after mount to avoid an SSR/hydration mismatch.
+  const [showDiagnostics, setShowDiagnostics] = useState(false);
+  useEffect(() => {
+    try {
+      const enabled =
+        process.env.NEXT_PUBLIC_DUST_SWEEP_DEBUG === "1" ||
+        new URLSearchParams(window.location.search).has("debug");
+      setShowDiagnostics(enabled);
+    } catch {
+      setShowDiagnostics(false);
+    }
+  }, []);
 
   if (isDetecting) {
     return (
@@ -183,9 +201,15 @@ export function WalletRouteStatus({
           {visual.subtext}
         </p>
         {showWhy ? (
-          <p className={cx("mt-2 border-t border-current/10 pt-2 text-xs leading-5 opacity-90", visual.text)}>
-            {visual.why}
-          </p>
+          <div className={cx("mt-2 space-y-1 border-t border-current/10 pt-2", visual.text)}>
+            <p className="text-xs leading-5 opacity-90">{visual.why}</p>
+            {showDiagnostics && delegateAddress ? (
+              <p className="break-all font-mono text-[10px] leading-4 opacity-70">
+                Delegated to: {delegateAddress}
+                {atomicStatus ? ` · batch: ${atomicStatus}` : ""}
+              </p>
+            ) : null}
+          </div>
         ) : null}
       </div>
 

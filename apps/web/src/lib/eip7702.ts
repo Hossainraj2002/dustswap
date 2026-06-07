@@ -56,12 +56,40 @@ export type DelegateRegistryEntry = {
  * eth_getCode on Base and recording the delegate address here.
  */
 export const KNOWN_DELEGATES: Record<string, DelegateRegistryEntry> = {
-  // ── Wallet-brand delegates (seed via telemetry / manual testing) ──
-  // "0x...": { wallet: "okx", label: "OKX Wallet" },
-  // "0x...": { wallet: "metamask", label: "MetaMask Smart Account" },
-  // "0x...": { wallet: "coinbase", label: "Coinbase Smart Wallet" },
+  // ── Wallet-brand delegates (verified deployed on Base 8453) ──
+  // These EIP-7702 delegate implementations deploy deterministically (same
+  // address across EVM chains via CREATE2). Each below was confirmed to exist on
+  // Base; MetaMask/Ambire/Trust are verified source, OKX is unverified but the
+  // same contract+creator as the Etherscan-labeled "OKX: EIP-7702 Delegator".
+  // To add/override without a redeploy, use NEXT_PUBLIC_EXTRA_KNOWN_DELEGATES.
+  // Capture a real address in-app via the route chip's "Why?" (prints the
+  // detected "Delegated to: 0x…") or the per-sweep route telemetry.
+  "0x63c0c19a282a1b52b07dd5a65b58948a07dae32b": {
+    wallet: "metamask",
+    label: "MetaMask Smart Account",
+  },
+  "0x80296ff8d1ed46f8e3c7992664d13b833504c2bb": {
+    wallet: "okx",
+    label: "OKX Wallet",
+  },
+  "0x5a7fc11397e9a8ad41bf10bf13f22b0a63f96f6d": {
+    wallet: "ambire",
+    label: "Ambire Wallet",
+  },
+  "0xd2e28229f6f2c235e57de2ebc727025a1d0530fb": {
+    wallet: "trust",
+    label: "Trust Wallet",
+  },
+  "0x000000009b1d0af20d8c6d0a44e162d11f9b8f00": {
+    wallet: "uniswap",
+    label: "Uniswap Wallet",
+  },
 
-  // ── Known infra delegates (labels only — not a wallet brand to switch to) ──
+  // ── Known infra/service delegates (labels only — no wallet to switch to) ──
+  "0x23e5f9c457a69ce776d20a8fe812a6701d66fce8": {
+    wallet: "unknown",
+    label: "Otim Delegator",
+  },
   "0x69007702764179f14f51cdce752f4f775d74e139": {
     wallet: "unknown",
     label: "Alchemy Modular Account v2",
@@ -77,6 +105,32 @@ export const KNOWN_DELEGATES: Record<string, DelegateRegistryEntry> = {
 };
 
 /**
+ * Extra delegates injected via env so we can seed addresses captured in the
+ * wild (e.g. OKX's Base delegate) WITHOUT a code deploy. Set
+ * NEXT_PUBLIC_EXTRA_KNOWN_DELEGATES to a JSON object of
+ *   { "0xlowercaseDelegate": { "wallet": "okx", "label": "OKX Wallet" } }
+ * Parsed once at module load; malformed JSON is ignored (never throws).
+ */
+function parseExtraDelegates(): Record<string, DelegateRegistryEntry> {
+  const raw = process.env.NEXT_PUBLIC_EXTRA_KNOWN_DELEGATES;
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw) as Record<string, DelegateRegistryEntry>;
+    const out: Record<string, DelegateRegistryEntry> = {};
+    for (const [addr, entry] of Object.entries(parsed)) {
+      if (entry && typeof entry.wallet === "string" && typeof entry.label === "string") {
+        out[addr.toLowerCase()] = entry;
+      }
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+const EXTRA_KNOWN_DELEGATES = parseExtraDelegates();
+
+/**
  * Resolves a delegate address to a human-friendly identity for messaging.
  * - null delegate → { state: "none" } (plain EOA)
  * - known delegate → { state: "known", wallet, label }
@@ -87,7 +141,8 @@ export function identifyDelegate(delegate: Address | null): DelegateIdentity {
     return { state: "none" };
   }
 
-  const hit = KNOWN_DELEGATES[delegate.toLowerCase()];
+  const key = delegate.toLowerCase();
+  const hit = KNOWN_DELEGATES[key] ?? EXTRA_KNOWN_DELEGATES[key];
   if (hit) {
     return { state: "known", wallet: hit.wallet, label: hit.label };
   }

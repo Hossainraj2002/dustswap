@@ -384,6 +384,8 @@ export default function DustSweepPage() {
               isDetecting={sweep.isDetectingRoute}
               recommendedWalletLabel={sweep.recommendedWallet?.label}
               permit2SetupCount={sweep.permit2SetupCount}
+              delegateAddress={sweep.delegation.address}
+              atomicStatus={sweep.walletProfile.atomicStatus}
             />
           )}
 
