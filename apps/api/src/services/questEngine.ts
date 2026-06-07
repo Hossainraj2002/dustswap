@@ -945,22 +945,74 @@ function matchesRequiredXToken(args: {
   );
 }
 
-function listUrlCandidates(tweet: any): string[] {
-  const urls = tweet?.entities?.urls;
-  if (!Array.isArray(urls)) {
+function collectTweetStringCandidates(value: unknown, depth = 0, seen = new WeakSet<object>()): string[] {
+  if (!value || depth > 8) {
     return [];
   }
 
-  return urls
-    .flatMap((item) => [
-      item?.url,
-      item?.expanded_url,
-      item?.expandedUrl,
-      item?.display_url,
-      item?.displayUrl,
-      item?.unwound_url,
-      item?.unwoundUrl,
-    ])
+  if (typeof value === "string") {
+    return [value];
+  }
+
+  if (typeof value !== "object") {
+    return [];
+  }
+
+  if (seen.has(value)) {
+    return [];
+  }
+  seen.add(value);
+
+  if (Array.isArray(value)) {
+    return value.flatMap((item) => collectTweetStringCandidates(item, depth + 1, seen));
+  }
+
+  return Object.entries(value as Record<string, unknown>).flatMap(([key, item]) => {
+    const normalizedKey = key.toLowerCase();
+    if (
+      normalizedKey === "author" ||
+      normalizedKey === "user" ||
+      normalizedKey === "retweeted_status" ||
+      normalizedKey === "retweetedstatus"
+    ) {
+      return [];
+    }
+
+    return collectTweetStringCandidates(item, depth + 1, seen);
+  });
+}
+
+function isTweetUrlCandidate(value: string) {
+  const trimmed = value.trim();
+  return (
+    /https?:\/\//i.test(trimmed) ||
+    /\b[a-z0-9.-]+\.[a-z]{2,}(?:\/|\?|$)/i.test(trimmed) ||
+    /(?:^|[?&#\s])ref=DUST-[a-z0-9-]+/i.test(trimmed)
+  );
+}
+
+function listUrlCandidates(tweet: any): string[] {
+  const urls = tweet?.entities?.urls;
+  const directUrlCandidates = Array.isArray(urls)
+    ? urls.flatMap((item) => [
+        item?.url,
+        item?.expanded_url,
+        item?.expandedUrl,
+        item?.display_url,
+        item?.displayUrl,
+        item?.unwound_url,
+        item?.unwoundUrl,
+      ])
+    : [];
+
+  return [
+    ...new Set(
+      [...directUrlCandidates, ...collectTweetStringCandidates(tweet).filter(isTweetUrlCandidate)]
+        .filter(Boolean)
+        .map((value) => String(value))
+        .flatMap((candidate) => buildDecodedTextVariants(candidate))
+    ),
+  ]
     .filter(Boolean)
     .map((value) => String(value).toLowerCase());
 }
@@ -1001,6 +1053,10 @@ function listReferralMatchCandidates(tweet: any, text: string) {
   const urls = tweet?.entities?.urls;
   const rawCandidates = [
     text,
+    tweet?.full_text,
+    tweet?.fullText,
+    tweet?.legacy?.full_text,
+    tweet?.note_tweet?.note_tweet_results?.result?.text,
     tweet?.url,
     tweet?.twitterUrl,
     ...(Array.isArray(urls)
@@ -1014,6 +1070,7 @@ function listReferralMatchCandidates(tweet: any, text: string) {
           item?.unwoundUrl,
         ])
       : []),
+    ...collectTweetStringCandidates(tweet).filter(isTweetUrlCandidate),
   ]
     .filter(Boolean)
     .map((value) => String(value));
@@ -1041,7 +1098,7 @@ function containsUserReferralCode(args: {
     "i"
   );
   const referralUrlPattern = new RegExp(
-    `https?:\\/\\/app\\.dustswap\\.wtf\\/?\\?ref=${escapedCode}(?:$|[^a-z0-9-])`,
+    `(?:https?:\\/\\/)?app\\.dustswap\\.wtf\\/?\\?ref=${escapedCode}(?:$|[^a-z0-9-])`,
     "i"
   );
 
