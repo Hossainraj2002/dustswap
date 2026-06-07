@@ -227,7 +227,6 @@ const EMPTY_FORM: AdminQuestInput = {
 function getRulesExample(form: AdminQuestInput) {
   if (isShareReferralXQuest(form)) {
     return `{
-  "requireUserReferralLink": true,
   "requiredAnyOf": ["@DustswapOnBase"]
 }`;
   }
@@ -325,7 +324,7 @@ function getVerificationGuide(form: AdminQuestInput) {
   if (form.platform === "x" && form.actionType === "share_referral_x") {
     return {
       recommended: "x_post_link",
-      text: "Share Referral on X quests: use x_post_link. Store the X intent URL template in CTA URL and set requireUserReferralLink in rules so the backend verifies the connected wallet user's own referral code.",
+      text: "Share Referral on X quests: use x_post_link. Store the X intent URL template in CTA URL and set requiredAnyOf to @DustswapOnBase so the backend verifies the connected X author and project mention.",
     };
   }
 
@@ -838,7 +837,7 @@ export default function AdminQuestsPage() {
                         field.key === "actionType" &&
                         nextValue === "share_referral_x"
                       ) {
-                        updateRulesText({ requireUserReferralLink: true });
+                        updateRulesText({ requiredAnyOf: ["@DustswapOnBase"] });
                       }
                     }}
                     className="w-full rounded-2xl border border-gray-200 bg-white px-4 py-3 text-sm text-gray-900 outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500 shadow-sm"
@@ -1047,7 +1046,7 @@ export default function AdminQuestsPage() {
                 <code className="ml-1">Discord join tasks</code> use <code>discord_guild_member</code> and never require bot secrets in admin.
                 <code className="ml-1">requiredAnyOf</code> means the post only needs one of those allowed X mentions or hashtags.
                 <code className="ml-1">x_post_link</code> also checks that the tweet author ID matches the connected X account.
-                <code className="ml-1">share_referral_x</code> uses <code>x_post_link</code> and requires the user&apos;s own referral link.
+                <code className="ml-1">share_referral_x</code> uses <code>x_post_link</code> and verifies the connected X author plus <code>@DustswapOnBase</code>.
                 <code className="ml-1">externalUrl</code> is the page users open.
                 <code className="ml-1">source</code> is used for onchain swap tracking.
                 <code className="ml-1">chainIds</code>, <code>tokenAddress</code>, and{" "}

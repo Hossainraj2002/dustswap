@@ -2984,9 +2984,9 @@ export class QuestEngine {
     const connectedAccount = await xVerificationService.requireConnectedAccount(user.id);
     const rulesRecord = rules as QuestRules & Record<string, unknown>;
     const requiresUserReferralLink =
-      quest.action_type === "share_referral_x" ||
-      rules.requireUserReferralLink === true ||
-      rulesRecord.require_user_referral_link === true;
+      quest.action_type !== "share_referral_x" &&
+      (rules.requireUserReferralLink === true ||
+        rulesRecord.require_user_referral_link === true);
     const userReferralCode = String(user.referral_code || "").trim().toUpperCase();
 
     const postId = extractPostId(postUrl);
@@ -3098,12 +3098,16 @@ export class QuestEngine {
     const urlCandidates = listUrlCandidates(tweet);
     const mentionCandidates = listMentionCandidates(tweet);
     const hashtagCandidates = listHashtagCandidates(tweet);
-    const fallbackAnyOf = [
+    const configuredAnyOf = [
       ...requiredAnyOf,
       ...requiredMentionsAny,
       ...requiredHashtags,
       ...(requiredMention ? [requiredMention] : []),
     ].filter(Boolean);
+    const fallbackAnyOf =
+      configuredAnyOf.length > 0 || quest.action_type !== "share_referral_x"
+        ? configuredAnyOf
+        : ["@DustswapOnBase"];
 
     if (fallbackAnyOf.length > 0) {
       const matchedAnyOf = fallbackAnyOf.some((token) =>

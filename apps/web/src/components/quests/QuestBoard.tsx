@@ -125,10 +125,6 @@ function getDiscordConnectMessage(error?: string | null) {
 }
 
 function getPostRequirementHint(quest: QuestItem) {
-  if (isShareReferralXQuest(quest)) {
-    return "Add your own Dustswap referral link.";
-  }
-
   const ruleTokens = Array.isArray(quest.rules.requiredAnyOf)
     ? quest.rules.requiredAnyOf
     : [
@@ -141,7 +137,11 @@ function getPostRequirementHint(quest: QuestItem) {
         ...(quest.rules.requiredMention ? [quest.rules.requiredMention] : []),
       ];
 
-  const cleaned = ruleTokens
+  const cleaned = (
+    ruleTokens.length > 0 || quest.actionType !== "share_referral_x"
+      ? ruleTokens
+      : ["@DustswapOnBase"]
+  )
     .map((value) => String(value).trim())
     .filter(Boolean);
 
@@ -1107,18 +1107,6 @@ export function QuestBoard() {
     if (!isXConnected) {
       clearPostVerificationFailure(quest.id);
       await handleConnectX("/quests");
-      return;
-    }
-
-    if (
-      isShareReferralXQuest(quest) &&
-      (!referralLinkState.code || !referralLinkState.unlocked)
-    ) {
-      clearPostVerificationFailure(quest.id);
-      setQuestInlineError(
-        quest.id,
-        "Complete your first check-in or claim to unlock your referral link."
-      );
       return;
     }
 
