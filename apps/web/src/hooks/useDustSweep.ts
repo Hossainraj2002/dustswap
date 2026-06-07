@@ -818,31 +818,25 @@ export function useDustSweep(): UseDustSweepReturn {
       delegation.info.wallet !== "unknown" &&
       delegation.info.wallet !== walletProfileBase.walletKey;
 
-    // (1) Known foreign delegation wins over the wallet's self-reported atomic
-    // capability. Some wallets (e.g. TokenPocket) advertise atomic batching but
-    // cannot actually batch on an account delegated to a different wallet — so
-    // trusting wallet_getCapabilities here produces a batch that fails. When we
-    // can name the delegate's owner, offer "switch + Permit2" instead.
+    // (1) Delegated to a wallet we can name that isn't the connected one →
+    // offer the switch (+ Permit2 fallback).
     if (knownForeignDelegate) {
       return "switch_or_permit2";
     }
 
-    // (2) "supported" means the account is already on a batch-capable
-    // implementation → trust it (the working Coinbase / OKX-own batch path).
-    if (atomicStatus === "supported") {
+    // (2) Only trust the wallet's atomic batch claim when we're certain the
+    // account isn't sitting on a FOREIGN delegate. Wallets (e.g. TokenPocket)
+    // report atomic "supported"/"ready" even on an account delegated to another
+    // wallet, then the batch fails. So batch only when the account is
+    // undelegated, OR on a delegate we positively recognize as this wallet's own.
+    // (Coinbase/Base smart wallets aren't 7702 EOAs → not "delegated" here → OK.)
+    const safeToBatch = !isDelegated || ownKnownDelegate;
+    if (safeToBatch && (atomicStatus === "supported" || atomicStatus === "ready")) {
       return "batch";
     }
 
-    // (3) "ready" means the wallet would upgrade the account first. That works
-    // on a fresh EOA (or on the wallet's own delegate), but NOT on an account
-    // already delegated elsewhere — overwriting a third-party delegation is what
-    // fails. So only batch when undelegated or on our own impl.
-    if (atomicStatus === "ready" && (!isDelegated || ownKnownDelegate)) {
-      return "batch";
-    }
-
-    // (4) Everything else — delegated to an unrecognized/foreign impl, or no
-    // atomic support — sweeps via Permit2, which ignores delegation entirely.
+    // (3) Delegated to an unrecognized/foreign impl, or no atomic support →
+    // Permit2 / standard approvals, which don't depend on the delegation.
     return "permit2";
   }, [atomicStatus, delegation, walletProfileBase.walletKey]);
 
@@ -1735,12 +1729,19 @@ export function useDustSweep(): UseDustSweepReturn {
       // genuinely can't batch, so this can only reduce prompts, never break.
       const canUseWalletSendCalls =
         supportsWalletSendCalls || walletStatus.isCoinbaseSmartWallet;
+      // Only attempt wallet batching on the batch route. When the account is
+      // delegated to a foreign/unknown impl (routeKind !== "batch"), the wallet's
+      // atomic batch can't actually work, so skip it and go straight to standard
+      // approvals + sweep — avoiding the "approval batch was not ready" failure.
+      const batchRouteAllowed = routeKind === "batch";
       const canUseAtomicBatch =
+        batchRouteAllowed &&
         batchMode &&
         hasV2Approvals &&
         canUseWalletSendCalls &&
         !usesTokenPocketExisting;
       const canUseTokenPocketBatch =
+        batchRouteAllowed &&
         batchMode &&
         hasV2Approvals &&
         usesTokenPocketExisting;
