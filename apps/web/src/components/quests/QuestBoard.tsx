@@ -1625,6 +1625,7 @@ export function QuestBoard() {
                   <div className="quest-connect-card rounded-[24px] border border-white/80 bg-white/82 p-3 shadow-[0_18px_44px_rgba(0,82,255,0.08)]">
                     <WalletConnectButton
                       fullWidth
+                      showDisconnect
                       connectLabel="Connect Wallet"
                       description="Connect your wallet to start quests and connect your X account."
                       className="min-h-[46px] rounded-2xl border-sky-200 bg-[#0052ff] px-4 py-2.5 text-sm font-semibold text-white shadow-[0_14px_30px_rgba(0,82,255,0.2)] hover:border-sky-300 hover:bg-sky-600 hover:text-white"

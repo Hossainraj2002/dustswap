@@ -758,6 +758,7 @@ export default function LeaderboardPage() {
               </p>
               <div className="mt-4 flex justify-center">
                 <WalletConnectButton
+                  showDisconnect
                   className="inline-flex min-h-[44px] items-center justify-center rounded-full border border-slate-200 bg-white px-5 py-2.5 text-sm font-semibold text-slate-700 shadow-[0_8px_20px_rgba(15,23,42,0.06)] transition-colors hover:border-sky-200 hover:bg-sky-50 hover:text-slate-900"
                   description="Connect your wallet, then complete one check-in to unlock the leaderboard."
                 />

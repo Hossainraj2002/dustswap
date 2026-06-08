@@ -417,6 +417,7 @@ export function PartnerMemberPage() {
           </p>
           <div className="mt-8">
             <WalletConnectButton
+              showDisconnect
               className="bg-[linear-gradient(135deg,#0284c7,#2563eb)] text-white shadow-[0_18px_36px_rgba(37,99,235,0.28)] hover:border-transparent hover:text-white"
               description="Connect the whitelisted wallet for your DustSwap partner dashboard."
             />

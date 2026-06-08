@@ -717,6 +717,7 @@ export default function SpinPage() {
                   </p>
                   <div className="mt-4 flex justify-center">
                     <WalletConnectButton
+                      showDisconnect
                       className="bg-[linear-gradient(135deg,#2563eb_0%,#0ea5e9_52%,#ffffff_180%)] text-white shadow-[0_20px_40px_rgba(37,99,235,0.28)] hover:border-transparent hover:text-white"
                       description="Connect your wallet to view tickets and spin."
                     />

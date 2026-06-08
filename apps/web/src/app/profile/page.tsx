@@ -1555,6 +1555,7 @@ function ProfilePageContent() {
               </p>
               <div className="mt-7 flex origin-center justify-center scale-105 sm:scale-110">
                 <WalletConnectButton
+                  showDisconnect
                   className="bg-[linear-gradient(135deg,#2563eb_0%,#0ea5e9_52%,#ffffff_180%)] text-white shadow-[0_20px_40px_rgba(37,99,235,0.28)] hover:border-transparent hover:text-white"
                   description="Connect your wallet to start your journey at DustSwap."
                 />

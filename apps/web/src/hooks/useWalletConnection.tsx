@@ -7,6 +7,7 @@ import {
   useEffect,
   useMemo,
   useRef,
+  useState,
   type ReactNode,
 } from "react";
 import {
@@ -215,8 +216,30 @@ function PrivyWalletConnectionProvider({ children }: { children: ReactNode }) {
   const { setActiveWallet } = useSetActiveWallet();
   const { address: wagmiAddress, status: wagmiStatus } = useAccount();
   const { disconnectAsync } = useDisconnect();
+  // ── Sticky manual-disconnect latch ───────────────────────────────────────
+  // When the user clicks "Disconnect" we must keep the Privy→wagmi
+  // reconciliation effect OFF until they intentionally connect again. A plain
+  // ref reset in a `finally` was not enough: `wallet.disconnect()` resolving
+  // does NOT mean React's useWallets() has emptied yet, so a later render still
+  // saw a connected Privy wallet + a disconnected wagmi and the reconcile loop
+  // instantly re-bound the wallet — which is exactly why "Disconnect" looked
+  // like it did nothing. We use state (re-renders, recomputes needsReconcile)
+  // plus a ref mirror (read synchronously inside the retry loop).
+  const [reconcilePaused, setReconcilePaused] = useState(false);
+  const reconcilePausedRef = useRef(false);
+  const pauseReconcile = useCallback(() => {
+    reconcilePausedRef.current = true;
+    setReconcilePaused(true);
+  }, []);
+  const resumeReconcile = useCallback(() => {
+    reconcilePausedRef.current = false;
+    setReconcilePaused(false);
+  }, []);
+
   const { connectWallet } = useConnectWallet({
     onSuccess: async ({ wallet: connectedWallet }) => {
+      // The user intentionally connected — re-enable reconciliation.
+      resumeReconcile();
       if (connectedWallet.type === "ethereum") {
         try {
           // Fast path: bind the just-connected wallet to wagmi immediately.
@@ -239,6 +262,9 @@ function PrivyWalletConnectionProvider({ children }: { children: ReactNode }) {
 
   const openWalletModal = useCallback(
     async (description?: string, walletList?: WalletListEntry[]) => {
+      // Opening the connect modal is an explicit intent to connect, so lift the
+      // manual-disconnect latch and let reconciliation bind the new wallet.
+      resumeReconcile();
       if (!readyRef.current) {
         const deadline = Date.now() + 4000;
         while (!readyRef.current && Date.now() < deadline) {
@@ -252,7 +278,7 @@ function PrivyWalletConnectionProvider({ children }: { children: ReactNode }) {
         walletChainType: "ethereum-only",
       });
     },
-    [connectWallet]
+    [connectWallet, resumeReconcile]
   );
 
   // ── Bug #2C: deterministic Privy → wagmi reconciliation ──────────────────
@@ -282,12 +308,6 @@ function PrivyWalletConnectionProvider({ children }: { children: ReactNode }) {
     return connected[0] ?? null;
   }, [wallets, wallet]);
 
-  // Set while an intentional disconnect is in flight so the reconciliation
-  // effect below doesn't immediately re-promote the wallet we're tearing down
-  // (the previous bug where clicking "Disconnect" did nothing — wagmi dropped,
-  // reconcile saw a still-connected Privy wallet, and rebound it instantly).
-  const disconnectingRef = useRef(false);
-
   const targetAddress = targetWallet?.address?.toLowerCase() ?? null;
   const wagmiBound =
     wagmiStatus === "connected" &&
@@ -298,7 +318,7 @@ function PrivyWalletConnectionProvider({ children }: { children: ReactNode }) {
   const wagmiBusy = wagmiStatus === "connecting" || wagmiStatus === "reconnecting";
   const needsReconcile =
     WALLET_RECONCILE_ENABLED &&
-    !disconnectingRef.current &&
+    !reconcilePaused &&
     !!targetAddress &&
     !wagmiBound &&
     !wagmiBusy;
@@ -321,7 +341,7 @@ function PrivyWalletConnectionProvider({ children }: { children: ReactNode }) {
         if (delayMs > 0) {
           await new Promise((resolve) => setTimeout(resolve, delayMs));
         }
-        if (cancelled) {
+        if (cancelled || reconcilePausedRef.current) {
           return;
         }
         const candidate = targetWalletRef.current;
@@ -345,25 +365,26 @@ function PrivyWalletConnectionProvider({ children }: { children: ReactNode }) {
   }, [needsReconcile, targetAddress, setActiveWallet]);
 
   const disconnectWallet = useCallback(async () => {
-    // Block reconciliation for the whole teardown so it can't rebind the wallet.
-    disconnectingRef.current = true;
-    try {
-      // 1) Disconnect every Privy-connected wallet (not just the active one).
-      await Promise.allSettled(
-        (wallets ?? []).map((entry) => entry.disconnect())
-      );
-      // 2) Drop the wagmi connection — this is what the "connected" pill reads
-      //    via useAccount(); without it the UI stays stuck on the address.
-      await disconnectAsync().catch(() => {});
-      // 3) End the Privy session. Login is wallet-only, so logging out is the
-      //    full disconnect and stops reconnectOnMount from restoring the wallet.
-      if (authenticated) {
-        await logout();
-      }
-    } finally {
-      disconnectingRef.current = false;
+    // Latch reconciliation OFF and keep it off — do NOT reset in a finally.
+    // It stays paused until the user explicitly connects again (openWalletModal
+    // / connect onSuccess). This is what makes "Disconnect" actually stick.
+    pauseReconcile();
+    // 1) Disconnect every Privy-connected wallet (not just the active one), so
+    //    Privy's wallet set empties and it won't auto-reconnect on next mount.
+    await Promise.allSettled(
+      (wallets ?? []).map((entry) => entry.disconnect())
+    );
+    // 2) Drop the wagmi connection — this is the source of truth the "connected"
+    //    pill reads via useAccount(); without it the UI stays stuck on the
+    //    address. Disconnect the active connection and any lingering connectors.
+    await disconnectAsync().catch(() => {});
+    // 3) If an authenticated Privy session exists (embedded/login flows), end it
+    //    too so reconnectOnMount can't restore the wallet. No-op for the common
+    //    connect-only path where `authenticated` is false.
+    if (authenticated) {
+      await logout().catch(() => {});
     }
-  }, [wallets, disconnectAsync, authenticated, logout]);
+  }, [wallets, disconnectAsync, authenticated, logout, pauseReconcile]);
 
   const value = useMemo<WalletConnectionContextValue>(
     () => ({
