@@ -108,6 +108,7 @@ app.get("/", (c) => {
       "POST /api/partner/admin/members": "Whitelist or update one partner member",
       "POST /api/partner/admin/members/batch": "Whitelist or update many partner members at once",
       "POST /api/partner/admin/members/remove-pending": "Remove pending whitelisted partner members",
+      "POST /api/partner/admin/distributions/settle": "Verify an on-chain USDC payout and mark the closed week paid",
       "GET /api/profile-completion?address=": "Get profile completion guide state",
       "POST /api/profile-completion/impression": "Record profile completion guide impressions",
       "POST /api/profile-completion/dismiss": "Dismiss the profile completion guide",

@@ -271,4 +271,25 @@ partnerRoutes.post("/admin/distributions/mark-paid", async (c) => {
   }
 });
 
+partnerRoutes.post("/admin/distributions/settle", async (c) => {
+  const authError = assertAdmin(c);
+  if (authError) {
+    return authError;
+  }
+
+  try {
+    const body = await c.req.json<{
+      address?: string;
+      weekStartUtc?: string;
+      payoutTxHash?: string;
+      paidNotes?: string | null;
+    }>();
+    const data = await partnerProgramService.settleDistributionPayout(body);
+    return c.json(data);
+  } catch (error) {
+    const payload = getErrorPayload(error);
+    return c.json(payload.body, payload.status as 400 | 401 | 403 | 404 | 409 | 429 | 500);
+  }
+});
+
 export { partnerRoutes };

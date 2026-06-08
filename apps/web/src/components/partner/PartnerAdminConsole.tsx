@@ -2,7 +2,13 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { getAddress, isAddress } from "viem";
+import { erc20Abi, getAddress, isAddress, type Hex } from "viem";
+import { useAccount, usePublicClient, useWalletClient } from "wagmi";
+import { base } from "wagmi/chains";
+import { useBaseChainSwitch } from "@/hooks/useBaseChainSwitch";
+import { isUserRejectedRequest } from "@/lib/paymaster";
+import { USDC_ADDRESS } from "@/lib/tokens";
+import { WalletConnectButton } from "@/components/wallet/WalletConnectButton";
 import {
   fetchPartnerAdminLeaderboard,
   formatUsd,
@@ -10,12 +16,55 @@ import {
   removePendingPartnerMembers,
   savePartnerAdminMember,
   savePartnerAdminMembersBatch,
+  settlePartnerDistribution,
   shortAddress,
   type PartnerAdminLeaderboardResponse,
   type PartnerAdminLeaderboardRow,
 } from "@/lib/partner";
 
 const PARTNER_ADMIN_TOKEN_STORAGE_KEY = "partner-admin-token";
+const PENDING_PAYOUT_STORAGE_KEY = "partner-payout-pending-v1";
+
+type PendingPayout = {
+  address: string;
+  weekStartUtc: string;
+  txHash: string;
+  amountUsd: number;
+  createdAt: number;
+};
+
+function pendingPayoutKey(address: string, weekStartUtc: string) {
+  return `${address.toLowerCase()}:${weekStartUtc}`;
+}
+
+function readPendingPayouts(): Record<string, PendingPayout> {
+  if (typeof window === "undefined") {
+    return {};
+  }
+
+  try {
+    const raw = window.localStorage.getItem(PENDING_PAYOUT_STORAGE_KEY);
+    if (!raw) {
+      return {};
+    }
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? (parsed as Record<string, PendingPayout>) : {};
+  } catch {
+    return {};
+  }
+}
+
+function writePendingPayouts(value: Record<string, PendingPayout>) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  try {
+    window.localStorage.setItem(PENDING_PAYOUT_STORAGE_KEY, JSON.stringify(value));
+  } catch {
+    // Ignore storage write failures (private mode / quota).
+  }
+}
 
 function getDisplayError(error: unknown) {
   const message = (error as Error)?.message || "Request failed";
@@ -64,12 +113,88 @@ function SummaryCard({
   );
 }
 
+function PayCell({
+  row,
+  canPay,
+  busy,
+  anyBusy,
+  pending,
+  onPay,
+}: {
+  row: PartnerAdminLeaderboardRow;
+  canPay: boolean;
+  busy: boolean;
+  anyBusy: boolean;
+  pending?: PendingPayout;
+  onPay: (row: PartnerAdminLeaderboardRow) => void;
+}) {
+  const dueUsd = row.metrics.latestClosedWeekDueRewardUsd;
+  const weekStartUtc = row.metrics.latestClosedWeekStartUtc;
+  const hasDue = Boolean(weekStartUtc) && dueUsd > 0;
+
+  if (!pending && !hasDue) {
+    return <span className="text-[11px] text-slate-400">Nothing due</span>;
+  }
+
+  const disabled = !canPay || anyBusy;
+  const title = !canPay
+    ? "Unlock the admin token and connect your payout wallet to pay."
+    : undefined;
+
+  if (pending) {
+    return (
+      <div className="flex flex-col gap-1">
+        <button
+          type="button"
+          onClick={() => onPay(row)}
+          disabled={disabled}
+          title={title}
+          className="inline-flex items-center justify-center rounded-[14px] border border-amber-300 bg-amber-50 px-3 py-2 text-xs font-black uppercase tracking-[0.12em] text-amber-800 transition hover:border-amber-400 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {busy ? "Finalizing..." : "Finalize payout"}
+        </button>
+        <a
+          href={`https://basescan.org/tx/${pending.txHash}`}
+          target="_blank"
+          rel="noreferrer"
+          className="text-[11px] font-semibold text-sky-600 hover:text-sky-700"
+        >
+          Sent {formatUsd(pending.amountUsd)} · view tx
+        </a>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-1">
+      <button
+        type="button"
+        onClick={() => onPay(row)}
+        disabled={disabled}
+        title={title}
+        className="inline-flex items-center justify-center rounded-[14px] bg-emerald-600 px-3 py-2 text-xs font-black uppercase tracking-[0.12em] text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
+      >
+        {busy ? "Paying..." : `Pay ${formatUsd(dueUsd)}`}
+      </button>
+      <span className="text-[11px] text-slate-500">Week {weekStartUtc}</span>
+    </div>
+  );
+}
+
 function LeaderboardTable({
   rows,
   emptyLabel,
+  canPay,
+  payingAddress,
+  pendingPayouts,
+  onPay,
 }: {
   rows: PartnerAdminLeaderboardRow[];
   emptyLabel: string;
+  canPay: boolean;
+  payingAddress: string | null;
+  pendingPayouts: Record<string, PendingPayout>;
+  onPay: (row: PartnerAdminLeaderboardRow) => void;
 }) {
   if (!rows.length) {
     return (
@@ -167,12 +292,29 @@ function LeaderboardTable({
                   </p>
                 </td>
                 <td className="px-4 py-4 align-top">
-                  <Link
-                    href={`/admin/partner/${encodeURIComponent(row.member.address)}`}
-                    className="inline-flex rounded-[14px] bg-slate-950 px-3 py-2 text-xs font-black uppercase tracking-[0.14em] text-white transition hover:bg-slate-800"
-                  >
-                    Open
-                  </Link>
+                  <div className="flex flex-col gap-2">
+                    <Link
+                      href={`/admin/partner/${encodeURIComponent(row.member.address)}`}
+                      className="inline-flex justify-center rounded-[14px] bg-slate-950 px-3 py-2 text-xs font-black uppercase tracking-[0.14em] text-white transition hover:bg-slate-800"
+                    >
+                      Open
+                    </Link>
+                    <PayCell
+                      row={row}
+                      canPay={canPay}
+                      busy={payingAddress === row.member.address}
+                      anyBusy={payingAddress !== null}
+                      pending={
+                        pendingPayouts[
+                          pendingPayoutKey(
+                            row.member.address,
+                            row.metrics.latestClosedWeekStartUtc || ""
+                          )
+                        ]
+                      }
+                      onPay={onPay}
+                    />
+                  </div>
                 </td>
               </tr>
             ))}
@@ -204,6 +346,37 @@ export function PartnerAdminConsole({
   const [isRemovingPending, setIsRemovingPending] = useState(false);
   const [isPendingCopied, setIsPendingCopied] = useState(false);
   const [isRemovedCopied, setIsRemovedCopied] = useState(false);
+
+  const { address: walletAddress, isConnected } = useAccount();
+  const { data: walletClient } = useWalletClient();
+  const publicClient = usePublicClient({ chainId: base.id });
+  const { isOnBase, isSwitching, switchToBase } = useBaseChainSwitch();
+  const [payingAddress, setPayingAddress] = useState<string | null>(null);
+  const [pendingPayouts, setPendingPayouts] = useState<Record<string, PendingPayout>>({});
+
+  useEffect(() => {
+    setPendingPayouts(readPendingPayouts());
+  }, []);
+
+  const persistPending = useCallback((key: string, payout: PendingPayout) => {
+    setPendingPayouts((current) => {
+      const next = { ...current, [key]: payout };
+      writePendingPayouts(next);
+      return next;
+    });
+  }, []);
+
+  const clearPending = useCallback((key: string) => {
+    setPendingPayouts((current) => {
+      if (!(key in current)) {
+        return current;
+      }
+      const next = { ...current };
+      delete next[key];
+      writePendingPayouts(next);
+      return next;
+    });
+  }, []);
 
   const loadLeaderboard = useCallback(
     async (tokenOverride?: string) => {
@@ -472,6 +645,157 @@ export function PartnerAdminConsole({
       setError(getDisplayError(removeError));
     } finally {
       setIsRemovingPending(false);
+    }
+  }
+
+  async function finalizePayout(row: PartnerAdminLeaderboardRow, txHash: Hex) {
+    const partnerAddress = row.member.address;
+    const weekStartUtc = row.metrics.latestClosedWeekStartUtc || "";
+    const key = pendingPayoutKey(partnerAddress, weekStartUtc);
+
+    setStatus(`Recording payout for ${shortAddress(partnerAddress)}…`);
+
+    let lastError: unknown = null;
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      try {
+        const response = await settlePartnerDistribution(adminToken, {
+          address: partnerAddress,
+          weekStartUtc,
+          payoutTxHash: txHash,
+          paidNotes: walletAddress
+            ? `Paid from ${walletAddress} via admin Pay button`
+            : "Paid via admin Pay button",
+        });
+
+        if (!response.success) {
+          throw new Error(response.error || "Failed to record payout.");
+        }
+
+        clearPending(key);
+        setStatus(
+          `Paid ${shortAddress(partnerAddress)} and marked week ${weekStartUtc} as paid.`
+        );
+        await loadLeaderboard();
+        return;
+      } catch (settleError) {
+        lastError = settleError;
+        await new Promise((resolve) => window.setTimeout(resolve, 2500));
+      }
+    }
+
+    // The transfer is already on-chain and saved locally; the partner row will now
+    // show "Finalize payout" so the admin can retry recording without paying twice.
+    throw new Error(
+      `Payment was sent on-chain but recording it failed: ${getDisplayError(lastError)} ` +
+        `It is saved locally — click "Finalize payout" on this partner to retry without paying again.`
+    );
+  }
+
+  async function handlePayPartner(row: PartnerAdminLeaderboardRow) {
+    const partnerAddress = row.member.address;
+    const weekStartUtc = row.metrics.latestClosedWeekStartUtc || "";
+    const dueUsd = row.metrics.latestClosedWeekDueRewardUsd;
+    const key = pendingPayoutKey(partnerAddress, weekStartUtc);
+    const existingPending = weekStartUtc ? pendingPayouts[key] : undefined;
+
+    setError(null);
+    setStatus(null);
+
+    if (!adminToken || !isUnlocked) {
+      setError("Load the admin with a valid token first.");
+      return;
+    }
+    if (!isConnected || !walletAddress || !walletClient) {
+      setError("Connect your payout wallet first.");
+      return;
+    }
+    if (!publicClient) {
+      setError("Base RPC is unavailable right now. Refresh and try again.");
+      return;
+    }
+
+    setPayingAddress(partnerAddress);
+    try {
+      // Resume an interrupted payout: finalize the existing tx instead of re-paying.
+      if (existingPending) {
+        await finalizePayout(row, existingPending.txHash as Hex);
+        return;
+      }
+
+      if (!weekStartUtc || dueUsd <= 0) {
+        throw new Error("No closed-week amount is currently due for this partner.");
+      }
+
+      const confirmed = window.confirm(
+        `Send ${dueUsd.toFixed(2)} USDC on Base to this partner?\n\n` +
+          `Partner: ${partnerAddress}\n` +
+          `Week: ${weekStartUtc}\n` +
+          `From: ${walletAddress}\n\n` +
+          `This sends USDC directly from your connected wallet, then marks the week paid.`
+      );
+      if (!confirmed) {
+        return;
+      }
+
+      if (!isOnBase) {
+        setStatus("Switching your wallet to Base…");
+        await switchToBase();
+      }
+
+      const amountUnits = BigInt(Math.round(dueUsd * 1_000_000));
+      if (amountUnits <= 0n) {
+        throw new Error("Computed payout amount is zero.");
+      }
+
+      const balance = (await publicClient.readContract({
+        address: USDC_ADDRESS,
+        abi: erc20Abi,
+        functionName: "balanceOf",
+        args: [walletAddress as `0x${string}`],
+      })) as bigint;
+
+      if (balance < amountUnits) {
+        throw new Error(
+          `Your wallet holds ${(Number(balance) / 1_000_000).toFixed(2)} USDC but ` +
+            `${dueUsd.toFixed(2)} USDC is needed for this payout.`
+        );
+      }
+
+      setStatus(`Confirm the ${dueUsd.toFixed(2)} USDC transfer in your wallet…`);
+      const txHash = (await walletClient.writeContract({
+        account: walletAddress as `0x${string}`,
+        chain: base,
+        address: USDC_ADDRESS,
+        abi: erc20Abi,
+        functionName: "transfer",
+        args: [partnerAddress as `0x${string}`, amountUnits],
+      })) as Hex;
+
+      // Persist BEFORE waiting so a refresh/crash resumes finalize and never double-pays.
+      persistPending(key, {
+        address: partnerAddress,
+        weekStartUtc,
+        txHash,
+        amountUsd: dueUsd,
+        createdAt: Date.now(),
+      });
+
+      setStatus(`Payment sent (${txHash.slice(0, 10)}…). Waiting for confirmation…`);
+      const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash });
+      if (receipt.status !== "success") {
+        throw new Error("The USDC transfer reverted on-chain. The week was not marked paid.");
+      }
+
+      await finalizePayout(row, txHash);
+    } catch (payError) {
+      if (isUserRejectedRequest(payError)) {
+        setStatus(null);
+        setError("Payment cancelled in your wallet.");
+      } else {
+        setError(getDisplayError(payError));
+      }
+    } finally {
+      setPayingAddress(null);
     }
   }
 
@@ -917,10 +1241,58 @@ export function PartnerAdminConsole({
               </div>
             ) : null}
 
+            <div className="mt-4 flex flex-col gap-3 rounded-[20px] border border-slate-200 bg-slate-50 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="min-w-0">
+                <p className="text-[11px] font-black uppercase tracking-[0.2em] text-slate-500">
+                  Payout wallet
+                </p>
+                <p className="mt-1 text-sm leading-6 text-slate-700">
+                  {isConnected && walletAddress ? (
+                    <>
+                      Paying from{" "}
+                      <span className="font-mono font-semibold text-slate-900">
+                        {shortAddress(walletAddress)}
+                      </span>{" "}
+                      on{" "}
+                      <span
+                        className={
+                          isOnBase
+                            ? "font-semibold text-emerald-700"
+                            : "font-semibold text-rose-600"
+                        }
+                      >
+                        {isOnBase ? "Base" : "the wrong network"}
+                      </span>
+                      . Pay sends USDC straight to each partner, then marks the week paid.
+                    </>
+                  ) : (
+                    "Connect the wallet you send USDC from to enable the per-partner Pay buttons."
+                  )}
+                </p>
+              </div>
+              <div className="flex shrink-0 flex-wrap items-center gap-2">
+                {isConnected && !isOnBase ? (
+                  <button
+                    type="button"
+                    onClick={() => void switchToBase()}
+                    disabled={isSwitching}
+                    className="rounded-[14px] border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-black uppercase tracking-[0.12em] text-rose-700 transition hover:border-rose-300 hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {isSwitching ? "Switching…" : "Switch to Base"}
+                  </button>
+                ) : null}
+                <WalletConnectButton showDisconnect connectLabel="Connect payout wallet" />
+              </div>
+            </div>
+
             <div className="mt-5">
               <LeaderboardTable
                 rows={filteredRows}
                 emptyLabel="No partner rows match this search yet."
+                canPay={isUnlocked && isConnected && Boolean(walletAddress)}
+                payingAddress={payingAddress}
+                pendingPayouts={pendingPayouts}
+                onPay={(row) => void handlePayPartner(row)}
               />
             </div>
           </section>

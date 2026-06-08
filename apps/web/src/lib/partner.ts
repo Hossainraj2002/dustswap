@@ -146,6 +146,16 @@ export type PartnerMarkPaidResponse = {
   error?: string;
 };
 
+export type PartnerSettlePayoutResponse = {
+  success: boolean;
+  weekStartUtc?: string;
+  paidAt?: string;
+  payoutTxHash?: string;
+  payoutUsdcAmount?: number;
+  alreadyPaid?: boolean;
+  error?: string;
+};
+
 export type PartnerBatchUpsertResponse = {
   success: boolean;
   processedCount: number;
@@ -490,6 +500,27 @@ export async function markPartnerDistributionPaid(
   });
 
   return parseJson<PartnerMarkPaidResponse>(response);
+}
+
+export async function settlePartnerDistribution(
+  adminToken: string,
+  input: {
+    address: string;
+    weekStartUtc: string;
+    payoutTxHash: string;
+    paidNotes?: string | null;
+  }
+) {
+  const response = await publicApiFetch(getPartnerApiUrl("/admin/distributions/settle"), {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-admin-token": adminToken,
+    },
+    body: JSON.stringify(input),
+  });
+
+  return parseJson<PartnerSettlePayoutResponse>(response);
 }
 
 export function shortAddress(address?: string | null) {

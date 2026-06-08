@@ -1,5 +1,11 @@
 import { createHash } from "crypto";
-import { getAddress, isAddress, type Hex } from "viem";
+import {
+  erc20Abi,
+  getAddress,
+  isAddress,
+  parseEventLogs,
+  type Hex,
+} from "viem";
 import { isAllowedAppDomain } from "../config/appOrigins";
 import { dbQuery } from "../lib/db";
 import { runtimeCache } from "../utils/runtimeCache";
@@ -19,6 +25,11 @@ const PARTNER_CONTENT_SUBMISSION_FUTURE_SKEW_MS = 60 * 1000;
 const PARTNER_CONTENT_SUBMISSION_WINDOW_MS = 60 * 1000;
 const PARTNER_CONTENT_SUBMISSION_LIMIT = 12;
 const PARTNER_PROTOCOL_FEE_RATE = 0.002;
+
+// USDC on Base mainnet (6 decimals). Lowercased for cheap comparisons.
+const USDC_BASE_TOKEN_ADDRESS = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913";
+const PARTNER_PAYOUT_RECEIPT_MAX_ATTEMPTS = 6;
+const PARTNER_PAYOUT_RECEIPT_RETRY_DELAY_MS = 2500;
 
 const publicClient = createBasePublicClient();
 
@@ -251,6 +262,14 @@ function firstRow<T>(rows: T[] | null | undefined) {
 function toNumber(value: number | string | null | undefined) {
   const parsed = Number(value ?? 0);
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function usdToUsdcUnits(value: number) {
+  return BigInt(Math.round(value * 1_000_000));
 }
 
 function toDateKey(value: string | Date) {
@@ -1830,6 +1849,248 @@ export class PartnerProgramService {
       success: true,
       weekStartUtc,
       paidAt,
+    } as const;
+  }
+
+  /**
+   * Confirms an on-chain USDC payout actually landed before we record it.
+   * Re-reads the receipt (with a short retry to absorb RPC indexing lag),
+   * sums every USDC Transfer log whose recipient is the partner wallet, and
+   * fails closed unless at least `requiredUnits` (6-decimal USDC) was sent.
+   */
+  private async verifyUsdcPayment(args: {
+    payoutTxHash: Hex;
+    recipient: string;
+    requiredUnits: bigint;
+  }) {
+    const recipient = args.recipient.toLowerCase();
+    let receipt: {
+      status?: string;
+      logs?: unknown[];
+    } | null = null;
+
+    for (let attempt = 0; attempt < PARTNER_PAYOUT_RECEIPT_MAX_ATTEMPTS; attempt += 1) {
+      try {
+        receipt = await publicClient.getTransactionReceipt({
+          hash: args.payoutTxHash,
+        });
+        if (receipt) {
+          break;
+        }
+      } catch {
+        // Not indexed yet on this RPC; wait and retry below.
+      }
+
+      if (attempt < PARTNER_PAYOUT_RECEIPT_MAX_ATTEMPTS - 1) {
+        await sleep(PARTNER_PAYOUT_RECEIPT_RETRY_DELAY_MS);
+      }
+    }
+
+    if (!receipt) {
+      throw new PartnerProgramError(
+        "Payout transaction is not confirmed on Base yet. Wait a moment and retry.",
+        409
+      );
+    }
+
+    if (receipt.status !== "success") {
+      throw new PartnerProgramError("Payout transaction reverted on-chain.", 400);
+    }
+
+    const transferLogs = parseEventLogs({
+      abi: erc20Abi,
+      eventName: "Transfer",
+      logs: (receipt.logs ?? []) as never,
+    });
+
+    let transferred = 0n;
+    for (const log of transferLogs) {
+      if (String(log.address).toLowerCase() !== USDC_BASE_TOKEN_ADDRESS) {
+        continue;
+      }
+
+      const to = String((log.args as { to?: string }).to || "").toLowerCase();
+      if (to !== recipient) {
+        continue;
+      }
+
+      transferred += (log.args as { value?: bigint }).value ?? 0n;
+    }
+
+    if (transferred < args.requiredUnits) {
+      throw new PartnerProgramError(
+        "Payout transaction does not send enough USDC to this partner wallet.",
+        400
+      );
+    }
+  }
+
+  /**
+   * Verifies an on-chain USDC payout for a single closed week and marks it paid.
+   * Idempotent: re-submitting the same tx hash for an already-paid week succeeds
+   * without side effects, and a tx hash already consumed by another payout is
+   * rejected — so the admin Pay button can never double-record a payment.
+   */
+  async settleDistributionPayout(input: {
+    address?: string;
+    weekStartUtc?: string;
+    payoutTxHash?: string;
+    paidNotes?: string | null;
+  }) {
+    const normalizedAddress = normalizeAddress(String(input.address || ""));
+    const weekStartUtc = normalizeWeekStartDate(input.weekStartUtc);
+    const payoutTxHash = normalizeTxHash(input.payoutTxHash);
+
+    const currentWeekStartUtc = toDateKey(getCurrentUtcWeekStart());
+    if (weekStartUtc >= currentWeekStartUtc) {
+      throw new PartnerProgramError("Only closed weeks can be paid.", 400);
+    }
+
+    const member = await this.findMemberByAddress(normalizedAddress);
+    if (!member) {
+      throw new PartnerProgramError("Partner member not found.", 404);
+    }
+
+    const { data: weeklyData, error: weeklyError } = await postgresDb
+      .from("partner_program_member_weekly_metrics")
+      .select("*")
+      .eq("partner_member_id", member.id)
+      .eq("week_start_utc", weekStartUtc)
+      .maybeSingle();
+
+    if (weeklyError) {
+      throw new Error(`Load weekly partner metrics: ${weeklyError.message}`);
+    }
+
+    const weekly = (weeklyData as WeeklyMetricRow | null) ?? null;
+    if (!weekly) {
+      throw new PartnerProgramError(
+        "No qualifying partner volume exists for that closed week.",
+        404
+      );
+    }
+
+    const rewardUsd = toNumber(weekly.reward_usd);
+    const requiredUnits = usdToUsdcUnits(rewardUsd);
+    if (requiredUnits <= 0n) {
+      throw new PartnerProgramError("This closed week has no reward to pay.", 400);
+    }
+
+    // (1) Week-level idempotency: already paid is a no-op for the same tx hash.
+    const { data: existingData, error: existingError } = await postgresDb
+      .from("partner_reward_distributions")
+      .select("*")
+      .eq("partner_member_id", member.id)
+      .eq("week_start_utc", weekStartUtc)
+      .maybeSingle();
+
+    if (existingError) {
+      throw new Error(`Load partner distribution: ${existingError.message}`);
+    }
+
+    const existing = (existingData as DistributionRow | null) ?? null;
+    if (existing?.paid_at) {
+      if ((existing.payout_tx_hash || "").toLowerCase() === payoutTxHash) {
+        return {
+          success: true,
+          weekStartUtc,
+          paidAt: existing.paid_at,
+          payoutTxHash,
+          payoutUsdcAmount: toNumber(existing.payout_usdc_amount),
+          alreadyPaid: true,
+        } as const;
+      }
+
+      throw new PartnerProgramError(
+        "This week is already marked paid with a different tx hash.",
+        409
+      );
+    }
+
+    // (2) Tx-hash reuse guard: one payment can't settle two different rows.
+    const { data: reuseData, error: reuseError } = await postgresDb
+      .from("partner_reward_distributions")
+      .select("partner_member_id, week_start_utc")
+      .eq("payout_tx_hash", payoutTxHash);
+
+    if (reuseError) {
+      throw new Error(`Check payout tx reuse: ${reuseError.message}`);
+    }
+
+    const reusedElsewhere = ((reuseData ?? []) as Array<{
+      partner_member_id: number | string;
+      week_start_utc: string | Date;
+    }>).some(
+      (row) =>
+        !(
+          Number(row.partner_member_id) === Number(member.id) &&
+          normalizeDateOnlyValue(row.week_start_utc) === weekStartUtc
+        )
+    );
+
+    if (reusedElsewhere) {
+      throw new PartnerProgramError(
+        "This payout tx hash was already used for another payout.",
+        409
+      );
+    }
+
+    // (3) Prove the money actually moved before recording anything.
+    await this.verifyUsdcPayment({
+      payoutTxHash: payoutTxHash as Hex,
+      recipient: normalizedAddress,
+      requiredUnits,
+    });
+
+    const referralCounts = await this.loadReferralCounts([Number(member.id)]);
+    const referredUsersTotal = toNumber(
+      referralCounts.get(Number(member.id))?.referred_users_total
+    );
+    const paidAt = new Date().toISOString();
+    const payoutUsdcAmount = Math.round(rewardUsd * 1_000_000) / 1_000_000;
+
+    const { error: upsertError } = await postgresDb
+      .from("partner_reward_distributions")
+      .upsert(
+        {
+          partner_member_id: Number(member.id),
+          week_start_utc: weekStartUtc,
+          week_end_utc: addUtcDays(weekStartUtc, 7),
+          qualifying_volume_usd: toNumber(weekly.qualifying_volume_usd),
+          protocol_fee_usd: toNumber(weekly.protocol_fee_usd),
+          reward_usd: rewardUsd,
+          min_fee_share_percent:
+            weekly.min_fee_share_percent != null
+              ? toNumber(weekly.min_fee_share_percent)
+              : null,
+          max_fee_share_percent:
+            weekly.max_fee_share_percent != null
+              ? toNumber(weekly.max_fee_share_percent)
+              : null,
+          referred_users_total: referredUsersTotal,
+          traded_users_total: toNumber(weekly.traded_users_total),
+          payout_usdc_amount: payoutUsdcAmount,
+          payout_tx_hash: payoutTxHash,
+          paid_at: paidAt,
+          paid_notes: input.paidNotes?.trim() || null,
+          updated_at: paidAt,
+        },
+        {
+          onConflict: "partner_member_id,week_start_utc",
+        }
+      );
+
+    if (upsertError) {
+      throw new Error(`Settle partner distribution: ${upsertError.message}`);
+    }
+
+    return {
+      success: true,
+      weekStartUtc,
+      paidAt,
+      payoutTxHash,
+      payoutUsdcAmount,
+      alreadyPaid: false,
     } as const;
   }
 }
