@@ -18,7 +18,7 @@ import {
   useWallets,
 } from "@privy-io/react-auth";
 import { useSetActiveWallet } from "@privy-io/wagmi";
-import { useAccount } from "wagmi";
+import { useAccount, useDisconnect } from "wagmi";
 import {
   hasInjectedOkxWallet,
   hasInjectedTokenPocketWallet,
@@ -209,11 +209,12 @@ const WALLET_RECONCILE_ENABLED =
 const WALLET_RECONCILE_RETRY_DELAYS_MS = [0, 150, 300, 600, 1200, 2400];
 
 function PrivyWalletConnectionProvider({ children }: { children: ReactNode }) {
-  const { ready } = usePrivy();
+  const { ready, authenticated, logout } = usePrivy();
   const { wallet } = useActiveWallet();
   const { wallets } = useWallets();
   const { setActiveWallet } = useSetActiveWallet();
   const { address: wagmiAddress, status: wagmiStatus } = useAccount();
+  const { disconnectAsync } = useDisconnect();
   const { connectWallet } = useConnectWallet({
     onSuccess: async ({ wallet: connectedWallet }) => {
       if (connectedWallet.type === "ethereum") {
@@ -281,6 +282,12 @@ function PrivyWalletConnectionProvider({ children }: { children: ReactNode }) {
     return connected[0] ?? null;
   }, [wallets, wallet]);
 
+  // Set while an intentional disconnect is in flight so the reconciliation
+  // effect below doesn't immediately re-promote the wallet we're tearing down
+  // (the previous bug where clicking "Disconnect" did nothing — wagmi dropped,
+  // reconcile saw a still-connected Privy wallet, and rebound it instantly).
+  const disconnectingRef = useRef(false);
+
   const targetAddress = targetWallet?.address?.toLowerCase() ?? null;
   const wagmiBound =
     wagmiStatus === "connected" &&
@@ -290,7 +297,11 @@ function PrivyWalletConnectionProvider({ children }: { children: ReactNode }) {
   // Don't fight wagmi while it is mid-(re)connect; re-evaluate when it settles.
   const wagmiBusy = wagmiStatus === "connecting" || wagmiStatus === "reconnecting";
   const needsReconcile =
-    WALLET_RECONCILE_ENABLED && !!targetAddress && !wagmiBound && !wagmiBusy;
+    WALLET_RECONCILE_ENABLED &&
+    !disconnectingRef.current &&
+    !!targetAddress &&
+    !wagmiBound &&
+    !wagmiBusy;
 
   const targetWalletRef = useRef<ConnectedWallet | null>(targetWallet);
   targetWalletRef.current = targetWallet;
@@ -334,8 +345,25 @@ function PrivyWalletConnectionProvider({ children }: { children: ReactNode }) {
   }, [needsReconcile, targetAddress, setActiveWallet]);
 
   const disconnectWallet = useCallback(async () => {
-    wallet?.disconnect();
-  }, [wallet]);
+    // Block reconciliation for the whole teardown so it can't rebind the wallet.
+    disconnectingRef.current = true;
+    try {
+      // 1) Disconnect every Privy-connected wallet (not just the active one).
+      await Promise.allSettled(
+        (wallets ?? []).map((entry) => entry.disconnect())
+      );
+      // 2) Drop the wagmi connection — this is what the "connected" pill reads
+      //    via useAccount(); without it the UI stays stuck on the address.
+      await disconnectAsync().catch(() => {});
+      // 3) End the Privy session. Login is wallet-only, so logging out is the
+      //    full disconnect and stops reconnectOnMount from restoring the wallet.
+      if (authenticated) {
+        await logout();
+      }
+    } finally {
+      disconnectingRef.current = false;
+    }
+  }, [wallets, disconnectAsync, authenticated, logout]);
 
   const value = useMemo<WalletConnectionContextValue>(
     () => ({
