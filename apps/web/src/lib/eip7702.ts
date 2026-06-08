@@ -68,6 +68,17 @@ export const KNOWN_DELEGATES: Record<string, DelegateRegistryEntry> = {
     wallet: "metamask",
     label: "MetaMask Smart Account",
   },
+  // OKX's actual Base delegate is its SmartWalletEntry — VERIFIED two ways:
+  // (1) read from a live OKX-delegated Base account (eth_getCode → 0xef0100…),
+  // (2) OKX's official okxlabs/okx-smart-wallet-evm repo lists this exact
+  // SmartWalletEntry address as deployed on Base. BaseScan leaves it unlabeled,
+  // which is why scraping Etherscan's mainnet "OKX: EIP-7702 Delegator" label
+  // gave the wrong (mainnet-only) address below.
+  "0xe40ccb2d94975c51bff0c004efdfd9b3a5796fa4": {
+    wallet: "okx",
+    label: "OKX Wallet",
+  },
+  // OKX's mainnet delegator label (kept as OKX; harmless if some accounts use it).
   "0x80296ff8d1ed46f8e3c7992664d13b833504c2bb": {
     wallet: "okx",
     label: "OKX Wallet",
