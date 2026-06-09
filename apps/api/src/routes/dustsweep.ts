@@ -25,6 +25,7 @@ import { pointsEngine } from "../services/pointsEngine";
 import { runtimeCache } from "../utils/runtimeCache";
 import { baseRpcRequest, alchemyRpcRequest, RpcDeterministicError, RpcTransportError } from "../utils/baseRpc";
 import { isMaintenanceBlocking, maintenanceUnavailable } from "../utils/maintenance";
+import { getBaseDustSweepV3Allowlist } from "../config/dustsweepV3Sources";
 
 const dustsweepRoutes = new Hono();
 
@@ -60,6 +61,10 @@ const UNISWAP_V3_SWAP_ROUTER_ADDRESS = (process.env.UNISWAP_V3_SWAP_ROUTER_ADDRE
   "0x2626664c2603336E57B271c5C0b26F421741e481") as Address;
 const UNISWAP_UNIVERSAL_ROUTER_ADDRESS = (process.env.UNISWAP_UNIVERSAL_ROUTER_ADDRESS ||
   "0xfdf682f51fe81aa4898f0ae2163d8a55c127fbc7") as Address;
+// V4-capable Universal Router (handles the V4_SWAP command). This is a DIFFERENT contract from the
+// legacy UR above; Uniswap V4 swaps must target THIS address. Verified live on Base + fork-tested.
+const UNISWAP_V4_UNIVERSAL_ROUTER_ADDRESS = (process.env.UNISWAP_V4_UNIVERSAL_ROUTER_ADDRESS ||
+  "0x6fF5693b99212Da76ad316178A184AB56D299b43") as Address;
 const PANCAKE_V3_SWAP_ROUTER_ADDRESS = (process.env.PANCAKE_V3_SWAP_ROUTER_ADDRESS ||
   "0x1b81D678ffb9C0263b24A97847620C99d213eB14") as Address;
 const UNISWAP_V3_QUOTER_ADDRESS = (process.env.UNISWAP_V3_QUOTER_ADDRESS ||
@@ -213,6 +218,12 @@ function getAllowedV2Targets() {
     BASESWAP_ROUTER_ADDRESS,
   ]);
   for (const address of getAllowedAggregatorAddresses()) targets.add(address);
+  // When V3 is active, always trust the verified V3 target registry (Slipstream, V4 Universal
+  // Router, etc.) so this off-chain gate stays in sync with the on-chain allowlist without
+  // requiring DUST_SWEEP_ALLOWED_TARGETS to be hand-edited for every new DEX.
+  if (isV3Active()) {
+    for (const address of getBaseDustSweepV3Allowlist().targets) targets.add(address.toLowerCase());
+  }
   return targets;
 }
 
@@ -225,6 +236,9 @@ function getAllowedV2Spenders() {
     BASESWAP_ROUTER_ADDRESS,
   ]);
   for (const address of getAllowedAggregatorAddresses()) spenders.add(address);
+  if (isV3Active()) {
+    for (const address of getBaseDustSweepV3Allowlist().spenders) spenders.add(address.toLowerCase());
+  }
   return spenders;
 }
 
@@ -2678,7 +2692,7 @@ function buildV2Route(route: DustSweepRoute, tokenOut: Address, receiver: Addres
     return {
       tokenIn: route.tokenIn,
       amountIn,
-      target: UNISWAP_UNIVERSAL_ROUTER_ADDRESS,
+      target: UNISWAP_V4_UNIVERSAL_ROUTER_ADDRESS,
       spender: PERMIT2_ADDRESS,
       value: 0n,
       data,
