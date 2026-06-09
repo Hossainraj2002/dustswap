@@ -1702,7 +1702,34 @@ export function useDustSweep(): UseDustSweepReturn {
           throw new Error(getPermit2SignatureErrorMessage(signatureError));
         }
 
-        canonicalCalldata = encodeDustSweepV2Calldata(buildTx, signature);
+        if (buildTx.callMode === "sweepV3Permit2") {
+          // V3 permit2: re-build with the signature so the backend encodes the final
+          // sweep() calldata against the real V3 ABI (no client-side V2 encoding).
+          const v3Resp = await fetch("/api/dustsweep/build-tx", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              routes: quote.routes,
+              tokenOut: tokenOut.address,
+              receiver: address,
+              deadline: quote.deadline,
+              permit2Nonce: quote.permit2Nonce,
+              userAddress: address,
+              signature,
+            }),
+          });
+          const v3Payload = await v3Resp.json().catch(() => null);
+          if (!v3Resp.ok || !v3Payload?.calldata) {
+            const message =
+              v3Payload && typeof v3Payload === "object" && "error" in v3Payload
+                ? String((v3Payload as { error?: unknown }).error)
+                : "Failed to finalize V3 sweep transaction";
+            throw new Error(message);
+          }
+          canonicalCalldata = v3Payload.calldata as Hex;
+        } else {
+          canonicalCalldata = encodeDustSweepV2Calldata(buildTx, signature);
+        }
         return canonicalCalldata;
       };
 

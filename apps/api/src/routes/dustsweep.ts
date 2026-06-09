@@ -50,6 +50,12 @@ const DUST_SWEEP_ROUTER_V1_ADDRESS = (process.env.DUST_SWEEP_ROUTER_V1_ADDRESS |
 const DUST_SWEEP_ROUTER_V2_ADDRESS = (process.env.DUST_SWEEP_ROUTER_V2_ADDRESS ||
   process.env.NEXT_PUBLIC_DUST_SWEEP_ROUTER_V2_ADDRESS ||
   "0x0000000000000000000000000000000000000000") as Address;
+// DustSweep V3 (DustSwapSweepRouter). When set, the owned_v2 lane transparently routes through
+// V3 (single-env switch, no V2/V3 fallback): same route shape + allowlist, but V3's sweep() ABI,
+// witness (binds feeBps + recipient) and exact-amount approvals. Leave unset to stay on V2.
+const DUST_SWEEP_ROUTER_V3_ADDRESS = (process.env.DUST_SWEEP_ROUTER_V3_ADDRESS ||
+  process.env.NEXT_PUBLIC_DUST_SWEEP_ROUTER_V3_ADDRESS ||
+  "0x0000000000000000000000000000000000000000") as Address;
 const UNISWAP_V3_SWAP_ROUTER_ADDRESS = (process.env.UNISWAP_V3_SWAP_ROUTER_ADDRESS ||
   "0x2626664c2603336E57B271c5C0b26F421741e481") as Address;
 const UNISWAP_UNIVERSAL_ROUTER_ADDRESS = (process.env.UNISWAP_UNIVERSAL_ROUTER_ADDRESS ||
@@ -66,6 +72,15 @@ const AERODROME_FACTORY_ADDRESS = (process.env.AERODROME_FACTORY_ADDRESS ||
   "0x420DD381b31aEf6683db6B902084cB0FFECe40Da") as Address;
 const BASESWAP_ROUTER_ADDRESS = (process.env.BASESWAP_ROUTER_ADDRESS ||
   "0x327Df1E6de05895d2ab08513aaDD9313Fe505d86") as Address;
+// Aerodrome Slipstream (concentrated liquidity). Uniswap-V3-style but pools are keyed by
+// tickSpacing (int24), not fee. Router + Quoter verified live on Base 2026-06-09 (BaseScan
+// labels + a live WETH->USDC quote). Router is allowlisted on the V3 sweep router.
+const AERODROME_SLIPSTREAM_ROUTER_ADDRESS = (process.env.AERODROME_SLIPSTREAM_ROUTER_ADDRESS ||
+  "0xBE6D8f0d05cC4be24d5167a3eF062215bE6D18a5") as Address;
+const AERODROME_SLIPSTREAM_QUOTER_ADDRESS = (process.env.AERODROME_SLIPSTREAM_QUOTER_ADDRESS ||
+  "0x254cF9E1E6e233aa1AC962CB9B05b2cfeAaE15b0") as Address;
+// Aerodrome CL tick spacings, deepest-liquidity-first. 1/50 = stable/correlated, 100/200/2000 = volatile.
+const AERODROME_SLIPSTREAM_TICK_SPACINGS = [100, 200, 2000, 50, 1] as const;
 const ZEROX_ALLOWANCE_HOLDER = (process.env.ZEROX_ALLOWANCE_HOLDER ||
   "0x0000000000001fF3684f28c67538d4D072C22734") as Address;
 const UNISWAP_V3_FACTORY_ADDRESS = (process.env.UNISWAP_V3_FACTORY_ADDRESS ||
@@ -137,6 +152,7 @@ const DEX = {
   PANCAKESWAP_V3: 3,
   BASESWAP: 4,
   GENERIC: 5,
+  AERODROME_SLIPSTREAM: 6,
 } as const;
 
 type DustSweepExecutionLane = "owned_v1" | "owned_v2" | "basket_aggregator";
@@ -152,9 +168,26 @@ function getRouteMaxCap(executionLane: DustSweepExecutionLane) {
   return executionLane === "owned_v1" ? 10 : 50;
 }
 
+function isV3Active() {
+  return (
+    isAddress(DUST_SWEEP_ROUTER_V3_ADDRESS) &&
+    DUST_SWEEP_ROUTER_V3_ADDRESS.toLowerCase() !== ZERO_ADDRESS.toLowerCase()
+  );
+}
+
 function getRouterAddressForLane(executionLane: DustSweepExecutionLane) {
-  if (executionLane === "owned_v2") return DUST_SWEEP_ROUTER_V2_ADDRESS;
+  if (executionLane === "owned_v2") {
+    return isV3Active() ? DUST_SWEEP_ROUTER_V3_ADDRESS : DUST_SWEEP_ROUTER_V2_ADDRESS;
+  }
   return DUST_SWEEP_ROUTER_V1_ADDRESS;
+}
+
+// Effective per-sweep fee for V3, passed as an EXPLICIT feeBpsOverride (never the sentinel) and
+// bound into the V3 witness, so the fee the user signs == the fee charged (audit L-1). Capped to
+// the contract's MAX_FEE_BPS so a misconfigured env can never make sweep() revert with FeeTooHigh.
+const V3_MAX_FEE_BPS = 300;
+function getV3FeeBps() {
+  return Math.max(0, Math.min(V3_MAX_FEE_BPS, getFeeBps()));
 }
 
 function parseAddressSet(value: string | undefined, fallback: Address[] = []) {
@@ -497,6 +530,68 @@ const DUST_SWEEP_ROUTER_V2_ABI = [
   },
 ] as const;
 
+// DustSweep V3 (DustSwapSweepRouter). Single sweep() entrypoint with a mode flag; routes use the
+// identical tuple shape as V2, plus a SweepParams struct (recipient + per-sweep feeBpsOverride).
+// allowedTargets/allowedSpenders share V2's selectors, so the V2 allowlist reader is reused.
+const DUST_SWEEP_ROUTER_V3_ABI = [
+  {
+    name: "sweep",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "mode", type: "uint8" },
+      {
+        name: "routes",
+        type: "tuple[]",
+        components: [
+          { name: "tokenIn", type: "address" },
+          { name: "amountIn", type: "uint256" },
+          { name: "target", type: "address" },
+          { name: "spender", type: "address" },
+          { name: "value", type: "uint256" },
+          { name: "data", type: "bytes" },
+        ],
+      },
+      {
+        name: "params",
+        type: "tuple",
+        components: [
+          { name: "outputToken", type: "address" },
+          { name: "recipient", type: "address" },
+          { name: "minAmountOut", type: "uint256" },
+          { name: "deadline", type: "uint256" },
+          { name: "feeBpsOverride", type: "uint16" },
+        ],
+      },
+      {
+        name: "permit",
+        type: "tuple",
+        components: [
+          {
+            name: "permitted",
+            type: "tuple[]",
+            components: [
+              { name: "token", type: "address" },
+              { name: "amount", type: "uint256" },
+            ],
+          },
+          { name: "nonce", type: "uint256" },
+          { name: "deadline", type: "uint256" },
+        ],
+      },
+      { name: "signature", type: "bytes" },
+    ],
+    outputs: [
+      { name: "grossAmountOut", type: "uint256" },
+      { name: "feeAmount", type: "uint256" },
+      { name: "netAmountOut", type: "uint256" },
+    ],
+  },
+] as const;
+
+// V3 SweepMode enum (matches the contract).
+const V3_SWEEP_MODE = { Permit2Signature: 0, Allowance: 1 } as const;
+
 const SWAP_ROUTER_02_ABI = [
   {
     name: "exactInputSingle",
@@ -652,6 +747,61 @@ const V3_DEX_DATA_PARAMETERS = [
 const V4_DEX_DATA_PARAMETERS = [
   { type: "uint24" },
   { type: "int24" },
+] as const;
+
+// Aerodrome Slipstream: a single int24 tickSpacing identifies the CL pool.
+const SLIPSTREAM_DEX_DATA_PARAMETERS = [{ type: "int24" }] as const;
+
+const SLIPSTREAM_QUOTER_ABI = [
+  {
+    name: "quoteExactInputSingle",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [
+      {
+        name: "params",
+        type: "tuple",
+        components: [
+          { name: "tokenIn", type: "address" },
+          { name: "tokenOut", type: "address" },
+          { name: "amountIn", type: "uint256" },
+          { name: "tickSpacing", type: "int24" },
+          { name: "sqrtPriceLimitX96", type: "uint160" },
+        ],
+      },
+    ],
+    outputs: [
+      { name: "amountOut", type: "uint256" },
+      { name: "sqrtPriceX96After", type: "uint160" },
+      { name: "initializedTicksCrossed", type: "uint32" },
+      { name: "gasEstimate", type: "uint256" },
+    ],
+  },
+] as const;
+
+const SLIPSTREAM_SWAP_ROUTER_ABI = [
+  {
+    name: "exactInputSingle",
+    type: "function",
+    stateMutability: "payable",
+    inputs: [
+      {
+        name: "params",
+        type: "tuple",
+        components: [
+          { name: "tokenIn", type: "address" },
+          { name: "tokenOut", type: "address" },
+          { name: "tickSpacing", type: "int24" },
+          { name: "recipient", type: "address" },
+          { name: "deadline", type: "uint256" },
+          { name: "amountIn", type: "uint256" },
+          { name: "amountOutMinimum", type: "uint256" },
+          { name: "sqrtPriceLimitX96", type: "uint160" },
+        ],
+      },
+    ],
+    outputs: [{ name: "amountOut", type: "uint256" }],
+  },
 ] as const;
 
 const AERODROME_DEX_DATA_PARAMETERS = [
@@ -1805,6 +1955,8 @@ async function get0xQuoteCandidate(
 const UNISWAP_V4_QUOTER_ADDRESS = (process.env.UNISWAP_V4_QUOTER_ADDRESS ||
   "0x0d5e0f971ed27fbff6c2837bf31316121532048d") as Address;
 
+// Deployed Base V4 Quoter (0x0d5e0f97…) interface, confirmed live 2026-06-09: no sqrtPriceLimitX96
+// in params, returns (uint256 amountOut, uint256 gasEstimate). The older deltaAmounts[] ABI reverts.
 const V4_QUOTER_ABI = [
   {
     inputs: [
@@ -1823,7 +1975,6 @@ const V4_QUOTER_ABI = [
           },
           { name: "zeroForOne", type: "bool" },
           { name: "exactAmount", type: "uint128" },
-          { name: "sqrtPriceLimitX96", type: "uint160" },
           { name: "hookData", type: "bytes" },
         ],
         name: "params",
@@ -1832,9 +1983,8 @@ const V4_QUOTER_ABI = [
     ],
     name: "quoteExactInputSingle",
     outputs: [
-      { name: "deltaAmounts", type: "int128[]" },
-      { name: "sqrtPriceX96After", type: "uint160" },
-      { name: "initializedTicksCrossed", type: "uint32" },
+      { name: "amountOut", type: "uint256" },
+      { name: "gasEstimate", type: "uint256" },
     ],
     stateMutability: "nonpayable",
     type: "function",
@@ -1879,7 +2029,6 @@ async function tryQuoteV4Single(
       exactAmount: amountIn <= BigInt("170141183460469231731687303715884105727")
         ? amountIn
         : BigInt("170141183460469231731687303715884105727"), // uint128 max
-      sqrtPriceLimitX96: 0n,
       hookData: "0x" as Hex,
     }],
   });
@@ -1892,12 +2041,7 @@ async function tryQuoteV4Single(
       functionName: "quoteExactInputSingle",
       data: result,
     });
-    // deltaAmounts: [amount0, amount1] — the output is the negative delta
-    const deltas = decoded[0];
-    // If zeroForOne, output is deltaAmounts[1] (negative = received)
-    // If !zeroForOne, output is deltaAmounts[0] (negative = received)
-    const outputDelta = zeroForOne ? deltas[1] : deltas[0];
-    const amountOut = outputDelta < 0n ? -outputDelta : 0n;
+    const amountOut = decoded[0]; // (amountOut, gasEstimate)
     return amountOut > 0n ? amountOut : null;
   } catch {
     return null;
@@ -1935,6 +2079,56 @@ async function getV4QuoteCandidates(
   return candidates;
 }
 
+async function tryQuoteSlipstreamSingle(
+  tokenIn: Address,
+  tokenOut: Address,
+  amountIn: bigint,
+  tickSpacing: number,
+) {
+  const data = encodeFunctionData({
+    abi: SLIPSTREAM_QUOTER_ABI,
+    functionName: "quoteExactInputSingle",
+    args: [{ tokenIn, tokenOut, amountIn, tickSpacing, sqrtPriceLimitX96: 0n }],
+  });
+  const result = await callContract(AERODROME_SLIPSTREAM_QUOTER_ADDRESS, data);
+  if (!result || result === "0x") return null;
+  const decoded = decodeFunctionResult({
+    abi: SLIPSTREAM_QUOTER_ABI,
+    functionName: "quoteExactInputSingle",
+    data: result,
+  });
+  const amountOut = decoded[0];
+  return amountOut > 0n ? amountOut : null;
+}
+
+async function getSlipstreamQuoteCandidates(
+  tokenIn: Address,
+  tokenOut: Address,
+  amountIn: bigint,
+): Promise<QuoteCandidate[]> {
+  const candidates: QuoteCandidate[] = [];
+  for (const tickSpacing of AERODROME_SLIPSTREAM_TICK_SPACINGS) {
+    try {
+      const amountOut = await tryQuoteSlipstreamSingle(tokenIn, tokenOut, amountIn, tickSpacing);
+      if (!amountOut) continue;
+      candidates.push({
+        tokenIn,
+        amountIn: amountIn.toString(),
+        amountOutMin: "0",
+        estimatedOut: amountOut.toString(),
+        dex: DEX.AERODROME_SLIPSTREAM,
+        dexName: `Aerodrome Slipstream (ts ${tickSpacing})`,
+        dexData: encodeAbiParameters(SLIPSTREAM_DEX_DATA_PARAMETERS, [tickSpacing]),
+        poolFee: tickSpacing,
+        amountOut,
+      });
+    } catch {
+      // Try the next tick spacing.
+    }
+  }
+  return candidates;
+}
+
 async function getBestQuote(
   tokenIn: Address,
   tokenOut: Address,
@@ -1964,6 +2158,7 @@ async function getBestQuote(
       }),
       getV4QuoteCandidates(tokenIn, tokenOut, amountIn),
       getAerodromeQuoteCandidates(tokenIn, tokenOut, amountIn),
+      getSlipstreamQuoteCandidates(tokenIn, tokenOut, amountIn),
       getBaseSwapQuoteCandidates(tokenIn, tokenOut, amountIn),
       get0xQuoteCandidate(tokenIn, tokenOut, amountIn, slippageBps).then((quote) =>
         quote ? [quote] : [],
@@ -2092,6 +2287,104 @@ function buildPermit2WitnessTypedData(args: {
       witness: args.witness,
     },
   };
+}
+
+// ── DustSweep V3 witness + calldata ──
+// V3's witness binds `recipient` (not `receiver`) and the effective `feeBps`, so the user signs
+// the exact fee. routeHash + the SweepRoute typehash are identical to V2, so hashV2Routes is reused.
+type DustSweepV3Witness = {
+  routeHash: Hex;
+  outputToken: Address;
+  recipient: Address;
+  minAmountOut: string;
+  deadline: string;
+  feeBps: number;
+};
+
+function buildV3WitnessTypedData(args: {
+  routes: DustSweepV2Route[];
+  spender: Address;
+  nonce: string;
+  deadline: number;
+  witness: DustSweepV3Witness;
+}) {
+  return {
+    domain: {
+      name: "Permit2",
+      chainId: BASE_CHAIN_ID,
+      verifyingContract: PERMIT2_ADDRESS,
+    },
+    types: {
+      TokenPermissions: [
+        { name: "token", type: "address" },
+        { name: "amount", type: "uint256" },
+      ],
+      DustSweepWitness: [
+        { name: "routeHash", type: "bytes32" },
+        { name: "outputToken", type: "address" },
+        { name: "recipient", type: "address" },
+        { name: "minAmountOut", type: "uint256" },
+        { name: "deadline", type: "uint256" },
+        { name: "feeBps", type: "uint16" },
+      ],
+      PermitBatchWitnessTransferFrom: [
+        { name: "permitted", type: "TokenPermissions[]" },
+        { name: "spender", type: "address" },
+        { name: "nonce", type: "uint256" },
+        { name: "deadline", type: "uint256" },
+        { name: "witness", type: "DustSweepWitness" },
+      ],
+    },
+    primaryType: "PermitBatchWitnessTransferFrom",
+    message: {
+      permitted: args.routes.map((route) => ({
+        token: route.tokenIn,
+        amount: route.amountIn.toString(),
+      })),
+      spender: args.spender,
+      nonce: args.nonce,
+      deadline: String(args.deadline),
+      witness: args.witness,
+    },
+  };
+}
+
+function encodeV3SweepCalldata(args: {
+  mode: number;
+  v2Routes: DustSweepV2Route[];
+  outputToken: Address;
+  recipient: Address;
+  minAmountOut: bigint;
+  deadline: number;
+  feeBpsOverride: number;
+  nonce?: string;
+  signature?: Hex;
+}) {
+  const permit = {
+    permitted:
+      args.mode === V3_SWEEP_MODE.Permit2Signature
+        ? args.v2Routes.map((route) => ({ token: route.tokenIn, amount: route.amountIn }))
+        : [],
+    nonce: BigInt(args.nonce ?? "0"),
+    deadline: BigInt(args.deadline),
+  };
+  return encodeFunctionData({
+    abi: DUST_SWEEP_ROUTER_V3_ABI,
+    functionName: "sweep",
+    args: [
+      args.mode,
+      args.v2Routes,
+      {
+        outputToken: args.outputToken,
+        recipient: args.recipient,
+        minAmountOut: args.minAmountOut,
+        deadline: BigInt(args.deadline),
+        feeBpsOverride: args.feeBpsOverride,
+      },
+      permit,
+      (args.signature ?? "0x") as Hex,
+    ],
+  });
 }
 
 function decodeV3DexData(dexData: Hex) {
@@ -2259,7 +2552,6 @@ function buildUniswapV4UniversalRouterCalldata(args: {
           { name: "zeroForOne", type: "bool" },
           { name: "amountIn", type: "uint128" },
           { name: "amountOutMinimum", type: "uint128" },
-          { name: "minHopPriceX36", type: "uint256" },
           { name: "hookData", type: "bytes" },
         ],
       },
@@ -2270,7 +2562,6 @@ function buildUniswapV4UniversalRouterCalldata(args: {
         zeroForOne: tokenInIsCurrency0,
         amountIn: args.amountIn,
         amountOutMinimum: args.amountOutMin,
-        minHopPriceX36: 0n,
         hookData: "0x" as Hex,
       },
     ],
@@ -2425,6 +2716,35 @@ function buildV2Route(route: DustSweepRoute, tokenOut: Address, receiver: Addres
       amountIn,
       target: BASESWAP_ROUTER_ADDRESS,
       spender: BASESWAP_ROUTER_ADDRESS,
+      value: 0n,
+      data,
+    };
+  }
+
+  if (route.dex === DEX.AERODROME_SLIPSTREAM) {
+    const [tickSpacing] = decodeAbiParameters(SLIPSTREAM_DEX_DATA_PARAMETERS, route.dexData as Hex);
+    const data = encodeFunctionData({
+      abi: SLIPSTREAM_SWAP_ROUTER_ABI,
+      functionName: "exactInputSingle",
+      args: [
+        {
+          tokenIn: route.tokenIn,
+          tokenOut,
+          tickSpacing,
+          recipient: receiver,
+          deadline: BigInt(deadline),
+          amountIn,
+          amountOutMinimum: amountOutMin,
+          sqrtPriceLimitX96: 0n,
+        },
+      ],
+    });
+
+    return {
+      tokenIn: route.tokenIn,
+      amountIn,
+      target: AERODROME_SLIPSTREAM_ROUTER_ADDRESS,
+      spender: AERODROME_SLIPSTREAM_ROUTER_ADDRESS,
       value: 0n,
       data,
     };
@@ -4895,13 +5215,24 @@ dustsweepRoutes.post("/build-tx", async (c) => {
   const value = v2Routes.reduce((sum, route) => sum + route.value, 0n);
   if (v2AuthMode !== "permit2") {
     const routerApprovals = await findMissingTokenApprovals(userAddress, routes, routerAddress);
-    const calldata = encodeV2AllowanceSweepCalldata({
-      v2Routes,
-      tokenOut: buildTokenOut,
-      receiver: buildReceiver,
-      minAmountOut,
-      deadline: body.deadline,
-    });
+    const v3Active = isV3Active();
+    const calldata = v3Active
+      ? encodeV3SweepCalldata({
+          mode: V3_SWEEP_MODE.Allowance,
+          v2Routes,
+          outputToken: buildTokenOut,
+          recipient: buildReceiver,
+          minAmountOut,
+          deadline: body.deadline!,
+          feeBpsOverride: getV3FeeBps(),
+        })
+      : encodeV2AllowanceSweepCalldata({
+          v2Routes,
+          tokenOut: buildTokenOut,
+          receiver: buildReceiver,
+          minAmountOut,
+          deadline: body.deadline,
+        });
 
     return c.json({
       requiresSignature: false,
@@ -4921,14 +5252,83 @@ dustsweepRoutes.post("/build-tx", async (c) => {
       })),
       minAmountOut: minAmountOut.toString(),
       calldata,
-      value: value.toString(),
-      callMode: "sweepWithAllowance",
+      // V3's sweep() is non-payable (ERC-20 inputs only); V2 summed route.value (always 0 here).
+      value: v3Active ? "0" : value.toString(),
+      callMode: v3Active ? "sweepV3Allowance" : "sweepWithAllowance",
       executionLane,
     });
   }
 
   const permit2Approvals = await findMissingPermit2Approvals(userAddress, routes);
   const routeHash = hashV2Routes(v2Routes);
+  const permit2Signature = body.signature && isHex(body.signature) ? (body.signature as Hex) : "0x";
+
+  if (isV3Active()) {
+    const feeBpsOverride = getV3FeeBps();
+    const v3Witness: DustSweepV3Witness = {
+      routeHash,
+      outputToken: buildTokenOut,
+      recipient: buildReceiver,
+      minAmountOut: minAmountOut.toString(),
+      deadline: String(body.deadline),
+      feeBps: feeBpsOverride,
+    };
+    const v3TypedData = buildV3WitnessTypedData({
+      routes: v2Routes,
+      spender: routerAddress,
+      nonce: String(body.permit2Nonce),
+      deadline: body.deadline!,
+      witness: v3Witness,
+    });
+    const v3Calldata = encodeV3SweepCalldata({
+      mode: V3_SWEEP_MODE.Permit2Signature,
+      v2Routes,
+      outputToken: buildTokenOut,
+      recipient: buildReceiver,
+      minAmountOut,
+      deadline: body.deadline!,
+      feeBpsOverride,
+      nonce: String(body.permit2Nonce),
+      signature: permit2Signature,
+    });
+
+    return c.json({
+      requiresSignature: true,
+      signatureMode: "permit2_witness",
+      approvalSpender: PERMIT2_ADDRESS,
+      approvalRequirements: permit2Approvals,
+      routerAddress,
+      contractAddress: routerAddress,
+      routeMaxCap,
+      typedData: v3TypedData,
+      permit2: v3TypedData,
+      permit: {
+        permitted: v2Routes.map((route) => ({
+          token: route.tokenIn,
+          amount: route.amountIn.toString(),
+        })),
+        nonce: String(body.permit2Nonce),
+        deadline: String(body.deadline),
+      },
+      witness: v3Witness,
+      routes: v2Routes.map((route) => ({
+        tokenIn: route.tokenIn,
+        amountIn: route.amountIn.toString(),
+        target: route.target,
+        spender: route.spender,
+        value: route.value.toString(),
+        data: route.data,
+      })),
+      minAmountOut: minAmountOut.toString(),
+      feeBpsOverride,
+      sweepMode: V3_SWEEP_MODE.Permit2Signature,
+      calldata: v3Calldata,
+      value: "0",
+      callMode: "sweepV3Permit2",
+      executionLane,
+    });
+  }
+
   const witness: Permit2Witness = {
     routeHash,
     outputToken: buildTokenOut,

@@ -329,3 +329,23 @@ export function getSwapOwnFeeBps() {
   const parsed = Number(process.env.DUSTSWAP_AGGREGATOR_FEE_BPS || "25");
   return Number.isFinite(parsed) && parsed >= 0 ? Math.min(300, Math.floor(parsed)) : 25;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DustSweep V3 (DustSwapSweepRouter) — additive Base DEX source registry.
+//
+// This re-export extends the swapown source surface with the new, deeper-liquidity
+// Base targets that DustSweep V3 can sweep through (Uniswap V3+V4 Universal Router,
+// Aerodrome classic + Slipstream + Universal Router, PancakeSwap / AlienBase /
+// DackieSwap SmartRouters, BaseSwap). It is purely additive: it does not change any
+// existing /swapown source, quoting, or readiness behavior above. The canonical data
+// (addresses, spender model, calldata style) lives in ./dustsweepV3Sources.
+// ─────────────────────────────────────────────────────────────────────────────
+export {
+  BASE_DUSTSWEEP_V3_TARGETS,
+  getActiveBaseDustSweepV3Targets,
+  getBaseDustSweepV3Allowlist,
+  getDustSweepV3RouterAddress,
+  type DustSweepV3Target,
+  type DustSweepV3SpenderModel,
+  type DustSweepV3CalldataStyle,
+} from "./dustsweepV3Sources";
