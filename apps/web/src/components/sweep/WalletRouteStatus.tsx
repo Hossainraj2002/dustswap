@@ -8,6 +8,7 @@ import {
   type SweepRouteKind,
 } from "@/types/dustsweep";
 import { isSameEip7702WalletFamily } from "@/lib/eip7702";
+import { isDustSweepApprovalBatchingEnabled } from "@/lib/dustsweep-feature-flags";
 
 function cx(...parts: Array<string | false | null | undefined>) {
   return parts.filter(Boolean).join(" ");
@@ -121,6 +122,9 @@ function getVisual(args: {
   const walletName = args.walletName || "This wallet";
   const walletKey = args.walletKey || "unknown";
   const delegation = args.delegation;
+  const showApprovalSafeMode =
+    args.walletKey === "metamask" &&
+    !isDustSweepApprovalBatchingEnabled(args.walletKey);
   const isOwnKnownDelegate =
     delegation?.state === "known" &&
     isSameEip7702WalletFamily(delegation.wallet, walletKey);
@@ -133,6 +137,21 @@ function getVisual(args: {
   ];
 
   if (args.routeKind === "batch") {
+    if (showApprovalSafeMode) {
+      return {
+        icon: <BoltIcon />,
+        title: "MetaMask approval-safe mode",
+        subtext: "Approve tokens one by one; DustSweep sends the sweep as one transaction.",
+        why: "DustSweep is configured to avoid batching ERC20 approvals in MetaMask so MetaMask's security review is easier to understand. Other supported wallets can still use approval batching.",
+        statusItems: [...statusItems, "Approval batch off"],
+        container:
+          "border-emerald-200 bg-emerald-50 dark:border-emerald-400/20 dark:bg-emerald-400/10",
+        text: "text-emerald-700 dark:text-emerald-300",
+        whyButton:
+          "text-emerald-700/80 hover:text-emerald-800 dark:text-emerald-300/80 dark:hover:text-emerald-200",
+      };
+    }
+
     const title = isOwnKnownDelegate
       ? `${delegation.label} one-click ready`
       : noDelegate && args.atomicStatus === "ready"

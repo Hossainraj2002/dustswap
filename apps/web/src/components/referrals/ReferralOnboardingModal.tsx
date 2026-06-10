@@ -1,9 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { emitDataInvalidation } from "@/lib/clientEvents";
 import { applyReferralCode, clearPointsSummaryCache, previewReferralCode } from "@/lib/points";
 import { normalizeReferralCode, storePendingReferralCode } from "@/lib/referrals";
-import { emitDataInvalidation } from "@/lib/clientEvents";
 
 interface ReferralOnboardingModalProps {
   address: string;
@@ -31,25 +31,31 @@ export function ReferralOnboardingModal({
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // autofocus input after mount animation
   useEffect(() => {
-    const t = window.setTimeout(() => inputRef.current?.focus(), 350);
+    const t = window.setTimeout(() => inputRef.current?.focus(), 250);
     return () => window.clearTimeout(t);
   }, []);
 
-  // debounced preview validation
+  useEffect(() => {
+    const handleGlobalKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onDismiss();
+      }
+    };
+
+    window.addEventListener("keydown", handleGlobalKeyDown);
+    return () => window.removeEventListener("keydown", handleGlobalKeyDown);
+  }, [onDismiss]);
+
   useEffect(() => {
     if (debounceRef.current) {
       clearTimeout(debounceRef.current);
     }
 
     const trimmed = code.trim();
-    if (!trimmed) {
+    if (!trimmed || trimmed.length < 4) {
       setValidation({ status: "idle" });
-      return;
-    }
-
-    if (trimmed.length < 4) {
       return;
     }
 
@@ -58,11 +64,11 @@ export function ReferralOnboardingModal({
     debounceRef.current = setTimeout(async () => {
       try {
         const result = await previewReferralCode(address, trimmed);
-        if (result.valid) {
-          setValidation({ status: "valid", message: result.message || "Valid code!" });
-        } else {
-          setValidation({ status: "invalid", message: result.message || "Invalid code." });
-        }
+        setValidation(
+          result.valid
+            ? { status: "valid", message: result.message || "Valid code!" }
+            : { status: "invalid", message: result.message || "Invalid code." }
+        );
       } catch {
         setValidation({ status: "idle" });
       }
@@ -119,7 +125,6 @@ export function ReferralOnboardingModal({
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter") void handleApply();
-    if (e.key === "Escape") onDismiss();
   };
 
   const trimmedCode = code.trim();
@@ -127,187 +132,203 @@ export function ReferralOnboardingModal({
 
   return (
     <div
-      className="fixed inset-0 z-[80] flex items-end justify-center sm:items-center px-4 pb-8 sm:pb-0"
-      style={{ background: "rgba(15,23,42,0.38)" }}
+      className="fixed inset-0 z-[90] flex items-center justify-center bg-slate-950/45 px-4 py-[calc(1rem+env(safe-area-inset-top))] backdrop-blur-sm dark:bg-black/65"
       onClick={(e) => {
         if (e.target === e.currentTarget) onDismiss();
       }}
     >
-      {/* backdrop blur */}
-      <div className="absolute inset-0 backdrop-blur-[3px]" aria-hidden="true" />
-
-      <div
-        className="relative w-full max-w-[360px] overflow-hidden rounded-[32px] border border-white/80 shadow-[0_32px_80px_rgba(15,23,42,0.26),inset_0_1px_0_rgba(255,255,255,0.92)]"
+      <section
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="referral-onboarding-title"
+        className="relative flex min-h-0 overflow-hidden rounded-[20px] border shadow-[0_24px_70px_rgba(15,23,42,0.24)] dark:shadow-[0_28px_86px_rgba(0,0,0,0.5)]"
         style={{
-          background:
-            "linear-gradient(180deg, rgba(255,255,255,0.98) 0%, rgba(239,246,255,0.97) 100%)",
-          animation: "referral-modal-in 0.28s cubic-bezier(0.34,1.56,0.64,1) both",
+          width: "min(6cm, calc(100vw - 2rem))",
+          maxHeight:
+            "calc(100dvh - 2rem - env(safe-area-inset-top) - env(safe-area-inset-bottom))",
+          background: "var(--ds-bg-elevated)",
+          borderColor: "var(--ds-border-soft)",
+          color: "var(--ds-text-primary)",
+          animation: "referral-modal-in 0.22s ease-out both",
         }}
       >
-        {/* top accent bar */}
-        <div
-          className="h-[3px] w-full"
-          style={{
-            background: "linear-gradient(90deg, #0ea5e9, #6366f1, #22c55e)",
-          }}
-        />
+        <div className="flex min-h-0 w-full flex-col">
+          <div className="h-[3px] bg-[linear-gradient(90deg,#0ea5e9,#2563eb,#22c55e)]" />
 
-        <div className="px-6 pt-5 pb-6">
-          {/* eyebrow */}
-          <p className="text-center text-[10px] font-black uppercase tracking-[0.3em] text-sky-600">
-            Referral Bonus
-          </p>
+          <button
+            type="button"
+            aria-label="Close referral bonus"
+            onClick={onDismiss}
+            className="absolute right-2 top-2 z-10 flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 bg-white/90 text-xl leading-none text-slate-500 shadow-sm transition hover:border-sky-200 hover:bg-sky-50 hover:text-slate-900 dark:border-white/10 dark:bg-white/[0.08] dark:text-slate-300 dark:hover:bg-white/[0.12] dark:hover:text-white"
+          >
+            <span aria-hidden="true">&times;</span>
+          </button>
 
-          {/* headline */}
-          <h2 className="mt-2 text-center text-[22px] font-black tracking-[-0.04em] text-slate-950">
-            Have a referral code?
-          </h2>
+          <div className="min-h-0 overflow-y-auto px-4 pb-4 pt-4">
+            <div className="pr-10">
+              <p className="text-[9px] font-black uppercase tracking-[0.24em] text-sky-600 dark:text-sky-300">
+                Referral Bonus
+              </p>
+              <h2
+                id="referral-onboarding-title"
+                className="mt-1 text-base font-black tracking-tight text-slate-950 dark:text-white"
+              >
+                Add invite code
+              </h2>
+            </div>
 
-          {/* reward pill */}
-          <div className="mt-3 flex justify-center">
-            <div className="flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-4 py-1.5">
-              <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
-              <p className="text-[11px] font-black tracking-[0.04em] text-emerald-700">
-                +500 PP for you &amp; your referrer
+            <div className="mt-3 rounded-[14px] border border-emerald-200 bg-emerald-50/90 px-3 py-2 dark:border-emerald-400/20 dark:bg-emerald-400/10">
+              <p className="text-[11px] font-black leading-4 text-emerald-700 dark:text-emerald-300">
+                +500 PP for both accounts
+              </p>
+              <p className="mt-0.5 text-[11px] leading-4 text-slate-500 dark:text-slate-300">
+                Enter the referral code from your inviter.
               </p>
             </div>
-          </div>
 
-          {/* subtext */}
-          <p className="mt-3 text-center text-[12.5px] leading-[1.6] text-slate-500">
-            Enter a valid referral code to unlock{" "}
-            <span className="font-bold text-slate-700">500 PP</span>.{" "}
-            Both you and the person who referred you receive the reward.
-          </p>
-
-          {/* success state */}
-          {applySuccess ? (
-            <div className="mt-5 flex flex-col items-center gap-2">
-              <div className="flex h-14 w-14 items-center justify-center rounded-full border border-emerald-200 bg-emerald-50">
-                <svg className="h-7 w-7 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            {applySuccess ? (
+              <div className="mt-4 rounded-[14px] border border-emerald-200 bg-emerald-50 px-3 py-3 text-center dark:border-emerald-400/20 dark:bg-emerald-400/10">
+                <svg
+                  className="mx-auto h-7 w-7 text-emerald-500 dark:text-emerald-300"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                  aria-hidden="true"
+                >
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
                 </svg>
-              </div>
-              <p className="text-sm font-black text-emerald-700">Referral applied! +500 PP incoming.</p>
-            </div>
-          ) : (
-            <>
-              {/* input */}
-              <div className="mt-5">
-                <p className="mb-1.5 text-[10px] font-black uppercase tracking-[0.26em] text-slate-400">
-                  Referral Code
+                <p className="mt-2 text-xs font-black text-emerald-700 dark:text-emerald-300">
+                  Referral applied. +500 PP incoming.
                 </p>
-                <div className="relative">
-                  <input
-                    ref={inputRef}
-                    type="text"
-                    value={code}
-                    onChange={(e) => {
-                      setCode(e.target.value.toUpperCase());
-                      setApplyError(null);
-                      setApplyInfo(null);
-                    }}
-                    onKeyDown={handleKeyDown}
-                    placeholder="e.g. DUST-XXXXX"
-                    maxLength={32}
-                    disabled={isApplying}
-                    className={`w-full rounded-[16px] border px-4 py-3 font-mono text-sm font-bold tracking-[0.06em] text-slate-800 outline-none transition-all placeholder:font-normal placeholder:tracking-normal placeholder:text-slate-300 ${
-                      validation.status === "valid"
-                        ? "border-emerald-300 bg-emerald-50/60 focus:border-emerald-400 focus:ring-2 focus:ring-emerald-200"
-                        : validation.status === "invalid"
-                          ? "border-rose-300 bg-rose-50/60 focus:border-rose-400 focus:ring-2 focus:ring-rose-200"
-                          : "border-slate-200 bg-white focus:border-sky-300 focus:ring-2 focus:ring-sky-100"
-                    }`}
-                  />
-                  {/* validation icon */}
-                  {validation.status === "validating" && (
-                    <div className="absolute right-3.5 top-1/2 -translate-y-1/2">
-                      <div className="h-4 w-4 animate-spin rounded-full border-2 border-slate-200 border-t-sky-500" />
-                    </div>
-                  )}
-                  {validation.status === "valid" && (
-                    <div className="absolute right-3.5 top-1/2 -translate-y-1/2">
-                      <svg className="h-4 w-4 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              </div>
+            ) : (
+              <>
+                <div className="mt-4">
+                  <label
+                    htmlFor="referral-code"
+                    className="mb-1.5 block text-[9px] font-black uppercase tracking-[0.2em] text-slate-400 dark:text-slate-500"
+                  >
+                    Referral Code
+                  </label>
+                  <div className="relative">
+                    <input
+                      id="referral-code"
+                      ref={inputRef}
+                      type="text"
+                      value={code}
+                      onChange={(e) => {
+                        setCode(e.target.value.toUpperCase());
+                        setApplyError(null);
+                        setApplyInfo(null);
+                      }}
+                      onKeyDown={handleKeyDown}
+                      placeholder="DUST-XXXXX"
+                      maxLength={32}
+                      disabled={isApplying}
+                      className={`w-full rounded-[14px] border px-3 py-2.5 pr-9 font-mono text-[13px] font-bold tracking-[0.04em] outline-none transition placeholder:font-normal placeholder:tracking-normal disabled:cursor-not-allowed disabled:opacity-70 ${
+                        validation.status === "valid"
+                          ? "border-emerald-300 bg-emerald-50/70 text-emerald-950 placeholder:text-emerald-700/40 focus:ring-2 focus:ring-emerald-200 dark:border-emerald-400/30 dark:bg-emerald-400/10 dark:text-emerald-100 dark:focus:ring-emerald-400/20"
+                          : validation.status === "invalid"
+                            ? "border-rose-300 bg-rose-50/70 text-rose-950 placeholder:text-rose-700/40 focus:ring-2 focus:ring-rose-200 dark:border-rose-400/30 dark:bg-rose-400/10 dark:text-rose-100 dark:focus:ring-rose-400/20"
+                            : "border-slate-200 bg-white text-slate-900 placeholder:text-slate-400 focus:border-sky-300 focus:ring-2 focus:ring-sky-100 dark:border-white/10 dark:bg-white/[0.06] dark:text-white dark:placeholder:text-slate-500 dark:focus:border-sky-400 dark:focus:ring-sky-400/20"
+                      }`}
+                    />
+
+                    {validation.status === "validating" && (
+                      <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                        <div className="h-4 w-4 animate-spin rounded-full border-2 border-slate-200 border-t-sky-500 dark:border-white/10 dark:border-t-sky-300" />
+                      </div>
+                    )}
+                    {validation.status === "valid" && (
+                      <svg
+                        className="absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-emerald-500 dark:text-emerald-300"
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                        aria-hidden="true"
+                      >
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
                       </svg>
-                    </div>
-                  )}
-                  {validation.status === "invalid" && (
-                    <div className="absolute right-3.5 top-1/2 -translate-y-1/2">
-                      <svg className="h-4 w-4 text-rose-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    )}
+                    {validation.status === "invalid" && (
+                      <svg
+                        className="absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-rose-500 dark:text-rose-300"
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                        aria-hidden="true"
+                      >
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" />
                       </svg>
-                    </div>
+                    )}
+                  </div>
+
+                  {(validation.status === "valid" || validation.status === "invalid") && (
+                    <p
+                      className={`mt-1.5 text-[11px] font-semibold leading-4 ${
+                        validation.status === "valid"
+                          ? "text-emerald-600 dark:text-emerald-300"
+                          : "text-rose-600 dark:text-rose-300"
+                      }`}
+                    >
+                      {validation.status === "valid"
+                        ? (validation as { status: "valid"; message: string }).message
+                        : (validation as { status: "invalid"; message: string }).message}
+                    </p>
+                  )}
+
+                  {applyInfo && (
+                    <p className="mt-1.5 text-[11px] font-semibold leading-4 text-sky-600 dark:text-sky-300">
+                      {applyInfo}
+                    </p>
+                  )}
+
+                  {applyError && (
+                    <p className="mt-1.5 text-[11px] font-semibold leading-4 text-rose-600 dark:text-rose-300">
+                      {applyError}
+                    </p>
                   )}
                 </div>
 
-                {/* validation message */}
-                {(validation.status === "valid" || validation.status === "invalid") && (
-                  <p
-                    className={`mt-1.5 text-[11px] font-semibold ${
-                      validation.status === "valid" ? "text-emerald-600" : "text-rose-600"
+                <div className="mt-4 grid grid-cols-1 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => void handleApply()}
+                    disabled={!canApply}
+                    className={`min-h-[42px] rounded-[14px] px-3 py-2 text-[13px] font-black transition active:scale-[0.98] ${
+                      canApply
+                        ? "bg-[linear-gradient(135deg,#0ea5e9,#2563eb)] text-white shadow-[0_10px_24px_rgba(37,99,235,0.22)] hover:-translate-y-0.5"
+                        : "cursor-not-allowed border border-slate-200 bg-slate-100 text-slate-400 shadow-none dark:border-white/10 dark:bg-white/[0.06] dark:text-slate-500"
                     }`}
                   >
-                    {validation.status === "valid"
-                      ? (validation as { status: "valid"; message: string }).message
-                      : (validation as { status: "invalid"; message: string }).message}
-                  </p>
-                )}
+                    {isApplying ? (
+                      <span className="flex items-center justify-center gap-2">
+                        <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/40 border-t-white" />
+                        Applying...
+                      </span>
+                    ) : (
+                      "Apply Code"
+                    )}
+                  </button>
 
-                {applyInfo && (
-                  <p className="mt-1.5 text-[11px] font-semibold text-sky-600">{applyInfo}</p>
-                )}
-
-                {/* apply error */}
-                {applyError && (
-                  <p className="mt-1.5 text-[11px] font-semibold text-rose-600">{applyError}</p>
-                )}
-              </div>
-
-              {/* CTA buttons */}
-              <div className="mt-4 flex gap-2.5">
-                <button
-                  type="button"
-                  onClick={onDismiss}
-                  className="flex-1 rounded-[16px] border border-slate-200 bg-white py-2.5 text-sm font-bold text-slate-600 transition hover:bg-slate-50 active:scale-[0.98]"
-                >
-                  Maybe Later
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void handleApply()}
-                  disabled={!canApply}
-                  className={`flex-1 rounded-[16px] py-2.5 text-sm font-black text-white shadow-[0_8px_20px_rgba(14,165,233,0.22)] transition active:scale-[0.98] ${
-                    canApply
-                      ? "bg-[linear-gradient(135deg,#0ea5e9,#6366f1)] hover:shadow-[0_12px_28px_rgba(14,165,233,0.32)] hover:-translate-y-0.5"
-                      : "cursor-not-allowed bg-slate-200 text-slate-400 shadow-none"
-                  }`}
-                >
-                  {isApplying ? (
-                    <span className="flex items-center justify-center gap-2">
-                      <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/40 border-t-white" />
-                      Applying…
-                    </span>
-                  ) : (
-                    "Apply Code"
-                  )}
-                </button>
-              </div>
-
-              {/* footer hint */}
-              <p className="mt-3 text-center text-[11px] text-slate-400">
-                You can also enter a code later from your profile.
-              </p>
-            </>
-          )}
+                  <button
+                    type="button"
+                    onClick={onDismiss}
+                    className="min-h-[42px] rounded-[14px] border border-slate-200 bg-white px-3 py-2 text-[13px] font-bold text-slate-600 transition hover:bg-slate-50 active:scale-[0.98] dark:border-white/10 dark:bg-white/[0.05] dark:text-slate-300 dark:hover:bg-white/[0.1]"
+                  >
+                    Maybe Later
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
         </div>
-      </div>
+      </section>
 
-      {/* animation keyframes injected inline */}
       <style>{`
         @keyframes referral-modal-in {
-          from { opacity: 0; transform: scale(0.92) translateY(16px); }
-          to   { opacity: 1; transform: scale(1)    translateY(0px); }
+          from { opacity: 0; transform: scale(0.96) translateY(8px); }
+          to { opacity: 1; transform: scale(1) translateY(0); }
         }
       `}</style>
     </div>

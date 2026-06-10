@@ -8,6 +8,10 @@ import {
   type EthereumProviderCandidate,
 } from "@/lib/ethereumProviders";
 import {
+  isDustSweepApprovalBatchingEnabled,
+  METAMASK_APPROVAL_BATCHING_DISABLED_NOTICE,
+} from "@/lib/dustsweep-feature-flags";
+import {
   type DustSweepAtomicStatus,
   type DustSweepWalletKey,
   type DustSweepWalletProfile,
@@ -217,6 +221,13 @@ export function getWalletBatchNotice(
   walletKey: DustSweepWalletKey,
   atomicStatus: DustSweepAtomicStatus,
 ) {
+  if (
+    (atomicStatus === "supported" || atomicStatus === "ready") &&
+    !isDustSweepApprovalBatchingEnabled(walletKey)
+  ) {
+    return METAMASK_APPROVAL_BATCHING_DISABLED_NOTICE;
+  }
+
   if (atomicStatus === "supported") {
     if (walletKey === "base_account" || walletKey === "coinbase") {
       return `${walletName} can batch token approvals; DustSweep sends approvals first, then the sweep for a reliable Base Account review.`;

@@ -24,6 +24,10 @@ import {
   parseDustSweepError,
 } from "@/lib/dustsweep-router";
 import {
+  isDustSweepApprovalBatchingEnabled,
+  METAMASK_APPROVAL_BATCHING_DISABLED_NOTICE,
+} from "@/lib/dustsweep-feature-flags";
+import {
   getBatchCapabilityStatus,
   getChainCapabilities,
   getDustSweepWalletProfileBase,
@@ -1808,11 +1812,15 @@ export function useDustSweep(): UseDustSweepReturn {
       // atomic batch can't actually work, so skip it and go straight to standard
       // approvals + sweep — avoiding the "approval batch was not ready" failure.
       const batchRouteAllowed = routeKind === "batch";
+      const walletApprovalBatchingEnabled = isDustSweepApprovalBatchingEnabled(
+        walletProfile.walletKey,
+      );
       const canUseAtomicBatch =
         batchRouteAllowed &&
         batchMode &&
         hasV2Approvals &&
         canUseWalletSendCalls &&
+        walletApprovalBatchingEnabled &&
         !usesTokenPocketExisting;
       const canUseTokenPocketBatch =
         batchRouteAllowed &&
@@ -1860,6 +1868,7 @@ export function useDustSweep(): UseDustSweepReturn {
         approvalCallCount: approvalCalls.length,
         fullBundleCallCount: bundledCallCount,
         walletCallCap,
+        walletApprovalBatchingEnabled,
         tokenPocketCompatibleBatch: canUseTokenPocketBatch,
         splitWalletBatch: shouldSplitWalletBatch,
         chunkWalletBatch: shouldChunkWalletBatch,
@@ -2062,6 +2071,14 @@ export function useDustSweep(): UseDustSweepReturn {
         !usesTokenPocketExisting
       ) {
         setExecutionNotice(getBatchFallbackNotice(walletProfile.walletName, walletProfile.walletKey));
+      }
+      if (
+        batchMode &&
+        hasV2Approvals &&
+        batchRouteAllowed &&
+        !walletApprovalBatchingEnabled
+      ) {
+        setExecutionNotice(METAMASK_APPROVAL_BATCHING_DISABLED_NOTICE);
       }
 
       let hash: Hex;

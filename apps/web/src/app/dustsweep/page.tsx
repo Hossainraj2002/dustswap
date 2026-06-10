@@ -11,6 +11,7 @@ import {
   shouldOfferTokenPocketAppDeepLink,
 } from "@/lib/ethereumProviders";
 import { getOneClickSweepWalletLabels } from "@/lib/eip7702";
+import { isDustSweepApprovalBatchingEnabled } from "@/lib/dustsweep-feature-flags";
 import { WalletConnectButton } from "@/components/wallet/WalletConnectButton";
 import { RouteDisplay } from "@/components/sweep/RouteDisplay";
 import { SlippageSettings } from "@/components/sweep/SlippageSettings";
@@ -319,6 +320,10 @@ export default function DustSweepPage() {
     sweep.sweepStep === "signing" ||
     sweep.sweepStep === "pending" ||
     sweep.sweepStep === "success";
+  const usesStandardMetaMaskApprovals =
+    sweep.routeKind === "batch" &&
+    sweep.walletProfile.walletKey === "metamask" &&
+    !isDustSweepApprovalBatchingEnabled(sweep.walletProfile.walletKey);
 
   if (!isConnected) {
     return <DisconnectedView />;
@@ -528,6 +533,7 @@ export default function DustSweepPage() {
               routeKind={sweep.routeKind === "batch" ? "batch" : "permit2"}
               sweepStep={sweep.sweepStep}
               hasSetup={sweep.permit2SetupCount > 0 || sweep.sweepStep === "approving"}
+              approvalMode={usesStandardMetaMaskApprovals ? "standard" : undefined}
             />
           ) : null}
 

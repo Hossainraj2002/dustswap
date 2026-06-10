@@ -338,13 +338,6 @@ export function AppShell({ children }: AppShellProps) {
       <main
         className={`relative z-10 flex-1 transition-opacity duration-100 ease-in-out ${mainShellClassName}`}
       >
-        {showReferralModal && address && (
-          <ReferralOnboardingModal
-            address={address}
-            onApplied={handleReferralApplied}
-            onDismiss={handleReferralDismiss}
-          />
-        )}
         {children}
       </main>
 
@@ -353,6 +346,14 @@ export function AppShell({ children }: AppShellProps) {
           isLightShell={isLightShell}
           pathname={pathname}
           placement="bottom"
+        />
+      )}
+
+      {showReferralModal && address && (
+        <ReferralOnboardingModal
+          address={address}
+          onApplied={handleReferralApplied}
+          onDismiss={handleReferralDismiss}
         />
       )}
     </div>

@@ -17,7 +17,19 @@ function buildModel(
   routeKind: SweepRouteKind,
   hasSetup: boolean,
   sweepStep: SweepStep,
+  approvalMode?: "standard",
 ): StepperModel {
+  if (approvalMode === "standard") {
+    const steps = ["Approve", "Sweep", "Done"];
+    const activeIndex =
+      sweepStep === "success"
+        ? 3
+        : sweepStep === "pending"
+          ? 1
+          : 0;
+    return { steps, activeIndex };
+  }
+
   if (routeKind === "batch") {
     const steps = ["Confirm batch", "Done"];
     if (sweepStep === "success") return { steps, activeIndex: 2 };
@@ -57,12 +69,19 @@ export function SweepStepper({
   routeKind,
   sweepStep,
   hasSetup = false,
+  approvalMode,
 }: {
   routeKind: SweepRouteKind;
   sweepStep: SweepStep;
   hasSetup?: boolean;
+  approvalMode?: "standard";
 }) {
-  const { steps, activeIndex } = buildModel(routeKind, hasSetup, sweepStep);
+  const { steps, activeIndex } = buildModel(
+    routeKind,
+    hasSetup,
+    sweepStep,
+    approvalMode,
+  );
 
   return (
     <div className="rounded-[8px] border border-slate-200 bg-white px-4 py-3 shadow-sm dark:border-white/10 dark:bg-white/[0.06]">
