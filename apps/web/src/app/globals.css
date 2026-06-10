@@ -39,6 +39,7 @@
     --ds-warning-text: #92400e;
     --ds-danger-bg: #fff1f2;
     --ds-danger-text: #be123c;
+    --safe-area-bottom: env(safe-area-inset-bottom, 0px);
   }
 
   :root.dark {
@@ -135,7 +136,7 @@
   .safe-area-inset {
     padding-left: env(safe-area-inset-left);
     padding-right: env(safe-area-inset-right);
-    padding-bottom: env(safe-area-inset-bottom);
+    padding-bottom: var(--safe-area-bottom);
   }
 }
 

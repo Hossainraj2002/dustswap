@@ -364,7 +364,7 @@ export default function DustSweepPage() {
         onClose={() => setSettingsOpen(false)}
       />
 
-      <div className="mx-auto max-w-[600px] pb-[calc(82px+env(safe-area-inset-bottom))] sm:pb-8">
+      <div className="mx-auto max-w-[600px] pb-[calc(82px+var(--safe-area-bottom))] sm:pb-8">
         {/* ── Header ── */}
         <div className="mb-6 flex items-center justify-between gap-3">
           <div className="flex items-center gap-2.5">

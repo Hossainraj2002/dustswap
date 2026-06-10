@@ -145,7 +145,7 @@ export function ReferralOnboardingModal({
         style={{
           width: "min(6cm, calc(100vw - 2rem))",
           maxHeight:
-            "calc(100dvh - 2rem - env(safe-area-inset-top) - env(safe-area-inset-bottom))",
+            "calc(100dvh - 2rem - env(safe-area-inset-top) - var(--safe-area-bottom))",
           background: "var(--ds-bg-elevated)",
           borderColor: "var(--ds-border-soft)",
           color: "var(--ds-text-primary)",

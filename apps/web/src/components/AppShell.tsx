@@ -107,7 +107,7 @@ function MobileShellNav({
         height: 'calc(60px + env(safe-area-inset-top))',
         paddingTop: 'env(safe-area-inset-top)',
       }
-    : { paddingBottom: 'env(safe-area-inset-bottom)' };
+    : { paddingBottom: 'var(--safe-area-bottom)' };
   const navRowClassName = isTopNav
     ? 'grid h-[60px] w-full grid-cols-5 items-center gap-1 px-2'
     : 'grid h-[82px] w-full grid-cols-5 items-start gap-1 px-2 pt-3';
@@ -154,6 +154,23 @@ function MobileShellNav({
 export function AppShell({ children }: AppShellProps) {
   const pathname = usePathname();
   const { resolvedTheme } = useTheme();
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const isMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
+      const hasInjected = !!(
+        (window as any).ethereum ||
+        (window as any).web3 ||
+        (window as any).trustWallet ||
+        (window as any).okxwallet ||
+        (window as any).rainbow
+      );
+      const hasWalletUA = /Coinbase|Rainbow|MetaMask|OKApp|TokenPocket/i.test(navigator.userAgent);
+      if (isMobile && (hasInjected || hasWalletUA)) {
+        document.documentElement.style.setProperty('--safe-area-bottom', '0px');
+      }
+    }
+  }, []);
   const isLightShell = resolvedTheme === 'light';
   const isLandingPage = pathname === '/';
   const isMaintenancePage = pathname === '/maintenance';
@@ -235,14 +252,14 @@ export function AppShell({ children }: AppShellProps) {
 
   const rootStyle = {
     '--ds-mobile-fixed-bottom-offset': isTopNavMobileMode
-      ? 'env(safe-area-inset-bottom)'
-      : 'calc(90px + env(safe-area-inset-bottom))',
+      ? 'var(--safe-area-bottom)'
+      : 'calc(90px + var(--safe-area-bottom))',
   } as CSSProperties;
   const mainShellClassName = isShelllessPage
     ? ''
     : isTopNavMobileMode
       ? 'pt-[calc(60px+env(safe-area-inset-top))] md:ml-[236px] md:pt-0'
-      : 'pb-[calc(90px+env(safe-area-inset-bottom))] md:ml-[236px] md:pb-0';
+      : 'pb-[calc(90px+var(--safe-area-bottom))] md:ml-[236px] md:pb-0';
 
   return (
     <div

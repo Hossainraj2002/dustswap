@@ -653,7 +653,7 @@ export default function LeaderboardPage() {
 
   return (
     <main
-      className="theme-page min-h-[100dvh] bg-[#f6f8fb] px-3 pb-[calc(8rem+env(safe-area-inset-bottom))] pt-4 sm:px-5 sm:pb-16 sm:pt-6 md:px-8 md:pt-8"
+      className="theme-page min-h-[100dvh] bg-[#f6f8fb] px-3 pb-[calc(8rem+var(--safe-area-bottom))] pt-4 sm:px-5 sm:pb-16 sm:pt-6 md:px-8 md:pt-8"
       style={{ minHeight: "100dvh" }}
     >
       <section
