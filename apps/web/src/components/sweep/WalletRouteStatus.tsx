@@ -1,7 +1,13 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { type SweepRouteKind } from "@/types/dustsweep";
+import {
+  type DelegateIdentity,
+  type DustSweepAtomicStatus,
+  type DustSweepWalletKey,
+  type SweepRouteKind,
+} from "@/types/dustsweep";
+import { isSameEip7702WalletFamily } from "@/lib/eip7702";
 
 function cx(...parts: Array<string | false | null | undefined>) {
   return parts.filter(Boolean).join(" ");
@@ -70,21 +76,85 @@ type RouteStatusVisual = {
   title: string;
   subtext: string;
   why: string;
+  statusItems: string[];
   container: string;
   text: string;
   whyButton: string;
 };
 
+function formatDelegationStatus(delegation?: DelegateIdentity) {
+  if (!delegation || delegation.state === "none") {
+    return "Not delegated on Base";
+  }
+
+  if (delegation.state === "known") {
+    return `Delegated to ${delegation.label}`;
+  }
+
+  return "Delegated to an unknown contract";
+}
+
+function formatAtomicStatus(status?: DustSweepAtomicStatus | string) {
+  if (status === "supported") return "Batch supported";
+  if (status === "ready") return "Wallet can enable batch";
+  if (status === "unsupported") return "Batch unsupported";
+  return "Batch status unknown";
+}
+
+function joinWalletLabels(labels?: string[]) {
+  const unique = Array.from(new Set((labels || []).filter(Boolean)));
+  if (unique.length === 0) return "OKX Wallet, TokenPocket Wallet, MetaMask, or Base Account";
+  if (unique.length === 1) return unique[0];
+  if (unique.length === 2) return `${unique[0]} or ${unique[1]}`;
+  return `${unique.slice(0, -1).join(", ")}, or ${unique[unique.length - 1]}`;
+}
+
 function getVisual(args: {
   routeKind: SweepRouteKind;
   recommendedWalletLabel?: string | null;
+  walletName?: string | null;
+  walletKey?: DustSweepWalletKey;
+  delegation?: DelegateIdentity;
+  atomicStatus?: DustSweepAtomicStatus | string;
+  supportedWalletLabels?: string[];
 }): RouteStatusVisual {
+  const walletName = args.walletName || "This wallet";
+  const walletKey = args.walletKey || "unknown";
+  const delegation = args.delegation;
+  const isOwnKnownDelegate =
+    delegation?.state === "known" &&
+    isSameEip7702WalletFamily(delegation.wallet, walletKey);
+  const noDelegate = !delegation || delegation.state === "none";
+  const supportedWallets = joinWalletLabels(args.supportedWalletLabels);
+  const statusItems = [
+    `Connected: ${walletName}`,
+    formatDelegationStatus(delegation),
+    formatAtomicStatus(args.atomicStatus),
+  ];
+
   if (args.routeKind === "batch") {
+    const title = isOwnKnownDelegate
+      ? `${delegation.label} one-click ready`
+      : noDelegate && args.atomicStatus === "ready"
+        ? `Ready to set up ${walletName}`
+        : "One-click batch ready";
+    const subtext = isOwnKnownDelegate
+      ? "This address is already delegated to the connected wallet."
+      : noDelegate && args.atomicStatus === "ready"
+        ? "Your wallet can enable its official EIP-7702 setup during the sweep."
+        : "Approve tokens and sweep with the connected wallet path.";
+    const why = isOwnKnownDelegate
+      ? `DustSweep read this address on Base and found the delegate belongs to ${delegation.label}, the wallet you are using now. This is the safest one-click route.`
+      : noDelegate && args.atomicStatus === "ready"
+        ? `${walletName} reports that it can enable atomic batching through its official wallet prompt. DustSweep does not write a delegation itself; the wallet handles that approval.`
+        : "Your wallet can bundle the token approvals and sweep path for this account, so DustSweep can use the one-click route.";
+
     return {
       icon: <BoltIcon />,
-      title: "One-click batch ready",
-      subtext: "Approve up to 50 tokens + sweep in one tap.",
-      why: "Your wallet can bundle every token approval and the sweep into a single atomic transaction, so you only confirm once.",
+      title,
+      subtext,
+      why,
+      statusItems,
       container:
         "border-emerald-200 bg-emerald-50 dark:border-emerald-400/20 dark:bg-emerald-400/10",
       text: "text-emerald-700 dark:text-emerald-300",
@@ -100,6 +170,52 @@ function getVisual(args: {
       title: `Set up with ${wallet}`,
       subtext: "Switch for one-click, or continue with a quick signature.",
       why: `Your wallet address was upgraded for batch transactions by ${wallet}. Only one wallet can manage that at a time, so other wallets sweep with a signature instead. Nothing is wrong with your funds.`,
+      statusItems,
+      container:
+        "border-blue-200 bg-blue-50 dark:border-blue-400/20 dark:bg-blue-400/10",
+      text: "text-blue-700 dark:text-blue-300",
+      whyButton:
+        "text-blue-700/80 hover:text-blue-800 dark:text-blue-300/80 dark:hover:text-blue-200",
+    };
+  }
+
+  if (delegation?.state === "unknown") {
+    return {
+      icon: <PenIcon />,
+      title: "Delegated smart account detected",
+      subtext: `One-click is unavailable in ${walletName}; Sign & Sweep will still work.`,
+      why: "This address is delegated on Base, but the delegate is not in DustSweep's wallet registry yet. To avoid sending a batch through the wrong wallet, DustSweep uses the fallback path.",
+      statusItems,
+      container:
+        "border-blue-200 bg-blue-50 dark:border-blue-400/20 dark:bg-blue-400/10",
+      text: "text-blue-700 dark:text-blue-300",
+      whyButton:
+        "text-blue-700/80 hover:text-blue-800 dark:text-blue-300/80 dark:hover:text-blue-200",
+    };
+  }
+
+  if (isOwnKnownDelegate) {
+    return {
+      icon: <PenIcon />,
+      title: `${delegation.label} setup detected`,
+      subtext: "The wallet did not report batch readiness, so DustSweep will use Sign & Sweep.",
+      why: `The Base delegation matches ${delegation.label}, but the connected provider did not confirm atomic batching. DustSweep keeps the account safe by falling back to a signature plus a normal sweep transaction.`,
+      statusItems,
+      container:
+        "border-blue-200 bg-blue-50 dark:border-blue-400/20 dark:bg-blue-400/10",
+      text: "text-blue-700 dark:text-blue-300",
+      whyButton:
+        "text-blue-700/80 hover:text-blue-800 dark:text-blue-300/80 dark:hover:text-blue-200",
+    };
+  }
+
+  if (noDelegate && (args.atomicStatus === "unsupported" || args.atomicStatus === "unknown")) {
+    return {
+      icon: <PenIcon />,
+      title: `${walletName} cannot one-click sweep`,
+      subtext: "This address is not delegated on Base. Continue here, or connect a one-click wallet.",
+      why: `${walletName} did not report EIP-5792/EIP-7702 atomic batching for Base. For one-click sweep, use ${supportedWallets}. You can still sweep safely here with Sign & Sweep.`,
+      statusItems,
       container:
         "border-blue-200 bg-blue-50 dark:border-blue-400/20 dark:bg-blue-400/10",
       text: "text-blue-700 dark:text-blue-300",
@@ -113,6 +229,7 @@ function getVisual(args: {
     title: "Sign & Sweep mode",
     subtext: "Sign once, then one transaction.",
     why: "One-click batching isn't available on this wallet connection, so DustSweep sweeps with a single signature plus one transaction. This works on any wallet, whatever your account is set up with.",
+    statusItems,
     container:
       "border-blue-200 bg-blue-50 dark:border-blue-400/20 dark:bg-blue-400/10",
     text: "text-blue-700 dark:text-blue-300",
@@ -133,13 +250,21 @@ export function WalletRouteStatus({
   permit2SetupCount = 0,
   delegateAddress,
   atomicStatus,
+  walletName,
+  walletKey,
+  delegation,
+  supportedWalletLabels,
 }: {
   routeKind: SweepRouteKind;
   isDetecting: boolean;
   recommendedWalletLabel?: string | null;
   permit2SetupCount?: number;
   delegateAddress?: string | null;
-  atomicStatus?: string;
+  atomicStatus?: DustSweepAtomicStatus;
+  walletName?: string | null;
+  walletKey?: DustSweepWalletKey;
+  delegation?: DelegateIdentity;
+  supportedWalletLabels?: string[];
 }) {
   const [showWhy, setShowWhy] = useState(false);
   // The raw delegate address is a diagnostic, not user-facing copy. Hide it from
@@ -169,7 +294,15 @@ export function WalletRouteStatus({
     );
   }
 
-  const visual = getVisual({ routeKind, recommendedWalletLabel });
+  const visual = getVisual({
+    routeKind,
+    recommendedWalletLabel,
+    walletName,
+    walletKey,
+    delegation,
+    atomicStatus,
+    supportedWalletLabels,
+  });
   const showSetupHint = routeKind === "permit2" && permit2SetupCount > 0;
 
   return (
@@ -200,6 +333,19 @@ export function WalletRouteStatus({
         <p className={cx("mt-1 text-xs leading-5 opacity-80", visual.text)}>
           {visual.subtext}
         </p>
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {visual.statusItems.map((item) => (
+            <span
+              key={item}
+              className={cx(
+                "rounded-full border border-current/15 px-2 py-0.5 text-[10px] font-semibold leading-4 opacity-80",
+                visual.text,
+              )}
+            >
+              {item}
+            </span>
+          ))}
+        </div>
         {showWhy ? (
           <div className={cx("mt-2 space-y-1 border-t border-current/10 pt-2", visual.text)}>
             <p className="text-xs leading-5 opacity-90">{visual.why}</p>

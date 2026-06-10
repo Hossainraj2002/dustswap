@@ -6,8 +6,11 @@ import { useAccount } from "wagmi";
 import { type WalletListEntry } from "@privy-io/react-auth";
 import {
   buildOkxInAppBrowserLink,
+  buildTokenPocketInAppBrowserLink,
   shouldOfferOkxAppDeepLink,
+  shouldOfferTokenPocketAppDeepLink,
 } from "@/lib/ethereumProviders";
+import { getOneClickSweepWalletLabels } from "@/lib/eip7702";
 import { WalletConnectButton } from "@/components/wallet/WalletConnectButton";
 import { RouteDisplay } from "@/components/sweep/RouteDisplay";
 import { SlippageSettings } from "@/components/sweep/SlippageSettings";
@@ -36,6 +39,7 @@ import {
 // prioritize the matched wallet when the user chooses "Switch to {wallet}".
 const WALLET_KEY_TO_PRIVY: Partial<Record<DustSweepWalletKey, WalletListEntry>> = {
   okx: "okx_wallet",
+  tokenpocket: "detected_ethereum_wallets",
   metamask: "metamask",
   coinbase: "coinbase_wallet",
   base_account: "base_account",
@@ -247,6 +251,10 @@ export default function DustSweepPage() {
       window.location.href = buildOkxInAppBrowserLink();
       return;
     }
+    if (key === "tokenpocket" && shouldOfferTokenPocketAppDeepLink()) {
+      window.location.href = buildTokenPocketInAppBrowserLink();
+      return;
+    }
     try {
       await walletConnection.disconnectWallet();
     } catch {
@@ -386,6 +394,10 @@ export default function DustSweepPage() {
               permit2SetupCount={sweep.permit2SetupCount}
               delegateAddress={sweep.delegation.address}
               atomicStatus={sweep.walletProfile.atomicStatus}
+              walletName={sweep.walletProfile.walletName}
+              walletKey={sweep.walletProfile.walletKey}
+              delegation={sweep.delegation.info}
+              supportedWalletLabels={getOneClickSweepWalletLabels()}
             />
           )}
 

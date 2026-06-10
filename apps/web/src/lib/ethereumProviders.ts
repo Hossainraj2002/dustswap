@@ -58,12 +58,30 @@ export function buildOkxInAppBrowserLink(targetUrl?: string) {
   return `https://www.okx.com/download?deeplink=${encodeURIComponent(innerDeepLink)}`;
 }
 
+export function buildTokenPocketInAppBrowserLink(targetUrl?: string) {
+  const dappUrl =
+    targetUrl ||
+    (typeof window !== "undefined"
+      ? window.location.href
+      : "https://app.dustswap.wtf");
+  const params = {
+    url: dappUrl,
+    chain: "ETH",
+    source: "DustSwap",
+  };
+  return `tpdapp://open?params=${encodeURIComponent(JSON.stringify(params))}`;
+}
+
 // Offer the OKX deep link only on a mobile browser that is NOT already the OKX
 // (or another wallet's) in-app browser, where the native injected flow works.
 export function shouldOfferOkxAppDeepLink() {
   return (
     isMobileUserAgent() && !isOkxAppBrowser() && !isTokenPocketAppBrowser()
   );
+}
+
+export function shouldOfferTokenPocketAppDeepLink() {
+  return isMobileUserAgent() && !isTokenPocketAppBrowser();
 }
 
 export function getEthereumProviderCandidates<

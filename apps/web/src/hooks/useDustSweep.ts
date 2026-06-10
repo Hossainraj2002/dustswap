@@ -9,7 +9,11 @@ import { useTokenBalances, type TokenBalanceScanState } from "@/hooks/useTokenBa
 import { useWalletConnection } from "@/hooks/useWalletConnection";
 import { useWalletWhitelist } from "@/hooks/useWalletWhitelist";
 import { getPermit2SignatureErrorMessage, PERMIT2_ADDRESS } from "@/lib/permit2";
-import { identifyDelegate, parseEip7702AuthorizedAddress } from "@/lib/eip7702";
+import {
+  identifyDelegate,
+  isSameEip7702WalletFamily,
+  parseEip7702AuthorizedAddress,
+} from "@/lib/eip7702";
 import {
   DUST_SWEEP_EXECUTION_LANE,
   DUST_SWEEP_ROUTER_ADDRESS,
@@ -812,16 +816,35 @@ export function useDustSweep(): UseDustSweepReturn {
     const isDelegated = delegation.address !== null;
     const ownKnownDelegate =
       delegation.info.state === "known" &&
-      delegation.info.wallet === walletProfileBase.walletKey;
+      isSameEip7702WalletFamily(
+        delegation.info.wallet,
+        walletProfileBase.walletKey,
+      );
     const knownForeignDelegate =
       delegation.info.state === "known" &&
       delegation.info.wallet !== "unknown" &&
-      delegation.info.wallet !== walletProfileBase.walletKey;
+      !isSameEip7702WalletFamily(
+        delegation.info.wallet,
+        walletProfileBase.walletKey,
+      );
+    const tokenPocketOwnDelegate =
+      ownKnownDelegate &&
+      walletProfileBase.walletKey === "tokenpocket" &&
+      walletProfileBase.executionStrategy === "tokenpocket_existing";
 
     // (1) Delegated to a wallet we can name that isn't the connected one →
     // offer the switch (+ Permit2 fallback).
     if (knownForeignDelegate) {
       return "switch_or_permit2";
+    }
+
+    // TokenPocket's Base delegate is enough to prove the connected TokenPocket
+    // wallet owns the account upgrade. Its wallet_getCapabilities response can
+    // be flaky inside the in-app browser, while the execution path below uses
+    // TokenPocket's provider directly with explicit gas. Let the verified own
+    // delegate unlock the one-click path instead of falling back to Permit2.
+    if (tokenPocketOwnDelegate) {
+      return "batch";
     }
 
     // (2) Only trust the wallet's atomic batch claim when we're certain the
@@ -838,7 +861,12 @@ export function useDustSweep(): UseDustSweepReturn {
     // (3) Delegated to an unrecognized/foreign impl, or no atomic support →
     // Permit2 / standard approvals, which don't depend on the delegation.
     return "permit2";
-  }, [atomicStatus, delegation, walletProfileBase.walletKey]);
+  }, [
+    atomicStatus,
+    delegation,
+    walletProfileBase.executionStrategy,
+    walletProfileBase.walletKey,
+  ]);
 
   const recommendedWallet = useMemo<RecommendedWallet | null>(() => {
     if (routeKind === "switch_or_permit2" && delegation.info.state === "known") {
