@@ -115,7 +115,7 @@ function AppProviders({ children }: ProvidersProps) {
         },
       }}
     >
-      <PrivyWagmiProvider config={wagmiConfig} reconnectOnMount>
+      <PrivyWagmiProvider config={wagmiConfig} reconnectOnMount={false}>
         <WalletConnectionProvider enabled>
           {!isMaintenancePage && <SwapCaptureBootstrap />}
           <WalletInterceptor />
@@ -124,7 +124,7 @@ function AppProviders({ children }: ProvidersProps) {
       </PrivyWagmiProvider>
     </PrivyProvider>
   ) : (
-    <BaseWagmiProvider config={fallbackWagmiConfig} reconnectOnMount>
+    <BaseWagmiProvider config={fallbackWagmiConfig} reconnectOnMount={false}>
       <WalletConnectionProvider enabled={false}>
         {!isMaintenancePage && <SwapCaptureBootstrap />}
         <WalletInterceptor />

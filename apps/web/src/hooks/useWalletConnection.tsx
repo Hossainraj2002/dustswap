@@ -225,8 +225,12 @@ function PrivyWalletConnectionProvider({ children }: { children: ReactNode }) {
   // instantly re-bound the wallet — which is exactly why "Disconnect" looked
   // like it did nothing. We use state (re-renders, recomputes needsReconcile)
   // plus a ref mirror (read synchronously inside the retry loop).
-  const [reconcilePaused, setReconcilePaused] = useState(false);
-  const reconcilePausedRef = useRef(false);
+  const [reconcilePaused, setReconcilePaused] = useState(true);
+  const reconcilePausedRef = useRef(true);
+  const [allowedReconcileAddress, setAllowedReconcileAddress] = useState<
+    string | null
+  >(null);
+  const allowedReconcileAddressRef = useRef<string | null>(null);
   const pauseReconcile = useCallback(() => {
     reconcilePausedRef.current = true;
     setReconcilePaused(true);
@@ -235,10 +239,16 @@ function PrivyWalletConnectionProvider({ children }: { children: ReactNode }) {
     reconcilePausedRef.current = false;
     setReconcilePaused(false);
   }, []);
+  const setAllowedAddress = useCallback((address?: string | null) => {
+    const normalized = address?.toLowerCase() ?? null;
+    allowedReconcileAddressRef.current = normalized;
+    setAllowedReconcileAddress(normalized);
+  }, []);
 
   const { connectWallet } = useConnectWallet({
     onSuccess: async ({ wallet: connectedWallet }) => {
-      // The user intentionally connected — re-enable reconciliation.
+      setAllowedAddress(connectedWallet.address);
+      // The user intentionally selected this wallet, so reconnect wagmi to it.
       resumeReconcile();
       if (connectedWallet.type === "ethereum") {
         try {
@@ -262,9 +272,11 @@ function PrivyWalletConnectionProvider({ children }: { children: ReactNode }) {
 
   const openWalletModal = useCallback(
     async (description?: string, walletList?: WalletListEntry[]) => {
-      // Opening the connect modal is an explicit intent to connect, so lift the
-      // manual-disconnect latch and let reconciliation bind the new wallet.
-      resumeReconcile();
+      // Opening the picker is not a completed wallet choice. Keep reconciliation
+      // paused until Privy's onSuccess returns the wallet the user selected.
+      pauseReconcile();
+      setAllowedAddress(null);
+      await disconnectAsync().catch(() => {});
       if (!readyRef.current) {
         const deadline = Date.now() + 4000;
         while (!readyRef.current && Date.now() < deadline) {
@@ -278,7 +290,7 @@ function PrivyWalletConnectionProvider({ children }: { children: ReactNode }) {
         walletChainType: "ethereum-only",
       });
     },
-    [connectWallet, resumeReconcile]
+    [connectWallet, disconnectAsync, pauseReconcile, setAllowedAddress]
   );
 
   // ── Bug #2C: deterministic Privy → wagmi reconciliation ──────────────────
@@ -296,6 +308,15 @@ function PrivyWalletConnectionProvider({ children }: { children: ReactNode }) {
     if (connected.length === 0) {
       return null;
     }
+    if (allowedReconcileAddress) {
+      const allowed = connected.find(
+        (entry) => entry.address.toLowerCase() === allowedReconcileAddress
+      );
+      if (allowed) {
+        return allowed;
+      }
+      return null;
+    }
     // Prefer Privy's active wallet; otherwise bind the first connected wallet.
     if (wallet?.address) {
       const match = connected.find(
@@ -306,7 +327,7 @@ function PrivyWalletConnectionProvider({ children }: { children: ReactNode }) {
       }
     }
     return connected[0] ?? null;
-  }, [wallets, wallet]);
+  }, [wallets, wallet, allowedReconcileAddress]);
 
   const targetAddress = targetWallet?.address?.toLowerCase() ?? null;
   const wagmiBound =
@@ -320,6 +341,7 @@ function PrivyWalletConnectionProvider({ children }: { children: ReactNode }) {
     WALLET_RECONCILE_ENABLED &&
     !reconcilePaused &&
     !!targetAddress &&
+    allowedReconcileAddress === targetAddress &&
     !wagmiBound &&
     !wagmiBusy;
 
@@ -342,6 +364,9 @@ function PrivyWalletConnectionProvider({ children }: { children: ReactNode }) {
           await new Promise((resolve) => setTimeout(resolve, delayMs));
         }
         if (cancelled || reconcilePausedRef.current) {
+          return;
+        }
+        if (allowedReconcileAddressRef.current !== targetAddress) {
           return;
         }
         const candidate = targetWalletRef.current;
@@ -369,6 +394,7 @@ function PrivyWalletConnectionProvider({ children }: { children: ReactNode }) {
     // It stays paused until the user explicitly connects again (openWalletModal
     // / connect onSuccess). This is what makes "Disconnect" actually stick.
     pauseReconcile();
+    setAllowedAddress(null);
     // 1) Disconnect every Privy-connected wallet (not just the active one), so
     //    Privy's wallet set empties and it won't auto-reconnect on next mount.
     await Promise.allSettled(
@@ -384,7 +410,14 @@ function PrivyWalletConnectionProvider({ children }: { children: ReactNode }) {
     if (authenticated) {
       await logout().catch(() => {});
     }
-  }, [wallets, disconnectAsync, authenticated, logout, pauseReconcile]);
+  }, [
+    wallets,
+    disconnectAsync,
+    authenticated,
+    logout,
+    pauseReconcile,
+    setAllowedAddress,
+  ]);
 
   const value = useMemo<WalletConnectionContextValue>(
     () => ({
