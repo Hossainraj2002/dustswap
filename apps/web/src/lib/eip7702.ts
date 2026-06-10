@@ -294,14 +294,6 @@ export const ONE_CLICK_SWEEP_WALLETS: Array<{
     ] as Address[],
   },
   {
-    wallet: "bitget",
-    label: "Bitget Wallet",
-    delegateAddresses: [
-      "0xa845c74344fc9405b1fcf712f04668979573c1bf",
-      "0x4428a93b478fa76a5bd9c7641f54ec6373855433",
-    ] as Address[],
-  },
-  {
     wallet: "rainbow",
     label: "Rainbow",
     delegateAddresses: [

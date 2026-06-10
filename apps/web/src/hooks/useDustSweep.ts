@@ -29,7 +29,6 @@ import {
 } from "@/lib/dustsweep-feature-flags";
 import {
   getBatchCapabilityStatus,
-  getCatalogedOneClickFallbackStatus,
   getChainCapabilities,
   getDustSweepWalletProfileBase,
   getWalletBatchNotice,
@@ -751,14 +750,8 @@ export function useDustSweep(): UseDustSweepReturn {
         const requests = getWalletRequestCandidates(walletClient, walletProfileBase.walletKey);
         if (requests.length === 0) {
           if (!cancelled) {
-            const fallbackAtomicStatus = getCatalogedOneClickFallbackStatus({
-              walletKey: walletProfileBase.walletKey,
-              detectedAtomicStatus: "unknown",
-            });
-            setSupportsWalletSendCalls(
-              fallbackAtomicStatus === "ready" || fallbackAtomicStatus === "supported",
-            );
-            setAtomicStatus(fallbackAtomicStatus);
+            setSupportsWalletSendCalls(false);
+            setAtomicStatus("unknown");
           }
           return;
         }
@@ -789,34 +782,13 @@ export function useDustSweep(): UseDustSweepReturn {
         }
 
         if (!cancelled) {
-          const fallbackAtomicStatus = getCatalogedOneClickFallbackStatus({
-            walletKey: walletProfileBase.walletKey,
-            detectedAtomicStatus,
-          });
-          if (fallbackAtomicStatus !== detectedAtomicStatus) {
-            console.info("DustSweep using cataloged wallet batch fallback", {
-              walletKey: walletProfileBase.walletKey,
-              detectedAtomicStatus,
-              fallbackAtomicStatus,
-            });
-          }
-          setSupportsWalletSendCalls(
-            supported ||
-              fallbackAtomicStatus === "ready" ||
-              fallbackAtomicStatus === "supported",
-          );
-          setAtomicStatus(fallbackAtomicStatus);
+          setSupportsWalletSendCalls(supported);
+          setAtomicStatus(detectedAtomicStatus);
         }
       } catch {
         if (!cancelled) {
-          const fallbackAtomicStatus = getCatalogedOneClickFallbackStatus({
-            walletKey: walletProfileBase.walletKey,
-            detectedAtomicStatus: "unknown",
-          });
-          setSupportsWalletSendCalls(
-            fallbackAtomicStatus === "ready" || fallbackAtomicStatus === "supported",
-          );
-          setAtomicStatus(fallbackAtomicStatus);
+          setSupportsWalletSendCalls(false);
+          setAtomicStatus("unknown");
         }
       }
     }
@@ -864,17 +836,19 @@ export function useDustSweep(): UseDustSweepReturn {
   // wallets that misreport their atomic capability on a foreign-delegated EOA.
   const routeKind = useMemo<SweepRouteKind>(() => {
     const isDelegated = delegation.address !== null;
+    const delegateWallet =
+      delegation.info.state === "known" ? delegation.info.wallet : null;
     const ownKnownDelegate =
-      delegation.info.state === "known" &&
+      delegateWallet !== null &&
       isSameEip7702WalletFamily(
-        delegation.info.wallet,
+        delegateWallet,
         walletProfileBase.walletKey,
       );
     const knownForeignDelegate =
-      delegation.info.state === "known" &&
-      delegation.info.wallet !== "unknown" &&
+      delegateWallet !== null &&
+      delegateWallet !== "unknown" &&
       !isSameEip7702WalletFamily(
-        delegation.info.wallet,
+        delegateWallet,
         walletProfileBase.walletKey,
       );
     const tokenPocketOwnDelegate =
@@ -884,7 +858,7 @@ export function useDustSweep(): UseDustSweepReturn {
 
     // (1) Delegated to a wallet we can name that isn't the connected one →
     // offer the switch (+ Permit2 fallback).
-    if (knownForeignDelegate) {
+    if (knownForeignDelegate && delegateWallet !== "bitget") {
       return "switch_or_permit2";
     }
 

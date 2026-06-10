@@ -2,6 +2,7 @@ import { base } from "viem/chains";
 import {
   getEthereumProviderCandidates,
   hasInjectedMetaMaskWallet,
+  isBitgetEthereumProvider,
   isOkxEthereumProvider,
   isTokenPocketEthereumProvider,
   mergeEthereumProviderCandidates,
@@ -188,6 +189,12 @@ export function getDustSweepWalletProfileBase(args: {
       signalKey === "walletconnect" ||
       signalKey === "injected" ||
       (signalKey === "metamask" && !hasMetaMaskRuntime));
+  const shouldPreferInjectedBitget =
+    injectedKey === "bitget" &&
+    (!signalKey ||
+      signalKey === "walletconnect" ||
+      signalKey === "injected" ||
+      (signalKey === "metamask" && !hasMetaMaskRuntime));
   const mayUseInjectedFlags =
     !combinedSignal ||
     signalKey === "injected" ||
@@ -199,6 +206,8 @@ export function getDustSweepWalletProfileBase(args: {
     walletKey = "tokenpocket";
   } else if (shouldPreferInjectedOkx) {
     walletKey = "okx";
+  } else if (shouldPreferInjectedBitget) {
+    walletKey = "bitget";
   } else if (signalKey && signalKey !== "injected") {
     walletKey = signalKey;
   } else if (args.isCoinbaseSmartWallet) {
@@ -254,30 +263,15 @@ export function getWalletBatchNotice(
     return null;
   }
 
+  if (walletKey === "bitget" && (atomicStatus === "unknown" || atomicStatus === "unsupported")) {
+    return "Bitget Wallet supports EIP-7702 after manual binding inside Bitget Wallet: More -> EIP-7702 -> Bind. DustSweep will use Sign & Sweep until Bitget reports public wallet batch support.";
+  }
+
   if (atomicStatus === "unsupported") {
     return "Atomic approval+sweep batching is unavailable on this wallet connection. DustSweep will use Permit2 approvals and a standard sweep.";
   }
 
   return null;
-}
-
-export function getCatalogedOneClickFallbackStatus(args: {
-  walletKey: DustSweepWalletKey;
-  detectedAtomicStatus: DustSweepAtomicStatus;
-}): DustSweepAtomicStatus {
-  if (args.detectedAtomicStatus !== "unknown") {
-    return args.detectedAtomicStatus;
-  }
-
-  // Bitget's mobile in-app provider can expose wallet_sendCalls/EIP-7702 setup
-  // while wallet_getCapabilities returns nothing useful. We still require the
-  // route resolver's delegation check before using this, so foreign delegates
-  // continue to fall back safely.
-  if (args.walletKey === "bitget") {
-    return "ready";
-  }
-
-  return args.detectedAtomicStatus;
 }
 
 function getWindowEthereumProviders(walletKey?: DustSweepWalletKey): WalletRpcProvider[] {
@@ -297,6 +291,7 @@ function getWindowEthereumProviders(walletKey?: DustSweepWalletKey): WalletRpcPr
     return (
       getInjectedWalletKey(provider) === walletKey ||
       getSignalWalletKey(providerSignal) === walletKey ||
+      (walletKey === "bitget" && isBitgetEthereumProvider(provider)) ||
       (walletKey === "okx" && isOkxEthereumProvider(provider)) ||
       (walletKey === "tokenpocket" && isTokenPocketEthereumProvider(provider))
     );

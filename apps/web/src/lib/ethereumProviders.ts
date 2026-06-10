@@ -1,4 +1,6 @@
 export type EthereumProviderCandidate = {
+  isBitgetWallet?: boolean;
+  isBitKeep?: boolean;
   isMetaMask?: boolean;
   isOKExWallet?: boolean;
   isOKXWallet?: boolean;
@@ -13,6 +15,7 @@ export type EthereumProviderCandidate = {
 
 const knownOkxProviders = new WeakSet<object>();
 const knownTokenPocketProviders = new WeakSet<object>();
+const knownBitgetProviders = new WeakSet<object>();
 
 type Eip6963ProviderInfo = {
   uuid?: string;
@@ -112,6 +115,14 @@ export function isTokenPocketAppBrowser() {
   return /TokenPocket/i.test(navigator.userAgent || "");
 }
 
+export function isBitgetAppBrowser() {
+  if (typeof navigator === "undefined") {
+    return false;
+  }
+
+  return /Bitget|BitKeep/i.test(navigator.userAgent || "");
+}
+
 function isMobileUserAgent() {
   if (typeof navigator === "undefined") {
     return false;
@@ -175,17 +186,36 @@ export function getEthereumProviderCandidates<
 
   const browserWindow = window as Window & {
     ethereum?: TProvider;
+    bitget?: TProvider | { ethereum?: TProvider };
+    bitkeep?: TProvider | { ethereum?: TProvider };
     okxwallet?: TProvider;
     tokenpocket?: TProvider | { ethereum?: TProvider };
   };
   const ethereum = browserWindow.ethereum;
   const eip6963Providers = getEip6963Providers<TProvider>();
+  const bitgetProvider =
+    browserWindow.bitget &&
+    typeof browserWindow.bitget === "object" &&
+    "ethereum" in browserWindow.bitget
+      ? browserWindow.bitget.ethereum
+      : browserWindow.bitget;
+  const bitkeepProvider =
+    browserWindow.bitkeep &&
+    typeof browserWindow.bitkeep === "object" &&
+    "ethereum" in browserWindow.bitkeep
+      ? browserWindow.bitkeep.ethereum
+      : browserWindow.bitkeep;
   const tokenPocketProvider =
     browserWindow.tokenpocket &&
     typeof browserWindow.tokenpocket === "object" &&
     "ethereum" in browserWindow.tokenpocket
       ? browserWindow.tokenpocket.ethereum
       : browserWindow.tokenpocket;
+  for (const provider of [bitgetProvider, bitkeepProvider]) {
+    if (provider && typeof provider === "object") {
+      knownBitgetProviders.add(provider);
+    }
+  }
   if (browserWindow.okxwallet && typeof browserWindow.okxwallet === "object") {
     knownOkxProviders.add(browserWindow.okxwallet);
   }
@@ -215,8 +245,23 @@ export function getEthereumProviderCandidates<
       }
     }
   }
+  if (isBitgetAppBrowser()) {
+    for (const provider of [
+      bitgetProvider,
+      bitkeepProvider,
+      ethereum?.selectedProvider,
+      ...(Array.isArray(ethereum?.providers) ? ethereum.providers : []),
+      ethereum,
+    ]) {
+      if (provider && typeof provider === "object") {
+        knownBitgetProviders.add(provider);
+      }
+    }
+  }
 
   const candidates = [
+    bitgetProvider,
+    bitkeepProvider,
     browserWindow.okxwallet,
     tokenPocketProvider,
     ...eip6963Providers,
@@ -245,6 +290,10 @@ export function mergeEthereumProviderCandidates<
   }
   if (providers.some(isTokenPocketEthereumProvider)) {
     merged.isTokenPocket = true;
+  }
+  if (providers.some(isBitgetEthereumProvider)) {
+    merged.isBitgetWallet = true;
+    merged.isBitKeep = true;
   }
   if (providers.some(isMetaMaskEthereumProvider)) {
     merged.isMetaMask = true;
@@ -301,6 +350,35 @@ export function isMetaMaskEthereumProvider(provider: EthereumProviderCandidate) 
 
 export function hasInjectedMetaMaskWallet() {
   return getEthereumProviderCandidates().some(isMetaMaskEthereumProvider);
+}
+
+export function isBitgetEthereumProvider(provider: EthereumProviderCandidate) {
+  if (knownBitgetProviders.has(provider)) {
+    return true;
+  }
+
+  if (provider.isBitgetWallet || provider.isBitKeep) {
+    return true;
+  }
+
+  if (isBitgetAppBrowser() && typeof provider.request === "function") {
+    return true;
+  }
+
+  const signal = [
+    provider.info?.name,
+    provider.info?.rdns,
+    provider.name,
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+
+  return signal.includes("bitget") || signal.includes("bitkeep");
+}
+
+export function hasInjectedBitgetWallet() {
+  return getEthereumProviderCandidates().some(isBitgetEthereumProvider);
 }
 
 export function isTokenPocketEthereumProvider(provider: EthereumProviderCandidate) {

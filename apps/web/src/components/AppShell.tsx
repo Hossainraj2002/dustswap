@@ -110,7 +110,7 @@ function MobileShellNav({
     : { paddingBottom: 'var(--safe-area-bottom)' };
   const navRowClassName = isTopNav
     ? 'grid h-[60px] w-full grid-cols-5 items-center gap-1 px-2'
-    : 'grid h-[82px] w-full grid-cols-5 items-start gap-1 px-2 pt-3';
+    : 'grid h-[69px] w-full grid-cols-5 items-start gap-1 px-2 pt-[7px]';
   const navLinkClassName = isTopNav
     ? 'group flex min-w-0 flex-col items-center justify-center gap-1 transition-transform active:scale-95'
     : 'group flex min-w-0 flex-col items-center justify-start gap-2 transition-transform active:scale-95';
@@ -253,13 +253,13 @@ export function AppShell({ children }: AppShellProps) {
   const rootStyle = {
     '--ds-mobile-fixed-bottom-offset': isTopNavMobileMode
       ? 'var(--safe-area-bottom)'
-      : 'calc(90px + var(--safe-area-bottom))',
+      : 'calc(77px + var(--safe-area-bottom))',
   } as CSSProperties;
   const mainShellClassName = isShelllessPage
     ? ''
     : isTopNavMobileMode
       ? 'pt-[calc(60px+env(safe-area-inset-top))] md:ml-[236px] md:pt-0'
-      : 'pb-[calc(90px+var(--safe-area-bottom))] md:ml-[236px] md:pb-0';
+      : 'pb-[calc(77px+var(--safe-area-bottom))] md:ml-[236px] md:pb-0';
 
   return (
     <div

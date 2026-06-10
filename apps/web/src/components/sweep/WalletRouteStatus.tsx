@@ -228,6 +228,25 @@ function getVisual(args: {
     };
   }
 
+  if (
+    walletKey === "bitget" &&
+    noDelegate &&
+    (args.atomicStatus === "unsupported" || args.atomicStatus === "unknown")
+  ) {
+    return {
+      icon: <PenIcon />,
+      title: "Bind Bitget EIP-7702 in wallet",
+      subtext: "Bitget requires manual EIP-7702 binding before one-click. Continue here with Sign & Sweep.",
+      why: "Bitget's public docs describe binding inside the wallet app: open Bitget Wallet, go to More, choose EIP-7702, then tap Bind. DustSweep will not try an undocumented setup request.",
+      statusItems,
+      container:
+        "border-blue-200 bg-blue-50 dark:border-blue-400/20 dark:bg-blue-400/10",
+      text: "text-blue-700 dark:text-blue-300",
+      whyButton:
+        "text-blue-700/80 hover:text-blue-800 dark:text-blue-300/80 dark:hover:text-blue-200",
+    };
+  }
+
   if (noDelegate && (args.atomicStatus === "unsupported" || args.atomicStatus === "unknown")) {
     return {
       icon: <PenIcon />,
