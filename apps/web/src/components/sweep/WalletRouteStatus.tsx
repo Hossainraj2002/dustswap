@@ -283,6 +283,25 @@ function getVisual(args: {
     };
   }
 
+  if (
+    walletKey === "trust" &&
+    noDelegate &&
+    (args.atomicStatus === "unsupported" || args.atomicStatus === "unknown")
+  ) {
+    return {
+      icon: <PenIcon />,
+      title: "Trust Wallet one-click not available",
+      subtext: "Trust Wallet did not report Base atomic batching. Continue here with Sign & Sweep.",
+      why: "DustSweep has Trust Wallet's known 7702 delegate saved for labeling already-delegated accounts, but Trust's public dApp docs do not expose EIP-5792 wallet_sendCalls or wallet_getCapabilities setup for Base. DustSweep will not send an undocumented upgrade request.",
+      statusItems,
+      container:
+        "border-blue-200 bg-blue-50 dark:border-blue-400/20 dark:bg-blue-400/10",
+      text: "text-blue-700 dark:text-blue-300",
+      whyButton:
+        "text-blue-700/80 hover:text-blue-800 dark:text-blue-300/80 dark:hover:text-blue-200",
+    };
+  }
+
   if (noDelegate && (args.atomicStatus === "unsupported" || args.atomicStatus === "unknown")) {
     return {
       icon: <PenIcon />,

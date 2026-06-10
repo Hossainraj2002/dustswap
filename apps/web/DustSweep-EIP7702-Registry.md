@@ -13,6 +13,7 @@ Runtime behavior:
 - `KNOWN_DELEGATES` maps that delegate address to a wallet or service label.
 - `ONE_CLICK_SWEEP_WALLETS` is only for wallet surfaces we can reasonably ask the user to connect.
 - Rainbow is saved in `KNOWN_DELEGATES` for accurate labeling, but it is not advertised as a default one-click wallet unless `NEXT_PUBLIC_DUST_SWEEP_RAINBOW_ONE_CLICK=true`.
+- Trust Wallet is saved in `KNOWN_DELEGATES` for accurate labeling, but it is not advertised as a default one-click wallet unless `NEXT_PUBLIC_DUST_SWEEP_TRUST_ONE_CLICK=true`.
 - Service/infra delegates are saved as `wallet: "unknown"` with a real label, so the UI can name them but does not offer a wallet switch.
 
 Important limit:
@@ -27,7 +28,7 @@ There is no canonical public wallet-to-EIP-7702-delegate registry. New wallet ve
 | TokenPocket Wallet | `0xcc0c946eecf01a4bc76bc333ea74ceb04756f17b` | User Base delegated account check, Etherscan label/source, BundleBear registry |
 | MetaMask | `0x63c0c19a282a1b52b07dd5a65b58948a07dae32b` | Ethereum.org known implementations, MetaMask delegation-framework docs, BundleBear registry |
 | Base Account / Coinbase Wallet | `0x7702cb554e6bfb442cb743a7df23154544a7176c` | Base EIP7702Proxy release/deployment addresses, Coinbase EIP-7702 docs, Base RPC code check, BundleBear registry |
-| Trust Wallet | `0xd2e28229f6f2c235e57de2ebc727025a1d0530fb` | BundleBear registry, Base RPC code check |
+| Trust Wallet | `0xd2e28229f6f2c235e57de2ebc727025a1d0530fb` | BundleBear registry, Base RPC code check. Trust Wallet public dApp docs currently document standard provider / WalletConnect request methods but not EIP-5792 `wallet_sendCalls` or `wallet_getCapabilities`, so DustSweep labels Trust delegates but does not recommend Trust for fresh one-click setup by default. |
 | Uniswap Wallet | `0x000000009b1d0af20d8c6d0a44e162d11f9b8f00`, `0x0c338ca25585035142a9a0a1eeeba267256f281f`, `0x458f5a9f47a01bea5d7a32662660559d9ed3312c` | Ethereum.org known implementations, Uniswap delegation docs, BundleBear registry, Base RPC code check |
 | Ambire Wallet | `0x5a7fc11397e9a8ad41bf10bf13f22b0a63f96f6d` | Ethereum.org known implementations, BundleBear registry, Base RPC code check |
 | Bitget Wallet | `0xa845c74344fc9405b1fcf712f04668979573c1bf`, `0x4428a93b478fa76a5bd9c7641f54ec6373855433` | Bitget EIP-7702 support docs/news, BundleBear registry, Base RPC code check. Bitget's public docs describe manual wallet binding, not a dApp-triggered `wallet_sendCalls` setup flow, so DustSweep does not advertise Bitget as one-click until public batch support is verified. |

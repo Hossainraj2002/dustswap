@@ -9,6 +9,9 @@ export const METAMASK_BATCH_APPROVALS_ENABLED =
 export const RAINBOW_ONE_CLICK_SWEEP_ENABLED =
   process.env.NEXT_PUBLIC_DUST_SWEEP_RAINBOW_ONE_CLICK === "true";
 
+export const TRUST_ONE_CLICK_SWEEP_ENABLED =
+  process.env.NEXT_PUBLIC_DUST_SWEEP_TRUST_ONE_CLICK === "true";
+
 export function isDustSweepApprovalBatchingEnabled(
   walletKey?: DustSweepWalletKey | null,
 ) {

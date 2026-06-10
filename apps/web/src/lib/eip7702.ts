@@ -3,7 +3,10 @@ import {
   type DelegateIdentity,
   type DustSweepWalletKey,
 } from "@/types/dustsweep";
-import { RAINBOW_ONE_CLICK_SWEEP_ENABLED } from "@/lib/dustsweep-feature-flags";
+import {
+  RAINBOW_ONE_CLICK_SWEEP_ENABLED,
+  TRUST_ONE_CLICK_SWEEP_ENABLED,
+} from "@/lib/dustsweep-feature-flags";
 
 // EIP-7702 delegation designator prefix. A delegated EOA's code is
 // `0xef0100 || <20-byte delegate address>`. See EIP-7702 + Privy's guide
@@ -279,13 +282,6 @@ export const ONE_CLICK_SWEEP_WALLETS: Array<{
     ] as Address[],
   },
   {
-    wallet: "trust",
-    label: "Trust Wallet",
-    delegateAddresses: [
-      "0xd2e28229f6f2c235e57de2ebc727025a1d0530fb",
-    ] as Address[],
-  },
-  {
     wallet: "uniswap",
     label: "Uniswap Wallet",
     delegateAddresses: [
@@ -308,6 +304,17 @@ export const ONE_CLICK_SWEEP_WALLETS: Array<{
           label: "Rainbow",
           delegateAddresses: [
             "0x612373d7003d694220f7800eeaf8e3924c0951d3",
+          ] as Address[],
+        },
+      ]
+    : []),
+  ...(TRUST_ONE_CLICK_SWEEP_ENABLED
+    ? [
+        {
+          wallet: "trust" as DustSweepWalletKey,
+          label: "Trust Wallet",
+          delegateAddresses: [
+            "0xd2e28229f6f2c235e57de2ebc727025a1d0530fb",
           ] as Address[],
         },
       ]
