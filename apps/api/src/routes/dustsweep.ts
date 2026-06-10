@@ -180,6 +180,30 @@ function isV3Active() {
   );
 }
 
+function sumRouteMinAmountOut(routes: Array<Pick<DustSweepRoute, "amountOutMin">>) {
+  return routes.reduce((sum, route) => sum + BigInt(route.amountOutMin), 0n);
+}
+
+function getRouterMinAmountOut(
+  routes: Array<Pick<DustSweepRoute, "amountOutMin">>,
+  executionLane: DustSweepExecutionLane,
+) {
+  if (!routes.length) return 0n;
+
+  if (executionLane === "owned_v2" && isV3Active()) {
+    // V3 executes routes best-effort: every DEX leg still enforces its own
+    // slippage floor, and failed legs are refunded. The router-level floor
+    // should therefore only require at least one quoted leg to settle, not the
+    // sum of every leg, otherwise one refunded dust route reverts the batch.
+    return routes.reduce((min, route) => {
+      const amount = BigInt(route.amountOutMin);
+      return amount < min ? amount : min;
+    }, BigInt(routes[0]!.amountOutMin));
+  }
+
+  return sumRouteMinAmountOut(routes);
+}
+
 function getRouterAddressForLane(executionLane: DustSweepExecutionLane) {
   if (executionLane === "owned_v2") {
     return isV3Active() ? DUST_SWEEP_ROUTER_V3_ADDRESS : DUST_SWEEP_ROUTER_V2_ADDRESS;
@@ -5051,7 +5075,7 @@ dustsweepRoutes.post("/quote", async (c) => {
   const feeBps = getFeeBps();
   const protocolFeeAmount = (totalEstimatedOut * BigInt(feeBps)) / 10_000n;
   const netEstimatedOut = totalEstimatedOut - protocolFeeAmount;
-  const minAmountOut = cappedRoutes.reduce((sum, route) => sum + BigInt(route.amountOutMin), 0n);
+  const minAmountOut = getRouterMinAmountOut(cappedRoutes, executionLane);
   const feeAmountUSD = (totalEstimatedOutUSD * feeBps) / 10_000;
   const netEstimatedOutUSD = totalEstimatedOutUSD - feeAmountUSD;
   const deadline = Math.floor(Date.now() / 1000) + 1800;
@@ -5225,7 +5249,7 @@ dustsweepRoutes.post("/build-tx", async (c) => {
     return c.json(errorJson((error as Error).message || "Failed to build V2 route"), 400);
   }
 
-  const minAmountOut = routes.reduce((sum, route) => sum + BigInt(route.amountOutMin), 0n);
+  const minAmountOut = getRouterMinAmountOut(routes, executionLane);
   const value = v2Routes.reduce((sum, route) => sum + route.value, 0n);
   if (v2AuthMode !== "permit2") {
     const routerApprovals = await findMissingTokenApprovals(userAddress, routes, routerAddress);

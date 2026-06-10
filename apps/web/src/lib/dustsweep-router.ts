@@ -119,7 +119,9 @@ export function parseDustSweepError(error: unknown) {
   if (lower.includes("deadlineexpired")) return "Deadline expired. Refreshing quote.";
   if (lower.includes("signatureexpired")) return "Deadline expired. Refreshing quote.";
   if (lower.includes("invalidnonce")) return "Permit already used. Refresh quote and try again.";
-  if (lower.includes("insufficientoutput")) return "Slippage exceeded, try again or increase slippage.";
+  if (lower.includes("insufficientoutput") || lower.includes("0xbb2875c3")) {
+    return "Route output moved before the sweep. Refresh the quote and try again, or remove the low-liquidity token.";
+  }
   if (lower.includes("batchtoolarge") || lower.includes("toomanytokens")) return "Too many tokens selected for this DustSweep lane.";
   if (lower.includes("zerotokens") || lower.includes("emptyorders")) return "Select at least one token to sweep.";
   if (lower.includes("permitlengthmismatch")) return "Permit data did not match the selected tokens.";
