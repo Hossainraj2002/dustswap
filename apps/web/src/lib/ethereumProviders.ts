@@ -14,6 +14,88 @@ export type EthereumProviderCandidate = {
 const knownOkxProviders = new WeakSet<object>();
 const knownTokenPocketProviders = new WeakSet<object>();
 
+type Eip6963ProviderInfo = {
+  uuid?: string;
+  name?: string;
+  icon?: string;
+  rdns?: string;
+};
+
+type Eip6963ProviderDetail<
+  TProvider extends EthereumProviderCandidate = EthereumProviderCandidate,
+> = {
+  info?: Eip6963ProviderInfo;
+  provider?: TProvider;
+};
+
+type Eip6963ProviderEvent<
+  TProvider extends EthereumProviderCandidate = EthereumProviderCandidate,
+> = Event & {
+  detail?: Eip6963ProviderDetail<TProvider>;
+};
+
+type Eip6963Window = Window & {
+  __dustSwapEip6963Listening?: boolean;
+  __dustSwapEip6963Providers?: Eip6963ProviderDetail[];
+};
+
+function getEip6963Store() {
+  if (typeof window === "undefined") {
+    return [];
+  }
+
+  const browserWindow = window as Eip6963Window;
+  browserWindow.__dustSwapEip6963Providers ||= [];
+
+  if (!browserWindow.__dustSwapEip6963Listening) {
+    browserWindow.addEventListener("eip6963:announceProvider", (rawEvent) => {
+      const event = rawEvent as Eip6963ProviderEvent;
+      const provider = event.detail?.provider;
+      if (!provider || typeof provider !== "object") {
+        return;
+      }
+
+      const info = event.detail?.info;
+      if (info && !provider.info) {
+        provider.info = info;
+      }
+
+      const providers = browserWindow.__dustSwapEip6963Providers || [];
+      const alreadySeen = providers.some(
+        (entry) =>
+          entry.provider === provider ||
+          (!!info?.uuid && entry.info?.uuid === info.uuid),
+      );
+      if (!alreadySeen) {
+        providers.push({ info, provider });
+      }
+    });
+    browserWindow.__dustSwapEip6963Listening = true;
+  }
+
+  try {
+    browserWindow.dispatchEvent(new Event("eip6963:requestProvider"));
+  } catch {
+    // Older browsers or hardened extension contexts may reject the event.
+  }
+
+  return browserWindow.__dustSwapEip6963Providers || [];
+}
+
+function getEip6963Providers<
+  TProvider extends EthereumProviderCandidate = EthereumProviderCandidate,
+>() {
+  return getEip6963Store()
+    .map((entry) => {
+      const provider = entry.provider as TProvider | undefined;
+      if (provider && entry.info && !provider.info) {
+        provider.info = entry.info;
+      }
+      return provider;
+    })
+    .filter(Boolean) as TProvider[];
+}
+
 export function isOkxAppBrowser() {
   if (typeof navigator === "undefined") {
     return false;
@@ -97,6 +179,7 @@ export function getEthereumProviderCandidates<
     tokenpocket?: TProvider | { ethereum?: TProvider };
   };
   const ethereum = browserWindow.ethereum;
+  const eip6963Providers = getEip6963Providers<TProvider>();
   const tokenPocketProvider =
     browserWindow.tokenpocket &&
     typeof browserWindow.tokenpocket === "object" &&
@@ -136,6 +219,7 @@ export function getEthereumProviderCandidates<
   const candidates = [
     browserWindow.okxwallet,
     tokenPocketProvider,
+    ...eip6963Providers,
     ethereum?.selectedProvider,
     ...(Array.isArray(ethereum?.providers) ? ethereum.providers : []),
     ethereum,
@@ -161,6 +245,9 @@ export function mergeEthereumProviderCandidates<
   }
   if (providers.some(isTokenPocketEthereumProvider)) {
     merged.isTokenPocket = true;
+  }
+  if (providers.some(isMetaMaskEthereumProvider)) {
+    merged.isMetaMask = true;
   }
 
   return merged;
@@ -193,6 +280,27 @@ export function isOkxEthereumProvider(provider: EthereumProviderCandidate) {
 
 export function hasInjectedOkxWallet() {
   return getEthereumProviderCandidates().some(isOkxEthereumProvider);
+}
+
+export function isMetaMaskEthereumProvider(provider: EthereumProviderCandidate) {
+  if (provider.isMetaMask) {
+    return true;
+  }
+
+  const signal = [
+    provider.info?.name,
+    provider.info?.rdns,
+    provider.name,
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+
+  return signal.includes("metamask") || signal.includes("meta_mask");
+}
+
+export function hasInjectedMetaMaskWallet() {
+  return getEthereumProviderCandidates().some(isMetaMaskEthereumProvider);
 }
 
 export function isTokenPocketEthereumProvider(provider: EthereumProviderCandidate) {

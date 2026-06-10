@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useAccount, useConnection, useWalletClient } from "wagmi";
 import { useWalletConnection } from "@/hooks/useWalletConnection";
 import {
+  hasInjectedMetaMaskWallet,
   hasInjectedOkxWallet,
   hasInjectedTokenPocketWallet,
   isOkxAppBrowser,
@@ -190,18 +191,20 @@ export function useWalletWhitelist(): WalletWhitelistStatus {
       injectedWalletName === "Token Pocket" ||
       isTokenPocketAppBrowser() ||
       hasInjectedTokenPocketWallet();
+    const isMetaMaskRuntime =
+      injectedWalletName === "MetaMask" || hasInjectedMetaMaskWallet();
     const shouldPreferOkxRuntimeName =
       isOkxRuntime &&
       (!walletClientType ||
-        walletClientType === "metamask" ||
         walletClientType === "detected_ethereum_wallets" ||
-        walletClientType === "wallet_connect");
+        walletClientType === "wallet_connect" ||
+        (walletClientType === "metamask" && !isMetaMaskRuntime));
     const shouldPreferTokenPocketRuntimeName =
       isTokenPocketRuntime &&
       (!walletClientType ||
-        walletClientType === "metamask" ||
         walletClientType === "detected_ethereum_wallets" ||
-        walletClientType === "wallet_connect");
+        walletClientType === "wallet_connect" ||
+        (walletClientType === "metamask" && !isMetaMaskRuntime));
     const isBaseAccountWallet =
       walletClientType === "base_account" ||
       walletClientType === "base_app" ||

@@ -1,6 +1,7 @@
 import { base } from "viem/chains";
 import {
   getEthereumProviderCandidates,
+  hasInjectedMetaMaskWallet,
   isOkxEthereumProvider,
   isTokenPocketEthereumProvider,
   mergeEthereumProviderCandidates,
@@ -170,18 +171,19 @@ export function getDustSweepWalletProfileBase(args: {
   const connectorSignal = normalizeWalletSignal(args.connectorId);
   const signalKey = getSignalWalletKey(combinedSignal);
   const injectedKey = getInjectedWalletKey(getEthereumFlags());
+  const hasMetaMaskRuntime = hasInjectedMetaMaskWallet();
   const shouldPreferInjectedOkx =
     injectedKey === "okx" &&
     (!signalKey ||
-      signalKey === "metamask" ||
       signalKey === "walletconnect" ||
-      signalKey === "injected");
+      signalKey === "injected" ||
+      (signalKey === "metamask" && !hasMetaMaskRuntime));
   const shouldPreferInjectedTokenPocket =
     injectedKey === "tokenpocket" &&
     (!signalKey ||
-      signalKey === "metamask" ||
       signalKey === "walletconnect" ||
-      signalKey === "injected");
+      signalKey === "injected" ||
+      (signalKey === "metamask" && !hasMetaMaskRuntime));
   const mayUseInjectedFlags =
     !combinedSignal ||
     signalKey === "injected" ||
