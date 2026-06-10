@@ -3,6 +3,7 @@ import {
   type DelegateIdentity,
   type DustSweepWalletKey,
 } from "@/types/dustsweep";
+import { RAINBOW_ONE_CLICK_SWEEP_ENABLED } from "@/lib/dustsweep-feature-flags";
 
 // EIP-7702 delegation designator prefix. A delegated EOA's code is
 // `0xef0100 || <20-byte delegate address>`. See EIP-7702 + Privy's guide
@@ -294,19 +295,23 @@ export const ONE_CLICK_SWEEP_WALLETS: Array<{
     ] as Address[],
   },
   {
-    wallet: "rainbow",
-    label: "Rainbow",
-    delegateAddresses: [
-      "0x612373d7003d694220f7800eeaf8e3924c0951d3",
-    ] as Address[],
-  },
-  {
     wallet: "ambire",
     label: "Ambire Wallet",
     delegateAddresses: [
       "0x5a7fc11397e9a8ad41bf10bf13f22b0a63f96f6d",
     ] as Address[],
   },
+  ...(RAINBOW_ONE_CLICK_SWEEP_ENABLED
+    ? [
+        {
+          wallet: "rainbow" as DustSweepWalletKey,
+          label: "Rainbow",
+          delegateAddresses: [
+            "0x612373d7003d694220f7800eeaf8e3924c0951d3",
+          ] as Address[],
+        },
+      ]
+    : []),
 ];
 
 export function getOneClickSweepWalletLabels(limit = 4) {
@@ -321,6 +326,13 @@ export function isSameEip7702WalletFamily(
   if (a === b) return true;
   const coinbaseFamily = new Set<DustSweepWalletKey>(["base_account", "coinbase"]);
   return coinbaseFamily.has(a) && coinbaseFamily.has(b);
+}
+
+export function canRecommendOneClickWallet(wallet?: DustSweepWalletKey | null) {
+  if (!wallet) return false;
+  return ONE_CLICK_SWEEP_WALLETS.some((entry) =>
+    isSameEip7702WalletFamily(entry.wallet, wallet),
+  );
 }
 
 /**

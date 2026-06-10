@@ -128,6 +128,8 @@ function getVisual(args: {
   const isOwnKnownDelegate =
     delegation?.state === "known" &&
     isSameEip7702WalletFamily(delegation.wallet, walletKey);
+  const isKnownForeignDelegate =
+    delegation?.state === "known" && !isOwnKnownDelegate;
   const noDelegate = !delegation || delegation.state === "none";
   const supportedWallets = joinWalletLabels(args.supportedWalletLabels);
   const statusItems = [
@@ -228,6 +230,21 @@ function getVisual(args: {
     };
   }
 
+  if (isKnownForeignDelegate) {
+    return {
+      icon: <PenIcon />,
+      title: `${delegation.label} setup detected`,
+      subtext: `${walletName} will use Sign & Sweep here.`,
+      why: `This address is delegated on Base to ${delegation.label}. DustSweep only recommends switching when that wallet has verified dApp-triggered one-click support; otherwise Sign & Sweep is the reliable path.`,
+      statusItems,
+      container:
+        "border-blue-200 bg-blue-50 dark:border-blue-400/20 dark:bg-blue-400/10",
+      text: "text-blue-700 dark:text-blue-300",
+      whyButton:
+        "text-blue-700/80 hover:text-blue-800 dark:text-blue-300/80 dark:hover:text-blue-200",
+    };
+  }
+
   if (
     walletKey === "bitget" &&
     noDelegate &&
@@ -238,6 +255,25 @@ function getVisual(args: {
       title: "Bind Bitget EIP-7702 in wallet",
       subtext: "Bitget requires manual EIP-7702 binding before one-click. Continue here with Sign & Sweep.",
       why: "Bitget's public docs describe binding inside the wallet app: open Bitget Wallet, go to More, choose EIP-7702, then tap Bind. DustSweep will not try an undocumented setup request.",
+      statusItems,
+      container:
+        "border-blue-200 bg-blue-50 dark:border-blue-400/20 dark:bg-blue-400/10",
+      text: "text-blue-700 dark:text-blue-300",
+      whyButton:
+        "text-blue-700/80 hover:text-blue-800 dark:text-blue-300/80 dark:hover:text-blue-200",
+    };
+  }
+
+  if (
+    walletKey === "rainbow" &&
+    noDelegate &&
+    (args.atomicStatus === "unsupported" || args.atomicStatus === "unknown")
+  ) {
+    return {
+      icon: <PenIcon />,
+      title: "Rainbow one-click not available",
+      subtext: "Rainbow did not report Base atomic batching. Continue here with Sign & Sweep.",
+      why: "DustSweep has Rainbow's known 7702 delegate saved for labeling already-delegated accounts, but this Rainbow connection did not report EIP-5792/EIP-7702 atomic readiness for Base. DustSweep will not send an undocumented upgrade request.",
       statusItems,
       container:
         "border-blue-200 bg-blue-50 dark:border-blue-400/20 dark:bg-blue-400/10",

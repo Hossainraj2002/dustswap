@@ -41,6 +41,8 @@ const PRIVY_WALLET_NAMES: Record<string, string> = {
   okx_wallet: "OKX Wallet",
   okx: "OKX Wallet",
   zerion: "Zerion",
+  ambire: "Ambire Wallet",
+  ambire_wallet: "Ambire Wallet",
   bitget_wallet: "Bitget Wallet",
   safe: "Safe",
   uniswap: "Uniswap Wallet",
@@ -58,6 +60,7 @@ type EthereumFlags = EthereumProviderCandidate & {
   isTokenPocket?: boolean;
   isOKExWallet?: boolean;
   isOKXWallet?: boolean;
+  isAmbire?: boolean;
   isImToken?: boolean;
   isPhantom?: boolean;
   isRainbow?: boolean;
@@ -126,6 +129,42 @@ function getPrivyWalletName(walletClientType: string | null) {
   return PRIVY_WALLET_NAMES[normalized] ?? null;
 }
 
+function getWalletNameFromMetadata(name?: string | null, id?: string | null) {
+  const signal = [name, id]
+    .map((value) => value?.trim().toLowerCase() ?? "")
+    .filter(Boolean)
+    .join(" ");
+
+  if (!signal) return null;
+  if (signal.includes("ambire")) return "Ambire Wallet";
+  if (signal.includes("rabby")) return "Rabby";
+  if (signal.includes("rainbow")) return "Rainbow";
+  if (signal.includes("okx") || signal.includes("okex")) return "OKX Wallet";
+  if (signal.includes("tokenpocket") || signal.includes("token_pocket")) {
+    return "Token Pocket";
+  }
+  if (signal.includes("bitget") || signal.includes("bitkeep")) {
+    return "Bitget Wallet";
+  }
+  if (signal.includes("trust")) return "Trust Wallet";
+  if (signal.includes("zerion")) return "Zerion";
+  if (signal.includes("safe")) return "Safe";
+  if (signal.includes("uniswap")) return "Uniswap Wallet";
+  if (signal.includes("phantom")) return "Phantom";
+  if (signal.includes("metamask") || signal.includes("meta_mask")) {
+    return "MetaMask";
+  }
+  if (signal.includes("coinbase") || signal.includes("base account")) {
+    return "Coinbase Smart Wallet";
+  }
+
+  return name || null;
+}
+
+function isGenericPrivyWalletName(name: string | null) {
+  return name === "Injected Wallet" || name === "WalletConnect";
+}
+
 export function useWalletWhitelist(): WalletWhitelistStatus {
   const { isConnected } = useAccount();
   const connection = useConnection();
@@ -133,6 +172,8 @@ export function useWalletWhitelist(): WalletWhitelistStatus {
   const { data: walletClient } = useWalletClient();
   const connectorId = connection.connector?.id ?? null;
   const walletClientType = walletConnection.activeWallet?.walletClientType ?? null;
+  const walletMetaName = walletConnection.activeWallet?.meta?.name ?? null;
+  const walletMetaId = walletConnection.activeWallet?.meta?.id ?? null;
   const [supportsEIP712, setSupportsEIP712] = useState(false);
   const [isChecking, setIsChecking] = useState(false);
 
@@ -182,6 +223,10 @@ export function useWalletWhitelist(): WalletWhitelistStatus {
 
   return useMemo<WalletWhitelistStatus>(() => {
     const privyWalletName = getPrivyWalletName(walletClientType);
+    const selectedWalletName = getWalletNameFromMetadata(
+      walletMetaName,
+      walletMetaId,
+    );
     const injectedWalletName = detectInjectedWalletName(connectorId);
     const isOkxRuntime =
       injectedWalletName === "OKX Wallet" ||
@@ -194,12 +239,14 @@ export function useWalletWhitelist(): WalletWhitelistStatus {
     const isMetaMaskRuntime =
       injectedWalletName === "MetaMask" || hasInjectedMetaMaskWallet();
     const shouldPreferOkxRuntimeName =
+      !selectedWalletName &&
       isOkxRuntime &&
       (!walletClientType ||
         walletClientType === "detected_ethereum_wallets" ||
         walletClientType === "wallet_connect" ||
         (walletClientType === "metamask" && !isMetaMaskRuntime));
     const shouldPreferTokenPocketRuntimeName =
+      !selectedWalletName &&
       isTokenPocketRuntime &&
       (!walletClientType ||
         walletClientType === "detected_ethereum_wallets" ||
@@ -217,7 +264,9 @@ export function useWalletWhitelist(): WalletWhitelistStatus {
         ? "OKX Wallet"
         : isBaseAccountWallet
         ? (privyWalletName || "Coinbase Smart Wallet")
-        : privyWalletName || injectedWalletName;
+        : privyWalletName && !isGenericPrivyWalletName(privyWalletName)
+        ? privyWalletName
+        : selectedWalletName || privyWalletName || injectedWalletName;
 
     // Capability-based support: any wallet with signTypedData + sendTransaction is supported
     // No brand/connector allowlisting — supports ~99% of wallets
@@ -250,5 +299,13 @@ export function useWalletWhitelist(): WalletWhitelistStatus {
       supportsEIP712,
       isCoinbaseSmartWallet,
     };
-  }, [connectorId, isChecking, isConnected, supportsEIP712, walletClientType]);
+  }, [
+    connectorId,
+    isChecking,
+    isConnected,
+    supportsEIP712,
+    walletClientType,
+    walletMetaId,
+    walletMetaName,
+  ]);
 }

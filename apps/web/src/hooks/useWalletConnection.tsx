@@ -174,7 +174,12 @@ export function supportsBaseAccountFeatures(
 }
 
 type WalletConnectionContextValue = {
-  activeWallet: { address?: string; walletClientType?: string } | null;
+  activeWallet: {
+    address?: string;
+    connectorType?: string;
+    meta?: { id?: string; name?: string };
+    walletClientType?: string;
+  } | null;
   disconnectWallet: () => Promise<void>;
   isAvailable: boolean;
   openWalletModal: (

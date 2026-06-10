@@ -393,6 +393,9 @@ export function getChainCapabilities(capabilities: unknown, chainId = base.id) {
   }
 
   const byChain = capabilities as Record<string, WalletChainCapabilities | undefined>;
+  if ("atomic" in byChain || "atomicBatch" in byChain) {
+    return byChain as WalletChainCapabilities;
+  }
   const chainIdHex = `0x${chainId.toString(16)}`;
   const chainIdDecimal = String(chainId);
 

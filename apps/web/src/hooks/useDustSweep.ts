@@ -10,6 +10,7 @@ import { useWalletConnection } from "@/hooks/useWalletConnection";
 import { useWalletWhitelist } from "@/hooks/useWalletWhitelist";
 import { getPermit2SignatureErrorMessage, PERMIT2_ADDRESS } from "@/lib/permit2";
 import {
+  canRecommendOneClickWallet,
   identifyDelegate,
   isSameEip7702WalletFamily,
   parseEip7702AuthorizedAddress,
@@ -758,7 +759,9 @@ export function useDustSweep(): UseDustSweepReturn {
 
         const capabilityParamSets: unknown[][] = [
           [address, [chainIdHex]],
+          [address, [String(base.id)]],
           [address],
+          [],
         ];
         let supported = false;
         let detectedAtomicStatus: DustSweepAtomicStatus = "unknown";
@@ -858,7 +861,7 @@ export function useDustSweep(): UseDustSweepReturn {
 
     // (1) Delegated to a wallet we can name that isn't the connected one →
     // offer the switch (+ Permit2 fallback).
-    if (knownForeignDelegate && delegateWallet !== "bitget") {
+    if (knownForeignDelegate && canRecommendOneClickWallet(delegateWallet)) {
       return "switch_or_permit2";
     }
 
