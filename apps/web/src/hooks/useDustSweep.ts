@@ -29,6 +29,7 @@ import {
 } from "@/lib/dustsweep-feature-flags";
 import {
   getBatchCapabilityStatus,
+  getCatalogedOneClickFallbackStatus,
   getChainCapabilities,
   getDustSweepWalletProfileBase,
   getWalletBatchNotice,
@@ -750,8 +751,14 @@ export function useDustSweep(): UseDustSweepReturn {
         const requests = getWalletRequestCandidates(walletClient, walletProfileBase.walletKey);
         if (requests.length === 0) {
           if (!cancelled) {
-            setSupportsWalletSendCalls(false);
-            setAtomicStatus("unknown");
+            const fallbackAtomicStatus = getCatalogedOneClickFallbackStatus({
+              walletKey: walletProfileBase.walletKey,
+              detectedAtomicStatus: "unknown",
+            });
+            setSupportsWalletSendCalls(
+              fallbackAtomicStatus === "ready" || fallbackAtomicStatus === "supported",
+            );
+            setAtomicStatus(fallbackAtomicStatus);
           }
           return;
         }
@@ -782,13 +789,34 @@ export function useDustSweep(): UseDustSweepReturn {
         }
 
         if (!cancelled) {
-          setSupportsWalletSendCalls(supported);
-          setAtomicStatus(detectedAtomicStatus);
+          const fallbackAtomicStatus = getCatalogedOneClickFallbackStatus({
+            walletKey: walletProfileBase.walletKey,
+            detectedAtomicStatus,
+          });
+          if (fallbackAtomicStatus !== detectedAtomicStatus) {
+            console.info("DustSweep using cataloged wallet batch fallback", {
+              walletKey: walletProfileBase.walletKey,
+              detectedAtomicStatus,
+              fallbackAtomicStatus,
+            });
+          }
+          setSupportsWalletSendCalls(
+            supported ||
+              fallbackAtomicStatus === "ready" ||
+              fallbackAtomicStatus === "supported",
+          );
+          setAtomicStatus(fallbackAtomicStatus);
         }
       } catch {
         if (!cancelled) {
-          setSupportsWalletSendCalls(false);
-          setAtomicStatus("unknown");
+          const fallbackAtomicStatus = getCatalogedOneClickFallbackStatus({
+            walletKey: walletProfileBase.walletKey,
+            detectedAtomicStatus: "unknown",
+          });
+          setSupportsWalletSendCalls(
+            fallbackAtomicStatus === "ready" || fallbackAtomicStatus === "supported",
+          );
+          setAtomicStatus(fallbackAtomicStatus);
         }
       }
     }

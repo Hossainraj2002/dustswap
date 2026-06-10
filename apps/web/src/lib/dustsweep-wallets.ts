@@ -261,6 +261,25 @@ export function getWalletBatchNotice(
   return null;
 }
 
+export function getCatalogedOneClickFallbackStatus(args: {
+  walletKey: DustSweepWalletKey;
+  detectedAtomicStatus: DustSweepAtomicStatus;
+}): DustSweepAtomicStatus {
+  if (args.detectedAtomicStatus !== "unknown") {
+    return args.detectedAtomicStatus;
+  }
+
+  // Bitget's mobile in-app provider can expose wallet_sendCalls/EIP-7702 setup
+  // while wallet_getCapabilities returns nothing useful. We still require the
+  // route resolver's delegation check before using this, so foreign delegates
+  // continue to fall back safely.
+  if (args.walletKey === "bitget") {
+    return "ready";
+  }
+
+  return args.detectedAtomicStatus;
+}
+
 function getWindowEthereumProviders(walletKey?: DustSweepWalletKey): WalletRpcProvider[] {
   const uniqueProviders = getRawEthereumProviders();
 
