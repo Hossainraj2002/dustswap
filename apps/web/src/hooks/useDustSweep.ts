@@ -171,6 +171,7 @@ const WALLET_SEND_CALLS_MAX_CALLS = Math.max(
   1,
   Number(process.env.NEXT_PUBLIC_DUST_SWEEP_WALLET_BATCH_CALL_CAP || "50") || 50,
 );
+const METAMASK_WALLET_SEND_CALLS_MAX_CALLS = 10;
 // Coinbase / Base smart wallets bundle approvals + sweep into ONE atomic
 // wallet_sendCalls for sweeps at or below this token count (one wallet prompt).
 // Above it, DustSweep splits into exactly two prompts: all approvals in one
@@ -184,6 +185,23 @@ const TOKENPOCKET_BATCH_APPROVALS_ENABLED =
 
 function isSameAddress(a?: string | null, b?: string | null) {
   return Boolean(a && b && a.toLowerCase() === b.toLowerCase());
+}
+
+function getWalletSendCallsMaxCalls(walletKey: DustSweepWalletKey) {
+  if (walletKey === "metamask") {
+    return Math.min(WALLET_SEND_CALLS_MAX_CALLS, METAMASK_WALLET_SEND_CALLS_MAX_CALLS);
+  }
+
+  return WALLET_SEND_CALLS_MAX_CALLS;
+}
+
+function chunkWalletCalls(calls: WalletSendCall[], maxCallCount: number) {
+  const chunks: WalletSendCall[][] = [];
+  const size = Math.max(1, maxCallCount);
+  for (let index = 0; index < calls.length; index += size) {
+    chunks.push(calls.slice(index, index + size));
+  }
+  return chunks;
 }
 
 function normalizeQuotePayload(payload: unknown): DustSweepQuoteResponse {
@@ -1775,6 +1793,7 @@ export function useDustSweep(): UseDustSweepReturn {
       const bundledCallCount = approvalCalls.length + 1;
       const usesTokenPocketExisting =
         walletProfile.executionStrategy === "tokenpocket_existing";
+      const walletCallCap = getWalletSendCallsMaxCalls(walletProfile.walletKey);
       const routeCount = quote.routes.length;
       const exceedsSingleBatchLimit = routeCount > SINGLE_BATCH_ROUTE_LIMIT;
       // Coinbase / Base smart wallets always support EIP-5792 atomic batching,
@@ -1812,12 +1831,16 @@ export function useDustSweep(): UseDustSweepReturn {
       const canBundleAllCalls =
         !shouldSplitWalletBatch &&
         (canUseAtomicBatch || canUseTokenPocketBatch) &&
-        bundledCallCount <= WALLET_SEND_CALLS_MAX_CALLS;
+        bundledCallCount <= walletCallCap;
       const canBundleApprovalsOnly =
         (canUseAtomicBatch || canUseTokenPocketBatch) &&
         approvalCalls.length > 0 &&
         // TP uses parallel eth_sendTransaction (no wallet_sendCalls cap); other wallets respect the cap.
-        (usesTokenPocketExisting || approvalCalls.length <= WALLET_SEND_CALLS_MAX_CALLS);
+        (usesTokenPocketExisting || approvalCalls.length <= walletCallCap);
+      const shouldChunkWalletBatch =
+        canUseAtomicBatch &&
+        !usesTokenPocketExisting &&
+        approvalCalls.length > walletCallCap;
       const usePaymasterCapabilities =
         walletStatus.isCoinbaseSmartWallet && Boolean(paymasterUrl);
 
@@ -1836,9 +1859,10 @@ export function useDustSweep(): UseDustSweepReturn {
         exceedsSingleBatchLimit,
         approvalCallCount: approvalCalls.length,
         fullBundleCallCount: bundledCallCount,
-        walletCallCap: WALLET_SEND_CALLS_MAX_CALLS,
+        walletCallCap,
         tokenPocketCompatibleBatch: canUseTokenPocketBatch,
         splitWalletBatch: shouldSplitWalletBatch,
+        chunkWalletBatch: shouldChunkWalletBatch,
       });
 
       const sendSweepTransaction = async (calldata: Hex) => {
@@ -1958,6 +1982,74 @@ export function useDustSweep(): UseDustSweepReturn {
         }
 
         const sweepCalldata = await getCanonicalCalldata();
+        currentStep = "pending";
+        setSweepStep(currentStep);
+        return sendSweepTransaction(sweepCalldata);
+      };
+
+      const sendChunkedWalletBatches = async (notice?: string) => {
+        if (notice) {
+          setExecutionNotice(notice);
+        }
+
+        const sweepCalldata = await getCanonicalCalldata();
+        const sweepCall: WalletSendCall = {
+          to: sweepTarget,
+          data: sweepCalldata,
+          value: txValue,
+          dataSuffix: DATA_SUFFIX,
+        };
+        const approvalChunks = chunkWalletCalls(approvalCalls, walletCallCap);
+
+        currentStep = "approving";
+        setSweepStep(currentStep);
+
+        let hash: Hex | null = null;
+        for (let index = 0; index < approvalChunks.length; index += 1) {
+          const isLastChunk = index === approvalChunks.length - 1;
+          const chunk = approvalChunks[index];
+          const canIncludeSweep = isLastChunk && chunk.length + 1 <= walletCallCap;
+          const calls = canIncludeSweep ? [...chunk, sweepCall] : chunk;
+
+          if (canIncludeSweep) {
+            currentStep = "pending";
+            setSweepStep(currentStep);
+          }
+
+          try {
+            hash = await sendAtomicWalletCalls({
+              account: address,
+              calls,
+              usePaymasterCapabilities,
+              walletKey: walletProfile.walletKey,
+              requireAtomic: true,
+              appendDataSuffixes: true,
+            });
+          } catch (chunkError) {
+            if (isRejectedByUser(chunkError) || isWalletLockedError(chunkError)) {
+              throw chunkError;
+            }
+
+            console.warn("DustSweep chunked wallet batch failed.", {
+              walletKey: walletProfile.walletKey,
+              chunkIndex: index,
+              chunkCallCount: calls.length,
+              walletCallCap,
+              code: getErrorCode(chunkError),
+              message: getDebugErrorMessage(chunkError),
+            });
+            throw new Error(WALLET_BATCH_UNSUPPORTED_MESSAGE);
+          }
+
+          if (!isLastChunk || !canIncludeSweep) {
+            await waitForSuccessfulTransaction(hash);
+          }
+
+          if (canIncludeSweep) {
+            return hash;
+          }
+        }
+
         currentStep = "pending";
         setSweepStep(currentStep);
         return sendSweepTransaction(sweepCalldata);
@@ -2088,9 +2180,13 @@ export function useDustSweep(): UseDustSweepReturn {
             ? TOKENPOCKET_SPLIT_BATCH_NOTICE
             : `Approval+sweep needs ${bundledCallCount} wallet calls, so DustSweep will batch approvals first and then send the sweep.`,
         );
+      } else if (shouldChunkWalletBatch) {
+        hash = await sendChunkedWalletBatches(
+          `${walletProfile.walletName || "Wallet"} supports ${walletCallCap} calls per batch. DustSweep will send approvals in wallet batches, then sweep.`,
+        );
       } else if (canUseAtomicBatch) {
         setExecutionNotice(
-          `Approval batching needs ${approvalCalls.length} wallet calls, above the ${WALLET_SEND_CALLS_MAX_CALLS} call cap. DustSweep will use Permit2 approvals and a standard sweep.`,
+          `Approval batching needs ${approvalCalls.length} wallet calls, above the ${walletCallCap} call cap. DustSweep will use Permit2 approvals and a standard sweep.`,
         );
         hash = await sendStandardSweepWithApprovals();
       } else {
