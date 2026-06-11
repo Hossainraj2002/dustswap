@@ -198,23 +198,30 @@ export function TokenSelectModal({
     [selectedTokens],
   );
 
+  const disabledOutputToken =
+    mode === "multi" &&
+    selectedOutputToken &&
+    !selectedOutputToken.isNative &&
+    tokenMatchesSearch(selectedOutputToken, query)
+      ? selectedOutputToken
+      : null;
+  const disabledOutputAddress = disabledOutputToken?.address.toLowerCase() ?? null;
+
   const visibleSwappable = useMemo(
     () =>
       swappableTokens
-        .filter((token) => tokenMatchesSearch(token, query))
+        .filter(
+          (token) =>
+            tokenMatchesSearch(token, query) &&
+            token.address.toLowerCase() !== disabledOutputAddress,
+        )
         .sort((a, b) => (b.valueUSD ?? 0) - (a.valueUSD ?? 0)),
-    [query, swappableTokens],
+    [disabledOutputAddress, query, swappableTokens],
   );
   const visibleOutputTokens = useMemo(
     () => outputTokens.filter((token) => tokenMatchesSearch(token, query)),
     [outputTokens, query],
   );
-
-  const disabledOutputToken =
-    mode === "multi" && selectedOutputToken && tokenMatchesSearch(selectedOutputToken, query)
-      ? selectedOutputToken
-      : null;
-  const disabledOutputAddress = disabledOutputToken?.address.toLowerCase() ?? null;
   const visibleUnavailable = useMemo(
     () =>
       unavailableTokens.filter(

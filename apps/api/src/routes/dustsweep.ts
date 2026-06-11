@@ -96,6 +96,7 @@ const BASESWAP_FACTORY_ADDRESS = (process.env.BASESWAP_FACTORY_ADDRESS ||
   "0xFDa619b6d20975be80A10332cD39b9a4b0FAa8BB") as Address;
 const USDBC_ADDRESS = "0xd9aAEc86B65D86f6A7B5B1b0c42FFA531710b6CA" as Address;
 const USDT_ADDRESS = "0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2" as Address;
+const WBTC_ADDRESS = "0x0555E30da8f98308EdB960aa94C0Db47230d2B9c" as Address;
 const DAI_ADDRESS = "0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb" as Address;
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000" as Address;
 const MAX_UINT128 = (1n << 128n) - 1n;
@@ -149,7 +150,6 @@ const DISCOVERY_ALCHEMY_MAX_PAGES = optionalBoundedEnvNumber(
   250,
 );
 const DISCOVERY_ALCHEMY_TIMEOUT_MS = boundedEnvNumber("DUST_SWEEP_ALCHEMY_TIMEOUT_MS", 4_000, 1_000, 15_000);
-const NATIVE_ETH_LOGO_URI = "https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/info/logo.png";
 const DEX = {
   UNISWAP_V3: 0,
   UNISWAP_V4: 1,
@@ -283,6 +283,24 @@ const DEFAULT_TOKEN_WHITELIST = [
     decimals: 18,
     logoURI: "https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/info/logo.png",
     liquidityUSD: 50_000_000,
+    source: "default",
+  },
+  {
+    address: USDT_ADDRESS,
+    symbol: "USDT",
+    name: "Tether USD",
+    decimals: 6,
+    logoURI: "https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/assets/0xdAC17F958D2ee523a2206206994597C13D831ec7/logo.png",
+    liquidityUSD: 50_000_000,
+    source: "default",
+  },
+  {
+    address: WBTC_ADDRESS,
+    symbol: "WBTC",
+    name: "Wrapped BTC",
+    decimals: 8,
+    logoURI: "https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/assets/0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599/logo.png",
+    liquidityUSD: 3_000_000,
     source: "default",
   },
 ] as const;
@@ -979,6 +997,7 @@ type TokenMarketHint = {
   bestDex: string;
   source: "canonical" | "coingecko" | "dexscreener" | "none";
   confidence: PriceConfidence;
+  logoURI?: string;
 };
 
 type TokenRiskResult = {
@@ -1224,12 +1243,22 @@ async function fetchTokenPricesDexScreener(addresses: Address[]): Promise<Record
         },
       );
       if (!response.ok) continue;
-      const pairs = (await response.json()) as Array<{
-        priceUsd?: string;
-        baseToken?: { address?: string };
-        quoteToken?: { address?: string };
-        liquidity?: { usd?: number };
-      }>;
+      const data = (await response.json()) as
+        | Array<{
+            priceUsd?: string;
+            baseToken?: { address?: string };
+            quoteToken?: { address?: string };
+            liquidity?: { usd?: number };
+          }>
+        | {
+            pairs?: Array<{
+              priceUsd?: string;
+              baseToken?: { address?: string };
+              quoteToken?: { address?: string };
+              liquidity?: { usd?: number };
+            }>;
+          };
+      const pairs = Array.isArray(data) ? data : data.pairs || [];
       // DexScreener returns pairs; use the highest-liquidity pair, not the highest price.
       const bestByToken = new Map<string, { price: number; liquidity: number }>();
       for (const pair of pairs) {
@@ -1335,7 +1364,10 @@ function setBestMarketHint(
     hint.liquidityUSD > existing.liquidityUSD ||
     (existing.priceUSD <= 0 && hint.priceUSD > 0)
   ) {
-    hints[key] = hint;
+    const logoURI = hint.logoURI || existing?.logoURI;
+    hints[key] = { ...hint, logoURI };
+  } else if (!existing.logoURI && hint.logoURI) {
+    existing.logoURI = hint.logoURI;
   }
 }
 
@@ -1345,7 +1377,12 @@ function isNativeTokenAddress(address: string) {
 
 function isOutputAssetAddress(address: string) {
   const key = address.toLowerCase();
-  return key === USDC_ADDRESS.toLowerCase() || key === WETH_ADDRESS.toLowerCase();
+  return (
+    key === USDC_ADDRESS.toLowerCase() ||
+    key === WETH_ADDRESS.toLowerCase() ||
+    key === USDT_ADDRESS.toLowerCase() ||
+    key === NATIVE_TOKEN_SENTINEL.toLowerCase()
+  );
 }
 
 async function fetchTokenMarketHintsDexScreener(addresses: Address[]): Promise<Record<string, TokenMarketHint>> {
@@ -1373,12 +1410,24 @@ async function fetchTokenMarketHintsDexScreener(addresses: Address[]): Promise<R
         );
         if (!response.ok) return nextHints;
 
-        const pairs = (await response.json()) as Array<{
-          priceUsd?: string;
-          dexId?: string;
-          baseToken?: { address?: string };
-          liquidity?: { usd?: number };
-        }>;
+        const data = (await response.json()) as
+          | Array<{
+              priceUsd?: string;
+              dexId?: string;
+              baseToken?: { address?: string };
+              liquidity?: { usd?: number };
+              info?: { imageUrl?: string };
+            }>
+          | {
+              pairs?: Array<{
+                priceUsd?: string;
+                dexId?: string;
+                baseToken?: { address?: string };
+                liquidity?: { usd?: number };
+                info?: { imageUrl?: string };
+              }>;
+            };
+        const pairs = Array.isArray(data) ? data : data.pairs || [];
 
         for (const pair of pairs) {
           const priceUSD = Number(pair.priceUsd || 0);
@@ -1392,6 +1441,7 @@ async function fetchTokenMarketHintsDexScreener(addresses: Address[]): Promise<R
             bestDex: bestDexFromSource(`dexscreener:${pair.dexId || ""}`),
             source: "dexscreener",
             confidence: liquidityUSD >= MIN_WL_LIQUIDITY_USD ? "HIGH" : "MEDIUM",
+            logoURI: pair.info?.imageUrl,
           });
         }
       } catch {
@@ -1551,13 +1601,6 @@ async function setCachedTokenResult(address: Address, payload: unknown) {
   } catch {
     // Optional cache table.
   }
-}
-
-async function readNativeBalance(holder: Address) {
-  const result = await baseRpcRequest<Hex>("eth_getBalance", [holder, "latest"], {
-    timeoutMs: 5_000,
-  });
-  return BigInt(result);
 }
 
 function getRiskClassification(args: {
@@ -4609,7 +4652,7 @@ async function handleDustSweepTokensRequest(c: Context, rawAddress?: string) {
 
       // ── Wallet-first discovery: fetch ALL balances, not just whitelisted ──
       // Whitelist is used as metadata/liquidity HINTS, not a visibility gate.
-      const [whitelist, erc20Discovery, nativeBalance] = await Promise.all([
+      const [whitelist, erc20Discovery] = await Promise.all([
         loadWhitelist(),
         fetchAlchemyTokenBalances(userAddress).catch((error) => {
           console.warn("[dustsweep/tokens] Alchemy balance discovery failed", {
@@ -4622,7 +4665,6 @@ async function handleDustSweepTokensRequest(c: Context, rawAddress?: string) {
             truncated: false,
           } satisfies AlchemyTokenBalanceDiscovery;
         }),
-        readNativeBalance(userAddress).catch(() => 0n),
       ]);
 
       const nonZero = erc20Discovery.tokenBalances.filter((balance) => {
@@ -4637,10 +4679,7 @@ async function handleDustSweepTokensRequest(c: Context, rawAddress?: string) {
       const allAddresses = nonZero
         .map((b) => b.contractAddress)
         .filter((a): a is Address => isAddress(a));
-      const marketAddresses = nativeBalance > 0n
-        ? [...allAddresses, NATIVE_TOKEN_SENTINEL]
-        : allAddresses;
-      const marketHints = await fetchTokenMarketHints(marketAddresses);
+      const marketHints = await fetchTokenMarketHints(allAddresses);
       const metadataByAddress = await loadDiscoveryMetadata(nonZero, whitelist, marketHints);
 
       const swappable: DiscoveryTokenResult[] = [];
@@ -4648,44 +4687,6 @@ async function handleDustSweepTokensRequest(c: Context, rawAddress?: string) {
       const hidden: DiscoveryTokenResult[] = [];
       const suspicious: DiscoveryTokenResult[] = [];
       const excludedOutputAssets: DiscoveryTokenResult[] = [];
-
-      if (nativeBalance > 0n) {
-        const nativeMarket = marketHints[NATIVE_TOKEN_SENTINEL.toLowerCase()] || emptyMarketHint();
-        const balanceFormatted = formatUnits(nativeBalance, 18);
-        const valueUSD = Number(balanceFormatted) * nativeMarket.priceUSD;
-        const nativeToken: DiscoveryTokenResult = {
-          address: NATIVE_TOKEN_SENTINEL,
-          symbol: "ETH",
-          name: "Ethereum",
-          decimals: 18,
-          logoURI: NATIVE_ETH_LOGO_URI,
-          balance: nativeBalance.toString(),
-          balanceFormatted,
-          valueUSD: roundUsd(valueUSD),
-          bestDex: nativeMarket.bestDex,
-          liquidityUSD: nativeMarket.liquidityUSD,
-          status: "NATIVE_WRAP_REQUIRED",
-          isNative: true,
-          wrapRequired: true,
-          sourceType: "native",
-          priceUSD: nativeMarket.priceUSD,
-          priceSource: nativeMarket.source,
-          priceConfidence: nativeMarket.confidence,
-          riskScore: 0,
-          riskReasons: [],
-          reason: "NATIVE_WRAP_REQUIRED",
-        };
-
-        if (nativeToken.valueUSD >= MIN_VALUE_USD) {
-          unavailable.push(nativeToken);
-        } else if (nativeToken.valueUSD > 0) {
-          hidden.push({
-            ...nativeToken,
-            status: "HIDDEN",
-            reason: "BELOW_THRESHOLD",
-          });
-        }
-      }
 
       // ── Process ERC-20 balances ──
       for (const balance of discoveryLimitedBalances(nonZero)) {
@@ -4728,6 +4729,7 @@ async function handleDustSweepTokensRequest(c: Context, rawAddress?: string) {
         const priceUSD = market.priceUSD;
         liquidityUSD = Math.max(liquidityUSD, market.liquidityUSD);
         bestDex = market.bestDex !== "GENERIC" ? market.bestDex : bestDex;
+        logoURI = logoURI || market.logoURI;
         const valueUSD = Number(balanceFormatted) * priceUSD;
         const risk = getRiskClassification({
           symbol,
@@ -4760,15 +4762,7 @@ async function handleDustSweepTokensRequest(c: Context, rawAddress?: string) {
         };
 
         // ── Classification logic ──
-        // Skip output tokens (USDC, WETH) — they're not dust
-        if (isOutputAssetAddress(tokenAddress)) {
-          excludedOutputAssets.push({
-            ...baseToken,
-            status: "EXCLUDED_OUTPUT_ASSET",
-            reason: "OUTPUT_ASSET",
-          });
-          continue;
-        }
+        // USDC, WETH, USDT can be swept
 
         // Token discovery only exposes assets that can be selected.
         // Sub-cent known-price balances stay hidden.
@@ -4891,6 +4885,8 @@ dustsweepRoutes.post("/quote", async (c) => {
   }
 
   const tokenOut = normalizeAddress(body.tokenOut);
+  const actualTokenOut = tokenOut.toLowerCase() === NATIVE_TOKEN_SENTINEL.toLowerCase() ? WETH_ADDRESS : tokenOut;
+  const isNativeOutput = isNativeTokenAddress(tokenOut);
   const slippageBps = Math.max(1, Math.min(3000, Number(body.slippageBps || 50)));
   const routes: DustSweepRoute[] = [];
   const skippedTokens: QuoteSkippedToken[] = [];
@@ -4921,6 +4917,15 @@ dustsweepRoutes.post("/quote", async (c) => {
         token: tokenIn,
         reason: "NATIVE_WRAP_REQUIRED",
         message: "Native ETH must be wrapped to WETH before sweeping.",
+      });
+      continue;
+    }
+
+    if (isNativeOutput && tokenIn.toLowerCase() === WETH_ADDRESS.toLowerCase()) {
+      skippedTokens.push({
+        token: tokenIn,
+        reason: "QUOTE_FAILED",
+        message: "Direct WETH-to-ETH sweep requires router support for a no-op unwrap leg.",
       });
       continue;
     }
@@ -4975,7 +4980,7 @@ dustsweepRoutes.post("/quote", async (c) => {
     ({ tokenIn, amountIn }) =>
       async () => {
         const cacheKey = `routeability:${tokenIn.toLowerCase()}:${tokenOut.toLowerCase()}`;
-        
+
         // 1. Check runtime memory cache (fastest)
         const memCached = runtimeCache.get<{ status: string; checkedAt: number }>(cacheKey);
         if (memCached && memCached.status === "NO_ROUTE") {
@@ -4993,7 +4998,7 @@ dustsweepRoutes.post("/quote", async (c) => {
           // but we know a route exists. For now, we proceed to quote to be safe.
         }
 
-        return getBestQuote(tokenIn, tokenOut, amountIn, slippageBps, executionLane)
+        return getBestQuote(tokenIn, actualTokenOut, amountIn, slippageBps, executionLane)
           .then(async (best) => {
             if (best) {
               runtimeCache.set(cacheKey, { status: "OK", checkedAt: Date.now() }, ROUTEABILITY_OK_TTL);
@@ -5201,6 +5206,16 @@ dustsweepRoutes.post("/build-tx", async (c) => {
 
   const buildTokenOut = normalizeAddress(body.tokenOut);
   const buildReceiver = normalizeAddress(body.receiver);
+  const actualTokenOut = isNativeTokenAddress(buildTokenOut) ? WETH_ADDRESS : buildTokenOut;
+
+  if (routes.some((route) => route.tokenIn.toLowerCase() === actualTokenOut.toLowerCase())) {
+    return c.json(
+      errorJson("Selected input includes the output token. Remove it and refresh the quote.", {
+        code: "OUTPUT_INPUT_MATCH",
+      }),
+      400,
+    );
+  }
 
   if (executionLane === "owned_v1") {
     const routerApprovals = await findMissingTokenApprovals(userAddress, routes, routerAddress);
@@ -5242,7 +5257,7 @@ dustsweepRoutes.post("/build-tx", async (c) => {
 
   let v2Routes: DustSweepV2Route[];
   try {
-    v2Routes = routes.map((route) => buildV2Route(route, buildTokenOut, routerAddress, body.deadline!));
+    v2Routes = routes.map((route) => buildV2Route(route, actualTokenOut, routerAddress, body.deadline!));
     for (const route of v2Routes) assertConfiguredV2Route(route);
     await assertOnchainV2RouterAllowlist(routerAddress, v2Routes);
   } catch (error) {

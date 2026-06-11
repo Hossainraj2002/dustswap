@@ -57,7 +57,18 @@ import {
   type UnavailableToken,
 } from "@/types/dustsweep";
 
+const NATIVE_TOKEN_SENTINEL = "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE" as Address;
+const USDT_ADDRESS = "0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2" as Address;
+
 export const DEFAULT_OUTPUT_TOKENS: Token[] = [
+  {
+    address: NATIVE_TOKEN_SENTINEL,
+    symbol: "ETH",
+    name: "Ethereum",
+    decimals: 18,
+    logoURI: "https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/info/logo.png",
+    isNative: true,
+  },
   {
     address: USDC_ADDRESS,
     symbol: "USDC",
@@ -71,6 +82,13 @@ export const DEFAULT_OUTPUT_TOKENS: Token[] = [
     name: "Wrapped Ether",
     decimals: 18,
     logoURI: "https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/info/logo.png",
+  },
+  {
+    address: USDT_ADDRESS,
+    symbol: "USDT",
+    name: "Tether USD",
+    decimals: 6,
+    logoURI: "https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/assets/0xdAC17F958D2ee523a2206206994597C13D831ec7/logo.png",
   },
 ];
 
@@ -155,7 +173,6 @@ export type UseDustSweepReturn = {
   resetSweepState: () => void;
 };
 
-const USDT_ADDRESS = "0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2" as Address;
 const ATOMIC_BATCH_UNSUPPORTED_MESSAGE =
   "This wallet cannot combine token approvals and the sweep into one atomic Base request. DustSweep will use Permit2 approvals and a standard sweep.";
 const WALLET_BATCH_UNSUPPORTED_MESSAGE =
@@ -190,6 +207,10 @@ const TOKENPOCKET_BATCH_APPROVALS_ENABLED =
 
 function isSameAddress(a?: string | null, b?: string | null) {
   return Boolean(a && b && a.toLowerCase() === b.toLowerCase());
+}
+
+function isSelectedOutputToken(token: Token, tokenOut: Token | null) {
+  return Boolean(tokenOut && isSameAddress(token.address, tokenOut.address));
 }
 
 function getWalletSendCallsMaxCalls(walletKey: DustSweepWalletKey) {
@@ -682,23 +703,29 @@ export function useDustSweep(): UseDustSweepReturn {
     [atomicStatus, walletProfileBase],
   );
 
-  const swappableTokens = balances.swappableTokens;
+  const allSwappableTokens = balances.swappableTokens;
   const outputTokens = useMemo(() => {
     const byAddress = new Map<string, Token>();
-    for (const token of DEFAULT_OUTPUT_TOKENS) {
+    for (const token of [...balances.swappableTokens, ...balances.unavailableTokens]) {
       byAddress.set(token.address.toLowerCase(), token);
     }
-    for (const token of [...balances.swappableTokens, ...balances.unavailableTokens]) {
-      if (
-        token.symbol === "USDC" ||
-        token.symbol === "USDbC" ||
-        token.symbol === "WETH"
-      ) {
-        byAddress.set(token.address.toLowerCase(), token);
-      }
-    }
-    return Array.from(byAddress.values());
+    return DEFAULT_OUTPUT_TOKENS.map((token) => {
+      const discovered = byAddress.get(token.address.toLowerCase());
+      return discovered
+        ? {
+            ...token,
+            balance: discovered.balance,
+            balanceFormatted: discovered.balanceFormatted,
+            valueUSD: discovered.valueUSD,
+            logoURI: token.logoURI || discovered.logoURI,
+          }
+        : token;
+    });
   }, [balances.swappableTokens, balances.unavailableTokens]);
+  const swappableTokens = useMemo(
+    () => allSwappableTokens.filter((token) => !isSelectedOutputToken(token, tokenOut)),
+    [allSwappableTokens, tokenOut],
+  );
 
   useEffect(() => {
     setUnavailableTokens([]);
@@ -722,6 +749,14 @@ export function useDustSweep(): UseDustSweepReturn {
       setExecutionNotice(null);
     }
   }, [address, isConnected]);
+
+  useEffect(() => {
+    if (tokenOut) {
+      setSelectedTokens((current) =>
+        current.filter((token) => !isSelectedOutputToken(token, tokenOut)),
+      );
+    }
+  }, [tokenOut]);
 
   useEffect(() => {
     if (!autoMode) return;
@@ -1040,6 +1075,7 @@ export function useDustSweep(): UseDustSweepReturn {
   }, [address, refreshQuote, selectedTokens, slippageBps, tokenOut]);
 
   const addToken = useCallback((token: SelectedToken) => {
+    if (isSelectedOutputToken(token, tokenOut)) return;
     setAutoMode(false);
     setSelectedTokens((current) => {
       if (current.some((item) => isSameAddress(item.address, token.address))) {
@@ -1047,7 +1083,7 @@ export function useDustSweep(): UseDustSweepReturn {
       }
       return [...current, token].slice(0, configuredRouteCap);
     });
-  }, [configuredRouteCap]);
+  }, [configuredRouteCap, tokenOut]);
 
   const selectAllTokens = useCallback(() => {
     setAutoMode(false);
