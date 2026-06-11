@@ -30,6 +30,11 @@ const OPENOCEAN_REFERRER_ADDRESS = normalizeAddress(
     process.env.NEXT_PUBLIC_OPENOCEAN_REFERRER_ADDRESS ||
     "0x0fd79f3ceaE7ddA5cFC15b35188E67EFAc542573"
 );
+const DUSTSWAP_BUILDER_CODE =
+  process.env.BASE_BUILDER_CODE ||
+  process.env.NEXT_PUBLIC_BASE_BUILDER_CODE ||
+  process.env.NEXT_PUBLIC_BUILDER_CODE ||
+  "bc_tpolfjho";
 
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 const ETH_PLACEHOLDER = "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
@@ -209,6 +214,7 @@ type SwapRoutingContext = {
   senderAddress: string;
   viaSmartWallet: boolean;
   userOperationHash: string | null;
+  builderCodeAttributed: boolean;
 };
 
 type OpenOceanTransactionDetail = {
@@ -236,6 +242,34 @@ function normalizeAddress(address: string) {
 
 function isExpectedOpenOceanReferrer(address: string) {
   return normalizeAddress(address) === OPENOCEAN_REFERRER_ADDRESS;
+}
+
+function toAsciiHex(value: string) {
+  return Array.from(Buffer.from(value, "utf8"))
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+function getBuilderCodeDataSuffix(code: string) {
+  const encoded = toAsciiHex(code);
+  const byteLength = Buffer.byteLength(code, "utf8");
+  if (!encoded || byteLength <= 0 || byteLength > 255) {
+    return "";
+  }
+
+  return `${encoded}${byteLength.toString(16).padStart(2, "0")}00${"8021".repeat(7)}`;
+}
+
+const DUSTSWAP_BUILDER_CODE_DATA_SUFFIX = getBuilderCodeDataSuffix(
+  DUSTSWAP_BUILDER_CODE
+);
+
+function hasDustSwapBuilderCodeAttribution(data?: string | null) {
+  if (!DUSTSWAP_BUILDER_CODE_DATA_SUFFIX || !data || data === "0x") {
+    return false;
+  }
+
+  return data.toLowerCase().includes(DUSTSWAP_BUILDER_CODE_DATA_SUFFIX);
 }
 
 function normalizeTxHash(txHash: string) {
@@ -817,6 +851,7 @@ async function resolveSwapRoutingContext(args: {
       senderAddress: args.decodedSwap.sender,
       viaSmartWallet: false,
       userOperationHash: args.resolvedTransaction.userOperationHash,
+      builderCodeAttributed: hasDustSwapBuilderCodeAttribution(args.transaction.input),
     };
   }
 
@@ -846,6 +881,7 @@ async function resolveSwapRoutingContext(args: {
       senderAddress: args.decodedSwap.sender,
       viaSmartWallet: false,
       userOperationHash: args.resolvedTransaction.userOperationHash,
+      builderCodeAttributed: hasDustSwapBuilderCodeAttribution(args.transaction.input),
     };
   }
 
@@ -895,6 +931,9 @@ async function resolveSwapRoutingContext(args: {
       senderAddress: normalizeAddress(matchingOperation.sender),
       viaSmartWallet: true,
       userOperationHash: args.resolvedTransaction.userOperationHash,
+      builderCodeAttributed:
+        hasDustSwapBuilderCodeAttribution(matchingRouterCall.data) ||
+        hasDustSwapBuilderCodeAttribution(args.transaction.input),
     };
   } catch (error) {
     if (error instanceof UnprocessableSwapError) {
@@ -1774,16 +1813,22 @@ export async function recordSwap(input: {
   }
 
   const decodedSwap = decodeSwapEvent(receipt);
-  if (!isExpectedOpenOceanReferrer(decodedSwap.referrer)) {
-    throw new UnprocessableSwapError("Swap transaction was not routed through DustSwap");
-  }
-
   const routingContext = await resolveSwapRoutingContext({
     expectedAddress: normalizedAddress,
     transaction,
     decodedSwap,
     resolvedTransaction,
   });
+  const attributionSource = isExpectedOpenOceanReferrer(decodedSwap.referrer)
+    ? "openocean_referrer"
+    : routingContext.builderCodeAttributed
+      ? "dustswap_builder_code"
+      : null;
+
+  if (!attributionSource) {
+    throw new UnprocessableSwapError("Swap transaction was not routed through DustSwap");
+  }
+
   const routerAddress = routingContext.routerAddress;
   const trustedOpenOceanAmountUsd = getPositiveUsdValue(input.trustedOpenOceanAmountUsd);
 
@@ -1838,6 +1883,8 @@ export async function recordSwap(input: {
     resolvedTxHash: resolvedTransaction.resolvedTxHash,
     userOperationHash: routingContext.userOperationHash,
     viaSmartWallet: routingContext.viaSmartWallet,
+    attributionSource,
+    builderCodeAttributed: routingContext.builderCodeAttributed,
     txFrom: transaction.from ? normalizeAddress(transaction.from) : null,
     sender: routingContext.senderAddress,
     routerAddress,

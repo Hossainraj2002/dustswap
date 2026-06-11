@@ -29,6 +29,7 @@ const APPROVAL_RECEIPT_POLL_DELAY_MS = 1000;
 const APPROVAL_RECEIPT_MAX_ATTEMPTS = 20;
 const CONNECTOR_PROVIDER_KEY = "connector";
 const WINDOW_PROVIDER_KEY = "window";
+const SWAP_CAPTURE_PROVIDER_STATE_KEY = "__dustswapSwapCaptureState";
 
 type CaptureQueueItem = {
   address: string;
@@ -82,12 +83,18 @@ type RequestError = Error & {
 type RequestCapableProvider = {
   chainId?: string | number;
   request: (args: EthereumRequestArguments) => Promise<unknown>;
+  [SWAP_CAPTURE_PROVIDER_STATE_KEY]?: SwapCaptureProviderState;
 };
 
 type WrappedProviderRecord = {
   key: string;
   provider: RequestCapableProvider;
   originalRequest: (args: EthereumRequestArguments) => Promise<unknown>;
+};
+
+type SwapCaptureProviderState = {
+  originalRequest: (args: EthereumRequestArguments) => Promise<unknown>;
+  wrappedRequest: (args: EthereumRequestArguments) => Promise<unknown>;
 };
 
 function isTxHash(value: unknown): value is string {
@@ -634,6 +641,7 @@ export function useSwapCapture() {
     }
 
     let cancelled = false;
+    let isSettingUpProviders = false;
     const providerRecords = new Map<string, WrappedProviderRecord>();
     const providerRestorers: Array<() => void> = [];
     queueRef.current = pruneCaptureQueue(readStoredItems<CaptureQueueItem>(STORAGE_KEY));
@@ -963,6 +971,16 @@ export function useSwapCapture() {
         return;
       }
 
+      const existingState = provider[SWAP_CAPTURE_PROVIDER_STATE_KEY];
+      if (existingState?.wrappedRequest === provider.request) {
+        providerRecords.set(providerKey, {
+          key: providerKey,
+          provider,
+          originalRequest: existingState.originalRequest,
+        });
+        return;
+      }
+
       const originalRequest = provider.request.bind(provider);
       const wrappedRequest = async (args: EthereumRequestArguments) => {
         const method = args?.method;
@@ -1117,6 +1135,10 @@ export function useSwapCapture() {
       };
 
       provider.request = wrappedRequest;
+      provider[SWAP_CAPTURE_PROVIDER_STATE_KEY] = {
+        originalRequest,
+        wrappedRequest,
+      };
       providerRecords.set(providerKey, {
         key: providerKey,
         provider,
@@ -1124,36 +1146,48 @@ export function useSwapCapture() {
       });
 
       providerRestorers.push(() => {
-        if (provider.request === wrappedRequest) {
+        if (
+          provider.request === wrappedRequest &&
+          provider[SWAP_CAPTURE_PROVIDER_STATE_KEY]?.wrappedRequest === wrappedRequest
+        ) {
           provider.request = originalRequest;
+          delete provider[SWAP_CAPTURE_PROVIDER_STATE_KEY];
         }
       });
     };
 
     const setupProviders = async () => {
-      const windowProvider =
-        ((window as Window & { ethereum?: RequestCapableProvider }).ethereum as
-          | RequestCapableProvider
-          | undefined) || null;
-      const connectorProvider =
-        connector && typeof connector.getProvider === "function"
-          ? (((await connector.getProvider({ chainId })) as RequestCapableProvider | undefined) ??
-            null)
-          : null;
-
-      if (cancelled) {
+      if (isSettingUpProviders) {
         return;
       }
 
-      for (const candidate of getProviderCandidates(windowProvider, connectorProvider)) {
-        wrapProvider(candidate.key, candidate.provider);
-      }
+      isSettingUpProviders = true;
 
-      void flushCallQueue(true);
-      void flushQueue(true);
+      try {
+        const windowProvider =
+          ((window as Window & { ethereum?: RequestCapableProvider }).ethereum as
+            | RequestCapableProvider
+            | undefined) || null;
+        const connectorProvider =
+          connector && typeof connector.getProvider === "function"
+            ? (((await connector.getProvider({ chainId })) as RequestCapableProvider | undefined) ??
+              null)
+            : null;
+
+        if (cancelled) {
+          return;
+        }
+
+        for (const candidate of getProviderCandidates(windowProvider, connectorProvider)) {
+          wrapProvider(candidate.key, candidate.provider);
+        }
+      } finally {
+        isSettingUpProviders = false;
+      }
     };
 
     const flushNow = () => {
+      void setupProviders();
       void flushCallQueue(true);
       void flushQueue(true);
     };
@@ -1169,6 +1203,7 @@ export function useSwapCapture() {
     document.addEventListener("visibilitychange", handleVisibilityChange);
 
     intervalRef.current = window.setInterval(() => {
+      void setupProviders();
       void flushCallQueue();
       void flushQueue();
     }, FLUSH_INTERVAL_MS);
