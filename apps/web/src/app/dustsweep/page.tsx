@@ -93,82 +93,7 @@ function getSweepButtonState(args: {
   return { state: "loading", label: "Finding route..." };
 }
 
-/* ─── Unconnected landing ───────────────────────────────────────────────── */
-function DisconnectedView() {
-  // Bug #2: on a plain mobile browser, offer a direct "Open in OKX Wallet" link
-  // that routes into OKX's in-app browser (native injected connect) instead of
-  // the flaky WalletConnect relay handshake. Resolved after mount so the
-  // navigator-based check never causes an SSR/hydration mismatch.
-  const [okxAppLink, setOkxAppLink] = useState<string | null>(null);
-  useEffect(() => {
-    if (shouldOfferOkxAppDeepLink()) {
-      setOkxAppLink(buildOkxInAppBrowserLink());
-    }
-  }, []);
-
-  return (
-    <div className="min-h-screen bg-gradient-to-b from-blue-50 via-white to-slate-50 px-4 py-8">
-      <div className="mx-auto flex min-h-[80dvh] max-w-[400px] flex-col items-center justify-center text-center">
-        {/* Logo */}
-        <div className="relative mb-6">
-          <div className="absolute inset-0 rounded-3xl bg-blue-200/30 blur-xl" />
-          <Image
-            src="/logo.png"
-            alt="DustSwap"
-            width={88}
-            height={88}
-            className="relative rounded-3xl shadow-lg"
-            priority
-          />
-        </div>
-
-        <h1 className="text-3xl font-bold tracking-tight text-slate-900">DustSweep</h1>
-        <p className="mt-1.5 text-sm font-medium text-blue-600">Base dust aggregator</p>
-        <p className="mt-4 max-w-sm text-sm leading-relaxed text-slate-500">
-          Connect a wallet to find small Base token balances and sweep them into one useful asset in just two transactions.
-        </p>
-
-        {/* Feature pills */}
-        <div className="mt-6 flex flex-wrap justify-center gap-2">
-          {["Up to 50 tokens", "EIP-712 signing", "1 approval + 1 sweep"].map((f) => (
-            <span
-              key={f}
-              className="rounded-full border border-blue-100 bg-blue-50 px-3 py-1 text-xs font-medium text-blue-600"
-            >
-              {f}
-            </span>
-          ))}
-        </div>
-
-        <div className="mt-8 w-full">
-          <WalletConnectButton
-            connectLabel="Connect Wallet"
-            description="Connect your wallet to use DustSweep."
-            walletList={DUST_SWEEP_PRIVY_WALLET_LIST}
-            fullWidth
-            className="rounded-2xl bg-blue-600 px-6 py-3 text-sm font-bold text-white shadow-[0_8px_24px_rgba(37,99,235,0.28)] hover:border-blue-600 hover:bg-blue-700 hover:text-white"
-          />
-
-          {okxAppLink ? (
-            <>
-              <a
-                href={okxAppLink}
-                className="mt-3 flex min-h-[44px] w-full items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-6 py-3 text-sm font-bold text-slate-800 shadow-sm transition-colors hover:border-slate-300 hover:bg-slate-50"
-              >
-                Open in OKX Wallet
-              </a>
-              <p className="mt-2 text-xs text-slate-400">
-                On OKX mobile? Open inside the OKX app for the most reliable connection.
-              </p>
-            </>
-          ) : null}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-/* ─── Main connected view ───────────────────────────────────────────────── */
+/* ─── Main sweep view ───────────────────────────────────────────────── */
 function BalanceScanStatus({
   isLoading,
   message,
@@ -324,10 +249,6 @@ export default function DustSweepPage() {
     sweep.routeKind === "batch" &&
     sweep.walletProfile.walletKey === "metamask" &&
     !isDustSweepApprovalBatchingEnabled(sweep.walletProfile.walletKey);
-
-  if (!isConnected) {
-    return <DisconnectedView />;
-  }
 
   return (
     <div className="theme-page min-h-screen bg-gradient-to-b from-blue-50 via-white to-slate-50 px-3 py-5 sm:px-6 sm:py-8">
