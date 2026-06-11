@@ -9,8 +9,8 @@ import {
   type EthereumProviderCandidate,
 } from "@/lib/ethereumProviders";
 import {
-  getDustSweepApprovalBatchingDisabledNotice,
   isDustSweepApprovalBatchingEnabled,
+  METAMASK_APPROVAL_BATCHING_DISABLED_NOTICE,
 } from "@/lib/dustsweep-feature-flags";
 import {
   type DustSweepAtomicStatus,
@@ -234,7 +234,7 @@ export function getWalletBatchNotice(
     (atomicStatus === "supported" || atomicStatus === "ready") &&
     !isDustSweepApprovalBatchingEnabled(walletKey)
   ) {
-    return getDustSweepApprovalBatchingDisabledNotice(walletName, walletKey);
+    return METAMASK_APPROVAL_BATCHING_DISABLED_NOTICE;
   }
 
   if (atomicStatus === "supported") {
