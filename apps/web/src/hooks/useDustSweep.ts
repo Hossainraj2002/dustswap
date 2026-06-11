@@ -1520,8 +1520,17 @@ export function useDustSweep(): UseDustSweepReturn {
     const capabilities = buildSendCallsCapabilities({
       usePaymasterCapabilities: args.usePaymasterCapabilities,
     });
+    // OKX extension decodes raw wallet_sendCalls approval batches well, but the
+    // viem walletClient.sendCalls wrapper can report an error while OKX still
+    // opens/queues a confirmation. Go straight to OKX's injected provider so a
+    // single sweep click maps to a single OKX confirmation queue.
+    const preferInjectedWalletSendCalls = args.walletKey === "okx";
 
-    if (typeof client.sendCalls === "function" && typeof client.waitForCallsStatus === "function") {
+    if (
+      !preferInjectedWalletSendCalls &&
+      typeof client.sendCalls === "function" &&
+      typeof client.waitForCallsStatus === "function"
+    ) {
       let viemCallId = "";
       try {
         const sendCallsResult = await client.sendCalls({
@@ -1575,7 +1584,9 @@ export function useDustSweep(): UseDustSweepReturn {
       }
     }
 
-    const requests = getWalletRequestCandidates(walletClient, args.walletKey);
+    const requests = getWalletRequestCandidates(walletClient, args.walletKey, {
+      preferInjected: preferInjectedWalletSendCalls,
+    });
     if (requests.length === 0) {
       throw new Error("wallet_sendCalls is unavailable");
     }
