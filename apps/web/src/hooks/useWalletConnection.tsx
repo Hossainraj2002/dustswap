@@ -213,6 +213,34 @@ const WALLET_RECONCILE_ENABLED =
 // The wagmi connector is set up asynchronously by @privy-io/wagmi, so the first
 // setActiveWallet call can be a no-op; we retry until wagmi reports connected.
 const WALLET_RECONCILE_RETRY_DELAYS_MS = [0, 150, 300, 600, 1200, 2400];
+const MANUAL_DISCONNECT_STORAGE_KEY = "dustswap:wallet-manual-disconnect";
+
+function hasManualDisconnectMarker() {
+  if (typeof window === "undefined") return false;
+  try {
+    return Boolean(window.localStorage.getItem(MANUAL_DISCONNECT_STORAGE_KEY));
+  } catch {
+    return false;
+  }
+}
+
+function writeManualDisconnectMarker() {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(MANUAL_DISCONNECT_STORAGE_KEY, String(Date.now()));
+  } catch {
+    // Storage can be blocked in private mode; the in-memory latch still works.
+  }
+}
+
+function clearManualDisconnectMarker() {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.removeItem(MANUAL_DISCONNECT_STORAGE_KEY);
+  } catch {
+    // Storage can be blocked in private mode; the in-memory latch still works.
+  }
+}
 
 function PrivyWalletConnectionProvider({ children }: { children: ReactNode }) {
   const { ready, authenticated, logout } = usePrivy();
@@ -232,6 +260,9 @@ function PrivyWalletConnectionProvider({ children }: { children: ReactNode }) {
   // plus a ref mirror (read synchronously inside the retry loop).
   const [reconcilePaused, setReconcilePaused] = useState(true);
   const reconcilePausedRef = useRef(true);
+  const manualDisconnectRef = useRef(hasManualDisconnectMarker());
+  const walletsRef = useRef(wallets);
+  walletsRef.current = wallets;
   const [allowedReconcileAddress, setAllowedReconcileAddress] = useState<
     string | null
   >(null);
@@ -249,9 +280,26 @@ function PrivyWalletConnectionProvider({ children }: { children: ReactNode }) {
     allowedReconcileAddressRef.current = normalized;
     setAllowedReconcileAddress(normalized);
   }, []);
+  const markManualDisconnected = useCallback(() => {
+    manualDisconnectRef.current = true;
+    writeManualDisconnectMarker();
+  }, []);
+  const clearManualDisconnected = useCallback(() => {
+    manualDisconnectRef.current = false;
+    clearManualDisconnectMarker();
+  }, []);
 
   const { connectWallet } = useConnectWallet({
     onSuccess: async ({ wallet: connectedWallet }) => {
+      if (manualDisconnectRef.current) {
+        try {
+          await Promise.resolve(connectedWallet.disconnect());
+        } catch {
+          // The manual-disconnect latch is already set; ignore stale cleanup errors.
+        }
+        await disconnectAsync().catch(() => {});
+        return;
+      }
       setAllowedAddress(connectedWallet.address);
       // The user intentionally selected this wallet, so reconnect wagmi to it.
       resumeReconcile();
@@ -279,6 +327,7 @@ function PrivyWalletConnectionProvider({ children }: { children: ReactNode }) {
     async (description?: string, walletList?: WalletListEntry[]) => {
       // Opening the picker is not a completed wallet choice. Keep reconciliation
       // paused until Privy's onSuccess returns the wallet the user selected.
+      clearManualDisconnected();
       pauseReconcile();
       setAllowedAddress(null);
       await disconnectAsync().catch(() => {});
@@ -295,7 +344,7 @@ function PrivyWalletConnectionProvider({ children }: { children: ReactNode }) {
         walletChainType: "ethereum-only",
       });
     },
-    [connectWallet, disconnectAsync, pauseReconcile, setAllowedAddress]
+    [clearManualDisconnected, connectWallet, disconnectAsync, pauseReconcile, setAllowedAddress]
   );
 
   // ── Bug #2C: deterministic Privy → wagmi reconciliation ──────────────────
@@ -344,6 +393,7 @@ function PrivyWalletConnectionProvider({ children }: { children: ReactNode }) {
   const wagmiBusy = wagmiStatus === "connecting" || wagmiStatus === "reconnecting";
   const needsReconcile =
     WALLET_RECONCILE_ENABLED &&
+    !manualDisconnectRef.current &&
     !reconcilePaused &&
     !!targetAddress &&
     allowedReconcileAddress === targetAddress &&
@@ -394,16 +444,43 @@ function PrivyWalletConnectionProvider({ children }: { children: ReactNode }) {
     // connected, which cancels the in-flight retry loop via the cleanup above.
   }, [needsReconcile, targetAddress, setActiveWallet]);
 
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key !== MANUAL_DISCONNECT_STORAGE_KEY || !event.newValue) {
+        return;
+      }
+      manualDisconnectRef.current = true;
+      pauseReconcile();
+      setAllowedAddress(null);
+      void Promise.allSettled(
+        (walletsRef.current ?? []).map((entry) =>
+          Promise.resolve().then(() => entry.disconnect())
+        )
+      );
+      void disconnectAsync().catch(() => {});
+    };
+
+    window.addEventListener("storage", handleStorage);
+    return () => window.removeEventListener("storage", handleStorage);
+  }, [disconnectAsync, pauseReconcile, setAllowedAddress]);
+
   const disconnectWallet = useCallback(async () => {
     // Latch reconciliation OFF and keep it off — do NOT reset in a finally.
     // It stays paused until the user explicitly connects again (openWalletModal
     // / connect onSuccess). This is what makes "Disconnect" actually stick.
+    markManualDisconnected();
     pauseReconcile();
     setAllowedAddress(null);
     // 1) Disconnect every Privy-connected wallet (not just the active one), so
     //    Privy's wallet set empties and it won't auto-reconnect on next mount.
     await Promise.allSettled(
-      (wallets ?? []).map((entry) => entry.disconnect())
+      (wallets ?? []).map((entry) =>
+        Promise.resolve().then(() => entry.disconnect())
+      )
     );
     // 2) Drop the wagmi connection — this is the source of truth the "connected"
     //    pill reads via useAccount(); without it the UI stays stuck on the
@@ -420,6 +497,7 @@ function PrivyWalletConnectionProvider({ children }: { children: ReactNode }) {
     disconnectAsync,
     authenticated,
     logout,
+    markManualDisconnected,
     pauseReconcile,
     setAllowedAddress,
   ]);
