@@ -222,12 +222,14 @@ export default function DustSweepPage() {
 
   // Truly-blocked = the wallet can't sign typed data at all (no Permit2, no
   // batch). This is the only remaining hard-stop; everything else has a route.
+  const hasConnectedWallet = Boolean(isConnected && address);
   const isTrulyBlocked =
-    isConnected && !sweep.walletStatus.isChecking && !sweep.walletStatus.isSupported;
+    hasConnectedWallet && !sweep.walletStatus.isChecking && !sweep.walletStatus.isSupported;
 
   // Route B card shows only while delegated-elsewhere AND the user hasn't opted
   // to continue on the current wallet for this session.
   const showSwitchCard =
+    hasConnectedWallet &&
     !isTrulyBlocked &&
     sweep.routeKind === "switch_or_permit2" &&
     !routeBContinued &&
@@ -306,26 +308,28 @@ export default function DustSweepPage() {
         {/* ── Main card ── */}
         <div className="space-y-3">
           {/* Delegation-aware route status — decided at connect, shown early. */}
-          {isTrulyBlocked ? (
-            <WalletGateNotice
-              walletName={sweep.walletStatus.walletName}
-              reason={sweep.walletStatus.reason}
-              onSwitchWallet={() => void handleSwitchWallet()}
-            />
-          ) : (
-            <WalletRouteStatus
-              routeKind={chipRouteKind}
-              isDetecting={sweep.isDetectingRoute}
-              recommendedWalletLabel={sweep.recommendedWallet?.label}
-              permit2SetupCount={sweep.permit2SetupCount}
-              delegateAddress={sweep.delegation.address}
-              atomicStatus={sweep.walletProfile.atomicStatus}
-              walletName={sweep.walletProfile.walletName}
-              walletKey={sweep.walletProfile.walletKey}
-              delegation={sweep.delegation.info}
-              supportedWalletLabels={getOneClickSweepWalletLabels()}
-            />
-          )}
+          {hasConnectedWallet ? (
+            isTrulyBlocked ? (
+              <WalletGateNotice
+                walletName={sweep.walletStatus.walletName}
+                reason={sweep.walletStatus.reason}
+                onSwitchWallet={() => void handleSwitchWallet()}
+              />
+            ) : (
+              <WalletRouteStatus
+                routeKind={chipRouteKind}
+                isDetecting={sweep.isDetectingRoute}
+                recommendedWalletLabel={sweep.recommendedWallet?.label}
+                permit2SetupCount={sweep.permit2SetupCount}
+                delegateAddress={sweep.delegation.address}
+                atomicStatus={sweep.walletProfile.atomicStatus}
+                walletName={sweep.walletProfile.walletName}
+                walletKey={sweep.walletProfile.walletKey}
+                delegation={sweep.delegation.info}
+                supportedWalletLabels={getOneClickSweepWalletLabels()}
+              />
+            )
+          ) : null}
 
           <BalanceScanStatus
             isLoading={sweep.isLoading}
