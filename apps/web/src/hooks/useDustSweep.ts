@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAccount, useConnection, usePublicClient, useWalletClient } from "wagmi";
 import { base } from "viem/chains";
 import { useBaseChainSwitch } from "@/hooks/useBaseChainSwitch";
@@ -669,6 +669,7 @@ export function useDustSweep(): UseDustSweepReturn {
   });
   const [isDetectingRoute, setIsDetectingRoute] = useState(false);
   const [permit2SetupCount, setPermit2SetupCount] = useState(0);
+  const sweepInFlightRef = useRef(false);
 
   const configuredRouteCap = getCapForLane(DUST_SWEEP_EXECUTION_LANE);
   const routeMaxCap = quote?.routeMaxCap ?? configuredRouteCap;
@@ -1705,6 +1706,12 @@ export function useDustSweep(): UseDustSweepReturn {
       }
     }
 
+    if (sweepInFlightRef.current) {
+      setExecutionNotice("A sweep request is already waiting in your wallet.");
+      return null;
+    }
+    sweepInFlightRef.current = true;
+
     // Per-sweep telemetry so KNOWN_DELEGATES and the route matrix become
     // data-driven (docs/eip7702-delegation-aware-workflow.md §1.5/§7.6).
     const logSweepTelemetry = (outcome: "success" | "cancelled" | "error") => {
@@ -2310,6 +2317,7 @@ export function useDustSweep(): UseDustSweepReturn {
       logSweepTelemetry(isRejectedByUser(sweepError) ? "cancelled" : "error");
       return null;
     } finally {
+      sweepInFlightRef.current = false;
       setIsSweeping(false);
     }
   }, [
