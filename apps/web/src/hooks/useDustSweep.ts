@@ -25,8 +25,8 @@ import {
   parseDustSweepError,
 } from "@/lib/dustsweep-router";
 import {
+  getDustSweepApprovalBatchingDisabledNotice,
   isDustSweepApprovalBatchingEnabled,
-  METAMASK_APPROVAL_BATCHING_DISABLED_NOTICE,
 } from "@/lib/dustsweep-feature-flags";
 import {
   getBatchCapabilityStatus,
@@ -2119,7 +2119,12 @@ export function useDustSweep(): UseDustSweepReturn {
         batchRouteAllowed &&
         !walletApprovalBatchingEnabled
       ) {
-        setExecutionNotice(METAMASK_APPROVAL_BATCHING_DISABLED_NOTICE);
+        setExecutionNotice(
+          getDustSweepApprovalBatchingDisabledNotice(
+            walletProfile.walletName,
+            walletProfile.walletKey,
+          ),
+        );
       }
 
       let hash: Hex;

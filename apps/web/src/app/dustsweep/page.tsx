@@ -247,9 +247,8 @@ export default function DustSweepPage() {
     sweep.sweepStep === "signing" ||
     sweep.sweepStep === "pending" ||
     sweep.sweepStep === "success";
-  const usesStandardMetaMaskApprovals =
+  const usesStandardWalletApprovals =
     sweep.routeKind === "batch" &&
-    sweep.walletProfile.walletKey === "metamask" &&
     !isDustSweepApprovalBatchingEnabled(sweep.walletProfile.walletKey);
 
   return (
@@ -458,7 +457,7 @@ export default function DustSweepPage() {
               routeKind={sweep.routeKind === "batch" ? "batch" : "permit2"}
               sweepStep={sweep.sweepStep}
               hasSetup={sweep.permit2SetupCount > 0 || sweep.sweepStep === "approving"}
-              approvalMode={usesStandardMetaMaskApprovals ? "standard" : undefined}
+              approvalMode={usesStandardWalletApprovals ? "standard" : undefined}
             />
           ) : null}
 
