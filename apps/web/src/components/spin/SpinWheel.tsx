@@ -97,15 +97,15 @@ export function SpinWheel({
                 <div
                   className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2"
                   style={{
-                    transform: `translate(-50%, -50%) rotate(${labelAngle}deg) translateY(clamp(-126px, -29vw, -92px))`,
+                    transform: `translate(-50%, -50%) rotate(${labelAngle}deg) translateY(clamp(-116px, -24vw, -82px))`,
                   }}
                 >
                   <div
                     data-active={active ? "true" : "false"}
                     className={`spin-reward-pill flex h-[24px] w-[72px] items-center justify-center rounded-full border px-1.5 py-1 text-center sm:h-[26px] sm:w-[82px] ${
                       active
-                        ? "border-sky-200 bg-white/88 shadow-[0_10px_24px_rgba(59,130,246,0.2)]"
-                        : "border-white/50 bg-white/42 shadow-[0_8px_18px_rgba(15,23,42,0.1)]"
+                        ? "border-sky-200 bg-white/88 shadow-[0_10px_24px_rgba(59,130,246,0.2)] backdrop-blur-md"
+                        : "border-transparent bg-transparent shadow-none"
                     }`}
                   >
                     <p

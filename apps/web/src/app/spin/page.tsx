@@ -662,7 +662,7 @@ export default function SpinPage() {
             </section>
           ) : null}
 
-          <section className="overflow-hidden rounded-[30px] border border-white/80 bg-white/82 px-4 py-4 shadow-[0_24px_80px_rgba(148,163,184,0.16)] backdrop-blur-xl sm:px-6 sm:py-6">
+          <section className="spin-page-panel overflow-hidden rounded-[30px] border border-sky-100/80 bg-white/82 px-4 py-4 shadow-[0_24px_80px_rgba(148,163,184,0.16)] backdrop-blur-xl sm:px-6 sm:py-6">
             <div className="flex items-start justify-between gap-3">
               <ThemeLongLogo
                 alt="DustSwap"
@@ -727,7 +727,7 @@ export default function SpinPage() {
             </div>
           </section>
 
-          <section className="rounded-[30px] border border-white/80 bg-white/78 px-4 py-6 shadow-[0_24px_80px_rgba(148,163,184,0.14)] backdrop-blur-xl sm:px-6 sm:py-8">
+          <section className="spin-page-panel rounded-[30px] border border-sky-100/80 bg-white/78 px-4 py-6 shadow-[0_24px_80px_rgba(148,163,184,0.14)] backdrop-blur-xl sm:px-6 sm:py-8">
             <div className="mx-auto max-w-[480px]">
               <SpinWheel
                 rotation={wheelRotation}

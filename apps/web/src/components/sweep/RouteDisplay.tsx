@@ -35,34 +35,37 @@ function formatUsd(value: number) {
 
 const GENERIC_DEX_ICON = "/dex/generic.svg";
 
-// Official brand logos for every DEX the sweep router can route through.
-const DEX_ICONS: Record<string, string> = {
-  UNISWAP_V3: "/dex/uniswap.png",
-  UNISWAP_V4: "/dex/uniswap.png",
-  AERODROME: "/dex/aerodrome.png",
-  AERODROME_SLIPSTREAM: "/dex/aerodrome.png",
-  PANCAKESWAP_V3: "/dex/pancakeswap.png",
-  BASESWAP: "/dex/baseswap.png",
-  ALIENBASE: "/dex/alienbase.png",
-  ALIEN_BASE: "/dex/alienbase.png",
-  DACKIESWAP: "/dex/dackieswap.png",
-  GENERIC: GENERIC_DEX_ICON,
-};
-
+// The API emits human-readable dexNames ("Uniswap V3", "Aerodrome via WETH",
+// "Aerodrome Slipstream (ts 200)", "PancakeSwap V3", "0x Aggregator", ...) while
+// internal constants use UPPER_SNAKE ("UNISWAP_V3"). Match by brand substring so
+// every variant resolves to the official logo.
 function getDexIcon(dexName: string) {
-  return DEX_ICONS[dexName] || GENERIC_DEX_ICON;
+  const name = dexName.toUpperCase();
+  if (name.includes("UNISWAP") || name.includes("UNI ")) return "/dex/uniswap.png";
+  if (name.includes("AERODROME") || name.includes("AERO ")) return "/dex/aerodrome.png";
+  if (name.includes("PANCAKE") || name.includes("CAKE")) return "/dex/pancakeswap.png";
+  if (name.includes("BASESWAP")) return "/dex/baseswap.png";
+  if (name.includes("ALIEN")) return "/dex/alienbase.png";
+  if (name.includes("DACKIE")) return "/dex/dackieswap.png";
+  if (name.startsWith("0X")) return "/dex/zerox.png";
+  return GENERIC_DEX_ICON;
 }
 
 function formatDexName(dexName: string) {
-  if (dexName === "UNISWAP_V3") return "Uniswap V3";
-  if (dexName === "UNISWAP_V4") return "Uniswap V4";
-  if (dexName.startsWith("UNISWAP")) return "Uniswap";
-  if (dexName === "PANCAKESWAP_V3") return "PancakeSwap";
-  if (dexName === "AERODROME_SLIPSTREAM") return "Aerodrome CL";
-  if (dexName === "AERODROME") return "Aerodrome";
-  if (dexName === "BASESWAP") return "BaseSwap";
-  if (dexName === "ALIENBASE" || dexName === "ALIEN_BASE") return "AlienBase";
-  if (dexName === "DACKIESWAP") return "DackieSwap";
+  const name = dexName.toUpperCase();
+  if (name.includes("UNISWAP")) {
+    if (name.includes("V4")) return "Uniswap V4";
+    if (name.includes("V3")) return "Uniswap V3";
+    return "Uniswap";
+  }
+  if (name.includes("AERODROME")) {
+    return name.includes("SLIPSTREAM") ? "Aerodrome CL" : "Aerodrome";
+  }
+  if (name.includes("PANCAKE") || name.includes("CAKE")) return "PancakeSwap";
+  if (name.includes("BASESWAP")) return "BaseSwap";
+  if (name.includes("ALIEN")) return "AlienBase";
+  if (name.includes("DACKIE")) return "DackieSwap";
+  if (name.startsWith("0X")) return "0x";
   return dexName.replace(/_/g, " ");
 }
 
@@ -183,16 +186,19 @@ export function RouteDisplay({
   const remainder = routeItems.length - visibleItems.length;
 
   // Providers ranked by how many tokens they route, for the footer summary.
+  // Group by cleaned brand name so "Uniswap V3" and "Uniswap V3 via WETH"
+  // count as one provider.
   const dexCounts = new Map<string, number>();
   for (const route of quote.routes) {
-    dexCounts.set(route.dexName, (dexCounts.get(route.dexName) || 0) + 1);
+    const brand = formatDexName(route.dexName);
+    dexCounts.set(brand, (dexCounts.get(brand) || 0) + 1);
   }
   const rankedDexes = [...dexCounts.entries()].sort((a, b) => b[1] - a[1]);
   const providerCount = rankedDexes.length || 1;
   const namedDexes = rankedDexes.slice(0, 2);
   const extraDexCount = rankedDexes.length - namedDexes.length;
   const dexSummary =
-    namedDexes.map(([dexName, count]) => `${formatDexName(dexName)}${count > 1 ? ` ×${count}` : ""}`).join(" · ") +
+    namedDexes.map(([brand, count]) => `${brand}${count > 1 ? ` ×${count}` : ""}`).join(" · ") +
     (extraDexCount > 0 ? ` +${extraDexCount}` : "");
 
   return (

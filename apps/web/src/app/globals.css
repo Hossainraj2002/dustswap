@@ -962,6 +962,24 @@
     color: rgba(186, 230, 253, 0.82);
   }
 
+  .spin-page-panel {
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.84), rgba(248, 251, 255, 0.78));
+    border-color: rgba(186, 230, 253, 0.72);
+    box-shadow:
+      0 20px 62px rgba(148, 163, 184, 0.14),
+      inset 0 1px 0 rgba(255, 255, 255, 0.68);
+  }
+
+  .dark .spin-page-panel {
+    background:
+      linear-gradient(180deg, rgba(7, 17, 31, 0.78), rgba(2, 6, 23, 0.72));
+    border-color: rgba(125, 211, 252, 0.18);
+    box-shadow:
+      0 26px 70px rgba(2, 6, 23, 0.34),
+      inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  }
+
   .dark .leaderboard-table-card {
     background-color: rgba(7, 17, 31, 0.92);
     border-color: rgba(125, 211, 252, 0.22);
@@ -1034,6 +1052,13 @@
     box-shadow:
       0 0 0 1px rgba(15, 23, 42, 0.32),
       inset 0 0 34px rgba(2, 6, 23, 0.18);
+  }
+
+  .spin-reward-pill:not([data-active="true"]) {
+    background-color: transparent;
+    border-color: transparent;
+    box-shadow: none;
+    backdrop-filter: none;
   }
 
   .dark .spin-reward-pill {
