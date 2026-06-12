@@ -68,7 +68,7 @@ export function SpinWheel({
 
       <div className="spin-wheel-shell absolute inset-[3%] rounded-full bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.95),rgba(191,219,254,0.7)_45%,rgba(147,197,253,0.25)_68%,rgba(14,165,233,0.14)_100%)] p-3 shadow-[0_28px_80px_rgba(59,130,246,0.22)]">
         <div
-          className="spin-wheel-face relative h-full w-full rounded-full border border-white/80 shadow-[inset_0_2px_0_rgba(255,255,255,0.95),inset_0_-14px_32px_rgba(191,219,254,0.55)]"
+          className="spin-wheel-face relative h-full w-full overflow-hidden rounded-full border border-white/80 shadow-[inset_0_2px_0_rgba(255,255,255,0.95),inset_0_-14px_32px_rgba(191,219,254,0.55)]"
           style={{
             backgroundImage: gradient,
             transform: `rotate(${rotation}deg)`,
@@ -97,19 +97,19 @@ export function SpinWheel({
                 <div
                   className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2"
                   style={{
-                    transform: `translate(-50%, -50%) rotate(${labelAngle}deg) translateY(clamp(-116px, -24vw, -82px))`,
+                    transform: `translate(-50%, -50%) rotate(${labelAngle}deg) translateY(clamp(-102px, -20vw, -72px))`,
                   }}
                 >
                   <div
                     data-active={active ? "true" : "false"}
-                    className={`spin-reward-pill flex h-[24px] w-[72px] items-center justify-center rounded-full border px-1.5 py-1 text-center sm:h-[26px] sm:w-[82px] ${
+                    className={
                       active
-                        ? "border-sky-200 bg-white/88 shadow-[0_10px_24px_rgba(59,130,246,0.2)] backdrop-blur-md"
-                        : "border-transparent bg-transparent shadow-none"
-                    }`}
+                        ? "spin-reward-pill flex h-[24px] min-w-[72px] items-center justify-center rounded-full border border-sky-200 bg-white/88 px-2 py-1 text-center shadow-[0_10px_24px_rgba(59,130,246,0.2)] backdrop-blur-md sm:h-[26px] sm:min-w-[82px]"
+                        : "spin-reward-label flex h-[24px] items-center justify-center px-0 text-center sm:h-[26px]"
+                    }
                   >
                     <p
-                      className="spin-reward-text text-[10px] font-black uppercase leading-none tracking-[0.08em] sm:text-[11px]"
+                      className="spin-reward-text whitespace-nowrap text-[10px] font-black uppercase leading-none tracking-[0.08em] sm:text-[11px]"
                       style={{
                         color: isDark ? DARK_REWARD_ACCENTS[index] : segment.accent,
                       }}

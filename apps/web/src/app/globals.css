@@ -1061,6 +1061,13 @@
     backdrop-filter: none;
   }
 
+  .spin-reward-label {
+    background: transparent;
+    border-color: transparent;
+    box-shadow: none;
+    backdrop-filter: none;
+  }
+
   .dark .spin-reward-pill {
     background-color: transparent;
     border-color: transparent;
