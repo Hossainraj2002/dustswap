@@ -3,6 +3,7 @@ import { dbQuery } from "../lib/db";
 export type MonitorWindowKey = "utc-day" | "3d" | "7d" | "30d" | "90d";
 
 type NumericLike = number | string | null | undefined;
+type SeriesGranularity = "hour" | "day";
 
 type SummaryRow = {
   tracked_users: NumericLike;
@@ -26,7 +27,10 @@ type SummaryRow = {
 };
 
 type SeriesRow = {
-  date_key: string;
+  bucket_start: string;
+  bucket_end: string;
+  bucket_label: string;
+  granularity: SeriesGranularity;
   tracked_users: NumericLike;
   new_users: NumericLike;
   returning_users: NumericLike;
@@ -98,6 +102,13 @@ const WINDOW_DAYS: Record<MonitorWindowKey, number> = {
   "90d": 90,
 };
 
+const MAX_MONITOR_SWAP_VOLUME_USD = 1_000_000;
+const MONITOR_SWAP_VOLUME_SQL = `CASE
+  WHEN amount_usd >= 0 AND amount_usd <= ${MAX_MONITOR_SWAP_VOLUME_USD}
+    THEN amount_usd::numeric
+  ELSE 0::numeric
+END`;
+
 function toNumber(value: NumericLike) {
   if (value == null || value === "") {
     return 0;
@@ -166,7 +177,7 @@ async function loadSummary(start: Date, end: Date) {
       SELECT $1::timestamptz AS start_at, $2::timestamptz AS end_at
     ),
     swap_events AS (
-      SELECT user_id, amount_usd::numeric AS amount_usd
+      SELECT user_id, ${MONITOR_SWAP_VOLUME_SQL} AS amount_usd
       FROM swap_transactions, bounds
       WHERE occurred_at >= bounds.start_at
         AND occurred_at < bounds.end_at
@@ -264,26 +275,36 @@ async function loadSummary(start: Date, end: Date) {
   return normalizeSummary(result.rows[0]);
 }
 
-async function loadSeries(start: Date, end: Date) {
+async function loadSeries(start: Date, end: Date, granularity: SeriesGranularity) {
+  const step = granularity === "hour" ? "1 hour" : "1 day";
+
   const result = await dbQuery<SeriesRow>(
     `
     WITH bounds AS (
-      SELECT $1::timestamptz AS start_at, $2::timestamptz AS end_at
+      SELECT
+        $1::timestamptz AS start_at,
+        $2::timestamptz AS end_at,
+        $3::interval AS step,
+        $4::text AS granularity
     ),
-    days AS (
-      SELECT generate_series(
-        (SELECT start_at::date FROM bounds),
-        (SELECT (end_at - INTERVAL '1 second')::date FROM bounds),
-        INTERVAL '1 day'
-      )::date AS date_key
+    buckets AS (
+      SELECT
+        series.bucket_start,
+        series.bucket_start + bounds.step AS bucket_end
+      FROM bounds
+      CROSS JOIN LATERAL generate_series(
+        bounds.start_at,
+        bounds.end_at - bounds.step,
+        bounds.step
+      ) AS series(bucket_start)
     ),
     events AS (
       SELECT
-        (occurred_at AT TIME ZONE 'UTC')::date AS date_key,
+        occurred_at AS event_time,
         user_id,
         'swap'::text AS event_source,
         1::integer AS transaction_count,
-        amount_usd::numeric AS volume_usd,
+        ${MONITOR_SWAP_VOLUME_SQL} AS volume_usd,
         0::integer AS check_in_count,
         0::integer AS spin_count
       FROM swap_transactions, bounds
@@ -293,7 +314,7 @@ async function loadSeries(start: Date, end: Date) {
       UNION ALL
 
       SELECT
-        (sweeps.created_at AT TIME ZONE 'UTC')::date AS date_key,
+        sweeps.created_at AS event_time,
         users.id AS user_id,
         'sweep'::text AS event_source,
         1::integer AS transaction_count,
@@ -309,7 +330,7 @@ async function loadSeries(start: Date, end: Date) {
       UNION ALL
 
       SELECT
-        (created_at AT TIME ZONE 'UTC')::date AS date_key,
+        created_at AT TIME ZONE 'UTC' AS event_time,
         user_id,
         'check_in'::text AS event_source,
         CASE WHEN payment_tx_hash IS NULL THEN 0 ELSE 1 END AS transaction_count,
@@ -323,7 +344,7 @@ async function loadSeries(start: Date, end: Date) {
       UNION ALL
 
       SELECT
-        (created_at AT TIME ZONE 'UTC')::date AS date_key,
+        created_at AT TIME ZONE 'UTC' AS event_time,
         user_id,
         'spin'::text AS event_source,
         1::integer AS transaction_count,
@@ -335,16 +356,23 @@ async function loadSeries(start: Date, end: Date) {
         AND (created_at AT TIME ZONE 'UTC') < bounds.end_at
     )
     SELECT
-      to_char(days.date_key, 'YYYY-MM-DD') AS date_key,
+      buckets.bucket_start AS bucket_start,
+      buckets.bucket_end AS bucket_end,
+      CASE
+        WHEN (SELECT granularity FROM bounds) = 'hour'
+          THEN to_char(buckets.bucket_start AT TIME ZONE 'UTC', 'HH24:00')
+        ELSE to_char(buckets.bucket_start AT TIME ZONE 'UTC', 'Mon DD')
+      END AS bucket_label,
+      (SELECT granularity FROM bounds) AS granularity,
       COUNT(DISTINCT events.user_id)::bigint AS tracked_users,
       COUNT(DISTINCT events.user_id) FILTER (
         WHERE users.id IS NOT NULL
-          AND (users.created_at AT TIME ZONE 'UTC') >= days.date_key::timestamptz
-          AND (users.created_at AT TIME ZONE 'UTC') < (days.date_key + 1)::timestamptz
+          AND (users.created_at AT TIME ZONE 'UTC') >= buckets.bucket_start
+          AND (users.created_at AT TIME ZONE 'UTC') < buckets.bucket_end
       )::bigint AS new_users,
       COUNT(DISTINCT events.user_id) FILTER (
         WHERE users.id IS NOT NULL
-          AND (users.created_at AT TIME ZONE 'UTC') < days.date_key::timestamptz
+          AND (users.created_at AT TIME ZONE 'UTC') < buckets.bucket_start
       )::bigint AS returning_users,
       COALESCE(SUM(events.transaction_count), 0)::bigint AS transactions,
       COUNT(DISTINCT events.user_id) FILTER (
@@ -353,17 +381,23 @@ async function loadSeries(start: Date, end: Date) {
       COALESCE(SUM(events.volume_usd), 0)::text AS volume_usd,
       COALESCE(SUM(events.check_in_count), 0)::bigint AS check_ins,
       COALESCE(SUM(events.spin_count), 0)::bigint AS spins
-    FROM days
-    LEFT JOIN events ON events.date_key = days.date_key
+    FROM buckets
+    LEFT JOIN events
+      ON events.event_time >= buckets.bucket_start
+      AND events.event_time < buckets.bucket_end
     LEFT JOIN users ON users.id = events.user_id
-    GROUP BY days.date_key
-    ORDER BY days.date_key ASC
+    GROUP BY buckets.bucket_start, buckets.bucket_end
+    ORDER BY buckets.bucket_start ASC
     `,
-    [start.toISOString(), end.toISOString()]
+    [start.toISOString(), end.toISOString(), step, granularity]
   );
 
   return result.rows.map((row) => ({
-    date: row.date_key,
+    date: row.bucket_start,
+    bucketStart: row.bucket_start,
+    bucketEnd: row.bucket_end,
+    label: row.bucket_label,
+    granularity: row.granularity,
     trackedUsers: toNumber(row.tracked_users),
     newUsers: toNumber(row.new_users),
     returningUsers: toNumber(row.returning_users),
@@ -386,7 +420,7 @@ async function loadSourceBreakdown(start: Date, end: Date) {
         'Swap'::text AS source,
         user_id,
         1::integer AS transactions,
-        amount_usd::numeric AS volume_usd
+        ${MONITOR_SWAP_VOLUME_SQL} AS volume_usd
       FROM swap_transactions, bounds
       WHERE occurred_at >= bounds.start_at
         AND occurred_at < bounds.end_at
@@ -460,7 +494,7 @@ async function loadUserActivity(start: Date, end: Date) {
         0::integer AS sweep_transactions,
         0::integer AS check_ins,
         0::integer AS spins,
-        amount_usd::numeric AS volume_usd
+        ${MONITOR_SWAP_VOLUME_SQL} AS volume_usd
       FROM swap_transactions, bounds
       WHERE occurred_at >= bounds.start_at
         AND occurred_at < bounds.end_at
@@ -557,7 +591,7 @@ async function loadTransactions(start: Date, end: Date) {
         address::text AS address,
         tx_hash::text AS tx_hash,
         chain_id,
-        amount_usd::numeric AS amount_usd,
+        ${MONITOR_SWAP_VOLUME_SQL} AS amount_usd,
         'recorded'::text AS status
       FROM swap_transactions, bounds
       WHERE occurred_at >= bounds.start_at
@@ -711,6 +745,7 @@ async function loadSpins(start: Date, end: Date) {
 export async function getAdminMonitor(windowValue?: string | null) {
   const windowKey = normalizeWindow(windowValue);
   const range = getUtcWindow(windowKey);
+  const seriesGranularity: SeriesGranularity = range.key === "utc-day" ? "hour" : "day";
 
   const [
     current,
@@ -724,7 +759,7 @@ export async function getAdminMonitor(windowValue?: string | null) {
   ] = await Promise.all([
     loadSummary(range.start, range.end),
     loadSummary(range.previousStart, range.start),
-    loadSeries(range.start, range.end),
+    loadSeries(range.start, range.end, seriesGranularity),
     loadSourceBreakdown(range.start, range.end),
     loadUserActivity(range.start, range.end),
     loadTransactions(range.start, range.end),

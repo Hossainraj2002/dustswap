@@ -25,6 +25,10 @@ export type MonitorSummary = {
 
 export type MonitorSeriesPoint = {
   date: string;
+  bucketStart: string;
+  bucketEnd: string;
+  label: string;
+  granularity: "hour" | "day";
   trackedUsers: number;
   newUsers: number;
   returningUsers: number;

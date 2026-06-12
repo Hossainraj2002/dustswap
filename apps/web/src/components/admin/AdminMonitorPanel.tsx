@@ -23,7 +23,6 @@ type MetricRow = {
   value: number;
   previous: number;
   displayValue: string;
-  chartKey: keyof MonitorSeriesPoint;
   detail: string;
 };
 
@@ -110,7 +109,6 @@ function getMetricRows(current: MonitorSummary, previous: MonitorSummary): Metri
       value: current.trackedUsers,
       previous: previous.trackedUsers,
       displayValue: formatNumber(current.trackedUsers),
-      chartKey: "trackedUsers",
       detail: `${formatNumber(current.newUsers)} new active, ${formatNumber(
         current.returningUsers
       )} returning, ${formatNumber(current.registeredUsers)} registered`,
@@ -121,7 +119,6 @@ function getMetricRows(current: MonitorSummary, previous: MonitorSummary): Metri
       value: current.totalTransactions,
       previous: previous.totalTransactions,
       displayValue: formatNumber(current.totalTransactions),
-      chartKey: "transactions",
       detail: `${formatNumber(current.swapTransactions)} swaps, ${formatNumber(
         current.sweepTransactions
       )} sweeps, ${formatNumber(current.checkinTransactions)} check-in payments, ${formatNumber(
@@ -134,7 +131,6 @@ function getMetricRows(current: MonitorSummary, previous: MonitorSummary): Metri
       value: current.swappingUsers,
       previous: previous.swappingUsers,
       displayValue: formatNumber(current.swappingUsers),
-      chartKey: "swappingUsers",
       detail: `${formatNumber(current.swapTransactions + current.sweepTransactions)} swap or sweep transactions`,
     },
     {
@@ -143,7 +139,6 @@ function getMetricRows(current: MonitorSummary, previous: MonitorSummary): Metri
       value: current.totalVolumeUsd,
       previous: previous.totalVolumeUsd,
       displayValue: formatUsd(current.totalVolumeUsd),
-      chartKey: "volumeUsd",
       detail: `${formatUsd(current.swapVolumeUsd)} swap, ${formatUsd(
         current.sweepVolumeUsd
       )} DustSweep, ${formatUsd(current.checkinPaymentUsd)} check-in payment`,
@@ -154,7 +149,6 @@ function getMetricRows(current: MonitorSummary, previous: MonitorSummary): Metri
       value: current.checkIns,
       previous: previous.checkIns,
       displayValue: formatNumber(current.checkIns),
-      chartKey: "checkIns",
       detail: `${formatNumber(current.checkInUsers)} check-in users`,
     },
     {
@@ -163,7 +157,6 @@ function getMetricRows(current: MonitorSummary, previous: MonitorSummary): Metri
       value: current.spins,
       previous: previous.spins,
       displayValue: formatNumber(current.spins),
-      chartKey: "spins",
       detail: `${formatNumber(current.spinUsers)} spin users`,
     },
   ];
@@ -193,69 +186,118 @@ function MetricDelta({ current, previous }: { current: number; previous: number 
   );
 }
 
-function SparklineChart({
+function UserBarChart({
   series,
-  chartKey,
-  valueLabel,
+  selectedBucketStart,
+  onSelect,
 }: {
   series: MonitorSeriesPoint[];
-  chartKey: keyof MonitorSeriesPoint;
-  valueLabel: string;
+  selectedBucketStart: string | null;
+  onSelect: (bucketStart: string) => void;
 }) {
-  const width = 680;
-  const height = 260;
-  const padX = 18;
-  const padY = 24;
-  const values = series.map((point) => Number(point[chartKey] || 0));
-  const safeValues = values.length ? values : [0];
-  const min = Math.min(0, ...safeValues);
-  const max = Math.max(1, ...safeValues);
-  const span = max - min || 1;
-  const points = safeValues.map((value, index) => {
-    const x =
-      safeValues.length === 1
-        ? width / 2
-        : padX + (index / (safeValues.length - 1)) * (width - padX * 2);
-    const y = height - padY - ((value - min) / span) * (height - padY * 2);
-    return { x, y, value };
-  });
-  const linePath = points
-    .map((point, index) => `${index === 0 ? "M" : "L"} ${point.x} ${point.y}`)
-    .join(" ");
-  const areaPath =
-    points.length > 0
-      ? `${linePath} L ${points[points.length - 1].x} ${height - padY} L ${points[0].x} ${
-          height - padY
-        } Z`
-      : "";
-  const lastPoint = points[points.length - 1];
+  const maxUsers = Math.max(1, ...series.map((point) => point.trackedUsers));
+  const selectedPoint =
+    series.find((point) => point.bucketStart === selectedBucketStart) ??
+    series.find((point) => point.trackedUsers > 0) ??
+    series[0];
+  const chartMode = series[0]?.granularity === "hour" ? "Hourly UTC users" : "Daily UTC users";
+  const labelStep = Math.max(1, Math.ceil(series.length / 12));
+  const minWidth = Math.max(620, series.length * (series.length > 30 ? 22 : 34));
 
   return (
-    <div className="h-[280px] w-full">
-      <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label={`${valueLabel} trend`} className="h-full w-full">
-        <defs>
-          <linearGradient id="monitor-area" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor="#2563eb" stopOpacity="0.18" />
-            <stop offset="100%" stopColor="#2563eb" stopOpacity="0" />
-          </linearGradient>
-        </defs>
-        {[0.25, 0.5, 0.75].map((ratio) => (
-          <line
-            key={ratio}
-            x1={padX}
-            x2={width - padX}
-            y1={padY + ratio * (height - padY * 2)}
-            y2={padY + ratio * (height - padY * 2)}
-            stroke="#e2e8f0"
-            strokeWidth="1"
-          />
-        ))}
-        <path d={areaPath} fill="url(#monitor-area)" />
-        <path d={linePath} fill="none" stroke="#2563eb" strokeWidth="5" strokeLinecap="round" strokeLinejoin="round" />
-        {lastPoint ? (
-          <circle cx={lastPoint.x} cy={lastPoint.y} r="6" fill="#2563eb" stroke="#ffffff" strokeWidth="4" />
-        ) : null}
-      </svg>
+    <div className="mt-5">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <p className="text-sm font-semibold text-slate-600">{chartMode}</p>
+        <div className="flex flex-wrap items-center gap-3 text-xs font-semibold text-slate-500">
+          <span className="inline-flex items-center gap-2">
+            <span className="h-2.5 w-2.5 rounded-sm bg-blue-500" />
+            New
+          </span>
+          <span className="inline-flex items-center gap-2">
+            <span className="h-2.5 w-2.5 rounded-sm bg-emerald-500" />
+            Returning
+          </span>
+        </div>
+      </div>
+
+      <div className="mt-4 overflow-x-auto pb-2">
+        <div
+          className="flex h-72 items-end gap-2 border-b border-slate-200 px-1 pt-4"
+          style={{ minWidth }}
+          role="list"
+          aria-label={chartMode}
+        >
+          {series.map((point, index) => {
+            const totalUsers = Math.max(0, point.trackedUsers);
+            const newUsers = Math.max(0, point.newUsers);
+            const returningUsers = Math.max(0, point.returningUsers);
+            const knownUsers = Math.max(1, newUsers + returningUsers);
+            const barHeight = totalUsers === 0 ? 2 : Math.max(8, (totalUsers / maxUsers) * 100);
+            const newHeight = totalUsers === 0 ? 0 : (newUsers / knownUsers) * 100;
+            const returningHeight = totalUsers === 0 ? 0 : (returningUsers / knownUsers) * 100;
+            const isSelected = point.bucketStart === selectedPoint?.bucketStart;
+            const showLabel = index === 0 || index === series.length - 1 || index % labelStep === 0;
+
+            return (
+              <button
+                key={point.bucketStart}
+                type="button"
+                role="listitem"
+                onClick={() => onSelect(point.bucketStart)}
+                className="group flex h-full min-w-[18px] flex-1 flex-col items-center justify-end gap-2 outline-none"
+                aria-label={`${point.label}: ${formatNumber(totalUsers)} tracked users, ${formatNumber(
+                  newUsers
+                )} new, ${formatNumber(returningUsers)} returning`}
+              >
+                <div className="relative flex h-[220px] w-full max-w-8 items-end">
+                  <div
+                    className={`flex w-full flex-col-reverse overflow-hidden rounded-t-md bg-slate-100 transition ${
+                      isSelected
+                        ? "ring-2 ring-blue-500 ring-offset-2"
+                        : "group-hover:ring-2 group-hover:ring-blue-200 group-focus-visible:ring-2 group-focus-visible:ring-blue-400 group-focus-visible:ring-offset-2"
+                    }`}
+                    style={{ height: `${barHeight}%` }}
+                  >
+                    {returningUsers > 0 ? (
+                      <span className="block bg-emerald-500" style={{ height: `${returningHeight}%` }} />
+                    ) : null}
+                    {newUsers > 0 ? (
+                      <span className="block bg-blue-500" style={{ height: `${newHeight}%` }} />
+                    ) : null}
+                  </div>
+                </div>
+                <span className="h-4 text-[10px] font-semibold text-slate-500">
+                  {showLabel ? point.label : ""}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {selectedPoint ? (
+        <div className="mt-4 grid gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3 sm:grid-cols-4">
+          <div className="sm:col-span-1">
+            <p className="text-xs font-semibold uppercase text-slate-500">Selected bucket</p>
+            <p className="mt-1 text-sm font-semibold text-slate-950">{selectedPoint.label}</p>
+            <p className="mt-1 text-xs text-slate-500">
+              {formatUtcDateTime(selectedPoint.bucketStart)} to {formatUtcDateTime(selectedPoint.bucketEnd)}
+            </p>
+          </div>
+          <div>
+            <p className="text-xs font-semibold uppercase text-slate-500">Tracked</p>
+            <p className="mt-1 text-xl font-semibold text-slate-950">{formatNumber(selectedPoint.trackedUsers)}</p>
+          </div>
+          <div>
+            <p className="text-xs font-semibold uppercase text-blue-600">New</p>
+            <p className="mt-1 text-xl font-semibold text-slate-950">{formatNumber(selectedPoint.newUsers)}</p>
+          </div>
+          <div>
+            <p className="text-xs font-semibold uppercase text-emerald-600">Returning</p>
+            <p className="mt-1 text-xl font-semibold text-slate-950">{formatNumber(selectedPoint.returningUsers)}</p>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -563,6 +605,7 @@ export function AdminMonitorPanel() {
   const [adminToken, setAdminToken] = useState("");
   const [selectedWindow, setSelectedWindow] = useState<MonitorWindowKey>("utc-day");
   const [selectedMetric, setSelectedMetric] = useState<MetricKey>("users");
+  const [selectedBucketStart, setSelectedBucketStart] = useState<string | null>(null);
   const [data, setData] = useState<AdminMonitorData | null>(null);
   const [isUnlocked, setIsUnlocked] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -643,6 +686,24 @@ export function AdminMonitorPanel() {
     [data]
   );
   const activeMetric = metricRows.find((row) => row.key === selectedMetric) ?? metricRows[0];
+  const userMetric = metricRows.find((row) => row.key === "users") ?? metricRows[0];
+
+  useEffect(() => {
+    if (!data?.series.length) {
+      setSelectedBucketStart(null);
+      return;
+    }
+
+    let latestActiveBucket: MonitorSeriesPoint | null = null;
+    for (let index = data.series.length - 1; index >= 0; index -= 1) {
+      if (data.series[index].trackedUsers > 0) {
+        latestActiveBucket = data.series[index];
+        break;
+      }
+    }
+
+    setSelectedBucketStart((latestActiveBucket ?? data.series[data.series.length - 1]).bucketStart);
+  }, [data?.generatedAt, data?.window.key, data?.series]);
 
   function handleWindowChange(nextWindow: MonitorWindowKey) {
     setSelectedWindow(nextWindow);
@@ -751,26 +812,26 @@ export function AdminMonitorPanel() {
           ) : null}
         </section>
 
-        {data && activeMetric ? (
+        {data && activeMetric && userMetric ? (
           <>
             <section className="grid gap-5 xl:grid-cols-[1fr_360px]">
               <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                   <div>
-                    <p className="text-sm font-semibold text-slate-500">{activeMetric.label}</p>
+                    <p className="text-sm font-semibold text-slate-500">{userMetric.label}</p>
                     <div className="mt-2 flex flex-wrap items-center gap-3">
                       <p className="text-3xl font-semibold text-slate-950 sm:text-4xl">
-                        {activeMetric.displayValue}
+                        {userMetric.displayValue}
                       </p>
-                      <MetricDelta current={activeMetric.value} previous={activeMetric.previous} />
+                      <MetricDelta current={userMetric.value} previous={userMetric.previous} />
                     </div>
                   </div>
-                  <p className="max-w-sm text-sm leading-6 text-slate-500">{activeMetric.detail}</p>
+                  <p className="max-w-sm text-sm leading-6 text-slate-500">{userMetric.detail}</p>
                 </div>
-                <SparklineChart
+                <UserBarChart
                   series={data.series}
-                  chartKey={activeMetric.chartKey}
-                  valueLabel={activeMetric.label}
+                  selectedBucketStart={selectedBucketStart}
+                  onSelect={setSelectedBucketStart}
                 />
               </div>
 
