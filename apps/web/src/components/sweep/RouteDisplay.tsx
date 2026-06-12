@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { formatUnits } from "viem";
 import {
   type DustSweepQuoteResponse,
@@ -8,7 +9,7 @@ import {
   type Token,
 } from "@/types/dustsweep";
 
-const MAX_VISIBLE_ROUTES = 12;
+const MAX_VISIBLE_ROUTES = 5;
 
 function cx(...parts: Array<string | false | null | undefined>) {
   return parts.filter(Boolean).join(" ");
@@ -34,12 +35,17 @@ function formatUsd(value: number) {
 
 const GENERIC_DEX_ICON = "/dex/generic.svg";
 
+// Official brand logos for every DEX the sweep router can route through.
 const DEX_ICONS: Record<string, string> = {
-  UNISWAP_V3: "/dex/uniswap.svg",
-  UNISWAP_V4: "/dex/uniswap.svg",
-  AERODROME: "/dex/aerodrome.svg",
-  PANCAKESWAP_V3: "/dex/pancake.svg",
-  BASESWAP: "/dex/baseswap.svg",
+  UNISWAP_V3: "/dex/uniswap.png",
+  UNISWAP_V4: "/dex/uniswap.png",
+  AERODROME: "/dex/aerodrome.png",
+  AERODROME_SLIPSTREAM: "/dex/aerodrome.png",
+  PANCAKESWAP_V3: "/dex/pancakeswap.png",
+  BASESWAP: "/dex/baseswap.png",
+  ALIENBASE: "/dex/alienbase.png",
+  ALIEN_BASE: "/dex/alienbase.png",
+  DACKIESWAP: "/dex/dackieswap.png",
   GENERIC: GENERIC_DEX_ICON,
 };
 
@@ -52,8 +58,11 @@ function formatDexName(dexName: string) {
   if (dexName === "UNISWAP_V4") return "Uniswap V4";
   if (dexName.startsWith("UNISWAP")) return "Uniswap";
   if (dexName === "PANCAKESWAP_V3") return "PancakeSwap";
+  if (dexName === "AERODROME_SLIPSTREAM") return "Aerodrome CL";
   if (dexName === "AERODROME") return "Aerodrome";
   if (dexName === "BASESWAP") return "BaseSwap";
+  if (dexName === "ALIENBASE" || dexName === "ALIEN_BASE") return "AlienBase";
+  if (dexName === "DACKIESWAP") return "DackieSwap";
   return dexName.replace(/_/g, " ");
 }
 
@@ -131,14 +140,17 @@ function RoutePill({ token, route }: { token: SelectedToken; route: DustSweepRou
   const dexLabel = formatDexName(route.dexName);
   return (
     <div
-      className="flex min-w-0 items-center gap-1.5 rounded-full border border-slate-100 bg-slate-50 py-1 pl-1 pr-1"
+      className="flex min-w-0 items-center gap-1 rounded-full border border-slate-100 bg-slate-50 py-1 pl-1 pr-1 sm:gap-1.5"
       title={`${token.symbol} via ${dexLabel}`}
     >
       <MiniTokenIcon token={token} />
       <span className="min-w-0 flex-1 truncate text-[11px] font-bold text-slate-800">
         {token.symbol}
       </span>
-      <TinyArrow />
+      {/* The connector arrow only fits once pills are wider than ~110px. */}
+      <span className="hidden shrink-0 sm:block">
+        <TinyArrow />
+      </span>
       <img
         src={getDexIcon(route.dexName)}
         alt={dexLabel}
@@ -157,6 +169,8 @@ export function RouteDisplay({
   tokenOut: Token | null;
   selectedTokens: SelectedToken[];
 }) {
+  const [expanded, setExpanded] = useState(false);
+
   if (!quote || !tokenOut) return null;
 
   const routeItems = quote.routes
@@ -165,7 +179,7 @@ export function RouteDisplay({
       token: selectedTokens.find((item) => item.address.toLowerCase() === route.tokenIn.toLowerCase()),
     }))
     .filter((item): item is { route: DustSweepRoute; token: SelectedToken } => Boolean(item.token));
-  const visibleItems = routeItems.slice(0, MAX_VISIBLE_ROUTES);
+  const visibleItems = expanded ? routeItems : routeItems.slice(0, MAX_VISIBLE_ROUTES);
   const remainder = routeItems.length - visibleItems.length;
 
   // Providers ranked by how many tokens they route, for the footer summary.
@@ -222,15 +236,28 @@ export function RouteDisplay({
         </div>
       </div>
 
-      {/* ── Compact route grid: token → official DEX logo ── */}
-      <div className="grid grid-cols-2 gap-1.5 px-3.5 py-3 sm:grid-cols-3">
+      {/* ── Compact route grid: token → official DEX logo, 3 per row ── */}
+      <div className="grid grid-cols-3 gap-1.5 px-3.5 py-3">
         {visibleItems.map(({ token, route }) => (
           <RoutePill key={token.address} token={token} route={route} />
         ))}
         {remainder > 0 ? (
-          <div className="flex items-center justify-center rounded-full border border-dashed border-slate-200 px-2 py-1 text-[11px] font-semibold text-slate-400">
+          <button
+            type="button"
+            onClick={() => setExpanded(true)}
+            className="flex items-center justify-center rounded-full border border-dashed border-blue-200 bg-blue-50/50 px-2 py-1 text-[11px] font-bold text-blue-600 transition hover:border-blue-300 hover:bg-blue-50"
+          >
             +{remainder} more
-          </div>
+          </button>
+        ) : null}
+        {expanded && routeItems.length > MAX_VISIBLE_ROUTES ? (
+          <button
+            type="button"
+            onClick={() => setExpanded(false)}
+            className="flex items-center justify-center rounded-full border border-dashed border-slate-200 px-2 py-1 text-[11px] font-bold text-slate-400 transition hover:border-slate-300 hover:bg-slate-50 hover:text-slate-600"
+          >
+            Show less
+          </button>
         ) : null}
       </div>
 
@@ -238,15 +265,17 @@ export function RouteDisplay({
       <div className="flex items-center justify-between gap-3 border-t border-slate-100 bg-slate-50/80 px-3.5 py-2.5">
         <div className="flex min-w-0 items-center gap-2">
           <div className="flex shrink-0 -space-x-1.5">
-            {rankedDexes.slice(0, 4).map(([dexName]) => (
-              <img
-                key={dexName}
-                src={getDexIcon(dexName)}
-                alt={formatDexName(dexName)}
-                title={formatDexName(dexName)}
-                className="h-5 w-5 rounded-full border-2 border-white bg-white object-contain shadow-sm"
-              />
-            ))}
+            {/* Dedupe by icon: Aerodrome classic + Slipstream share one brand logo. */}
+            {[...new Set(rankedDexes.map(([dexName]) => getDexIcon(dexName)))]
+              .slice(0, 4)
+              .map((icon) => (
+                <img
+                  key={icon}
+                  src={icon}
+                  alt=""
+                  className="h-5 w-5 rounded-full border-2 border-white bg-white object-contain shadow-sm"
+                />
+              ))}
           </div>
           <span className="truncate text-[11px] font-medium text-slate-500">via {dexSummary}</span>
         </div>
