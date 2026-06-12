@@ -3,12 +3,11 @@ import type { Abi } from "viem";
 export type SpinRewardKey =
   | "50_pp"
   | "100_pp"
-  | "150_pp"
   | "200_pp"
   | "250_pp"
-  | "500_pp"
-  | "1_usdc"
-  | "5_usdc";
+  | "300_pp"
+  | "400_pp"
+  | "500_pp";
 
 export type SpinRewardKind = "pp" | "usdc";
 
@@ -38,12 +37,48 @@ export const SPIN_TRIGGER_ABI = [
 
 export const SPIN_WHEEL_SEGMENTS: readonly SpinWheelSegment[] = [
   {
-    key: "50_pp",
-    label: "50 PP",
-    probability: 25,
+    key: "500_pp",
+    label: "500 PP",
+    probability: 10,
     type: "pp",
-    amount: 50,
-    fill: "#f8fbff",
+    amount: 500,
+    fill: "#93c5fd",
+    accent: "#0f172a",
+  },
+  {
+    key: "400_pp",
+    label: "400 PP",
+    probability: 15,
+    type: "pp",
+    amount: 400,
+    fill: "#e0f2fe",
+    accent: "#0f766e",
+  },
+  {
+    key: "300_pp",
+    label: "300 PP",
+    probability: 15,
+    type: "pp",
+    amount: 300,
+    fill: "#bae6fd",
+    accent: "#075985",
+  },
+  {
+    key: "250_pp",
+    label: "250 PP",
+    probability: 20,
+    type: "pp",
+    amount: 250,
+    fill: "#f0f9ff",
+    accent: "#0f766e",
+  },
+  {
+    key: "200_pp",
+    label: "200 PP",
+    probability: 20,
+    type: "pp",
+    amount: 200,
+    fill: "#bfdbfe",
     accent: "#1d4ed8",
   },
   {
@@ -56,58 +91,13 @@ export const SPIN_WHEEL_SEGMENTS: readonly SpinWheelSegment[] = [
     accent: "#1e40af",
   },
   {
-    key: "150_pp",
-    label: "150 PP",
-    probability: 20,
-    type: "pp",
-    amount: 150,
-    fill: "#eff6ff",
-    accent: "#2563eb",
-  },
-  {
-    key: "200_pp",
-    label: "200 PP",
-    probability: 15,
-    type: "pp",
-    amount: 200,
-    fill: "#bfdbfe",
-    accent: "#1d4ed8",
-  },
-  {
-    key: "250_pp",
-    label: "250 PP",
-    probability: 15,
-    type: "pp",
-    amount: 250,
-    fill: "#f0f9ff",
-    accent: "#0f766e",
-  },
-  {
-    key: "500_pp",
-    label: "500 PP",
+    key: "50_pp",
+    label: "50 PP",
     probability: 5,
     type: "pp",
-    amount: 500,
-    fill: "#93c5fd",
-    accent: "#0f172a",
-  },
-  {
-    key: "1_usdc",
-    label: "1 USDC",
-    probability: 0,
-    type: "usdc",
-    amount: 1,
-    fill: "#e0f2fe",
-    accent: "#0f766e",
-  },
-  {
-    key: "5_usdc",
-    label: "5 USDC",
-    probability: 0,
-    type: "usdc",
-    amount: 5,
-    fill: "#bae6fd",
-    accent: "#075985",
+    amount: 50,
+    fill: "#f8fbff",
+    accent: "#1d4ed8",
   },
 ] as const;
 

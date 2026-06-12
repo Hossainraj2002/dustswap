@@ -17,25 +17,23 @@ type SpinWheelProps = {
 };
 
 const DARK_SEGMENT_FILLS = [
-  "#0b3b5b",
-  "#123f72",
-  "#174c88",
-  "#15376a",
-  "#0f5756",
   "#0b6978",
   "#0d465f",
   "#102a52",
+  "#0f5756",
+  "#15376a",
+  "#123f72",
+  "#0b3b5b",
 ] as const;
 
 const DARK_REWARD_ACCENTS = [
-  "#dbeafe",
-  "#bfdbfe",
-  "#c7d2fe",
-  "#93c5fd",
-  "#99f6e4",
   "#ffffff",
   "#ccfbf1",
   "#bae6fd",
+  "#99f6e4",
+  "#93c5fd",
+  "#bfdbfe",
+  "#dbeafe",
 ] as const;
 
 function getDarkSpinWheelGradient() {

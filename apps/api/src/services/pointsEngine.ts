@@ -521,12 +521,44 @@ type SpinHistoryRow = {
 
 const SPIN_REWARDS: readonly SpinRewardOption[] = [
   {
-    key: "50_pp",
-    label: "50 PP",
-    probability: 25,
+    key: "500_pp",
+    label: "500 PP",
+    probability: 10,
     type: "pp",
-    amount: 50,
-    pointsAwarded: 50,
+    amount: 500,
+    pointsAwarded: 500,
+  },
+  {
+    key: "400_pp",
+    label: "400 PP",
+    probability: 15,
+    type: "pp",
+    amount: 400,
+    pointsAwarded: 400,
+  },
+  {
+    key: "300_pp",
+    label: "300 PP",
+    probability: 15,
+    type: "pp",
+    amount: 300,
+    pointsAwarded: 300,
+  },
+  {
+    key: "250_pp",
+    label: "250 PP",
+    probability: 20,
+    type: "pp",
+    amount: 250,
+    pointsAwarded: 250,
+  },
+  {
+    key: "200_pp",
+    label: "200 PP",
+    probability: 20,
+    type: "pp",
+    amount: 200,
+    pointsAwarded: 200,
   },
   {
     key: "100_pp",
@@ -537,52 +569,12 @@ const SPIN_REWARDS: readonly SpinRewardOption[] = [
     pointsAwarded: 100,
   },
   {
-    key: "150_pp",
-    label: "150 PP",
-    probability: 20,
-    type: "pp",
-    amount: 150,
-    pointsAwarded: 150,
-  },
-  {
-    key: "200_pp",
-    label: "200 PP",
-    probability: 15,
-    type: "pp",
-    amount: 200,
-    pointsAwarded: 200,
-  },
-  {
-    key: "250_pp",
-    label: "250 PP",
-    probability: 15,
-    type: "pp",
-    amount: 250,
-    pointsAwarded: 250,
-  },
-  {
-    key: "500_pp",
-    label: "500 PP",
+    key: "50_pp",
+    label: "50 PP",
     probability: 5,
     type: "pp",
-    amount: 500,
-    pointsAwarded: 500,
-  },
-  {
-    key: "1_usdc",
-    label: "1 USDC",
-    probability: 0,
-    type: "usdc",
-    amount: 1,
-    pointsAwarded: 0,
-  },
-  {
-    key: "5_usdc",
-    label: "5 USDC",
-    probability: 0,
-    type: "usdc",
-    amount: 5,
-    pointsAwarded: 0,
+    amount: 50,
+    pointsAwarded: 50,
   },
 ] as const;
 
@@ -827,11 +819,15 @@ function normalizeSpinRewardRow(row: SpinHistoryRow) {
 }
 
 function pickSpinReward() {
-  const roll = Math.random() * 100;
+  const totalProbability = SPIN_REWARDS.reduce(
+    (total, reward) => total + Math.max(0, reward.probability),
+    0
+  );
+  const roll = Math.random() * totalProbability;
   let cursor = 0;
 
   for (const reward of SPIN_REWARDS) {
-    cursor += reward.probability;
+    cursor += Math.max(0, reward.probability);
     if (roll < cursor) {
       return reward;
     }
