@@ -17,6 +17,7 @@ import { RouteDisplay } from "@/components/sweep/RouteDisplay";
 import { SlippageSettings } from "@/components/sweep/SlippageSettings";
 import { SweepButton } from "@/components/sweep/SweepButton";
 import { SweepDetails } from "@/components/sweep/SweepDetails";
+import { SweepGuideModal } from "@/components/sweep/SweepGuideModal";
 import { SweepStepper } from "@/components/sweep/SweepStepper";
 import { SweepSuccessModal } from "@/components/sweep/SweepSuccessModal";
 import { SwitchOrContinueCard } from "@/components/sweep/SwitchOrContinueCard";
@@ -255,6 +256,8 @@ export default function DustSweepPage() {
 
   return (
     <div className="theme-page min-h-screen bg-gradient-to-b from-blue-50 via-white to-slate-50 px-3 py-5 sm:px-6 sm:py-8">
+      <SweepGuideModal />
+
       <TokenSelectModal
         isOpen={tokenModalMode !== null}
         mode={tokenModalMode || "multi"}
