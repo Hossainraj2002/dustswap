@@ -558,7 +558,7 @@ async function loadTransactions(start: Date, end: Date) {
         tx_hash::text AS tx_hash,
         chain_id,
         amount_usd::numeric AS amount_usd,
-        COALESCE(source, 'recorded')::text AS status
+        'recorded'::text AS status
       FROM swap_transactions, bounds
       WHERE occurred_at >= bounds.start_at
         AND occurred_at < bounds.end_at
