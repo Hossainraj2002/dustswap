@@ -18,6 +18,7 @@ import { SlippageSettings } from "@/components/sweep/SlippageSettings";
 import { SweepButton } from "@/components/sweep/SweepButton";
 import { SweepDetails } from "@/components/sweep/SweepDetails";
 import { SweepStepper } from "@/components/sweep/SweepStepper";
+import { SweepSuccessModal } from "@/components/sweep/SweepSuccessModal";
 import { SwitchOrContinueCard } from "@/components/sweep/SwitchOrContinueCard";
 import { TokenFromPanel } from "@/components/sweep/TokenFromPanel";
 import { TokenSelectModal } from "@/components/sweep/TokenSelectModal";
@@ -285,6 +286,11 @@ export default function DustSweepPage() {
         removeFailedTokens={sweep.removeFailedTokens}
         onRemoveFailedTokensChange={sweep.setRemoveFailedTokens}
         onClose={() => setSettingsOpen(false)}
+      />
+
+      <SweepSuccessModal
+        summary={sweep.completionSummary}
+        onClose={sweep.dismissCompletionSummary}
       />
 
       <div className="mx-auto max-w-[600px] pb-[calc(69px+var(--safe-area-bottom))] sm:pb-8">

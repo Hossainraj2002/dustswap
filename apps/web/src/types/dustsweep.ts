@@ -313,6 +313,29 @@ export type DustSweepRecordResponse = {
   questProgress?: Record<string, unknown>;
 };
 
+export type DustSweepCompletionInput = Pick<
+  SelectedToken,
+  "address" | "symbol" | "name" | "decimals" | "logoURI" | "balanceFormatted" | "valueUSD"
+> & {
+  estimatedOut: string;
+  dexName: string;
+};
+
+export type DustSweepCompletionSummary = {
+  txHash: Hex;
+  tokenOut: Token;
+  tokenOutAmount: string;
+  tokenOutValueUSD: number;
+  inputValueUSD: number;
+  feeAmountUSD: number;
+  gasEstimateUSD: number;
+  routeCount: number;
+  walletName: string;
+  routeKind: SweepRouteKind;
+  completedAt: number;
+  inputs: DustSweepCompletionInput[];
+};
+
 export type SweepButtonVisualState =
   | { state: "disabled"; label: "Select tokens" }
   | { state: "disabled"; label: "Select output token" }

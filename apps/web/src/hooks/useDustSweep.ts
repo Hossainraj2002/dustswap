@@ -43,6 +43,7 @@ import { USDC_ADDRESS, WETH_ADDRESS } from "@/lib/tokens";
 import {
   type DustSweepAtomicStatus,
   type DustSweepBuildTxResponse,
+  type DustSweepCompletionSummary,
   type DustSweepWalletKey,
   type DustSweepWalletProfile,
   type DustSweepQuoteResponse,
@@ -133,6 +134,7 @@ export type UseDustSweepReturn = {
   isSweeping: boolean;
   sweepStep: SweepStep;
   txHash: Hex | null;
+  completionSummary: DustSweepCompletionSummary | null;
   error: string | null;
   executionNotice: string | null;
   quoteError: string | null;
@@ -171,6 +173,7 @@ export type UseDustSweepReturn = {
   previewSweep: () => Promise<void>;
   executeSweep: () => Promise<ExecuteSweepResult | null>;
   resetSweepState: () => void;
+  dismissCompletionSummary: () => void;
 };
 
 const ATOMIC_BATCH_UNSUPPORTED_MESSAGE =
@@ -657,6 +660,7 @@ export function useDustSweep(): UseDustSweepReturn {
   const [isSweeping, setIsSweeping] = useState(false);
   const [sweepStep, setSweepStep] = useState<SweepStep>("idle");
   const [txHash, setTxHash] = useState<Hex | null>(null);
+  const [completionSummary, setCompletionSummary] = useState<DustSweepCompletionSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [executionNotice, setExecutionNotice] = useState<string | null>(null);
   const [quoteError, setQuoteError] = useState<string | null>(null);
@@ -1128,8 +1132,13 @@ export function useDustSweep(): UseDustSweepReturn {
   const resetSweepState = useCallback(() => {
     setSweepStep("idle");
     setTxHash(null);
+    setCompletionSummary(null);
     setError(null);
     setExecutionNotice(null);
+  }, []);
+
+  const dismissCompletionSummary = useCallback(() => {
+    setCompletionSummary(null);
   }, []);
 
   const waitForSuccessfulTransaction = useCallback(async (hash: Hex) => {
@@ -1736,6 +1745,7 @@ export function useDustSweep(): UseDustSweepReturn {
     setSweepStep(currentStep);
     setError(null);
     setExecutionNotice(null);
+    setCompletionSummary(null);
 
     try {
       await switchToBase();
@@ -2272,6 +2282,40 @@ export function useDustSweep(): UseDustSweepReturn {
       setTxHash(hash);
       await waitForSuccessfulTransaction(hash);
 
+      const completedInputs: DustSweepCompletionSummary["inputs"] = [];
+      for (const route of quote.routes) {
+        const token = selectedTokens.find((item) =>
+          isSameAddress(item.address, route.tokenIn),
+        );
+        if (!token) continue;
+        completedInputs.push({
+          address: token.address,
+          symbol: token.symbol,
+          name: token.name,
+          decimals: token.decimals,
+          logoURI: token.logoURI,
+          balanceFormatted: token.balanceFormatted,
+          valueUSD: token.valueUSD,
+          estimatedOut: route.estimatedOut,
+          dexName: route.dexName,
+        });
+      }
+
+      setCompletionSummary({
+        txHash: hash,
+        tokenOut,
+        tokenOutAmount: quote.netEstimatedOut || quote.totalEstimatedOut,
+        tokenOutValueUSD: quote.netEstimatedOutUSD ?? quote.totalEstimatedOutUSD,
+        inputValueUSD: completedInputs.reduce((sum, token) => sum + (token.valueUSD || 0), 0),
+        feeAmountUSD: quote.feeAmountUSD,
+        gasEstimateUSD: quote.gasEstimateUSD,
+        routeCount: quote.routes.length,
+        walletName: walletProfile.walletName,
+        routeKind,
+        completedAt: Date.now(),
+        inputs: completedInputs,
+      });
+
       setSweepStep("success");
       logSweepTelemetry("success");
       await fetch("/api/dustsweep/record-sweep", {
@@ -2336,7 +2380,7 @@ export function useDustSweep(): UseDustSweepReturn {
     sendTokenApprovals,
     sendTokenPocketBatchApprovals,
     sendTokenPocketRawTransaction,
-    selectedTokens.length,
+    selectedTokens,
     supportsWalletSendCalls,
     switchToBase,
     tokenOut,
@@ -2363,6 +2407,7 @@ export function useDustSweep(): UseDustSweepReturn {
     isSweeping,
     sweepStep,
     txHash,
+    completionSummary,
     error: error || balances.error,
     executionNotice,
     quoteError,
@@ -2401,5 +2446,6 @@ export function useDustSweep(): UseDustSweepReturn {
     previewSweep: refreshQuote,
     executeSweep,
     resetSweepState,
+    dismissCompletionSummary,
   };
 }
