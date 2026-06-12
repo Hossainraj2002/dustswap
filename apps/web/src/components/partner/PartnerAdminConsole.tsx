@@ -835,6 +835,12 @@ export function PartnerAdminConsole({
           >
             Open Quest Admin
           </Link>
+          <Link
+            href="/admin/monitor"
+            className="inline-flex rounded-[16px] border border-slate-200 bg-white px-4 py-2.5 text-sm font-black text-slate-700 transition hover:border-slate-300 hover:text-slate-950"
+          >
+            Open Monitor
+          </Link>
         </div>
       </section>
 

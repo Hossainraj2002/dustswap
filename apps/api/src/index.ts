@@ -23,6 +23,7 @@ import { pointsRoutes } from "./routes/points";
 import { profileCompletionRoutes } from "./routes/profileCompletion";
 import { profileSettingsRoutes } from "./routes/profileSettings";
 import { questsRoutes } from "./routes/quests";
+import { monitorRoutes } from "./routes/monitor";
 import { swapsRoutes } from "./routes/swaps";
 import { swapownRoutes } from "./routes/swapown";
 import { dustsweepRoutes } from "./routes/dustsweep";
@@ -60,6 +61,7 @@ app.route("/api/points", pointsRoutes);
 app.route("/api/profile-completion", profileCompletionRoutes);
 app.route("/api/profile-settings", profileSettingsRoutes);
 app.route("/api/quests", questsRoutes);
+app.route("/api/monitor", monitorRoutes);
 app.route("/api/swaps", swapsRoutes);
 app.route("/api/swapown", swapownRoutes);
 app.route("/api/dustsweep", dustsweepRoutes);
@@ -121,6 +123,7 @@ app.get("/", (c) => {
       "POST /api/points/check-in": "Daily check-in",
       "POST /api/points/record-sweep": "Record sweep for points",
       "GET /api/quests": "Get active quests and user progress",
+      "GET /api/monitor/admin?window=utc-day": "Admin: live monitoring dashboard data",
       "GET /api/quests/discord/connect": "Start signed Discord OAuth connection",
       "GET /api/quests/discord/callback": "Discord OAuth callback",
       "POST /api/quests/discord/verify": "Verify Discord server membership",
