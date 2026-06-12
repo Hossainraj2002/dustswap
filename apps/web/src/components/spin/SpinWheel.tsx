@@ -89,27 +89,29 @@ export function SpinWheel({
             return (
               <div key={segment.key}>
                 <div
-                  className="absolute left-1/2 top-1/2 h-[45%] w-px origin-bottom bg-white/75"
+                  className="absolute inset-[4%]"
                   style={{
-                    transform: `translate(-50%, -100%) rotate(${angle}deg)`,
+                    transform: `rotate(${angle}deg)`,
                   }}
-                />
+                >
+                  <div className="spin-wheel-separator absolute left-1/2 top-0 h-1/2 w-px -translate-x-1/2" />
+                </div>
                 <div
-                  className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2"
+                  className="absolute inset-0"
                   style={{
-                    transform: `translate(-50%, -50%) rotate(${labelAngle}deg) translateY(clamp(-102px, -20vw, -72px))`,
+                    transform: `rotate(${labelAngle}deg)`,
                   }}
                 >
                   <div
                     data-active={active ? "true" : "false"}
                     className={
                       active
-                        ? "spin-reward-pill flex h-[24px] min-w-[72px] items-center justify-center rounded-full border border-sky-200 bg-white/88 px-2 py-1 text-center shadow-[0_10px_24px_rgba(59,130,246,0.2)] backdrop-blur-md sm:h-[26px] sm:min-w-[82px]"
-                        : "spin-reward-label flex h-[24px] items-center justify-center px-0 text-center sm:h-[26px]"
+                        ? "spin-reward-pill absolute left-1/2 top-[10%] flex h-[25px] min-w-[78px] -translate-x-1/2 items-center justify-center rounded-full border border-sky-200 bg-white/88 px-2 py-1 text-center shadow-[0_10px_24px_rgba(59,130,246,0.2)] backdrop-blur-md sm:h-[28px] sm:min-w-[88px]"
+                        : "spin-reward-label absolute left-1/2 top-[10%] flex h-[25px] -translate-x-1/2 items-center justify-center px-0 text-center sm:h-[28px]"
                     }
                   >
                     <p
-                      className="spin-reward-text whitespace-nowrap text-[10px] font-black uppercase leading-none tracking-[0.08em] sm:text-[11px]"
+                      className="spin-reward-text whitespace-nowrap text-[11px] font-black uppercase leading-none tracking-[0.08em] sm:text-[12px]"
                       style={{
                         color: isDark ? DARK_REWARD_ACCENTS[index] : segment.accent,
                       }}
