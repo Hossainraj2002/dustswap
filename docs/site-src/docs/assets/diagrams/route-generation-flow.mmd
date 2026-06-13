@@ -1,0 +1,20 @@
+flowchart TD
+    A([Quote request: tokens, amounts,\noutput, slippage, address]) --> B[Validate: cap 50 tokens,\ndrop input == output,\nskip native ETH inputs]
+    B --> C[Re-read live balances on-chain]
+    C -- "balance < amount" --> S1[skip: BALANCE_CHANGED]
+    C -- ok --> D{Routeability cache:\nknown NO_ROUTE?}
+    D -- yes --> S2[skip: NO_LIQUIDITY cached]
+    D -- no --> E[Quote fan-out per token, in parallel]
+    E --> F1[Uniswap V3 Quoter\n4 fee tiers + 2-hop paths]
+    E --> F2[Uniswap V4 Quoter]
+    E --> F3[PancakeSwap V3 Quoter]
+    E --> F4[Aerodrome classic\ngetAmountsOut]
+    E --> F5[Aerodrome Slipstream\n5 tick spacings]
+    E --> F6[BaseSwap getAmountsOut]
+    E --> F7[0x aggregator\noptional, lane-filtered]
+    F1 & F2 & F3 & F4 & F5 & F6 & F7 --> G[Best candidate per token\nhighest amountOut wins]
+    G -- none --> S3[skip: NO_LIQUIDITY / QUOTE_FAILED]
+    G -- found --> H["Per-leg floor:\namountOutMin = quote × (1 − slippage)"]
+    H --> I["Aggregate response:\ntotals, 2% fee preview, gas estimate,\n30-min deadline, random Permit2 nonce"]
+    S1 & S2 & S3 --> I
+    I --> Z([Routes + skippedTokens with reasons])

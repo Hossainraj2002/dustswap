@@ -1,0 +1,19 @@
+flowchart TD
+    A(["eth_getCode(address) on Base"]) --> B{Code starts with\n0xef0100 designator?}
+    B -- no --> C[Plain EOA]
+    B -- yes --> D["Extract delegate address\nlook up in KNOWN_DELEGATES registry"]
+    D --> E{Delegate identity}
+    E -- "connected wallet's own\n(same family)" --> F[Own delegate]
+    E -- "known OTHER one-click wallet\n(OKX, MetaMask, Coinbase, ...)" --> G[/"Route: SWITCH_OR_PERMIT2\nOffer: Switch to that wallet\nor continue with Sign & Sweep"/]
+    E -- "unknown / infra delegate\n(labeled, no switch offered)" --> H[/"Route: PERMIT2\nSign & Sweep — works regardless\nof delegation"/]
+    C --> I{wallet_getCapabilities\natomic on Base?}
+    F --> J{TokenPocket with\nown delegate?}
+    J -- yes --> K[/"Route: BATCH\n(own delegate proves ownership;\ncapability probe can be flaky)"/]
+    J -- no --> I
+    I -- "supported / ready" --> K2[/"Route: BATCH\nOne-Click sweep"/]
+    I -- "unsupported / unknown" --> H
+    G -.->|user continues here| H
+    style G fill:#fff3cd,stroke:#b8860b
+    style H fill:#e7f1ff,stroke:#1d4ed8
+    style K fill:#d1fae5,stroke:#047857
+    style K2 fill:#d1fae5,stroke:#047857

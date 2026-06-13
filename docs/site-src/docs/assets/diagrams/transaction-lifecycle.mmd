@@ -1,0 +1,42 @@
+sequenceDiagram
+    autonumber
+    participant U as User
+    participant F as Frontend
+    participant B as Backend API
+    participant W as Wallet
+    participant R as Sweep router (Base)
+    participant D as DEXes
+    participant FC as Fee collector
+
+    U->>F: Press Sweep
+    F->>F: Check deadline (30 min), price impact gate,<br/>suppress double-clicks
+    F->>B: POST /build-tx
+    B->>B: Re-check live balances · validate routes vs<br/>allowlist (config + on-chain) · build calldata
+    B-->>F: Calldata + approvals + typed data (if permit2 mode)
+    alt One-Click route
+        F->>W: wallet_sendCalls: approvals + sweep, atomic
+        W->>U: One confirmation
+    else Sign & Sweep route
+        F->>W: Exact approvals (first time only)
+        F->>W: signTypedData (gas-free)
+        W->>U: Setup / Sign prompts
+        F->>B: Rebuild with signature
+        B-->>F: Final calldata
+        F->>W: eth_sendTransaction
+        W->>U: Sweep confirmation
+    end
+    U-->>W: Confirm
+    W->>R: Transaction submitted
+    R->>R: Pull exact inputs (Permit2 or allowance)
+    loop Each route, best-effort
+        R->>D: Approve exact → swap → reset approval
+        D-->>R: Output (or leg fails → skipped)
+    end
+    R->>U: Refund inputs of skipped legs
+    R->>FC: Protocol fee (2%, cap 3%)
+    R->>U: Net output (ETH unwrapped if chosen)
+    R-->>W: Receipt
+    F->>F: Verify receipt status == success
+    F->>B: POST /record-sweep (points, quests)
+    F->>U: Success summary + BaseScan link
+    F->>F: Rescan balances

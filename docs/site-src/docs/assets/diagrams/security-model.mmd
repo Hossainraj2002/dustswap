@@ -1,0 +1,40 @@
+flowchart LR
+    subgraph USER["User controls"]
+        U1[Selects tokens & amounts]
+        U2[Signs intent:\nroutes, output, recipient,\nminOut, deadline, fee]
+        U3[Can reject any prompt\nfree, anytime]
+    end
+
+    subgraph CONTRACT["Contract enforces — unconditional"]
+        C1[Exact amounts only\nno unlimited approvals exist]
+        C2[Approvals reset to 0\nevery leg, success or failure]
+        C3[Only allowlisted\ntargets & spenders callable]
+        C4[Delta accounting:\nonly this tx's funds touchable]
+        C5[Fee hard cap 3%]
+        C6[Failed legs skipped\n& refunded same tx]
+        C7[Reentrancy guard\n+ self-only execution]
+    end
+
+    subgraph OWNER["Owner is trusted for"]
+        O1[DEX allowlist contents]
+        O2[Fee rate within 3% cap]
+        O3[Pause / unpause]
+        O4[Rescue of stuck funds only\ncannot enter user txs]
+    end
+
+    subgraph BACKEND["Backend is trusted for"]
+        B1[Honest route calldata]
+        B2[Tight per-leg floors\nfrom fresh quotes]
+        B3[Allowlist pre-checks\nconfig + on-chain]
+    end
+
+    subgraph EXTERNAL["External dependencies"]
+        E1[Permit2 — canonical\nsignature verification]
+        E2[Allowlisted DEX routers\nUniswap, Aerodrome, Pancake, ...]
+    end
+
+    USER -->|signed intent freezes\nbackend's output| CONTRACT
+    BACKEND -->|builds routes,\ncannot alter after signing| CONTRACT
+    OWNER -->|config only,\npublic on-chain events| CONTRACT
+    CONTRACT --> E1
+    CONTRACT --> E2

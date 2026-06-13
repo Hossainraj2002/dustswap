@@ -1,0 +1,34 @@
+# Risk Disclosures
+
+## Particle Points are not a token
+
+Particle Points (PP) are an **off-chain points balance** tracked by DustSwap. They:
+
+- do not exist on-chain,
+- cannot be transferred, traded, or sold,
+- have **no monetary value today**.
+
+DustSwap plans to reward standing (including leaderboard rank) at a future **TGE (Token Generation Event)**, but the reward structure, amounts, eligibility, and timing are **not finalized or guaranteed**. See [What are Particle Points?](../rewards/pp-rewards.md) and [Leaderboard Overview](../leaderboards/leaderboard-overview.md).
+
+## Spin fairness
+
+Spin prize draws are performed server-side and are **not provably fair on-chain**, though the triggering transaction is independently verified. See [Spin Rewards](../rewards/spin-rewards.md).
+
+## Smart contract risk
+
+As with any on-chain product, smart-contract risk exists. See [Audit Status](audit-status.md) for what has and has not been independently audited.
+
+## General
+
+- DustSwap currently operates on **Base mainnet only**.
+- A planned **Bridge** feature is not live; do not act on any third-party claims that it is.
+- Particle Points balances, quest lists, and reward amounts are admin-managed and may change.
+
+> **User Safety Note**
+> Never pay anyone for PP, pass NFTs, or "early access" — see [User Safety](user-safety.md).
+
+## Related pages
+
+- [What are Particle Points?](../rewards/pp-rewards.md)
+- [Security Overview](security-overview.md)
+- [Audit Status](audit-status.md)

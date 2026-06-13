@@ -1,0 +1,20 @@
+flowchart TD
+    A([User opens /dustsweep]) --> B[Connect wallet]
+    B --> C["Detect in parallel:\nwallet_getCapabilities + eth_getCode (Base)"]
+    C --> D[Scan wallet balances]
+    D --> E[Token list: swappable / hidden / suspicious]
+    E --> F[Select tokens\nmanual / select all / auto-mode]
+    F --> G[Choose output token\nETH default, USDC, WETH, USDT]
+    G --> H[Quote: best route per token\nvalid 30 min]
+    H --> I{"Price impact\non any route > 5%?"}
+    I -- yes --> J[Explicit confirmation dialog]
+    I -- no --> K
+    J -- confirmed --> K{Resolved route kind}
+    K -- batch --> L["One-Click:\napprovals + sweep in one\nwallet_sendCalls bundle"]
+    K -- permit2 --> M["Sign & Sweep:\nexact approvals (first time)\n+ EIP-712 signature + 1 tx"]
+    K -- switch_or_permit2 --> N[Offer switch to owning wallet] --> M
+    L --> O[Transaction confirmed on Base]
+    M --> O
+    O --> P[Success summary + BaseScan link\nfailed legs refunded automatically]
+    P --> Q[Record sweep: points & quests]
+    Q --> R([Balances rescan])

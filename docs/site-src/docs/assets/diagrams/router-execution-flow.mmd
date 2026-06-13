@@ -1,0 +1,27 @@
+flowchart TD
+    A(["sweep(mode, routes, params, permit, sig)\nnonReentrant · whenNotPaused"]) --> B["Resolve fee:\noverride or default, hard cap 3%"]
+    B --> C["Validate params + every route:\n≤ 50 routes · deadline ok ·\ntarget & spender ALLOWLISTED ·\ntokenIn ≠ output · amount > 0"]
+    C --> D[Snapshot balances:\noutput token + every unique input\ndelta accounting]
+    D --> E{mode}
+    E -- Permit2Signature --> F[permitWitnessTransferFrom\nwitness verified, owner = msg.sender]
+    E -- Allowance --> G[safeTransferFrom per token]
+    F & G --> H[Pull EXACTLY amountIn per token]
+    H --> I[For each route:\ntry executeRoute — self-call]
+    I --> J["Guard: held balance ≥ amountIn?\n(fee-on-transfer protection)"]
+    J -- no --> R1[Leg reverts → caught]
+    J -- yes --> K["forceApprove(spender, 0)\nforceApprove(spender, amountIn)\n+ transient Permit2 allowance if UR"]
+    K --> L["target.call(data) — allowlisted DEX"]
+    L --> M[Reset ALL approvals to 0\nsuccess or failure]
+    M -- success --> N[emit RouteExecuted]
+    M -- failure --> R1
+    R1 --> O[emit RouteSkipped\napprovals rolled back, batch continues]
+    N & O --> P{More routes?}
+    P -- yes --> I
+    P -- no --> Q[Refund leftover inputs\nsee Refund Flow]
+    Q --> S{Output delta ≥ minAmountOut?}
+    S -- no --> T([revert InsufficientOutput])
+    S -- yes --> U["Fee = gross × feeBps / 10000\n→ feeCollector · emit ProtocolFeePaid"]
+    U --> V{Output = native ETH sentinel?}
+    V -- yes --> W[Unwrap WETH → send ETH to recipient]
+    V -- no --> X[safeTransfer net to recipient]
+    W & X --> Y([emit DustSwept\ngross, fee, net, routeCount])

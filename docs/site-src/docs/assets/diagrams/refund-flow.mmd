@@ -1,0 +1,13 @@
+flowchart TD
+    A[Before pulling inputs:\nsnapshot router balance of\nevery unique input token] --> B[Pull exact amounts + execute legs\nbest-effort, failures skipped]
+    B --> C[After all legs:\nmeasure each input token's\nbalance delta vs snapshot]
+    C --> D{"Delta > 0?\nleftover from skipped leg,\nfee-on-transfer remnant,\nor DEX refund"}
+    D -- no --> E([Nothing to refund\nfor this token])
+    D -- yes --> F["Best-effort transfer back to user\nraw call, tolerant of\nnon-standard ERC-20 returns"]
+    F -- success --> G[emit InputRefunded\ntoken back in user wallet\nSAME transaction]
+    F -- "transfer itself fails\n(pathological token)" --> H[emit RefundFailed\nsweep continues — not reverted]
+    H --> I[Owner rescueERC20\nmanual recovery path]
+    G & E --> J([Settle output & finish])
+    H --> J
+    style G fill:#d1fae5,stroke:#047857
+    style H fill:#fff3cd,stroke:#b8860b

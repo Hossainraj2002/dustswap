@@ -1,0 +1,28 @@
+sequenceDiagram
+    autonumber
+    participant U as User
+    participant A as DustSweep app
+    participant B as Backend
+    participant W as Wallet
+    participant P2 as Permit2
+    participant R as Sweep router
+
+    A->>B: POST /build-tx (routes, output, deadline, nonce)
+    B-->>A: Typed data + approval requirements (spender = Permit2)
+    opt First time per token
+        A->>W: approve(Permit2, exact amount) per token
+        W->>U: Approval prompt(s) — "Setup"
+        U-->>W: Confirm
+    end
+    A->>W: signTypedData: PermitBatchWitnessTransferFrom
+    W->>U: Readable message — exact tokens & amounts,<br/>spender = router, nonce, 30-min deadline,<br/>witness binds routes + output + recipient + minOut + fee
+    U-->>W: Sign (gas-free)
+    A->>B: POST /build-tx again, with signature
+    B-->>A: Final sweep calldata (real ABI)
+    A->>W: eth_sendTransaction → router
+    W->>R: sweep(Permit2Signature, routes, params, permit, sig)
+    R->>R: Recompute witness from actual routes/params
+    R->>P2: permitWitnessTransferFrom(owner = msg.sender)
+    P2->>P2: Verify signature, nonce unused, deadline ok,<br/>witness hash matches
+    P2->>R: Transfer EXACT amounts in
+    Note over R: Any tampering with routes, recipient,<br/>minOut, or fee ⇒ hash mismatch ⇒ revert

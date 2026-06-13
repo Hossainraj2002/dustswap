@@ -1,0 +1,17 @@
+flowchart TD
+    A([Request: wallet address, chain 8453]) --> B{Runtime cache\nfresh? ~30s}
+    B -- hit --> Z([Return cached result])
+    B -- miss --> C{DB cache\nfresh? ~90s}
+    C -- hit --> Z
+    C -- miss --> D["Fetch ALL ERC-20 balances\n(indexer, paginated)"]
+    D --> E[Filter to non-zero balances]
+    E --> F["Market hints per token:\nprice, liquidity, best DEX\n(DexScreener, CoinGecko fallback)"]
+    E --> G["Metadata: symbol/name/decimals\nwhitelist hint or on-chain read\n(cached ~24h)"]
+    F --> H[Risk classification\nsymbol/name heuristics, metadata,\nprice, liquidity, verification]
+    G --> H
+    H --> I{Classify each token}
+    I -- "spam heuristics tripped" --> J[suspicious\nSPAM_OR_DENYLISTED]
+    I -- "value < $0.01" --> K[hidden\nBELOW_THRESHOLD]
+    I -- "no price" --> L[hidden\nUNKNOWN_PRICE]
+    I -- "priced + passes checks" --> M[swappable\nsorted by USD value]
+    J & K & L & M --> N[Cache + return buckets\nwith discovery stats]

@@ -1,0 +1,19 @@
+# Audit Status
+
+DustSwap has completed an automated-tooling-assisted security review of the `DustSwapSweepRouter` (DustSweep V3) contract. This is **not** a third-party professional audit and is **not** a guarantee of the absence of vulnerabilities — see the disclaimer below.
+
+> Full report: [DustSwap V3 — Smart Contract Security Audit](https://docs.google.com/document/d/1O7XGYHxerPmmPBQHQc_N1nGlGF8Ja4We9as_BdmFIHY/edit)
+
+## Summary
+
+- **Auditor:** Fable 5 · **Date:** 13 June 2026 · **Chain:** Base (chainId 8453)
+- **Contract:** `DustSwapSweepRouter` (DustSweep V3)
+- **Tools used:** Slither, Solhint, Surya, Mythril, solc 0.8.24, plus manual function-by-function review
+- **Result:** No Critical or High severity issues identified. **1 Medium**, **5 Low**, and several Informational findings — all currently **Open** (not yet remediated).
+
+| ID | Title | Severity | Status |
+| --- | --- | --- | --- |
+| M-1 | Protocol fee is caller-controlled and bypassable | Medium | Open |
+| L-1 | `target`/`spender` allowlists validated independently | Low | Open |
+| L-2 | Held-balance guard uses absolute, not per-sweep, balance | Low | Open |
+| L-3 | Slippage floor checked on gross (pre-

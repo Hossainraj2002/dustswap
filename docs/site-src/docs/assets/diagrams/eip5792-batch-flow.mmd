@@ -1,0 +1,20 @@
+flowchart TD
+    A([Connect]) --> B["wallet_getCapabilities (Base)\ntry multiple param shapes"]
+    B --> C{atomic status}
+    C -- "supported / ready" --> D{Account delegation safe?\nundelegated OR own wallet's delegate}
+    C -- "unsupported / unknown" --> P[Sign & Sweep path]
+    D -- no --> P
+    D -- yes --> E["Build ONE bundle:\nexact approvals + sweep call\nwallet_sendCalls v2.0.0, atomicRequired"]
+    E --> F{"Within call cap?\ndefault 50, MetaMask 10,\nCoinbase splits above 10 routes"}
+    F -- "fits" --> G[Submit bundle]
+    F -- "approvals only fit" --> H[Bundle approvals,\nthen sweep tx separately]
+    F -- "exceeds cap" --> I[Chunk approval batches,\nsweep appended to last chunk]
+    G --> J["Poll wallet_getCallsStatus\n(up to 180 s)"]
+    H --> J
+    I --> J
+    J --> K{Result}
+    K -- "tx hash, atomic, receipts ok" --> S([Done — one confirmation])
+    K -- "user rejected" --> X([Stop. Never retried])
+    K -- "batch error 4100/57xx\nor non-atomic" --> L[Fallback: bundled approvals\nthen separate sweep]
+    L -- fails again --> M[Fallback: sequential approvals\n+ standard sweep tx]
+    M --> S2([Done — honest notice shown\nat every downgrade])
