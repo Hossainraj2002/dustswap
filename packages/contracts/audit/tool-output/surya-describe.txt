@@ -1,0 +1,127 @@
+ +  Context 
+    - [Int] _msgSender
+    - [Int] _msgData
+    - [Int] _contextSuffixLength
+
+ + [Int] IERC165 
+    - [Ext] supportsInterface
+
+ + [Int] IERC20 
+    - [Ext] totalSupply
+    - [Ext] balanceOf
+    - [Ext] transfer #
+    - [Ext] allowance
+    - [Ext] approve #
+    - [Ext] transferFrom #
+
+ + [Lib] StorageSlot 
+    - [Int] getAddressSlot
+    - [Int] getBooleanSlot
+    - [Int] getBytes32Slot
+    - [Int] getUint256Slot
+    - [Int] getInt256Slot
+    - [Int] getStringSlot
+    - [Int] getStringSlot
+    - [Int] getBytesSlot
+    - [Int] getBytesSlot
+
+ +  Ownable (Context)
+    - [Pub] <Constructor> #
+    - [Pub] owner
+    - [Int] _checkOwner
+    - [Pub] renounceOwnership #
+       - modifiers: onlyOwner
+    - [Pub] transferOwnership #
+       - modifiers: onlyOwner
+    - [Int] _transferOwnership #
+
+ +  Pausable (Context)
+    - [Pub] paused
+    - [Int] _requireNotPaused
+    - [Int] _requirePaused
+    - [Int] _pause #
+       - modifiers: whenNotPaused
+    - [Int] _unpause #
+       - modifiers: whenPaused
+
+ +  ReentrancyGuard 
+    - [Pub] <Constructor> #
+    - [Prv] _nonReentrantBeforeView
+    - [Prv] _nonReentrantBefore #
+    - [Prv] _nonReentrantAfter #
+    - [Int] _reentrancyGuardEntered
+    - [Int] _reentrancyGuardStorageSlot
+
+ + [Int] IERC1363 (IERC20, IERC165)
+    - [Ext] transferAndCall #
+    - [Ext] transferAndCall #
+    - [Ext] transferFromAndCall #
+    - [Ext] transferFromAndCall #
+    - [Ext] approveAndCall #
+    - [Ext] approveAndCall #
+
+ + [Lib] SafeERC20 
+    - [Int] safeTransfer #
+    - [Int] safeTransferFrom #
+    - [Int] trySafeTransfer #
+    - [Int] trySafeTransferFrom #
+    - [Int] safeIncreaseAllowance #
+    - [Int] safeDecreaseAllowance #
+    - [Int] forceApprove #
+    - [Int] transferAndCallRelaxed #
+    - [Int] transferFromAndCallRelaxed #
+    - [Int] approveAndCallRelaxed #
+    - [Prv] _safeTransfer #
+    - [Prv] _safeTransferFrom #
+    - [Prv] _safeApprove #
+
+ + [Int] ISignatureTransfer 
+    - [Ext] permitWitnessTransferFrom #
+
+ + [Int] IAllowanceTransfer 
+    - [Ext] approve #
+
+ + [Int] IWETH9 
+    - [Ext] withdraw #
+
+ +  DustSwapSweepRouter (Ownable, ReentrancyGuard, Pausable)
+    - [Pub] <Constructor> #
+       - modifiers: Ownable
+    - [Ext] <Receive Ether> ($)
+    - [Ext] sweep #
+       - modifiers: nonReentrant,whenNotPaused
+    - [Int] _pullAndExecute #
+    - [Ext] executeRoute #
+    - [Int] _resolveFeeBps
+    - [Int] _validateParams
+    - [Int] _validateRoutes
+    - [Int] _validatePermit
+    - [Int] _pullInputsWithPermit2 #
+    - [Int] _pullInputsWithAllowance #
+    - [Int] _executeRoutesBestEffort #
+    - [Int] _snapshotInputs
+    - [Int] _refundLeftoverInputs #
+    - [Int] _settleOutput #
+    - [Pub] hashRoutes
+    - [Pub] hashSweepWitness
+    - [Ext] setFeeBps #
+       - modifiers: onlyOwner
+    - [Ext] setFeeCollector #
+       - modifiers: onlyOwner
+    - [Ext] setAllowedTarget #
+       - modifiers: onlyOwner
+    - [Ext] setAllowedSpender #
+       - modifiers: onlyOwner
+    - [Ext] pause #
+       - modifiers: onlyOwner
+    - [Ext] unpause #
+       - modifiers: onlyOwner
+    - [Ext] rescueERC20 #
+       - modifiers: onlyOwner,nonReentrant
+    - [Ext] rescueNative #
+       - modifiers: onlyOwner,nonReentrant
+
+
+ ($) = payable function
+ # = non-constant function
+  

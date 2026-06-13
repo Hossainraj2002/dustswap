@@ -1384,7 +1384,12 @@ export function useDustSweep(): UseDustSweepReturn {
     const buildRpcCalls = (reqs: ApprovalRequirement[], getAmount: (r: ApprovalRequirement) => bigint) =>
       reqs.map(r => ({
         to: r.token as string,
-        data: encodeFunctionData({ abi: erc20Abi, functionName: "approve", args: [spender, getAmount(r)] }),
+        // Raw wallet_sendCalls bypasses normalizeWalletSendCall, so append the
+        // builder code suffix directly (same as sendTokenPocketRawTransaction).
+        data: appendDataSuffix(
+          encodeFunctionData({ abi: erc20Abi, functionName: "approve", args: [spender, getAmount(r)] }),
+          DATA_SUFFIX,
+        ),
         value: toRpcQuantity(0n),
         // gas as a direct top-level field (EIP-5792) so TP uses it without estimating.
         gas: toRpcQuantity(APPROVAL_CALL_GAS_LIMIT),
@@ -1475,6 +1480,9 @@ export function useDustSweep(): UseDustSweepReturn {
             args: [spender, 0n],
           }),
           value: 0n,
+          // Builder code attribution, symmetric with the sweep call so every
+          // batched approval also carries the suffix (normalizeWalletSendCall appends it).
+          dataSuffix: DATA_SUFFIX,
           gas: APPROVAL_CALL_GAS_LIMIT,
         });
       }
@@ -1487,6 +1495,7 @@ export function useDustSweep(): UseDustSweepReturn {
           args: [spender, requirement.approvalAmount],
         }),
         value: 0n,
+        dataSuffix: DATA_SUFFIX,
         gas: APPROVAL_CALL_GAS_LIMIT,
       });
     }

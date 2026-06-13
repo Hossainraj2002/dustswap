@@ -1,0 +1,40 @@
+Error checking for updates: getaddrinfo EAI_AGAIN registry.npmjs.org
+
+DustSwapSweepRouter_Remix.sol
+    14:1   warning  Found more than One contract per file. 7 contracts found!                                            one-contract-per-file
+    83:5   warning  GC: [value] on Event [Transfer] could be Indexed                                                     gas-indexed-events
+    89:5   warning  GC: [value] on Event [Approval] could be Indexed                                                     gas-indexed-events
+   416:5   warning  GC: [account] on Event [Paused] could be Indexed                                                     gas-indexed-events
+   421:5   warning  GC: [account] on Event [Unpaused] could be Indexed                                                   gas-indexed-events
+  1068:5   warning  GC: For [ SweepParams ] struct, packing seems inefficient. Try rearranging to achieve 32bytes slots  gas-struct-packing
+  1077:5   warning  GC: For [ SweepState ] struct, packing seems inefficient. Try rearranging to achieve 32bytes slots   gas-struct-packing
+  1092:52  warning  GC: String exceeds 32 bytes                                                                          gas-small-strings
+  1092:52  warning  GC: String exceeds 32 bytes                                                                          gas-small-strings
+  1095:59  warning  GC: String exceeds 32 bytes                                                                          gas-small-strings
+  1095:59  warning  GC: String exceeds 32 bytes                                                                          gas-small-strings
+  1098:5   warning  GC: String exceeds 32 bytes                                                                          gas-small-strings
+  1103:5   warning  Immutable variables name are set to be in capitalized SNAKE_CASE                                     immutable-vars-naming
+  1104:5   warning  Immutable variables name are set to be in capitalized SNAKE_CASE                                     immutable-vars-naming
+  1126:5   warning  GC: [amountIn] on Event [RouteSkipped] could be Indexed                                              gas-indexed-events
+  1127:5   warning  GC: [amount] on Event [InputRefunded] could be Indexed                                               gas-indexed-events
+  1128:5   warning  GC: [amount] on Event [RefundFailed] could be Indexed                                                gas-indexed-events
+  1130:5   warning  GC: [oldFeeBps] on Event [FeeBpsUpdated] could be Indexed                                            gas-indexed-events
+  1130:5   warning  GC: [newFeeBps] on Event [FeeBpsUpdated] could be Indexed                                            gas-indexed-events
+  1131:5   warning  GC: [oldCollector] on Event [FeeCollectorUpdated] could be Indexed                                   gas-indexed-events
+  1131:5   warning  GC: [newCollector] on Event [FeeCollectorUpdated] could be Indexed                                   gas-indexed-events
+  1132:5   warning  GC: [allowed] on Event [AllowedTargetUpdated] could be Indexed                                       gas-indexed-events
+  1133:5   warning  GC: [allowed] on Event [AllowedSpenderUpdated] could be Indexed                                      gas-indexed-events
+  1134:5   warning  GC: [amount] on Event [ERC20Rescued] could be Indexed                                                gas-indexed-events
+  1135:5   warning  GC: [amount] on Event [NativeRescued] could be Indexed                                               gas-indexed-events
+  1278:51  warning  Avoid to use low level calls                                                                         avoid-low-level-calls
+  1282:97  warning  Avoid making time-based decisions in your business logic                                             not-rely-on-time
+  1304:13  warning  Avoid making time-based decisions in your business logic                                             not-rely-on-time
+  1466:47  warning  Avoid to use low level calls                                                                         avoid-low-level-calls
+  1472:60  warning  GC: Non strict inequality found. Try converting to a strict one                                      gas-strict-inequalities
+
+✖ 30 problems (0 errors, 30 warnings)
+
+ ------------------------------------------------------------------------------------------------------ 
+ ===> Smart contract Audits by Protofire. Book a call: ]8;;https://calendly.com/vitaliy-chernov/30minhttps://calendly.com/vitaliy-chernov/30min]8;; <===  
+ ------------------------------------------------------------------------------------------------------ 
+
