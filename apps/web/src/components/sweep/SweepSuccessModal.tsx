@@ -81,6 +81,95 @@ function CheckBadge() {
   );
 }
 
+// Premium "dust stream" connector: a gradient rail with dust particles flowing
+// into a glowing arrowhead — conveys many tokens being swept into the output.
+function FlowConnector() {
+  return (
+    <span className="relative flex h-8 shrink-0 items-center" aria-hidden="true">
+      <svg
+        width="112"
+        height="32"
+        viewBox="0 0 112 32"
+        fill="none"
+        className="overflow-visible"
+      >
+        <defs>
+          <linearGradient
+            id="sweepFlowLine"
+            x1="0"
+            y1="16"
+            x2="112"
+            y2="16"
+            gradientUnits="userSpaceOnUse"
+          >
+            <stop offset="0%" stopColor="#6366f1" />
+            <stop offset="45%" stopColor="#2563eb" />
+            <stop offset="75%" stopColor="#06b6d4" />
+            <stop offset="100%" stopColor="#10b981" />
+          </linearGradient>
+          <radialGradient id="sweepFlowParticle" cx="0.5" cy="0.5" r="0.5">
+            <stop offset="0%" stopColor="#ffffff" />
+            <stop offset="35%" stopColor="#5eead4" />
+            <stop offset="100%" stopColor="#10b981" stopOpacity="0" />
+          </radialGradient>
+        </defs>
+
+        {/* glow landing pad at the output end */}
+        <circle cx="96" cy="16" r="10" fill="#10b981" opacity="0.12" />
+
+        {/* soft rail */}
+        <path
+          d="M4 16H92"
+          stroke="url(#sweepFlowLine)"
+          strokeWidth="3"
+          strokeLinecap="round"
+          strokeOpacity="0.16"
+        />
+
+        {/* flowing energy */}
+        <path
+          d="M4 16H92"
+          stroke="url(#sweepFlowLine)"
+          strokeWidth="3"
+          strokeLinecap="round"
+          strokeDasharray="0.5 9"
+        >
+          <animate
+            attributeName="stroke-dashoffset"
+            values="19;0"
+            dur="1s"
+            repeatCount="indefinite"
+          />
+        </path>
+
+        {/* travelling dust particles */}
+        <circle cy="16" r="3.5" fill="url(#sweepFlowParticle)">
+          <animate attributeName="cx" values="4;90" dur="1.6s" repeatCount="indefinite" />
+          <animate attributeName="opacity" values="0;1;1;0" dur="1.6s" repeatCount="indefinite" />
+        </circle>
+        <circle cy="16" r="2.5" fill="url(#sweepFlowParticle)">
+          <animate attributeName="cx" values="4;90" dur="1.6s" begin="0.55s" repeatCount="indefinite" />
+          <animate attributeName="opacity" values="0;1;1;0" dur="1.6s" begin="0.55s" repeatCount="indefinite" />
+        </circle>
+        <circle cy="16" r="2" fill="url(#sweepFlowParticle)">
+          <animate attributeName="cx" values="4;90" dur="1.6s" begin="1.1s" repeatCount="indefinite" />
+          <animate attributeName="opacity" values="0;1;1;0" dur="1.6s" begin="1.1s" repeatCount="indefinite" />
+        </circle>
+
+        {/* glowing arrowhead landing on the output token */}
+        <path
+          d="M90 9.5 102 16 90 22.5"
+          stroke="#10b981"
+          strokeWidth="3"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          fill="none"
+        />
+      </svg>
+    </span>
+  );
+}
+
 function FlowGraphic({ summary }: { summary: DustSweepCompletionSummary }) {
   const visibleInputs = summary.inputs.slice(0, 3);
   const hiddenCount = Math.max(0, summary.routeCount - visibleInputs.length);
@@ -108,14 +197,7 @@ function FlowGraphic({ summary }: { summary: DustSweepCompletionSummary }) {
           ) : null}
         </div>
 
-        <div className="flex shrink-0 items-center gap-1.5">
-          <span className="h-1 w-3 rounded-full bg-slate-300" />
-          <span className="h-1 w-3 rounded-full bg-slate-300" />
-          <span className="h-1 w-3 rounded-full bg-slate-300" />
-          <span className="h-1 w-5 rounded-full bg-blue-500" />
-          <span className="h-1 w-5 rounded-full bg-emerald-400" />
-          <span className="text-xl leading-none text-slate-500">-&gt;</span>
-        </div>
+        <FlowConnector />
 
         <div className="inline-flex shrink-0 items-center gap-2 rounded-full bg-white px-2.5 py-1.5 text-slate-950 shadow-sm ring-1 ring-slate-200">
           <TokenLogo token={summary.tokenOut} size="sm" />
