@@ -1,3 +1,7 @@
+---
+title: "How Referrals Work"
+---
+
 # How Referrals Work
 
 Invite friends to DustSwap and you both win: each successful referral pays 500 PP to both sides, and you earn a 20% lifetime commission on everything your invitees earn.

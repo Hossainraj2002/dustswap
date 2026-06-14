@@ -1,3 +1,7 @@
+---
+title: "Ranking System"
+---
+
 # Ranking System
 
 ## How rankings are computed

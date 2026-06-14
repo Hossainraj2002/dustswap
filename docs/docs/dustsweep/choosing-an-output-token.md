@@ -1,3 +1,7 @@
+---
+title: "Choosing an Output Token"
+---
+
 # Choosing an Output Token
 
 Every sweep converts your selected tokens into one output token. DustSweep offers four: ETH (the default), USDC, WETH, and USDT.

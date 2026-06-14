@@ -1,3 +1,7 @@
+---
+title: "DustSweep Technical Specification"
+---
+
 # DustSweep Technical Specification
 
 **Product:** DustSweep — the dust-sweeping feature of DustSwap (`/dustsweep`)

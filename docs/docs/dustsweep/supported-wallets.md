@@ -1,3 +1,7 @@
+---
+title: "Supported Wallets Overview"
+---
+
 # Supported Wallets Overview
 
 DustSweep supports virtually every wallet — support is based on what a wallet can do, not its brand. The difference between wallets is only how smooth the experience is: one confirmation, or a signature plus a transaction.

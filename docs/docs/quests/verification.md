@@ -1,3 +1,7 @@
+---
+title: "Quest Verification & Claiming"
+---
+
 # Quest Verification & Claiming
 
 How DustSwap confirms you actually completed a quest, why verification occasionally lags, and what to do when a quest won't verify.

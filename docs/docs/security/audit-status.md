@@ -1,3 +1,7 @@
+---
+title: "Audit Status"
+---
+
 # Audit Status
 
 DustSwap has completed an automated-tooling-assisted security review of the `DustSwapSweepRouter` (DustSweep V3) contract. This is **not** a third-party professional audit and is **not** a guarantee of the absence of vulnerabilities — see the disclaimer below.

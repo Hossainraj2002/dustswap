@@ -1,3 +1,7 @@
+---
+title: "Related Contracts"
+---
+
 # Related Contracts
 
 Beyond the DustSweep router itself, DustSwap's on-chain footprint on Base mainnet includes:

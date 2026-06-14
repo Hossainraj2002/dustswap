@@ -1,3 +1,7 @@
+---
+title: "Referral FAQ"
+---
+
 # Referral FAQ
 
 Quick answers about referral codes, bonuses, and commission.

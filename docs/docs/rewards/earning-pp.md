@@ -1,3 +1,7 @@
+---
+title: "Earning PP: Every Action & Cap"
+---
+
 # Earning PP: Every Action & Cap
 
 Every way to earn Particle Points, with exact base amounts, multipliers, and daily caps. All on-chain actions are verified server-side against the real transaction before points are credited.

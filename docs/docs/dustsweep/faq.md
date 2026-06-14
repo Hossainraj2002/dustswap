@@ -1,3 +1,7 @@
+---
+title: "General FAQ"
+---
+
 # General FAQ
 
 Quick answers to the most common DustSweep questions. Each answer links to the page with full detail.

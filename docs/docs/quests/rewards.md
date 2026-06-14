@@ -1,3 +1,7 @@
+---
+title: "Quest Rewards"
+---
+
 # Quest Rewards
 
 ## How quest rewards work

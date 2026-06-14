@@ -54,6 +54,8 @@ docs/*
 !docs/DEPLOY.md
 !docs/docs/
 !docs/functions/
+!docs/docs.json
+!docs/favicon.svg
 docs/site/
 docs/.cache/
 

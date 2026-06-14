@@ -1,3 +1,7 @@
+---
+title: "Glossary"
+---
+
 # Glossary
 
 **Particle Points (PP)** — DustSwap's off-chain progression points balance. Not a token; no monetary value today. See [PP Rewards](../rewards/pp-rewards.md).

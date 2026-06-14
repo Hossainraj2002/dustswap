@@ -1,3 +1,7 @@
+---
+title: "What the Wallet Prompts Mean"
+---
+
 # What the Wallet Prompts Mean
 
 Every prompt DustSweep triggers in your wallet has a specific, predictable shape. This page is your checklist: what each prompt is, what it should contain, and when to reject.

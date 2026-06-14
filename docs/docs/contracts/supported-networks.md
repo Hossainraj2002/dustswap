@@ -1,3 +1,7 @@
+---
+title: "Supported Networks (Contracts)"
+---
+
 # Supported Networks (Contracts)
 
 All contracts listed in [DustSweep Router](dustsweep-router.md) and [Related Contracts](related-contracts.md) are deployed on **Base mainnet**.

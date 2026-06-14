@@ -1,3 +1,7 @@
+---
+title: "EIP-7702 Explained"
+---
+
 # EIP-7702 Explained
 
 If DustSweep tells you *"this address is already set up for one-click batching with another wallet"*, this page explains what that means, why it happens, and what your options are. Short version: it is normal, your funds are fine, and you can always sweep.

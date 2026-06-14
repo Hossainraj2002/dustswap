@@ -1,3 +1,7 @@
+---
+title: "Weekly Leaderboard"
+---
+
 # Weekly Leaderboard
 
 > **Open item:** the current leaderboard system (see [Leaderboard Overview](leaderboard-overview.md)) consists of three **all-time** boards — Particle Points, Referrals, and Volume. A separate weekly-reset leaderboard is **not currently confirmed to exist**. This page is a placeholder pending owner confirmation (see `docs/gitbook-build-audit.md`, open item 1).

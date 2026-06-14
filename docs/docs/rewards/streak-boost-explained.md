@@ -1,3 +1,7 @@
+---
+title: "Streak Boost Explained"
+---
+
 # Streak Boost Explained
 
 Your check-in streak is the single biggest PP multiplier in DustSwap: +10% per consecutive day, up to +300% at day 30 — and it boosts almost every way you earn, not just the check-in itself.

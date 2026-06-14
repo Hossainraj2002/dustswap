@@ -1,3 +1,7 @@
+---
+title: "Sign & Sweep (Permit2)"
+---
+
 # Sign & Sweep (Permit2)
 
 The universal path: one gas-free signature plus one transaction, on virtually any wallet. This is DustSweep's robust fallback — and for most wallets, its everyday flow.

@@ -1,3 +1,7 @@
+---
+title: "What are Particle Points?"
+---
+
 # What are Particle Points?
 
 Particle Points (PP) are DustSwap's progression points. Almost everything you do in the app — swapping, sweeping dust, checking in daily, completing quests, inviting friends — earns PP, and your total drives your rank, streak boosts, and quest progress.

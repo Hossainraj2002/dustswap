@@ -1,3 +1,7 @@
+---
+title: "Fees"
+---
+
 # Fees
 
 DustSweep charges a single protocol fee of 2%, taken from the swap output — plus normal Base network gas. There are no deposit fees, no subscription, and no fee on failed or refunded tokens.

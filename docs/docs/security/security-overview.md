@@ -1,3 +1,7 @@
+---
+title: "Security Overview"
+---
+
 # Security Overview
 
 DustSwap's security model spans DustSweep, swaps, burns, spins, and the points/referral system. Key cross-cutting principles:

@@ -1,3 +1,7 @@
+---
+title: "What is DustSwap?"
+---
+
 # What is DustSwap?
 
 DustSwap is a Base-network (chain ID 8453) app that combines a token swap experience with a rewards layer: Particle Points (PP), daily check-ins with streaks, quests, referrals, and leaderboards.

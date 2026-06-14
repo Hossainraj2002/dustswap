@@ -1,3 +1,7 @@
+---
+title: "Referral Commission in Detail"
+---
+
 # Referral Commission in Detail
 
 How the 20% lifetime commission is calculated, what counts, what doesn't, and the planned Co-Founder Pass boost.

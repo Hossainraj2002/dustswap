@@ -1,5 +1,5 @@
 ---
-title: "Dustswap Documentation"
+title: "Introduction"
 ---
 
 # Dustswap Documentation

@@ -1,3 +1,7 @@
+---
+title: "One-Click Sweeps (EIP-5792)"
+---
+
 # One-Click Sweeps (EIP-5792)
 
 On wallets that support atomic batching, DustSweep bundles every approval and the sweep itself into a single wallet confirmation. This page explains how that works and what to expect, wallet by wallet.

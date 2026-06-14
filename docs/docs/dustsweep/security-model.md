@@ -1,3 +1,7 @@
+---
+title: "Security Model"
+---
+
 # Security Model
 
 DustSweep's security rests on a small set of strictly enforced on-chain rules: exact amounts only, approvals that always return to zero, allowlisted DEXes only, and accounting that makes user funds unreachable to anyone else. This page explains the model, its guarantees, and its honest trust assumptions.

@@ -1,3 +1,7 @@
+---
+title: "Understanding Your Quote"
+---
+
 # Understanding Your Quote
 
 Before you sweep, DustSweep shows exactly what you should expect: the route for every token, the total estimated output, the fee, and the gas estimate. This page explains each number.

@@ -1,3 +1,7 @@
+---
+title: "Referral Eligibility Rules"
+---
+
 # Referral Eligibility Rules
 
 ## Who can apply a referral code

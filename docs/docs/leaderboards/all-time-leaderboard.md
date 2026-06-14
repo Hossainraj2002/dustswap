@@ -1,3 +1,7 @@
+---
+title: "All-Time Leaderboard"
+---
+
 # All-Time Leaderboard
 
 DustSwap's current leaderboards are **all-time standings**, computed continuously (or via periodic snapshot for referrals) from verified activity. There are three boards:

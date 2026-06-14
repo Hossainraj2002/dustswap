@@ -1,3 +1,7 @@
+---
+title: "Leaderboards"
+---
+
 # Leaderboards
 
 Three rankings track how you compare across the DustSwap community: total Particle Points, referral performance, and swap volume. Your standing is expected to matter — leaderboard rewards are planned for the future TGE.

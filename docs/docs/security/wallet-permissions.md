@@ -1,3 +1,7 @@
+---
+title: "Wallet Permissions"
+---
+
 # Wallet Permissions
 
 DustSwap's contracts are designed so you only grant the minimum access needed for the action you're performing, and every approval is visible in your wallet before you sign.

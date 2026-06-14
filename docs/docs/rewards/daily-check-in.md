@@ -1,3 +1,7 @@
+---
+title: "Daily Check-In & Streaks"
+---
+
 # Daily Check-In & Streaks
 
 One tap per day: earn 100+ PP, grow a streak that multiplies all your earnings up to 4×, and collect 3 spin tickets. The check-in is free.

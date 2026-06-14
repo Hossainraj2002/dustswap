@@ -1,0 +1,189 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "theme": "mint",
+  "name": "Dustswap Documentation",
+  "description": "Official documentation for Dustswap, DustSweep, rewards, quests, referrals, security, and ecosystem features.",
+  "favicon": "/favicon.svg",
+  "colors": {
+    "primary": "#6366F1",
+    "light": "#818CF8",
+    "dark": "#4F46E5"
+  },
+  "navigation": {
+    "groups": [
+      {
+        "group": "Get Started",
+        "pages": [
+          "docs/index"
+        ]
+      },
+      {
+        "group": "Introduction",
+        "pages": [
+          "docs/introduction/what-is-dustswap",
+          "docs/introduction/official-links"
+        ]
+      },
+      {
+        "group": "DustSweep",
+        "pages": [
+          {
+            "group": "Overview",
+            "pages": [
+              "docs/dustsweep/what-is-dustsweep",
+              "docs/dustsweep/quick-start",
+              "docs/dustsweep/supported-network-and-tokens"
+            ]
+          },
+          {
+            "group": "Using DustSweep",
+            "pages": [
+              "docs/dustsweep/connecting-your-wallet",
+              "docs/dustsweep/scanning-and-selecting-tokens",
+              "docs/dustsweep/why-some-tokens-cant-be-swept",
+              "docs/dustsweep/hidden-and-suspicious-tokens",
+              "docs/dustsweep/choosing-an-output-token",
+              "docs/dustsweep/understanding-your-quote",
+              "docs/dustsweep/fees",
+              "docs/dustsweep/slippage-and-price-impact",
+              "docs/dustsweep/executing-a-sweep"
+            ]
+          },
+          {
+            "group": "Signing & Wallets",
+            "pages": [
+              "docs/dustsweep/one-click-sweeps",
+              "docs/dustsweep/sign-and-sweep",
+              "docs/dustsweep/wallet-prompts",
+              "docs/dustsweep/after-the-sweep",
+              "docs/dustsweep/supported-wallets",
+              "docs/dustsweep/eip-7702-explained",
+              "docs/dustsweep/what-you-sign"
+            ]
+          },
+          {
+            "group": "Security & Design",
+            "pages": [
+              "docs/dustsweep/security-model",
+              "docs/dustsweep/non-custodial-design"
+            ]
+          },
+          {
+            "group": "FAQ",
+            "pages": [
+              "docs/dustsweep/faq"
+            ]
+          }
+        ]
+      },
+      {
+        "group": "Swap & Bridge",
+        "pages": [
+          "docs/swap-and-bridge/swaps",
+          "docs/swap-and-bridge/bridge",
+          "docs/swap-and-bridge/supported-networks",
+          "docs/swap-and-bridge/fees",
+          "docs/swap-and-bridge/security"
+        ]
+      },
+      {
+        "group": "Rewards",
+        "pages": [
+          {
+            "group": "PP Rewards",
+            "pages": [
+              "docs/rewards/pp-rewards",
+              "docs/rewards/earning-pp",
+              "docs/rewards/streak-boost-explained",
+              "docs/rewards/pp-faq"
+            ]
+          },
+          {
+            "group": "Daily Check-In",
+            "pages": [
+              "docs/rewards/daily-check-in",
+              "docs/rewards/streak-recovery"
+            ]
+          },
+          "docs/rewards/spin-rewards"
+        ]
+      },
+      {
+        "group": "Quests",
+        "pages": [
+          "docs/quests/quests-overview",
+          "docs/quests/social-quests",
+          "docs/quests/onchain-quests",
+          "docs/quests/verification",
+          "docs/quests/rewards"
+        ]
+      },
+      {
+        "group": "Referral System",
+        "pages": [
+          "docs/referrals/how-referrals-work",
+          "docs/referrals/referral-rewards",
+          "docs/referrals/eligibility-rules",
+          {
+            "group": "Anti-Sybil Measures",
+            "pages": [
+              "docs/referrals/anti-sybil-measures",
+              "docs/referrals/referral-faq"
+            ]
+          }
+        ]
+      },
+      {
+        "group": "Leaderboards",
+        "pages": [
+          "docs/leaderboards/leaderboard-overview",
+          "docs/leaderboards/weekly-leaderboard",
+          "docs/leaderboards/all-time-leaderboard",
+          "docs/leaderboards/ranking-system"
+        ]
+      },
+      {
+        "group": "Security",
+        "pages": [
+          "docs/security/security-overview",
+          "docs/security/user-safety",
+          "docs/security/wallet-permissions",
+          "docs/security/risk-disclosures",
+          "docs/security/audit-status",
+          "docs/security/trust-assumptions"
+        ]
+      },
+      {
+        "group": "Contract Addresses",
+        "pages": [
+          "docs/contracts/dustsweep-router",
+          "docs/contracts/related-contracts",
+          "docs/contracts/supported-networks"
+        ]
+      },
+      {
+        "group": "Resources",
+        "pages": [
+          "docs/resources/glossary",
+          "docs/resources/troubleshooting",
+          "docs/resources/current-limitations",
+          "docs/resources/roadmap",
+          "docs/resources/official-links",
+          "docs/resources/dustsweep-technical-specification",
+          "docs/resources/platform-features-index"
+        ]
+      }
+    ]
+  },
+  "navbar": {
+    "links": [
+      {
+        "label": "Dustswap App",
+        "href": "https://dustswap.wtf"
+      }
+    ]
+  },
+  "footer": {
+    "socials": {}
+  }
+}

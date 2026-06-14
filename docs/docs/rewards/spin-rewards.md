@@ -1,3 +1,7 @@
+---
+title: "Spin Rewards"
+---
+
 # Spin Rewards
 
 Spin is a bonus PP mini-game tied to your daily check-in.

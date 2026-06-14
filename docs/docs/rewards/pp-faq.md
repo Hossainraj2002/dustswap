@@ -1,3 +1,7 @@
+---
+title: "PP FAQ"
+---
+
 # PP FAQ
 
 Quick answers about Particle Points — earning, caps, boosts, and what PP is (and is not).

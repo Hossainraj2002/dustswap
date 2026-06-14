@@ -1,3 +1,7 @@
+---
+title: "Connecting Your Wallet"
+---
+
 # Connecting Your Wallet
 
 DustSweep works with virtually any wallet that can sign standard typed messages. When you connect, it quietly checks what your wallet can do and picks the smoothest sweep flow available to you.

@@ -1,3 +1,7 @@
+---
+title: "Trust Assumptions"
+---
+
 # Trust Assumptions
 
 ## Contract ownership

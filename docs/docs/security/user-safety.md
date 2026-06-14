@@ -1,3 +1,7 @@
+---
+title: "User Safety"
+---
+
 # User Safety
 
 DustSwap documentation includes "User Safety Note" callouts throughout. This page summarizes the common scam patterns to watch for across the platform.

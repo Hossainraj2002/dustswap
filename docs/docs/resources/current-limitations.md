@@ -1,3 +1,7 @@
+---
+title: "Current Limitations"
+---
+
 # Current Limitations
 
 - **Base mainnet only** — DustSweep, Swaps, and the points system all currently run on Base (chain ID 8453). Other networks are not currently committed.

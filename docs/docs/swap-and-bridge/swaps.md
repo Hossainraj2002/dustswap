@@ -1,3 +1,7 @@
+---
+title: "Swaps"
+---
+
 # Swaps
 
 The general-purpose token swap interface (`/swap`) lets you trade tokens on Base. It is separate from [DustSweep](../dustsweep/what-is-dustsweep.md), which is built specifically for clearing out small dust balances.

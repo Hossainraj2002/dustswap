@@ -1,3 +1,7 @@
+---
+title: "Streak Recovery"
+---
+
 # Streak Recovery
 
 Missed a day? A recently broken streak doesn't have to mean starting over: DustSwap lets you restore your full streak — and its boost — for a small fee ($1, paid in ETH).

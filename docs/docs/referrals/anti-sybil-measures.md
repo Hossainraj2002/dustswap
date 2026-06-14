@@ -1,3 +1,7 @@
+---
+title: "Anti-Sybil Measures"
+---
+
 # Anti-Sybil Measures
 
 DustSwap applies several checks to keep the referral and rewards system fair.

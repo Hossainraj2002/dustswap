@@ -1,3 +1,7 @@
+---
+title: "Linking X & Discord"
+---
+
 # Linking X & Discord
 
 Social quests are verified through your linked X (Twitter) and Discord accounts — a one-time, OAuth-based setup. No passwords are shared with DustSwap, and no screenshots are ever needed.

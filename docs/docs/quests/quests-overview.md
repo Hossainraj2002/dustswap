@@ -1,3 +1,7 @@
+---
+title: "How Quests Work"
+---
+
 # How Quests Work
 
 Quests are one-time tasks — social and on-chain — that pay fixed PP rewards. The quest board changes over time as new campaigns launch, so this page explains the system; the live board shows what's available right now.

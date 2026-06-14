@@ -1,3 +1,7 @@
+---
+title: "Scanning & Selecting Tokens"
+---
+
 # Scanning & Selecting Tokens
 
 When you connect, DustSweep scans your whole wallet on Base — every token you hold, not just a curated list — then sorts the results so you can choose what to sweep with confidence.

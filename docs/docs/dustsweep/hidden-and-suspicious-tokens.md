@@ -1,3 +1,7 @@
+---
+title: "Hidden & Suspicious Tokens"
+---
+
 # Hidden & Suspicious Tokens
 
 DustSweep hides certain tokens by default — some because they are too small to matter, others because they look like spam or scams. This page explains how that classification works and how to stay safe around unsolicited tokens.

@@ -1,3 +1,7 @@
+---
+title: "Official Links"
+---
+
 # Official Links
 
 See [Introduction → Official Links](../introduction/official-links.md) for the canonical list of official DustSwap links and channels.

@@ -1,3 +1,7 @@
+---
+title: "On-Chain Quests"
+---
+
 # On-Chain Quests
 
 On-chain quests are one-time tasks verified against your real DustSwap activity on Base — no social account linking required.

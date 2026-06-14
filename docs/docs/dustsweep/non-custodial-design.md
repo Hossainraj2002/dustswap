@@ -1,3 +1,7 @@
+---
+title: "Non-Custodial Design & Approvals"
+---
+
 # Non-Custodial Design & Approvals
 
 DustSweep never takes custody of your tokens, and never holds a standing approval that could move them later. This page explains exactly how approvals work in each flow — and how every one of them returns to zero.

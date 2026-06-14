@@ -1,3 +1,7 @@
+---
+title: "Why Some Tokens Can't Be Swept"
+---
+
 # Why Some Tokens Can't Be Swept
 
 Not every token in your wallet can be converted. This page lists every reason DustSweep may exclude or skip a token, what each one means, and what (if anything) you can do about it.

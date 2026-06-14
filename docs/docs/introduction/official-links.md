@@ -1,3 +1,7 @@
+---
+title: "Official Links"
+---
+
 # Official Links
 
 Use these as the source of truth for anything DustSwap-related. If a link, handle, or "official" channel you encounter isn't listed here, treat it as unverified.

@@ -1,3 +1,7 @@
+---
+title: "What is DustSweep?"
+---
+
 # What is DustSweep?
 
 DustSweep turns the small, leftover token balances ("dust") in your wallet into one useful token — ETH, USDC, WETH, or USDT — in a single sweep, with as few wallet confirmations as possible.

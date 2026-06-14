@@ -1,3 +1,7 @@
+---
+title: "What You Sign and Why It's Safe"
+---
+
 # What You Sign and Why It's Safe
 
 The gas-free signature in the Sign & Sweep flow is the part of DustSweep users ask about most. This page shows exactly what is inside that message, what it can and cannot do, and how to recognize a fake.

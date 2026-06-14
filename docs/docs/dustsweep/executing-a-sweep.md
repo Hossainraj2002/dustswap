@@ -1,3 +1,7 @@
+---
+title: "Executing a Sweep"
+---
+
 # Executing a Sweep
 
 When you press **Sweep**, DustSweep builds the final transaction, picks the smoothest path your wallet supports, and walks you through each step with an honest progress indicator. This page explains what happens between the button press and the success screen.

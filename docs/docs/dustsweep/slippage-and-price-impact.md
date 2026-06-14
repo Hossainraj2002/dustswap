@@ -1,3 +1,7 @@
+---
+title: "Slippage & Price Impact"
+---
+
 # Slippage & Price Impact
 
 Prices move between the moment you get a quote and the moment your sweep executes. Slippage settings define how much movement you accept; price impact measures how much your own trade moves the market. DustSweep protects you on both, per token.
