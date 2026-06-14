@@ -46,6 +46,34 @@ Create a **separate Pages project** just for the docs, so it deploys independent
 - Add a CNAME DNS record pointing `docs` → `<username>.github.io`.
 - Enable "Enforce HTTPS" in repo Pages settings once DNS resolves.
 
+## 5. Edit pages from a web admin panel (no GitHub UI needed)
+
+`docs/functions/` contains a small Cloudflare Pages Functions app — a password-protected `/admin`
+page on the same `dustswap-docs` Pages project. It lets you browse, edit, create, and delete the
+markdown files in `docs/docs/`, committing changes straight to GitHub on save.
+
+- URL: `https://docs.dustswap.wtf/admin` (or `https://dustswap-docs.pages.dev/admin`)
+- **No password is stored in the repo.** You must set `ADMIN_PASSWORD` yourself (see below) —
+  until it's set, `/admin` login is disabled entirely.
+
+**Required setup**: in the `dustswap-docs` Cloudflare Pages project → **Settings → Environment
+variables**, add:
+
+| Variable        | Value                                                                 |
+|-----------------|------------------------------------------------------------------------|
+| `ADMIN_PASSWORD`| Required. Pick your own password for `/admin` — not stored anywhere in the repo |
+| `GITHUB_TOKEN`  | A GitHub fine-grained Personal Access Token, scoped to the `dustswap` repo, with **Contents: Read and write** permission |
+| `GITHUB_REPO`   | `Hossainraj2002/dustswap` (only needed if it ever differs from the default) |
+| `GITHUB_BRANCH` | `main` (only needed if it ever differs from the default) |
+
+Until `ADMIN_PASSWORD` is set, every `/admin` login attempt is rejected (503). Until `GITHUB_TOKEN`
+is set, `/admin` still works for browsing and viewing files, but Save/Delete will show an error
+explaining the token is missing.
+
+Each save/delete creates a normal commit on `main` (message like `docs admin: update <path>`),
+which triggers the usual Cloudflare Pages rebuild — so edits go live automatically a minute or two
+after saving.
+
 ## Notes
 
 - Screenshots: drop your real images into `docs/docs/assets/screenshots/`, same filenames as the current placeholders, and rebuild.

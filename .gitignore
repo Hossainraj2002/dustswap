@@ -53,6 +53,7 @@ docs/*
 !docs/mkdocs.yml
 !docs/DEPLOY.md
 !docs/docs/
+!docs/functions/
 docs/site/
 docs/.cache/
 
