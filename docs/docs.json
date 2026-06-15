@@ -80,9 +80,7 @@
         "group": "Swap & Bridge",
         "pages": [
           "docs/swap-and-bridge/overview",
-          "docs/swap-and-bridge/swaps",
           "docs/swap-and-bridge/supported-networks",
-          "docs/swap-and-bridge/fees",
           "docs/swap-and-bridge/security"
         ]
       },
@@ -93,7 +91,6 @@
             "group": "PP Rewards",
             "pages": [
               "docs/rewards/pp-rewards",
-              "docs/rewards/earning-pp",
               "docs/rewards/streak-boost-explained",
               "docs/rewards/pp-faq"
             ]
@@ -149,8 +146,7 @@
           "docs/security/user-safety",
           "docs/security/wallet-permissions",
           "docs/security/risk-disclosures",
-          "docs/security/audit-status",
-          "docs/security/trust-assumptions"
+          "docs/security/audit-status"
         ]
       },
       {
@@ -166,11 +162,8 @@
         "pages": [
           "docs/resources/glossary",
           "docs/resources/troubleshooting",
-          "docs/resources/current-limitations",
           "docs/resources/roadmap",
-          "docs/resources/official-links",
-          "docs/resources/dustsweep-technical-specification",
-          "docs/resources/platform-features-index"
+          "docs/resources/official-links"
         ]
       }
     ]
