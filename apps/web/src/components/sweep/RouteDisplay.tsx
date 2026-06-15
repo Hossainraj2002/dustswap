@@ -41,18 +41,22 @@ const GENERIC_DEX_ICON = "/dex/generic.svg";
 // every variant resolves to the official logo.
 function getDexIcon(dexName: string) {
   const name = dexName.toUpperCase();
+  // QuickSwap (Algebra) must be matched before any generic "SWAP"/aggregator fallthrough.
+  if (name.includes("QUICKSWAP") || name.includes("ALGEBRA")) return "/dex/quickswap.png";
   if (name.includes("UNISWAP") || name.includes("UNI ")) return "/dex/uniswap.png";
   if (name.includes("AERODROME") || name.includes("AERO ")) return "/dex/aerodrome.png";
   if (name.includes("PANCAKE") || name.includes("CAKE")) return "/dex/pancakeswap.png";
   if (name.includes("BASESWAP")) return "/dex/baseswap.png";
   if (name.includes("ALIEN")) return "/dex/alienbase.png";
   if (name.includes("DACKIE")) return "/dex/dackieswap.png";
+  if (name.includes("LI.FI") || name.includes("LIFI")) return "/dex/lifi.png";
   if (name.startsWith("0X")) return "/dex/zerox.png";
   return GENERIC_DEX_ICON;
 }
 
 function formatDexName(dexName: string) {
   const name = dexName.toUpperCase();
+  if (name.includes("QUICKSWAP") || name.includes("ALGEBRA")) return "QuickSwap";
   if (name.includes("UNISWAP")) {
     if (name.includes("V4")) return "Uniswap V4";
     if (name.includes("V3")) return "Uniswap V3";
@@ -65,6 +69,7 @@ function formatDexName(dexName: string) {
   if (name.includes("BASESWAP")) return "BaseSwap";
   if (name.includes("ALIEN")) return "AlienBase";
   if (name.includes("DACKIE")) return "DackieSwap";
+  if (name.includes("LI.FI") || name.includes("LIFI")) return "LI.FI";
   if (name.startsWith("0X")) return "0x";
   return dexName.replace(/_/g, " ");
 }
