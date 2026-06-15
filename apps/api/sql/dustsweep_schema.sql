@@ -56,6 +56,8 @@ alter table public.sweeps add column if not exists chain_id integer default 8453
 alter table public.sweeps add column if not exists created_at timestamptz default now();
 
 create index if not exists idx_sweeps_user on public.sweeps(user_address);
+-- Speeds windowed (daily/weekly) sweep-quest progress queries.
+create index if not exists idx_sweeps_user_created on public.sweeps(user_address, created_at);
 create index if not exists idx_tokens_chain_active on public.tokens(chain_id, is_active);
 create index if not exists idx_tokens_liquidity on public.tokens(chain_id, liquidity_usd desc);
 create unique index if not exists idx_tokens_address_unique on public.tokens(address);

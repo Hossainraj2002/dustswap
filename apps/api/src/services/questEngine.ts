@@ -35,6 +35,10 @@ type QuestPlatform = "x" | "base" | "dustswap" | "discord";
 type QuestActionType =
   | "swap_volume"
   | "swap_count"
+  | "sweep_volume"
+  | "sweep_count"
+  | "sweep_tokens_at_once"
+  | "sweep_tokens_total"
   | "join_discord"
   | "like"
   | "post"
@@ -45,6 +49,7 @@ type QuestActionType =
   | "visit";
 type QuestVerificationType =
   | "swap_volume"
+  | "sweep"
   | "x_post_link"
   | "discord_guild_member"
   | "delay_gate"
@@ -3439,6 +3444,224 @@ export class QuestEngine {
     return {
       success: true,
       completedQuests,
+    };
+  }
+
+  // ── DustSweep quests ──────────────────────────────────────────────────────
+  // Sweep quests mirror swap quests but read the already-captured `sweeps`
+  // table (keyed by lowercased wallet address, timestamped via `created_at`)
+  // instead of `swap_transactions`. Four metrics are derived per window:
+  //   sweep_volume         → Σ value_usd
+  //   sweep_count          → number of sweeps
+  //   sweep_tokens_at_once → max tokens_swapped in a single sweep
+  //   sweep_tokens_total   → Σ tokens_swapped
+  async syncRecordedSweepProgress(address: string) {
+    if (!isAddress(address)) {
+      throw new Error("A valid wallet address is required");
+    }
+
+    const normalizedAddress = normalizeAddress(address);
+    const user = await pointsEngine.getOrCreate(normalizedAddress);
+    const completedQuests = await this.syncPublishedSweepQuests(
+      user.id,
+      normalizedAddress
+    );
+
+    if (completedQuests.length > 0) {
+      pointsEngine.invalidateUserReadCaches(normalizedAddress);
+    }
+    this.invalidateQuestBoardCache(normalizedAddress);
+
+    return {
+      success: true,
+      completedQuests,
+    };
+  }
+
+  private async syncPublishedSweepQuests(
+    userId: number,
+    address: string,
+    referenceDates: Date[] = [getNow()]
+  ) {
+    const { data: questsData, error: questsError } = await postgresDb
+      .from("quests")
+      .select("*")
+      .eq("category", "onchain")
+      .in("action_type", [
+        "sweep_volume",
+        "sweep_count",
+        "sweep_tokens_at_once",
+        "sweep_tokens_total",
+      ])
+      .eq("status", "published")
+      .eq("is_active", true);
+
+    if (questsError) {
+      throw new Error(`Failed to load sweep quests: ${questsError.message}`);
+    }
+
+    const completedQuests: Array<{
+      questId: string;
+      slug: string;
+      awardedPoints: number;
+    }> = [];
+
+    const now = getNow();
+    const quests = ((questsData ?? []) as QuestRecord[])
+      .map((row) => normalizeQuestRecord(row))
+      .filter((quest) => isQuestLive(quest, now));
+
+    for (const quest of quests) {
+      const seenCycleKeys = new Set<string>();
+
+      for (const referenceDate of referenceDates) {
+        const cycleKey = getCycleKey(quest.progress_window, referenceDate);
+        if (seenCycleKeys.has(cycleKey)) {
+          continue;
+        }
+        seenCycleKeys.add(cycleKey);
+
+        const progress = await this.syncSweepProgressForQuest(
+          userId,
+          address,
+          quest,
+          referenceDate
+        );
+
+        if (progress?.completedAt && progress.awardedPoints > 0) {
+          completedQuests.push({
+            questId: quest.id,
+            slug: quest.slug,
+            awardedPoints: progress.awardedPoints,
+          });
+        }
+      }
+    }
+
+    return completedQuests;
+  }
+
+  private async syncSweepProgressForQuest(
+    userId: number,
+    address: string,
+    quest: QuestRecord,
+    referenceDate: Date = getNow()
+  ) {
+    const now = referenceDate;
+    const cycleKey = getCycleKey(quest.progress_window, now);
+    const occurredBounds = getQuestSwapOccurredBounds(quest, now);
+
+    let rows: Array<{
+      value_usd: number | string | null;
+      tokens_swapped: number | string | null;
+    }>;
+
+    if (
+      occurredBounds.end &&
+      occurredBounds.end.getTime() <= occurredBounds.start.getTime()
+    ) {
+      rows = [];
+    } else {
+      let query = postgresDb
+        .from("sweeps")
+        .select("value_usd, tokens_swapped")
+        .eq("user_address", address.toLowerCase())
+        .gte("created_at", occurredBounds.start.toISOString());
+
+      if (occurredBounds.end) {
+        query = query.lt("created_at", occurredBounds.end.toISOString());
+      }
+
+      const result = await query;
+      if (result.error) {
+        throw new Error(`Failed to load sweeps: ${result.error.message}`);
+      }
+      rows = (result.data ?? []) as typeof rows;
+    }
+
+    const volumeValue = rows.reduce(
+      (sum, row) => sum + toNumber(row.value_usd),
+      0
+    );
+    const countValue = rows.length;
+    const tokensTotal = rows.reduce(
+      (sum, row) => sum + toNumber(row.tokens_swapped),
+      0
+    );
+    const tokensMax = rows.reduce(
+      (max, row) => Math.max(max, toNumber(row.tokens_swapped)),
+      0
+    );
+
+    let progressValue: number;
+    switch (quest.action_type) {
+      case "sweep_count":
+        progressValue = countValue;
+        break;
+      case "sweep_tokens_at_once":
+        progressValue = tokensMax;
+        break;
+      case "sweep_tokens_total":
+        progressValue = tokensTotal;
+        break;
+      case "sweep_volume":
+      default:
+        progressValue = volumeValue;
+        break;
+    }
+
+    const existing = await this.getProgress(userId, quest.id, cycleKey);
+    const completedAlready = Boolean(existing?.completed_at);
+    const nowIso = now.toISOString();
+
+    const updated = await this.upsertProgress({
+      userId,
+      quest,
+      cycleKey,
+      updates: {
+        status:
+          progressValue >= quest.target_value
+            ? "completed"
+            : progressValue > 0
+              ? "in_progress"
+              : "not_started",
+        progress: progressValue,
+        target_value: quest.target_value,
+        completed_at:
+          progressValue >= quest.target_value
+            ? existing?.completed_at || nowIso
+            : null,
+      },
+    });
+
+    if (!completedAlready && progressValue >= quest.target_value) {
+      const completion = await this.completeQuest(
+        userId,
+        address,
+        quest,
+        cycleKey,
+        {
+          eventType: "sweep",
+          countValue,
+          volumeValue,
+          tokensMax,
+          tokensTotal,
+          progressValue,
+          source: "dustsweep",
+        }
+      );
+
+      return {
+        progress: completion.progress.progress,
+        completedAt: completion.progress.completed_at,
+        awardedPoints: completion.awardedPoints,
+      };
+    }
+
+    return {
+      progress: updated.progress,
+      completedAt: updated.completed_at,
+      awardedPoints: 0,
     };
   }
 

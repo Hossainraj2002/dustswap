@@ -4,6 +4,10 @@ export type QuestPlatform = "x" | "base" | "dustswap" | "discord";
 export type QuestActionType =
   | "swap_volume"
   | "swap_count"
+  | "sweep_volume"
+  | "sweep_count"
+  | "sweep_tokens_at_once"
+  | "sweep_tokens_total"
   | "join_discord"
   | "like"
   | "post"
@@ -14,6 +18,7 @@ export type QuestActionType =
   | "visit";
 export type QuestVerificationType =
   | "swap_volume"
+  | "sweep"
   | "x_post_link"
   | "discord_guild_member"
   | "delay_gate"

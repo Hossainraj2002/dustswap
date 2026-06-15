@@ -11,6 +11,7 @@ import {
   fetchQuestBoard,
   getDiscordConnectUrl,
   syncSwapQuestActivity,
+  syncSweepQuestActivity,
   startQuest,
   verifyDiscordJoin,
   verifyDelayQuest,
@@ -408,18 +409,49 @@ function formatEndCountdown(endsAt: string) {
   return `Ending in ${minutes}m`;
 }
 
+function isSweepQuest(quest: QuestItem) {
+  return (
+    quest.actionType === "sweep_volume" ||
+    quest.actionType === "sweep_count" ||
+    quest.actionType === "sweep_tokens_at_once" ||
+    quest.actionType === "sweep_tokens_total"
+  );
+}
+
+// Sweep quests track token counts for every metric except volume (USD).
+function isCountStyleQuest(quest: QuestItem) {
+  return (
+    quest.actionType === "swap_count" ||
+    quest.actionType === "sweep_count" ||
+    quest.actionType === "sweep_tokens_at_once" ||
+    quest.actionType === "sweep_tokens_total"
+  );
+}
+
 function formatGoalValue(quest: QuestItem) {
   const targetValue = Number(quest.targetValue || 0);
   const formattedTarget = targetValue.toLocaleString(undefined, {
     maximumFractionDigits: Number.isInteger(targetValue) ? 0 : 6,
   });
 
-  if (quest.actionType === "swap_volume") {
+  if (quest.actionType === "swap_volume" || quest.actionType === "sweep_volume") {
     return `$${formattedTarget}`;
   }
 
   if (quest.actionType === "swap_count") {
     return `${formattedTarget} swaps`;
+  }
+
+  if (quest.actionType === "sweep_count") {
+    return `${formattedTarget} sweeps`;
+  }
+
+  if (quest.actionType === "sweep_tokens_at_once") {
+    return `${formattedTarget} tokens in one sweep`;
+  }
+
+  if (quest.actionType === "sweep_tokens_total") {
+    return `${formattedTarget} tokens`;
   }
 
   return "1 action";
@@ -428,7 +460,7 @@ function formatGoalValue(quest: QuestItem) {
 function formatProgressValue(quest: QuestItem, value: number) {
   const numericValue = Number(value || 0);
 
-  if (quest.actionType === "swap_count") {
+  if (isCountStyleQuest(quest)) {
     return numericValue.toLocaleString();
   }
 
@@ -883,22 +915,30 @@ export function QuestBoard() {
       const visible = options?.visible ?? false;
       if (visible) {
         setIsRefreshing(true);
-        setMessage("Checking your latest swap progress...");
+        setMessage("Checking your latest swap & sweep progress...");
         setError(null);
       }
 
       let syncIssue: string | null = null;
 
       try {
-        const response = await syncSwapQuestActivity(address, {
-          force: options?.force ?? false,
-        });
+        // Swap and sweep quests read independent capture tables, so sync both.
+        // Swap sync drives error/import state; a sweep sync hiccup must not
+        // break the swap flow, so it is tolerated.
+        const [response, sweepResponse] = await Promise.all([
+          syncSwapQuestActivity(address, {
+            force: options?.force ?? false,
+          }),
+          syncSweepQuestActivity(address).catch(() => null),
+        ]);
         if (!response.success) {
           throw new Error(response.error || "Failed to sync recent swaps");
         }
 
         const importedCount = response.importedHashes?.length || 0;
-        const completedCount = response.completedQuests?.length || 0;
+        const completedCount =
+          (response.completedQuests?.length || 0) +
+          (sweepResponse?.completedQuests?.length || 0);
 
         if (importedCount > 0 || completedCount > 0) {
           clearPointsSummaryCache(address);
@@ -1340,11 +1380,21 @@ export function QuestBoard() {
           <InfoChip label="Goal" value={formatGoalValue(quest)} />
         </div>
 
-        {quest.actionType === "swap_volume" || quest.actionType === "swap_count" ? (
+        {quest.actionType === "swap_volume" ||
+        quest.actionType === "swap_count" ||
+        isSweepQuest(quest) ? (
           <div className="quest-action-panel rounded-[20px] border border-slate-200/80 bg-white/88 p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.55)]">
             <div className="flex items-center justify-between text-[13px]">
               <span className="text-slate-500">
-                {quest.actionType === "swap_count" ? "Current swaps" : "Current volume"}
+                {quest.actionType === "swap_count"
+                  ? "Current swaps"
+                  : quest.actionType === "sweep_count"
+                    ? "Current sweeps"
+                    : quest.actionType === "sweep_tokens_at_once"
+                      ? "Most in one sweep"
+                      : quest.actionType === "sweep_tokens_total"
+                        ? "Tokens swept"
+                        : "Current volume"}
               </span>
               <span className="font-semibold text-slate-900">
                 {formatProgressValue(quest, progressValue)}
@@ -1357,14 +1407,20 @@ export function QuestBoard() {
               />
             </div>
             <p className="mt-2 text-[11px] text-slate-500">
-              Volume tracking can take up to 10 minutes.
+              {isSweepQuest(quest)
+                ? "Sweep progress updates moments after your sweep confirms."
+                : "Volume tracking can take up to 10 minutes."}
             </p>
             <div className="mt-3 flex gap-2">
               <Link
-                href={questUrl || "/swap"}
+                href={questUrl || (isSweepQuest(quest) ? "/dustsweep" : "/swap")}
                 className="inline-flex flex-1 items-center justify-center rounded-2xl bg-sky-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-sky-700"
               >
-                {isDone ? "View Swap" : primaryLabel}
+                {isDone
+                  ? isSweepQuest(quest)
+                    ? "View Sweep"
+                    : "View Swap"
+                  : primaryLabel}
               </Link>
               <button
                 type="button"

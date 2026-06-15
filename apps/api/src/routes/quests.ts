@@ -463,6 +463,27 @@ questsRoutes.post("/activities/swap/sync", async (c) => {
   }
 });
 
+// Recompute sweep-quest progress from the already-captured `sweeps` table.
+// Lets the quest board backfill progress for quests created after a user has
+// already swept (sweeps are persisted via /api/dustsweep/record-sweep).
+questsRoutes.post("/activities/sweep/sync", async (c) => {
+  try {
+    const body = (await c.req.json()) as { address?: string };
+
+    if (!body.address) {
+      return c.json({ success: false, error: "address is required" }, 400);
+    }
+
+    const data = await questEngine.syncRecordedSweepProgress(body.address);
+    return c.json(data);
+  } catch (error) {
+    return c.json(
+      { success: false, error: (error as Error).message },
+      400
+    );
+  }
+});
+
 questsRoutes.post("/:id/start", async (c) => {
   if (await isMaintenanceBlocking(c)) {
     return maintenanceUnavailable(c);

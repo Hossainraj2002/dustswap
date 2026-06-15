@@ -160,6 +160,29 @@ function applySwapQuestDefaults(form: AdminQuestInput): AdminQuestInput {
   };
 }
 
+const SWEEP_ACTION_TYPES: AdminQuestInput["actionType"][] = [
+  "sweep_volume",
+  "sweep_count",
+  "sweep_tokens_at_once",
+  "sweep_tokens_total",
+];
+
+function isSweepQuest(form: AdminQuestInput) {
+  return SWEEP_ACTION_TYPES.includes(form.actionType);
+}
+
+function applySweepQuestDefaults(form: AdminQuestInput): AdminQuestInput {
+  return {
+    ...form,
+    category: "onchain",
+    platform: "dustswap",
+    verificationType: "sweep",
+    actionType: isSweepQuest(form) ? form.actionType : "sweep_volume",
+    ctaLabel: form.ctaLabel || "Open Sweep",
+    ctaUrl: form.ctaUrl || "/dustsweep",
+  };
+}
+
 function applyDiscordQuestDefaults(form: AdminQuestInput): AdminQuestInput {
   return {
     ...form,
@@ -280,6 +303,12 @@ function getRulesExample(form: AdminQuestInput) {
 }`;
   }
 
+  if (isSweepQuest(form)) {
+    return `{
+  "source": "dustsweep"
+}`;
+  }
+
   return `{
   "externalUrl": "https://example.com"
 }`;
@@ -297,6 +326,13 @@ function getVerificationGuide(form: AdminQuestInput) {
     return {
       recommended: "swap_volume",
       text: "Swap quests: use swap_volume. The backend reads captured swap progress, so CTA URL can point to /swap.",
+    };
+  }
+
+  if (isSweepQuest(form)) {
+    return {
+      recommended: "sweep",
+      text: "Sweep quests: use the sweep verification. The backend reads captured DustSweep progress (volume, count, tokens-in-one-sweep, or total tokens), so CTA URL can point to /dustsweep.",
     };
   }
 
@@ -351,6 +387,7 @@ function getVerificationGuide(form: AdminQuestInput) {
 function getVerificationOptionLabel(option: string) {
   const labels: Record<string, string> = {
     swap_volume: "swap_volume - swap progress",
+    sweep: "sweep - DustSweep progress",
     x_post_link: "x_post_link - post or reply link",
     discord_guild_member: "discord_guild_member - Discord server member",
     delay_gate: "delay_gate - open CTA / follow / repost",
@@ -742,10 +779,14 @@ export default function AdminQuestsPage() {
                 {
                   key: "actionType",
                   label: "Action",
-                  help: "The exact task users perform, like swap volume, follow, like, repost, reply, post, or visit.",
+                  help: "The exact task users perform, like swap volume, sweep volume, sweep count, sweep tokens at once, follow, like, repost, reply, post, or visit.",
                   options: [
                     "swap_volume",
                     "swap_count",
+                    "sweep_volume",
+                    "sweep_count",
+                    "sweep_tokens_at_once",
+                    "sweep_tokens_total",
                     "join_discord",
                     "like",
                     "post",
@@ -759,8 +800,8 @@ export default function AdminQuestsPage() {
                 {
                   key: "verificationType",
                   label: "Verification",
-                  help: "Defines how the backend confirms completion. swap_volume reads swap progress. x_post_link verifies pasted post or reply links with GetX. discord_guild_member checks Discord server membership with the backend bot token.",
-                  options: ["swap_volume", "x_post_link", "discord_guild_member", "delay_gate", "delay_gate_retry"],
+                  help: "Defines how the backend confirms completion. swap_volume reads swap progress. sweep reads DustSweep progress from captured sweeps. x_post_link verifies pasted post or reply links with GetX. discord_guild_member checks Discord server membership with the backend bot token.",
+                  options: ["swap_volume", "sweep", "x_post_link", "discord_guild_member", "delay_gate", "delay_gate_retry"],
                 },
                 {
                   key: "progressWindow",
@@ -788,6 +829,16 @@ export default function AdminQuestsPage() {
                         };
 
                         if (
+                          (field.key === "actionType" &&
+                            SWEEP_ACTION_TYPES.includes(
+                              nextValue as AdminQuestInput["actionType"]
+                            )) ||
+                          (field.key === "verificationType" && nextValue === "sweep")
+                        ) {
+                          return applySweepQuestDefaults(next as AdminQuestInput);
+                        }
+
+                        if (
                           field.key === "actionType" &&
                           (nextValue === "swap_volume" || nextValue === "swap_count")
                         ) {
@@ -813,6 +864,10 @@ export default function AdminQuestsPage() {
                         }
 
                         if (field.key === "category" && nextValue === "onchain") {
+                          // Preserve a sweep quest's type; only fall back to swap.
+                          if (isSweepQuest(next as AdminQuestInput)) {
+                            return applySweepQuestDefaults(next as AdminQuestInput);
+                          }
                           return applySwapQuestDefaults({
                             ...(next as AdminQuestInput),
                             actionType: isSwapQuest(next as AdminQuestInput)
@@ -862,7 +917,7 @@ export default function AdminQuestsPage() {
                 {
                   key: "targetValue",
                   label: "Target value",
-                  help: "Use the goal number here. Example: 10 means $10 for swap_volume, 10 swaps for swap_count, and 1 for most social quests.",
+                  help: "Use the goal number here. Examples: 10 means $10 for swap_volume / sweep_volume, 10 for swap_count / sweep_count (number of swaps or sweeps), 5 for sweep_tokens_at_once (tokens in a single sweep), 25 for sweep_tokens_total (tokens across sweeps), and 1 for most social quests.",
                 },
                 {
                   key: "sortOrder",
@@ -946,8 +1001,10 @@ export default function AdminQuestsPage() {
             <div className="mt-4 grid gap-3 rounded-2xl border border-gray-200 bg-white p-4 text-xs leading-6 text-gray-600 sm:grid-cols-2">
               <p>
                 <span className="font-semibold text-gray-900">Target value:</span> use USD amount for{" "}
-                <code>swap_volume</code>, number of swaps for <code>swap_count</code>, and usually{" "}
-                <code>1</code> for social tasks.
+                <code>swap_volume</code> / <code>sweep_volume</code>, a count for{" "}
+                <code>swap_count</code> / <code>sweep_count</code>, tokens-in-one-sweep for{" "}
+                <code>sweep_tokens_at_once</code>, total tokens for{" "}
+                <code>sweep_tokens_total</code>, and usually <code>1</code> for social tasks.
               </p>
               <p>
                 <span className="font-semibold text-gray-900">Sort order:</span> lower numbers appear first on the quest page.
@@ -955,7 +1012,7 @@ export default function AdminQuestsPage() {
               </p>
             </div>
 
-            {isOnchainSwapForm(form) ? (
+            {isOnchainSwapForm(form) && !isSweepQuest(form) ? (
               <div className="mt-4 grid gap-4 rounded-2xl border border-sky-100 bg-sky-50/40 p-4 sm:grid-cols-3">
                 <label>
                   <HelpLabel

@@ -22,6 +22,7 @@ import {
 } from "viem";
 import { postgresDb } from "../services/postgres";
 import { pointsEngine } from "../services/pointsEngine";
+import { questEngine } from "../services/questEngine";
 import { runtimeCache } from "../utils/runtimeCache";
 import { baseRpcRequest, alchemyRpcRequest, RpcDeterministicError, RpcTransportError } from "../utils/baseRpc";
 import { isMaintenanceBlocking, maintenanceUnavailable } from "../utils/maintenance";
@@ -5882,8 +5883,22 @@ dustsweepRoutes.post("/record-sweep", async (c) => {
     console.error("[dustsweep/record-sweep] points error:", error);
   }
 
+  // Advance admin-created sweep quests now that the sweep row is persisted.
+  let completedQuests: Array<{
+    questId: string;
+    slug: string;
+    awardedPoints: number;
+  }> = [];
+  try {
+    const questSync = await questEngine.syncRecordedSweepProgress(userAddress);
+    completedQuests = questSync.completedQuests;
+  } catch (error) {
+    console.error("[dustsweep/record-sweep] quest error:", error);
+  }
+
   return c.json({
     success: true,
+    completedQuests,
     questProgress: {
       FIRST_SWEEP: sweepCount === 1 || tokensSwapped > 0,
       SWEEP_10_TOKENS: tokensSwapped >= 10,

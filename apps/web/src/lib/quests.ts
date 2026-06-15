@@ -393,6 +393,27 @@ export async function syncSwapQuestActivity(
   }>(response);
 }
 
+/**
+ * Recompute sweep-quest progress from the captured `sweeps` table. Sweep
+ * activity is persisted server-side at sweep time (/api/dustsweep/record-sweep);
+ * this backfills progress for quests created after the user already swept.
+ */
+export async function syncSweepQuestActivity(address: string) {
+  const response = await publicApiFetch(getQuestsApiUrl("/activities/sweep/sync"), {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ address }),
+  });
+
+  return parseJson<{
+    success: boolean;
+    completedQuests?: Array<{ questId: string; slug: string; awardedPoints: number }>;
+    error?: string;
+  }>(response);
+}
+
 export async function saveXUsername(address: string, username: string) {
   const cacheKey = getSaveXUsernameCacheKey(address, username);
   const recent = saveXUsernameRecent.get(cacheKey);
