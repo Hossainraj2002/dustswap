@@ -925,7 +925,25 @@ export class PointsEngine {
     return address.trim().toLowerCase();
   }
 
-  private async loadUserByNormalizedAddress(normalizedAddress: string) {
+  // Resolve a wallet to its owning account through user_wallets. A linked
+  // secondary wallet resolves to its primary account; the returned record's
+  // address is always the primary wallet (kept denormalized for display).
+  private async resolveUserByWallet(normalizedAddress: string) {
+    const { data, error } = await postgresDb.rpc("resolve_user_by_wallet", {
+      p_wallet: normalizedAddress,
+    });
+
+    if (error) {
+      throw new Error(`Resolve user by wallet: ${error.message}`);
+    }
+
+    const row = Array.isArray(data) ? data[0] ?? null : data ?? null;
+    return normalizeUserRecord((row as Partial<UserRecord> | null) ?? null);
+  }
+
+  // Direct lookup by users.address — only for the account creation/adoption path,
+  // where a user row may exist before its user_wallets row does.
+  private async loadUserRowByAddress(normalizedAddress: string) {
     const { data, error } = await postgresDb
       .from("users")
       .select("*")
@@ -937,6 +955,36 @@ export class PointsEngine {
     }
 
     return normalizeUserRecord((data as Partial<UserRecord> | null) ?? null);
+  }
+
+  private async loadUserByNormalizedAddress(normalizedAddress: string) {
+    return this.resolveUserByWallet(normalizedAddress);
+  }
+
+  // Ensure a wallet is registered in user_wallets + has a spin balance row.
+  // Idempotent; used on the account create/adopt path.
+  private async ensureWalletRegistered(
+    userId: number,
+    normalizedAddress: string,
+    isPrimary = false
+  ) {
+    await postgresDb.from("user_wallets").upsert(
+      {
+        user_id: userId,
+        wallet_address: normalizedAddress,
+        is_primary: isPrimary,
+      },
+      { onConflict: "wallet_address", ignoreDuplicates: true }
+    );
+
+    await postgresDb.from("wallet_spin_balances").upsert(
+      {
+        wallet_address: normalizedAddress,
+        user_id: userId,
+        spin_tickets: 0,
+      },
+      { onConflict: "wallet_address", ignoreDuplicates: true }
+    );
   }
 
   private async ensureReferralCode(user: UserRecord) {
@@ -984,57 +1032,67 @@ export class PointsEngine {
 
   async getOrCreate(address: string): Promise<UserRecord> {
     const normalizedAddress = this.normalizeStoredAddress(address);
-    const existing = await this.loadUserByNormalizedAddress(normalizedAddress);
 
-    if (existing) {
-      return this.ensureReferralCode(existing);
+    // Fast path: wallet already maps to an account (its own primary, or linked
+    // as a secondary wallet to another account). Backfill guarantees existing
+    // accounts have a user_wallets row, so no registration is needed here.
+    const resolved = await this.resolveUserByWallet(normalizedAddress);
+    if (resolved) {
+      return this.ensureReferralCode(resolved);
     }
 
+    // Wallet is not linked anywhere. It may still have a legacy users row by
+    // address (e.g. a pre-backfill gap) — adopt it; otherwise create one.
+    let userRow = await this.loadUserRowByAddress(normalizedAddress);
     let lastError: Error | null = null;
 
-    for (let attempt = 0; attempt < USER_CREATE_MAX_ATTEMPTS; attempt += 1) {
-      const { error } = await postgresDb.from("users").upsert(
-        {
-          address: normalizedAddress,
-          referral_code: genCode(),
-          total_points: 0,
-          spin_tickets: 0,
-          current_streak: 0,
-          longest_streak: 0,
-        },
-        {
-          onConflict: "address",
-          ignoreDuplicates: true,
+    if (!userRow) {
+      for (let attempt = 0; attempt < USER_CREATE_MAX_ATTEMPTS; attempt += 1) {
+        const { error } = await postgresDb.from("users").upsert(
+          {
+            address: normalizedAddress,
+            referral_code: genCode(),
+            total_points: 0,
+            spin_tickets: 0,
+            current_streak: 0,
+            longest_streak: 0,
+          },
+          {
+            onConflict: "address",
+            ignoreDuplicates: true,
+          }
+        );
+
+        if (error) {
+          lastError = new Error(`Create user: ${error.message}`);
+          const message = error.message.toLowerCase();
+
+          if (
+            message.includes("duplicate key") ||
+            message.includes("unique") ||
+            message.includes("referral_code")
+          ) {
+            continue;
+          }
+
+          throw lastError;
         }
-      );
 
-      if (error) {
-        lastError = new Error(`Create user: ${error.message}`);
-        const message = error.message.toLowerCase();
-
-        if (
-          message.includes("duplicate key") ||
-          message.includes("unique") ||
-          message.includes("referral_code")
-        ) {
-          continue;
+        userRow = await this.loadUserRowByAddress(normalizedAddress);
+        if (userRow) {
+          break;
         }
-
-        throw lastError;
-      }
-
-      const created = await this.loadUserByNormalizedAddress(normalizedAddress);
-      if (created) {
-        return this.ensureReferralCode(created);
       }
     }
 
-    const created = await this.loadUserByNormalizedAddress(normalizedAddress);
-    if (created) {
-      return this.ensureReferralCode(created);
+    if (!userRow) {
+      throw lastError ?? new Error("Create user: failed to create or load user");
     }
 
-    throw lastError ?? new Error("Create user: failed to create or load user");
+    // Register the wallet as the primary of its (new) account so future
+    // resolution goes through user_wallets.
+    await this.ensureWalletRegistered(userRow.id, normalizedAddress, true);
+    return this.ensureReferralCode(userRow);
   }
 
   private getPointsSummaryCacheKey(address: string) {
@@ -1338,9 +1396,13 @@ export class PointsEngine {
     user: UserRecord,
     options?: {
       readOnlyPrice?: boolean;
+      connectingWallet?: string;
     }
   ) {
-    const [rankResult, priceSnapshot] = await Promise.all([
+    // Spin tickets are per-wallet: surface the connecting wallet's balance (or
+    // the account's primary wallet when no connecting wallet is supplied).
+    const ticketWallet = (options?.connectingWallet || user.address || "").toLowerCase();
+    const [rankResult, priceSnapshot, walletTickets] = await Promise.all([
       postgresDb
         .from("users")
         .select("*", { count: "exact", head: true })
@@ -1348,12 +1410,18 @@ export class PointsEngine {
       options?.readOnlyPrice
         ? this.getReadOnlyEthPriceSnapshot()
         : Promise.resolve<DailyAssetPriceRecord | undefined>(undefined),
+      ticketWallet
+        ? this.getWalletSpinTickets(ticketWallet, Number(user.spin_tickets || 0))
+        : Promise.resolve(Number(user.spin_tickets || 0)),
     ]);
 
-    return this.buildBalancePayload(user, {
-      rank: (rankResult.count ?? 0) + 1,
-      priceSnapshot,
-    });
+    return this.buildBalancePayload(
+      { ...user, spin_tickets: walletTickets },
+      {
+        rank: (rankResult.count ?? 0) + 1,
+        priceSnapshot,
+      }
+    );
   }
 
   private async fetchAllPages<T>(
@@ -1560,17 +1628,7 @@ export class PointsEngine {
 
   private async findExistingUser(address: string) {
     const normalizedAddress = this.normalizeStoredAddress(address);
-    const { data, error } = await postgresDb
-      .from("users")
-      .select("*")
-      .eq("address", normalizedAddress)
-      .maybeSingle();
-
-    if (error) {
-      throw new Error(`Load existing user: ${error.message}`);
-    }
-
-    return normalizeUserRecord((data as Partial<UserRecord> | null) ?? null);
+    return this.resolveUserByWallet(normalizedAddress);
   }
 
   private async getReadOnlyEthPriceSnapshot(date = new Date()) {
@@ -3399,8 +3457,15 @@ export class PointsEngine {
     return SPIN_CONTRACT_ADDRESS;
   }
 
-  private async adjustSpinTickets(userId: number, delta: number) {
-    const { data, error } = await postgresDb.rpc("adjust_spin_tickets", {
+  // Spin tickets are tracked per-wallet (wallet_spin_balances), not per-account,
+  // so a linked EOA and Base Account each spin from their own balance.
+  private async adjustSpinTickets(
+    walletAddress: string,
+    userId: number,
+    delta: number
+  ) {
+    const { data, error } = await postgresDb.rpc("adjust_wallet_spin_tickets", {
+      p_wallet: walletAddress.toLowerCase(),
       p_user_id: userId,
       p_delta: delta,
     });
@@ -3414,6 +3479,59 @@ export class PointsEngine {
     }
 
     return Number(data || 0);
+  }
+
+  // Read a single wallet's spin ticket balance (falls back when no row exists).
+  private async getWalletSpinTickets(walletAddress: string, fallback = 0) {
+    const { data, error } = await postgresDb
+      .from("wallet_spin_balances")
+      .select("spin_tickets")
+      .eq("wallet_address", walletAddress.toLowerCase())
+      .maybeSingle();
+
+    if (error || !data) {
+      return fallback;
+    }
+
+    return Number((data as { spin_tickets: number }).spin_tickets || 0);
+  }
+
+  // Grant spin tickets to EVERY wallet linked to an account. A single daily
+  // check-in from either wallet tops up both. Returns the balance for the wallet
+  // that performed the check-in (connectingWalletAddress).
+  private async grantSpinTicketsToAllWallets(
+    userId: number,
+    delta: number,
+    connectingWalletAddress: string
+  ) {
+    const normalizedConnecting = connectingWalletAddress.toLowerCase();
+    const { data, error } = await postgresDb
+      .from("user_wallets")
+      .select("wallet_address")
+      .eq("user_id", userId);
+
+    if (error) {
+      throw new Error(`Load account wallets: ${error.message}`);
+    }
+
+    const rows = (data as Array<{ wallet_address: string }>) || [];
+    const wallets = rows.length
+      ? rows.map((row) => row.wallet_address.toLowerCase())
+      : [normalizedConnecting];
+
+    if (!wallets.includes(normalizedConnecting)) {
+      wallets.push(normalizedConnecting);
+    }
+
+    let connectingBalance = 0;
+    for (const wallet of wallets) {
+      const balance = await this.adjustSpinTickets(wallet, userId, delta);
+      if (wallet === normalizedConnecting) {
+        connectingBalance = balance;
+      }
+    }
+
+    return connectingBalance;
   }
 
   private verifySpinEvent(logs: readonly any[], normalizedAddress: string) {
@@ -3676,9 +3794,10 @@ export class PointsEngine {
       txHash
     );
 
-    nextUser.spin_tickets = await this.adjustSpinTickets(
+    nextUser.spin_tickets = await this.grantSpinTicketsToAllWallets(
       user.id,
-      CFG.SPIN_TICKETS_PER_CHECK_IN
+      CFG.SPIN_TICKETS_PER_CHECK_IN,
+      normalizedAddress
     );
 
     this.invalidateUserReadCaches(normalizedAddress);
@@ -3689,7 +3808,7 @@ export class PointsEngine {
       paymentAsset: payment.asset,
       paymentAmountUsd: payment.amountUsd,
       unlockedBoostPercent,
-      ...(await this.buildBalance(nextUser)),
+      ...(await this.buildBalance(nextUser, { connectingWallet: normalizedAddress })),
     };
   }
 
@@ -3700,7 +3819,7 @@ export class PointsEngine {
     if (!snapshot.isBroken && !snapshot.missedStreak) {
       return {
         reset: false,
-        ...(await this.buildBalance(user)),
+        ...(await this.buildBalance(user, { connectingWallet: address })),
       };
     }
 
@@ -3721,7 +3840,7 @@ export class PointsEngine {
 
     return {
       reset: true,
-      ...(await this.buildBalance(nextUser)),
+      ...(await this.buildBalance(nextUser, { connectingWallet: address })),
     };
   }
 
@@ -3816,7 +3935,7 @@ export class PointsEngine {
       txHash,
       asset: payment.asset,
       paymentAmountUsd: payment.amountUsd,
-      ...(await this.buildBalance(nextUser)),
+      ...(await this.buildBalance(nextUser, { connectingWallet: normalizedAddress })),
     };
   }
 
@@ -3824,7 +3943,9 @@ export class PointsEngine {
     const normalizedAddress = getAddress(address).toLowerCase();
     const user = await this.getOrCreate(normalizedAddress);
 
-    if (Number(user.spin_tickets || 0) < CFG.SPIN_TICKET_COST) {
+    // Spend from the CONNECTING wallet's own ticket balance.
+    const walletTickets = await this.getWalletSpinTickets(normalizedAddress);
+    if (walletTickets < CFG.SPIN_TICKET_COST) {
       throw new Error("You don't have any ticket to spin right now");
     }
 
@@ -3839,11 +3960,16 @@ export class PointsEngine {
     }
 
     const verification = await this.verifySpinTransaction(normalizedAddress, txHash);
-    const remainingTickets = await this.adjustSpinTickets(user.id, -CFG.SPIN_TICKET_COST);
+    const remainingTickets = await this.adjustSpinTickets(
+      normalizedAddress,
+      user.id,
+      -CFG.SPIN_TICKET_COST
+    );
     const reward = pickSpinReward();
 
     const { error: historyError } = await postgresDb.from("spin_history").insert({
       user_id: user.id,
+      wallet_address: normalizedAddress,
       tx_hash: txHash,
       reward_key: reward.key,
       reward_label: reward.label,
@@ -3857,7 +3983,9 @@ export class PointsEngine {
     });
 
     if (historyError) {
-      await this.adjustSpinTickets(user.id, CFG.SPIN_TICKET_COST).catch(() => undefined);
+      await this.adjustSpinTickets(normalizedAddress, user.id, CFG.SPIN_TICKET_COST).catch(
+        () => undefined
+      );
 
       if (historyError.message?.toLowerCase().includes("duplicate")) {
         throw new Error("That spin transaction has already been used");
@@ -3921,7 +4049,7 @@ export class PointsEngine {
         pointsAwarded: reward.pointsAwarded,
         probability: reward.probability,
       },
-      ...(await this.buildBalance(nextUser)),
+      ...(await this.buildBalance(nextUser, { connectingWallet: normalizedAddress })),
     };
   }
 
@@ -4101,6 +4229,7 @@ export class PointsEngine {
 
     return this.buildBalance(user, {
       readOnlyPrice: true,
+      connectingWallet: address,
     });
   }
 
@@ -4374,6 +4503,7 @@ export class PointsEngine {
       const [balance, stats, referral, referralUnlocked] = await Promise.all([
         this.buildBalance(user, {
           readOnlyPrice: true,
+          connectingWallet: normalizedAddress,
         }),
         this.getSweepStatsByUserId(user.id),
         this.getReferralStatsByUserId(user.id),

@@ -111,6 +111,7 @@ type QuestProgressRecord = {
   id: number;
   quest_id: string;
   user_id: number;
+  wallet_address?: string | null;
   cycle_key: string;
   status: string;
   progress: number;
@@ -1346,17 +1347,18 @@ export class QuestEngine {
 
   private async getExistingUserId(address: string) {
     const normalizedAddress = normalizeAddress(address);
-    const { data, error } = await postgresDb
-      .from("users")
-      .select("id")
-      .eq("address", normalizedAddress)
-      .maybeSingle();
+    // Resolve through user_wallets so a linked (secondary) wallet maps to its
+    // owning account, not a missing/tombstoned users row.
+    const { data, error } = await postgresDb.rpc("resolve_user_by_wallet", {
+      p_wallet: normalizedAddress,
+    });
 
     if (error) {
       throw new Error(`Failed to load quest user: ${error.message}`);
     }
 
-    return data ? Number((data as { id: number }).id) : null;
+    const row = Array.isArray(data) ? data[0] ?? null : data ?? null;
+    return row ? Number((row as { id: number }).id) : null;
   }
 
   private async assertAuthenticatedXAccountAction(
@@ -1787,12 +1789,20 @@ export class QuestEngine {
             ])
           );
 
-          progressByKey = new Map(
-            ((progressRows ?? []) as QuestProgressRecord[]).map((row) => [
-              `${row.quest_id}:${row.cycle_key}`,
-              row,
-            ])
-          );
+          // Onchain quest progress is per-wallet: only surface rows for the
+          // connecting wallet (wallet_address match) plus account-level rows
+          // (wallet_address NULL, i.e. social/legacy progress).
+          const connectingWallet = normalizedAddress.toLowerCase();
+          progressByKey = new Map();
+          for (const row of (progressRows ?? []) as QuestProgressRecord[]) {
+            const rowWallet = row.wallet_address
+              ? String(row.wallet_address).toLowerCase()
+              : null;
+            if (rowWallet && rowWallet !== connectingWallet) {
+              continue;
+            }
+            progressByKey.set(`${row.quest_id}:${row.cycle_key}`, row);
+          }
 
           campaignWhitelistByKey = new Map(
             ((whitelistRows ?? []) as QuestCampaignWhitelistRecord[]).map((row) => [
@@ -3610,7 +3620,7 @@ export class QuestEngine {
         break;
     }
 
-    const existing = await this.getProgress(userId, quest.id, cycleKey);
+    const existing = await this.getProgress(userId, quest.id, cycleKey, address);
     const completedAlready = Boolean(existing?.completed_at);
     const nowIso = now.toISOString();
 
@@ -3618,6 +3628,8 @@ export class QuestEngine {
       userId,
       quest,
       cycleKey,
+      walletAddress: address,
+      existing,
       updates: {
         status:
           progressValue >= quest.target_value
@@ -4039,7 +4051,7 @@ export class QuestEngine {
     const progressValue =
       quest.action_type === "swap_count" ? countValue : volumeValue;
 
-    const existing = await this.getProgress(userId, quest.id, cycleKey);
+    const existing = await this.getProgress(userId, quest.id, cycleKey, address);
     const completedAlready = Boolean(existing?.completed_at);
     const nowIso = now.toISOString();
 
@@ -4047,6 +4059,8 @@ export class QuestEngine {
       userId,
       quest,
       cycleKey,
+      walletAddress: address,
+      existing,
       updates: {
         status:
           progressValue >= quest.target_value
@@ -4101,7 +4115,8 @@ export class QuestEngine {
     cycleKey: string,
     metadata: Record<string, unknown>
   ) {
-    const progress = await this.getProgress(userId, quest.id, cycleKey);
+    const walletForQuest = quest.category === "onchain" ? address : null;
+    const progress = await this.getProgress(userId, quest.id, cycleKey, walletForQuest);
 
     if (!progress) {
       throw new Error("Quest progress was not found");
@@ -4120,6 +4135,8 @@ export class QuestEngine {
             userId,
             quest,
             cycleKey,
+            walletAddress: walletForQuest,
+            existing: progress,
             updates: {
               status: "completed",
               progress: Math.max(progress.progress, quest.target_value),
@@ -4160,6 +4177,8 @@ export class QuestEngine {
       userId,
       quest,
       cycleKey,
+      walletAddress: walletForQuest,
+      existing: progress,
       updates: {
         status: "completed",
         progress: Math.max(progress.progress, quest.target_value),
@@ -4222,14 +4241,28 @@ export class QuestEngine {
     return quest;
   }
 
-  private async getProgress(userId: number, questId: string, cycleKey: string) {
-    const { data, error } = await postgresDb
+  // Onchain quest progress is per-wallet (wallet_address set); social/account
+  // quest progress is account-level (wallet_address NULL). Pass walletAddress
+  // for onchain quests so each linked wallet tracks its own progress.
+  private async getProgress(
+    userId: number,
+    questId: string,
+    cycleKey: string,
+    walletAddress?: string | null
+  ) {
+    let query = postgresDb
       .from("quest_progress")
       .select("*")
-      .eq("user_id", userId)
       .eq("quest_id", questId)
-      .eq("cycle_key", cycleKey)
-      .maybeSingle();
+      .eq("cycle_key", cycleKey);
+
+    if (walletAddress) {
+      query = query.eq("wallet_address", walletAddress.toLowerCase());
+    } else {
+      query = query.eq("user_id", userId).is("wallet_address", null);
+    }
+
+    const { data, error } = await query.maybeSingle();
 
     if (error) {
       throw new Error(`Failed to load quest progress: ${error.message}`);
@@ -4242,18 +4275,30 @@ export class QuestEngine {
     userId: number;
     quest: QuestRecord;
     cycleKey: string;
+    walletAddress?: string | null;
     existing?: QuestProgressRecord | null;
     updates: Record<string, unknown>;
   }) {
+    // Per-wallet only for onchain quests; social quests stay account-level.
+    const walletAddress =
+      args.quest.category === "onchain" && args.walletAddress
+        ? args.walletAddress.toLowerCase()
+        : null;
+
     const existing =
       args.existing !== undefined
         ? args.existing
-        : await this.getProgress(args.userId, args.quest.id, args.cycleKey);
+        : await this.getProgress(
+            args.userId,
+            args.quest.id,
+            args.cycleKey,
+            walletAddress
+          );
 
-    const payload = {
-      id: existing?.id,
+    const payload: Record<string, unknown> = {
       user_id: args.userId,
       quest_id: args.quest.id,
+      wallet_address: walletAddress,
       cycle_key: args.cycleKey,
       status: existing?.status || "not_started",
       progress: existing?.progress ?? 0,
@@ -4271,15 +4316,47 @@ export class QuestEngine {
       ...args.updates,
     };
 
+    // The unique constraints are now partial indexes that the query builder
+    // can't target with ON CONFLICT, so update-by-id when a row exists and
+    // insert otherwise (the partial unique index still guards races).
+    if (existing?.id) {
+      const { data, error } = await postgresDb
+        .from("quest_progress")
+        .update(payload)
+        .eq("id", existing.id)
+        .select("*")
+        .single();
+      if (error) {
+        throw new Error(`Failed to save quest progress: ${error.message}`);
+      }
+      return data as QuestProgressRecord;
+    }
+
     const { data, error } = await postgresDb
       .from("quest_progress")
-      .upsert(payload, {
-        onConflict: "user_id,quest_id,cycle_key",
-      })
+      .insert(payload)
       .select("*")
       .single();
 
     if (error) {
+      // Lost an insert race — fall back to updating the now-existing row.
+      const raced = await this.getProgress(
+        args.userId,
+        args.quest.id,
+        args.cycleKey,
+        walletAddress
+      );
+      if (raced?.id) {
+        const { data: updated, error: updateError } = await postgresDb
+          .from("quest_progress")
+          .update(payload)
+          .eq("id", raced.id)
+          .select("*")
+          .single();
+        if (!updateError) {
+          return updated as QuestProgressRecord;
+        }
+      }
       throw new Error(`Failed to save quest progress: ${error.message}`);
     }
 

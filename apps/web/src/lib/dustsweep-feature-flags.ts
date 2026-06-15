@@ -12,6 +12,9 @@ export const RAINBOW_ONE_CLICK_SWEEP_ENABLED =
 export const TRUST_ONE_CLICK_SWEEP_ENABLED =
   process.env.NEXT_PUBLIC_DUST_SWEEP_TRUST_ONE_CLICK === "true";
 
+export const WALLET_LINKING_ENABLED =
+  process.env.NEXT_PUBLIC_WALLET_LINKING_ENABLED === "true";
+
 export function isDustSweepApprovalBatchingEnabled(
   walletKey?: DustSweepWalletKey | null,
 ) {

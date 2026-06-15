@@ -27,6 +27,7 @@ import { monitorRoutes } from "./routes/monitor";
 import { swapsRoutes } from "./routes/swaps";
 import { swapownRoutes } from "./routes/swapown";
 import { dustsweepRoutes } from "./routes/dustsweep";
+import { walletLinkRoutes } from "./routes/walletLink";
 import { pointsEngine } from "./services/pointsEngine";
 import { repostQuestRewardScheduler } from "./services/repostQuestRewards";
 import tokens from "./routes/tokens";
@@ -65,6 +66,7 @@ app.route("/api/monitor", monitorRoutes);
 app.route("/api/swaps", swapsRoutes);
 app.route("/api/swapown", swapownRoutes);
 app.route("/api/dustsweep", dustsweepRoutes);
+app.route("/api/wallet-link", walletLinkRoutes);
 
 pointsEngine.startReferralLeaderboardSnapshotScheduler();
 repostQuestRewardScheduler.start();

@@ -25,6 +25,7 @@ import {
   verifyDiscordJoin,
 } from "@/lib/quests";
 import { ThemePreferenceControl } from "@/components/theme/ThemePreferenceControl";
+import { WalletLinkManager } from "@/components/profile/WalletLinkManager";
 
 type ProfileSettingsModalProps = {
   open: boolean;
@@ -855,6 +856,10 @@ export function ProfileSettingsModal({
               </div>
             </div>
             </div>
+          </div>
+
+          <div className="mt-4">
+            <WalletLinkManager address={address} />
           </div>
 
           {fieldError || validationMessage ? (
