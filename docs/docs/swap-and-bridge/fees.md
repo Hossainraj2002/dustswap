@@ -4,20 +4,15 @@ title: "Swap & Bridge Fees"
 
 # Swap & Bridge Fees
 
-## Swap fees
+DustSwap charges a flat **0.25%** fee on every swap and bridge. It's the same rate whether you trade on a single chain or move across chains, and it's always shown in your quote before you confirm.
 
-Swaps are routed through DustSwap's on-chain aggregator router (in partnership with OpenOcean), which applies a DustSwap fee that is **hard-capped on-chain at 3%** (`MAX_FEE_BPS = 300`).
-
-To be confirmed before publication: the exact live fee percentage currently shown to users (the on-chain configurable value may be set below the 3% cap).
-
-## Bridge fees
-
-The [Bridge](bridge.md) feature is not live yet. Fees will be documented here once the feature launches.
+That 0.25% is the only fee DustSwap takes. You'll also pay the normal network gas for whatever chain you're transacting on — that goes to the network, not to DustSwap.
 
 > **User Safety Note**
-> The 3% figure is a smart-contract hard cap, not necessarily the fee you'll pay — always check the fee line in your quote before confirming a swap.
+> Always check the fee line in your quote before confirming. DustSwap's fee is 0.25% — if a quote shows something far higher, it isn't coming from DustSwap.
 
 ## Related pages
 
+- [Swap & Bridge](overview.md)
 - [Swaps](swaps.md)
 - [DustSweep Fees](../dustsweep/fees.md)

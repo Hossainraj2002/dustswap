@@ -22,7 +22,7 @@ DustSweep is a feature of DustSwap, available at [https://app.dustswap.wtf/dusts
 
 1. **Scans** your wallet for every non-zero token balance on Base — not just tokens from a curated list.
 2. **Classifies** what it finds: sellable tokens are shown, spam and suspicious tokens are hidden by default.
-3. **Routes** each selected token through the best of several Base DEXes (Uniswap, Aerodrome, PancakeSwap, BaseSwap, and others).
+3. **Routes** each selected token through the best of several Base DEXes (Uniswap, Aerodrome, PancakeSwap, QuickSwap, AlienBase, BaseSwap, and others), falling back to an aggregator only when no DEX can trade a token.
 4. **Executes** all swaps in a single on-chain transaction through DustSweep's own sweep contract, sweeping up to **50 tokens at once**.
 5. **Delivers** the combined output to your wallet, minus a transparent protocol fee (2%, hard-capped at 3% by the smart contract).
 

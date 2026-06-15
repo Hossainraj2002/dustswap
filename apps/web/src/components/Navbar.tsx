@@ -12,7 +12,6 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useAccount } from "wagmi";
 import {
-  BridgeIcon,
   DustSweepIcon,
   HomeIcon,
   LeaderboardIcon,
@@ -37,9 +36,8 @@ const NAV_LINKS: NavLink[] = [
   { href: "/", label: "Home", icon: HomeIcon },
   { href: "/spin", label: "Spin", icon: SpinIcon },
   { href: "/comingsoon", label: "Dust Sweep", icon: DustSweepIcon },
-  { href: "/swap", label: "Swap", icon: SwapIcon },
+  { href: "/swap", label: "Swap & Bridge", icon: SwapIcon },
   { href: "/leaderboard", label: "Leaderboard", icon: LeaderboardIcon },
-  { href: "/dust-bridge", label: "Bridge", icon: BridgeIcon, badge: "Soon" },
   { href: "/particles", label: "Particles", icon: ParticlesIcon },
 ];
 

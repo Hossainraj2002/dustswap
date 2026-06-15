@@ -11,20 +11,24 @@ Before you sweep, DustSweep shows exactly what you should expect: the route for 
 When you confirm your selection, DustSweep:
 
 1. **Re-checks your live balances** — if a balance changed since the scan, that token is flagged instead of mis-quoted.
-2. **Quotes every token across multiple DEXes in parallel** — Uniswap V3, Uniswap V4, Aerodrome (classic + Slipstream), PancakeSwap V3, BaseSwap, and an optional aggregator source.
+2. **Quotes every token on Base's DEXes** — Uniswap V3, Uniswap V4, Aerodrome (classic + Slipstream), PancakeSwap V3, QuickSwap (Algebra), AlienBase, and BaseSwap. If none of them can trade a token, DustSweep falls back to an aggregator (0x first, then LI.FI) for that token only — so even awkward long-tail tokens still get a route.
 3. **Picks the best route per token** — the venue returning the highest output wins; the chosen DEX is shown next to each token.
 4. **Applies your slippage tolerance** to set a minimum acceptable output per token (default 0.5%).
 5. **Calculates totals** — gross estimated output, the 2% protocol fee, net output, USD values, and an estimated gas cost.
 
 ```mermaid
 flowchart LR
-    T[Selected tokens] --> Q{Quote each token\nacross all DEXes}
+    T[Selected tokens] --> Q{Quote each token\non Base DEXes}
     Q --> U[Uniswap V3/V4]
     Q --> A[Aerodrome]
     Q --> P[PancakeSwap V3]
-    Q --> B[BaseSwap + others]
-    U & A & P & B --> W[Best route per token]
-    W --> S[Totals: output - fee = net]
+    Q --> K[QuickSwap]
+    Q --> B[AlienBase + BaseSwap]
+    U & A & P & K & B --> W{Route found?}
+    W -- yes --> R[Best route per token]
+    W -- no --> G[Aggregator fallback\n0x, then LI.FI]
+    G --> R
+    R --> S[Totals: output - fee = net]
 ```
 
 ## Reading the quote panel

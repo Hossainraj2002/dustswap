@@ -15,7 +15,7 @@ Tokens move wallet → sweep contract → DEX → wallet inside one transaction.
 The contract pulls exactly the per-token amounts you authorized, approves each DEX for exactly that amount, and resets every approval to zero immediately after each swap — on success *and* on failure. No unlimited or standing allowance path to the router exists in any mode.
 
 **3. Allowlisted DEXes only.**
-Each swap can only call a contract on the owner-maintained allowlist (Uniswap, Aerodrome, PancakeSwap, BaseSwap, and other verified Base routers), and tokens can only be pulled by allowlisted spenders. Anything else reverts on-chain. The backend additionally verifies every route against the allowlist — both its configuration and the live on-chain state — before building a transaction.
+Each swap can only call a contract on the owner-maintained allowlist (Uniswap, Aerodrome, PancakeSwap, QuickSwap, AlienBase, BaseSwap, the 0x and LI.FI aggregator contracts, and other verified Base routers), and tokens can only be pulled by allowlisted spenders. Anything else reverts on-chain. The backend additionally verifies every route against the allowlist — both its configuration and the live on-chain state — before building a transaction.
 
 **4. Signed intent (Permit2 path).**
 The signature binds the exact routes, output token, recipient, minimum output, deadline, **and fee**. Nothing can be altered after you sign without invalidating the signature. Signatures are single-use, expire in 30 minutes, and only work when submitted by your own address.

@@ -4,8 +4,7 @@ title: "Current Limitations"
 
 # Current Limitations
 
-- **Base mainnet only** — DustSweep, Swaps, and the points system all currently run on Base (chain ID 8453). Other networks are not currently committed.
-- **Bridge is not live** — shown as "Coming soon" in the app. See [Bridge](../swap-and-bridge/bridge.md).
+- **DustSweep is Base-only** — DustSweep and dust discovery run on Base (chain ID 8453). [Swap & Bridge](../swap-and-bridge/supported-networks.md) spans several major chains.
 - **DustSweep: up to 50 tokens per sweep** per transaction (smart-contract limit).
 - **DustSweep output tokens limited to ETH, USDC, WETH, USDT** — by design, to avoid "sweep into a worthless token" scams.
 - **Particle Points have no monetary value today** and cannot be transferred, traded, or sold. See [Risk Disclosures](../security/risk-disclosures.md).

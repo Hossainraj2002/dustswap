@@ -4,23 +4,27 @@ title: "Supported Networks (Swap & Bridge)"
 
 # Supported Networks (Swap & Bridge)
 
-## Today
+Swap & Bridge works across major EVM chains. You can swap within a single chain, or bridge between any two supported chains. Base is the default, and it's the same network [DustSweep](../dustsweep/supported-network-and-tokens.md) runs on.
 
-DustSwap's swap experience runs on **Base mainnet** (chain ID 8453) only, the same network as [DustSweep](../dustsweep/supported-network-and-tokens.md).
+DustSwap rewards — swap volume and Particle Points — are tracked on these chains:
 
-| | |
+| Chain | Chain ID |
 |---|---|
-| Network | **Base mainnet** |
-| Chain ID | **8453** |
-| Gas token | ETH (on Base) |
-| Block explorer | [https://basescan.org](https://basescan.org) |
+| Base | 8453 |
+| Ethereum | 1 |
+| Arbitrum | 42161 |
+| Optimism | 10 |
+| Polygon | 137 |
+| BNB Chain | 56 |
+| Avalanche | 43114 |
+| zkSync Era | 324 |
+| Linea | 59144 |
+| Scroll | 534352 |
 
-## Bridge (coming soon)
-
-The planned [Bridge](bridge.md) feature, provided in partnership with OpenOcean, will add cross-network functionality. Which networks it will connect to is **to be confirmed before publication**.
+Routing may reach additional networks beyond this list, but rewards are credited only on the chains above.
 
 ## Related pages
 
+- [Swap & Bridge](overview.md)
 - [Swaps](swaps.md)
-- [Bridge](bridge.md)
 - [DustSweep: Supported Network & Tokens](../dustsweep/supported-network-and-tokens.md)

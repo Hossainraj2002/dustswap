@@ -50,10 +50,7 @@ pnpm-debug.log*
 
 # Docs
 docs/*
-!docs/mkdocs.yml
-!docs/DEPLOY.md
 !docs/docs/
-!docs/functions/
 !docs/docs.json
 !docs/favicon.svg
 docs/site/

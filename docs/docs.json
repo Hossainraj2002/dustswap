@@ -79,8 +79,8 @@
       {
         "group": "Swap & Bridge",
         "pages": [
+          "docs/swap-and-bridge/overview",
           "docs/swap-and-bridge/swaps",
-          "docs/swap-and-bridge/bridge",
           "docs/swap-and-bridge/supported-networks",
           "docs/swap-and-bridge/fees",
           "docs/swap-and-bridge/security"

@@ -44,13 +44,16 @@ The output list is intentionally short and limited to major assets. This removes
 
 ## Where the liquidity comes from
 
-Each selected token is quoted across multiple Base venues in parallel, and the best route wins per token:
+Each selected token is quoted across Base's main DEXes, and the best route wins per token:
 
 - Uniswap V3 and Uniswap V4
 - Aerodrome (classic and Slipstream concentrated liquidity)
 - PancakeSwap V3
+- QuickSwap (Algebra)
+- AlienBase
 - BaseSwap
-- Additional allowlisted routers (AlienBase, DackieSwap) and an optional aggregator source
+
+If a token can't be traded on any of those, DustSweep falls back to an external aggregator — 0x first, then LI.FI — but only for that one token. Aggregators are never used when a native DEX already has a route. The result is coverage close to all of Base's liquidity, while the common tokens still route directly through the DEXes above.
 
 Only routers on DustSweep's allowlist can ever be called by the sweep contract. See [Security Model](security-model.md).
 

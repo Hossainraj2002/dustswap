@@ -4,18 +4,13 @@ title: "Swap & Bridge Security"
 
 # Swap & Bridge Security
 
-## Swaps
-
-- The on-chain aggregator router enforces a **hard-capped 3% fee** (`MAX_FEE_BPS = 300`) — this cannot be exceeded regardless of configuration.
-- After a swap, DustSwap verifies your transaction on-chain before crediting volume or PP — submitting a fake or unrelated transaction hash cannot generate rewards.
-- Routing is provided in partnership with **OpenOcean**, aggregating across audited Base DEX liquidity.
-- Slippage protection is applied per-quote — review the quote before confirming.
-
-## Bridge
-
-The [Bridge](bridge.md) feature is not live yet. Its security model — expected to follow the same "your transaction is independently verified before rewards are credited" pattern — will be documented in full at launch, in partnership with OpenOcean.
+- **You stay in control.** DustSwap never takes custody of your funds — you approve and confirm every swap and bridge in your own wallet.
+- **On-chain verification.** After a trade, DustSwap checks the transaction on-chain before crediting any volume or Particle Points. A copied or unrelated transaction hash can't farm rewards.
+- **Slippage protection.** Every quote applies slippage protection — review the quote, including the 0.25% fee, before you confirm.
+- **Routing across audited liquidity.** Routes are sourced from across established DEX liquidity (via DustSwap's partner OpenOcean), not a single unknown pool.
 
 ## Related pages
 
-- [Swaps](swaps.md)
+- [Swap & Bridge](overview.md)
+- [Fees](fees.md)
 - [Security Overview](../security/security-overview.md)

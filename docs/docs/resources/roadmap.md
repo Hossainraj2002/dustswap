@@ -6,7 +6,6 @@ title: "Roadmap"
 
 The following are publicly signaled as planned but **not live**. No dates are committed.
 
-- **Bridge** — cross-network bridging, in partnership with OpenOcean. See [Bridge](../swap-and-bridge/bridge.md).
 - **Co-Founder Pass referral boost** — would raise referral commission from 20% to 30% for holders. See [Referral Rewards](../referrals/referral-rewards.md).
 - **TGE (Token Generation Event)** — DustSwap plans to reward leaderboard standing at a future TGE. Structure, amounts, eligibility, and timing are not finalized or announced. See [Leaderboard Overview](../leaderboards/leaderboard-overview.md).
 

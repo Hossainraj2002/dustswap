@@ -18,7 +18,7 @@ DustSwap is a Base-network (chain ID 8453) app that combines a token swap experi
 
 ## Network
 
-DustSwap runs on **Base mainnet** (chain ID 8453). A Bridge feature is planned (see [Bridge](../swap-and-bridge/bridge.md)) but not live yet.
+DustSweep runs on **Base mainnet** (chain ID 8453). [Swap & Bridge](../swap-and-bridge/overview.md) works across Base and other major chains, including moving tokens between them.
 
 > **User Safety Note**
 > DustSwap only operates through `app.dustswap.wtf`. Particle Points have no monetary value today and cannot be bought or sold — treat any site or DM claiming otherwise as a scam. Official support is the DustSwap Discord.

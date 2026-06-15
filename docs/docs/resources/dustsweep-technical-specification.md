@@ -18,7 +18,7 @@ At a high level, DustSweep:
 
 - Scans the connected wallet for every non-zero ERC-20 balance on Base.
 - Prices and classifies those balances (swappable, hidden, suspicious, unavailable).
-- Quotes each selected token against multiple Base DEXes and one aggregator, picking the best route per token.
+- Quotes each selected token against Base's DEXes first, and only falls back to an aggregator for tokens no DEX can trade, picking the best route per token.
 - Executes all swaps in a single on-chain transaction through a purpose-built, owner-allowlisted sweep router contract.
 - Uses Permit2 signatures, EIP-5792 wallet batching, and EIP-7702 delegation awareness to minimize the number of approvals and prompts the user sees.
 - Takes a protocol fee from the realized output (hard-capped on-chain at 3%) and delivers the net output to the user.
@@ -103,8 +103,9 @@ External dependencies:
 - **Alchemy** — Base RPC + `alchemy_getTokenBalances` for wallet-wide ERC-20 discovery.
 - **DexScreener** — token prices, liquidity, best-DEX hints (primary market data source).
 - **CoinGecko** — price fallback.
-- **0x Swap API** — optional aggregator quote source (`DUST_SWEEP_ENABLE_AGGREGATORS=true`, via the 0x AllowanceHolder `0x0000000000001fF3684f28c67538d4D072C22734`).
-- **On-chain quoters** — Uniswap V3 QuoterV2, Uniswap V4 Quoter, PancakeSwap V3 Quoter, Aerodrome router `getAmountsOut`, Aerodrome Slipstream Quoter, BaseSwap router `getAmountsOut`.
+- **0x Swap API** — first aggregator fallback (`DUST_SWEEP_ENABLE_AGGREGATORS=true`, via the 0x AllowanceHolder `0x0000000000001fF3684f28c67538d4D072C22734`). Consulted only for tokens with no native DEX route.
+- **LI.FI API** — second aggregator fallback, same-chain Base only (`DUST_SWEEP_ENABLE_LIFI=true`, via the LI.FI Diamond `0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE`). Bridge routes and any route requiring native value are rejected.
+- **On-chain quoters** — Uniswap V3 QuoterV2, Uniswap V4 Quoter, PancakeSwap V3 Quoter, QuickSwap Algebra QuoterV2, Aerodrome router `getAmountsOut`, Aerodrome Slipstream Quoter, AlienBase router `getAmountsOut`, BaseSwap router `getAmountsOut`.
 
 Request path for a sweep:
 
@@ -173,14 +174,17 @@ Implemented in `POST /dustsweep/quote`.
 1. **Validation & filtering.** Token count must not exceed the lane cap (50 for `owned_v2`/V3, 10 for V1). Inputs equal to the output token are dropped. Native ETH inputs are skipped with `NATIVE_WRAP_REQUIRED`. WETH→native-ETH is currently skipped (no no-op unwrap leg; see Limitations).
 2. **Live balance check.** Each token's on-chain balance is re-read; if the wallet no longer holds at least the requested amount, the token is skipped with `BALANCE_CHANGED`.
 3. **Routeability pre-screen.** A two-layer cache (runtime memory + Postgres `dustsweep_routeability_cache`, with amount-bucketed keys) short-circuits tokens recently known to have `NO_ROUTE`, so repeated scans don't re-quote dead tokens.
-4. **Best-quote fan-out** (`getBestQuote`). For each token, all of the following are quoted **in parallel**, and the highest `amountOut` wins:
+4. **Best-quote fan-out** (`getBestQuote`). For each token, the native Base DEXes are quoted **in parallel** and the highest `amountOut` wins:
    - Uniswap V3 (QuoterV2; fee tiers 500/3000/10000/100, plus two-hop paths through intermediate assets with curated fee pairs)
    - PancakeSwap V3 (Quoter; fee tiers 500/2500/10000/100)
    - Uniswap V4 (V4 Quoter; executed through the V4-capable Universal Router)
+   - QuickSwap (Algebra Integral QuoterV2; single-hop dynamic-fee pools; gated by `DUST_SWEEP_ENABLE_ALGEBRA`)
    - Aerodrome classic (Solidly `getAmountsOut`, volatile + stable routes)
    - Aerodrome Slipstream (concentrated liquidity; tick spacings 100/200/2000/50/1)
+   - AlienBase (UniV2-style `getAmountsOut`, direct + WETH/USDC hops; gated by `DUST_SWEEP_ENABLE_ALIENBASE`)
    - BaseSwap (UniV2-style `getAmountsOut`)
-   - 0x aggregator (optional; only when aggregators are enabled, and only candidates executable in the current lane survive the filter)
+
+   Aggregators are a **fallback, not part of the parallel set**. Only if no native DEX returns a route is the token quoted against 0x, and then LI.FI, in that order; the first that returns a lane-executable quote wins. This keeps direct routes for the common case and reserves aggregators for long-tail tokens a native adapter doesn't cover (Curve, Maverick, SushiSwap, DackieSwap, and similar). Aggregator candidates still pass the same allowlist and lane checks as any other route.
 5. **Per-route slippage floor.** `amountOutMin = quotedOut × (10000 − slippageBps) / 10000`, computed per token.
 6. **Aggregates.** The response includes `totalEstimatedOut`, `protocolFeeAmount` (fee bps × total), `netEstimatedOut`, USD figures, `feeBps`, a heuristic gas estimate, a **30-minute deadline**, and a freshly generated random 128-bit `permit2Nonce`.
 7. **Router-level `minAmountOut`.** Lane-dependent (see Section 16): for V3 it is the *minimum* single-leg floor (because legs are best-effort and refundable); for V2 it is the *sum* of all leg floors.
@@ -201,11 +205,16 @@ The V3 sweep router only calls **owner-allowlisted** swap targets, and tokens ca
 | Aerodrome Classic Router (Solidly) | `0xcF77a3Ba9A5CA399B7c97c74d54e5b1Beb874E43` | itself | `self` |
 | Aerodrome Slipstream SwapRouter | `0xBE6D8f0d05cC4be24d5167a3eF062215bE6D18a5` | itself | `self` |
 | PancakeSwap SmartRouter | `0x1b81D678ffb9C0263b24A97847620C99d213eB14` | itself | `self` |
-| AlienBase SmartRouter | `0xB20C411FC84FBB27e78608C24d0056D974ea9411` | itself | `self` |
+| QuickSwap Algebra SwapRouter | `0xe6c9bb24ddB4aE5c6632dbE0DE14e3E474c6Cb04` | itself | `self` |
+| AlienBase Router (UniV2) | `0x8c1A3cF8f83074169FE5D7aD50B978e1cD6b37c7` | itself | `self` |
 | DackieSwap SmartRouter | `0x195FBc5B8Fbd5Ac739C1BA57D4Ef6D5a704F34f7` | itself | `self` |
 | BaseSwap Router | `0x327Df1E6de05895d2ab08513aaDD9313Fe505d86` | itself | `self` |
 
-Per the registry's own provenance notes, each address was verified live on Base via `eth_getCode` and cross-checked against official docs / verified BaseScan labels on 2026-06-09. **TODO: confirm which of these targets are currently enabled on the live V3 contract's on-chain allowlist** (the registry is the intended set; `enabled: true` for all nine in code).
+QuickSwap and AlienBase are the newest native adapters. They are allowlisted on the router but also gated app-side by `DUST_SWEEP_ENABLE_ALGEBRA` / `DUST_SWEEP_ENABLE_ALIENBASE`, so they only quote/execute once those flags are on. AlienBase routes through its UniV2 router (`0x8c1A…37c7`), not the AlienBase SmartRouter (`0xB20C…9411`), because the SmartRouter has no on-chain quote.
+
+When no native DEX can trade a token, the aggregator fallback calls the outer aggregator contract directly — the 0x AllowanceHolder (`0x0000000000001fF3684f28c67538d4D072C22734`) or the LI.FI Diamond (`0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE`). These are allowlisted as targets and spenders too; their internal pools/hops are never allowlisted. For 0x and LI.FI the app re-checks the live `transaction.to` / `approvalAddress` from each quote against the allowlist and drops anything that doesn't match.
+
+Per the registry's own provenance notes, each DEX address was verified live on Base via `eth_getCode` and cross-checked against official docs / verified BaseScan labels (QuickSwap and AlienBase confirmed 2026-06-15, including a forked-Base execution test through the live V3 router). **TODO: confirm which of these targets are currently enabled on the live V3 contract's on-chain allowlist** (the registry is the intended set; `enabled: true` for all ten in code).
 
 Two spender models exist, and both preserve the exact-amount guarantee:
 
@@ -415,7 +424,7 @@ End-to-end, by route kind. In all cases, the calldata executed on-chain is built
 
 - The protocol fee is taken **once, at settlement, from the realized output** — never per-leg, never from inputs: `feeAmount = grossAmountOut × feeBps / 10 000`, transferred to `feeCollector`, with the remainder going to the recipient.
 - **On-chain hard cap: `MAX_FEE_BPS = 300` (3%)** in both V2 and V3. The constructor and `setFeeBps` enforce it; V3 also caps any per-sweep override.
-- **Configured fee:** the backend reads `DUST_SWEEP_FEE_BPS` (code default 200 = 2%). Repository env files contain both `200` and `60` (0.6%), and the frontend display default is 60. **TODO: confirm the current production fee (on-chain `feeBps` + env override) and align frontend display, backend env, and contract state before publishing a number.**
+- **Configured fee:** the DustSweep fee is **2% (200 bps)**. The backend reads `DUST_SWEEP_FEE_BPS=200` and passes it as the explicit `feeBpsOverride`; the frontend display (`NEXT_PUBLIC_DUST_SWEEP_FEE_BPS`) is `200` to match. (This is the dust-sweep fee only; the separate `/swap` flow charges 0.25%.)
 - **V3 fee binding (audit finding L-1 remediation):** the backend always passes an **explicit** `feeBpsOverride` (never the sentinel), and in Permit2 mode the fee is inside the signed witness — so the fee a user signs is exactly the fee charged, and the owner cannot change the fee of an in-flight signed sweep. In Allowance mode the explicit override provides equivalent protection.
 - Quotes return `protocolFeeAmount`, `netEstimatedOut`, and USD equivalents so the fee is visible before signing.
 - Known quirk (audit I-1): for native-ETH output sweeps, the fee is paid to the collector in **WETH** while the user receives unwrapped ETH. Intentional per current code.
@@ -516,7 +525,7 @@ Suggested user-facing guidance, consistent with the implementation:
 - **Output tokens are a fixed list** (ETH/USDC/WETH/USDT) rather than free choice.
 - **Unpriced/illiquid tokens can't be swept** even if technically tradable — pricing confidence gates sweepability.
 - **Wallet batching reliability varies**; several wallet-specific workarounds exist (TokenPocket gas injection, OKX provider preference, MetaMask batching feature-flagged off), and behavior may shift as wallets update.
-- **Fee display vs. configured fee may diverge** across env files (60 vs 200 bps in repo) — see Section 15 TODO.
+- **DustSweep fee is 2% (200 bps)**, well under the on-chain 3% cap. (The `/swap` flow is a separate 0.25% fee.)
 - **Owner governance** is a single key per the deployment guide (no multisig/timelock confirmed) — see Section 19 TODO.
 
 ---
@@ -552,7 +561,7 @@ A Permit2 `PermitBatchWitnessTransferFrom` message: the exact tokens and amounts
 On the V3 router, that token is skipped and refunded to your wallet in the same transaction; the rest of the sweep completes. You'll see `RouteSkipped` and `InputRefunded` events in the transaction.
 
 **What does it cost?**
-A protocol fee taken from the output (hard-capped at 3% on-chain; current rate — **TODO: confirm, repo config shows 0.6%–2% candidates**) plus Base gas, which is typically cents even for large batches.
+A protocol fee taken from the output — **2%**, hard-capped at 3% on-chain — plus Base gas, which is typically cents even for large batches.
 
 **Why does it say my account is "set up with another wallet"?**
 Your address was upgraded via EIP-7702 by another wallet (e.g. OKX). Only one delegation can exist per address per chain, and other wallets won't batch on top of it. DustSweep offers to switch to that wallet for one-click sweeps, or continue where you are with a signature + one transaction.
@@ -602,7 +611,7 @@ An internal security review of the V3 router exists (0 critical / 0 high finding
 
 Source material for the visual documentation set. Each blueprint lists nodes and edges so it can be rendered directly (Mermaid or design tool).
 
-**A.1 System architecture diagram.** Nodes: Browser (`/dustsweep` UI + `useDustSweep`), Next.js API proxy, Hono backend API, Postgres (whitelist/caches/sweeps), Alchemy (discovery+RPC), DexScreener/CoinGecko (prices), 0x API (optional quotes), Wallet, Base chain {DustSwapSweepRouter V3, Permit2, allowlisted DEX routers ×9, FeeCollector}. Edges: UI→proxy→API for `/tokens`, `/quote`, `/build-tx`, `/record-sweep`; API→data sources; UI→Wallet (sign/sendCalls/sendTransaction); Wallet→Router; Router→Permit2 (pull), Router→DEXes (swaps), Router→FeeCollector (fee), Router→User (net output + refunds).
+**A.1 System architecture diagram.** Nodes: Browser (`/dustsweep` UI + `useDustSweep`), Next.js API proxy, Hono backend API, Postgres (whitelist/caches/sweeps), Alchemy (discovery+RPC), DexScreener/CoinGecko (prices), 0x + LI.FI APIs (aggregator fallback quotes), Wallet, Base chain {DustSwapSweepRouter V3, Permit2, allowlisted DEX routers ×10, 0x/LI.FI aggregator targets, FeeCollector}. Edges: UI→proxy→API for `/tokens`, `/quote`, `/build-tx`, `/record-sweep`; API→data sources; UI→Wallet (sign/sendCalls/sendTransaction); Wallet→Router; Router→Permit2 (pull), Router→DEXes (swaps), Router→FeeCollector (fee), Router→User (net output + refunds).
 
 **A.2 DustSweep transaction flow (sequence diagram).** Lanes: User, Frontend, Backend, Wallet, Router, Permit2, DEX, FeeCollector. Sequence: scan → select → quote (re-check balances, fan-out quotes, best-per-token) → build-tx (allowlist checks) → [route-dependent: approvals batch / Permit2 sign + rebuild] → submit → router pulls exact inputs → per-leg approve-swap-reset loop with try/catch skip → refund leftovers → fee → net output → record-sweep.
 
