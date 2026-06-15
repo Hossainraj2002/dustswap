@@ -86,6 +86,20 @@ const AERODROME_SLIPSTREAM_QUOTER_ADDRESS = (process.env.AERODROME_SLIPSTREAM_QU
   "0x254cF9E1E6e233aa1AC962CB9B05b2cfeAaE15b0") as Address;
 // Aerodrome CL tick spacings, deepest-liquidity-first. 1/50 = stable/correlated, 100/200/2000 = volatile.
 const AERODROME_SLIPSTREAM_TICK_SPACINGS = [100, 200, 2000, 50, 1] as const;
+// ── QuickSwap Algebra Integral (concentrated liquidity, dynamic fee) ──
+// Verified live on Base 2026-06-15. Pools are keyed by (token0, token1, deployer); the default
+// deployer is address(0). The QuoterV2 input struct carries that deployer field (selector
+// 0xe94764c4) and amountOut is the first return word. App-side gated by DUST_SWEEP_ENABLE_ALGEBRA
+// (default off) and requires the SwapRouter to be allowlisted on the V3 router.
+const ALGEBRA_SWAP_ROUTER_ADDRESS = (process.env.ALGEBRA_SWAP_ROUTER_ADDRESS ||
+  "0xe6c9bb24ddB4aE5c6632dbE0DE14e3E474c6Cb04") as Address;
+const ALGEBRA_QUOTER_ADDRESS = (process.env.ALGEBRA_QUOTER_ADDRESS ||
+  "0x23E0583a3a000d567bB3848115065c1890D87fb5") as Address;
+// ── AlienBase UniV2 router ── The AlienBase SmartRouter (0xB20C…9411) does NOT expose
+// getAmountsOut, so we quote/execute through AlienBase's UniV2 router instead. Verified live
+// 2026-06-15. App-side gated by DUST_SWEEP_ENABLE_ALIENBASE (default off).
+const ALIENBASE_V2_ROUTER_ADDRESS = (process.env.ALIENBASE_V2_ROUTER_ADDRESS ||
+  "0x8c1A3cF8f83074169FE5D7aD50B978e1cD6b37c7") as Address;
 const ZEROX_ALLOWANCE_HOLDER = (process.env.ZEROX_ALLOWANCE_HOLDER ||
   "0x0000000000001fF3684f28c67538d4D072C22734") as Address;
 const UNISWAP_V3_FACTORY_ADDRESS = (process.env.UNISWAP_V3_FACTORY_ADDRESS ||
@@ -158,6 +172,8 @@ const DEX = {
   BASESWAP: 4,
   GENERIC: 5,
   AERODROME_SLIPSTREAM: 6,
+  ALGEBRA: 7,
+  ALIENBASE: 8,
 } as const;
 
 type DustSweepExecutionLane = "owned_v1" | "owned_v2" | "basket_aggregator";
@@ -859,6 +875,60 @@ const SLIPSTREAM_SWAP_ROUTER_ABI = [
     outputs: [{ name: "amountOut", type: "uint256" }],
   },
 ] as const;
+
+// ── QuickSwap Algebra Integral ABIs ──
+// Quoter input struct: (tokenIn, tokenOut, deployer, amountIn, limitSqrtPrice) — selector 0xe94764c4,
+// confirmed live on Base. The return tuple is version-specific (6 words on Base), but amountOut is
+// always the first word, so the adapter reads word[0] directly rather than decoding the full tuple.
+const ALGEBRA_QUOTER_ABI = [
+  {
+    name: "quoteExactInputSingle",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [
+      {
+        name: "params",
+        type: "tuple",
+        components: [
+          { name: "tokenIn", type: "address" },
+          { name: "tokenOut", type: "address" },
+          { name: "deployer", type: "address" },
+          { name: "amountIn", type: "uint256" },
+          { name: "limitSqrtPrice", type: "uint160" },
+        ],
+      },
+    ],
+    outputs: [],
+  },
+] as const;
+
+const ALGEBRA_SWAP_ROUTER_ABI = [
+  {
+    name: "exactInputSingle",
+    type: "function",
+    stateMutability: "payable",
+    inputs: [
+      {
+        name: "params",
+        type: "tuple",
+        components: [
+          { name: "tokenIn", type: "address" },
+          { name: "tokenOut", type: "address" },
+          { name: "deployer", type: "address" },
+          { name: "recipient", type: "address" },
+          { name: "deadline", type: "uint256" },
+          { name: "amountIn", type: "uint256" },
+          { name: "amountOutMinimum", type: "uint256" },
+          { name: "limitSqrtPrice", type: "uint160" },
+        ],
+      },
+    ],
+    outputs: [{ name: "amountOut", type: "uint256" }],
+  },
+] as const;
+
+// Algebra single-hop dexData carries the pool deployer (address(0) = default deployer).
+const ALGEBRA_DEX_DATA_PARAMETERS = [{ type: "address" }] as const;
 
 const AERODROME_DEX_DATA_PARAMETERS = [
   {
@@ -2032,6 +2102,108 @@ async function get0xQuoteCandidate(
   }
 }
 
+function lifiEnabled() {
+  return (
+    process.env.DUST_SWEEP_ENABLE_AGGREGATORS !== "false" &&
+    process.env.DUST_SWEEP_ENABLE_LIFI === "true" &&
+    getAllowedAggregatorAddresses().size > 0
+  );
+}
+
+// LI.FI is the SECOND aggregator fallback (after 0x), same-chain Base only. It is consulted only
+// when no native DEX route exists. We bind taker = recipient = the sweep router, reject any route
+// that bridges (chain id != Base) or requires native value, and gate the returned target/spender
+// against the aggregator allowlist (DUST_SWEEP_ALLOWED_AGGREGATOR_TARGETS) exactly like 0x.
+async function getLifiQuoteCandidate(
+  tokenIn: Address,
+  tokenOut: Address,
+  amountIn: bigint,
+  slippageBps: number,
+): Promise<QuoteCandidate | null> {
+  const taker = getRouterAddressForLane(getExecutionLane());
+  if (!lifiEnabled() || !isAddress(taker)) return null;
+
+  try {
+    const url = new URL("https://li.quest/v1/quote");
+    url.searchParams.set("fromChain", String(BASE_CHAIN_ID));
+    url.searchParams.set("toChain", String(BASE_CHAIN_ID));
+    url.searchParams.set("fromToken", tokenIn);
+    url.searchParams.set("toToken", tokenOut);
+    url.searchParams.set("fromAmount", amountIn.toString());
+    url.searchParams.set("fromAddress", taker);
+    url.searchParams.set("toAddress", taker);
+    url.searchParams.set("slippage", String(Math.max(0, slippageBps) / 10_000));
+
+    const headers: Record<string, string> = { Accept: "application/json" };
+    const apiKey = process.env.LIFI_API_KEY || process.env.LIFI_API_KEYS;
+    if (apiKey) headers["x-lifi-api-key"] = apiKey.split(",")[0]!.trim();
+
+    const response = await fetch(url, { headers, signal: AbortSignal.timeout(8_000) });
+    if (!response.ok) return null;
+
+    const quote = (await response.json()) as {
+      estimate?: { toAmount?: string; approvalAddress?: string };
+      action?: { fromChainId?: number; toChainId?: number };
+      transactionRequest?: { to?: string; data?: string; value?: string; chainId?: number };
+    };
+
+    // Same-chain Base only — reject any bridge route.
+    if (
+      quote.action &&
+      (Number(quote.action.fromChainId) !== BASE_CHAIN_ID ||
+        Number(quote.action.toChainId) !== BASE_CHAIN_ID)
+    ) {
+      return null;
+    }
+    if (
+      quote.transactionRequest?.chainId &&
+      Number(quote.transactionRequest.chainId) !== BASE_CHAIN_ID
+    ) {
+      return null;
+    }
+
+    const toAmount = quote.estimate?.toAmount;
+    const tx = quote.transactionRequest;
+    const spenderRaw = quote.estimate?.approvalAddress;
+    if (!toAmount || !tx?.to || !tx?.data || !spenderRaw) return null;
+    if (!isAddress(tx.to) || !isAddress(spenderRaw)) return null;
+    if (tx.value && BigInt(tx.value) > 0n) return null;
+
+    const target = normalizeAddress(tx.to);
+    const spender = normalizeAddress(spenderRaw);
+    const allowedAggregatorAddresses = getAllowedAggregatorAddresses();
+    if (
+      !allowedAggregatorAddresses.has(target.toLowerCase()) ||
+      !allowedAggregatorAddresses.has(spender.toLowerCase())
+    ) {
+      return null;
+    }
+
+    const amountOut = BigInt(toAmount);
+    if (amountOut <= 0n) return null;
+
+    return {
+      tokenIn,
+      amountIn: amountIn.toString(),
+      amountOutMin: "0",
+      estimatedOut: amountOut.toString(),
+      dex: DEX.GENERIC,
+      dexName: "LI.FI Aggregator",
+      dexData: encodeAbiParameters(GENERIC_DEX_DATA_PARAMETERS, [
+        {
+          target,
+          spender,
+          data: tx.data as Hex,
+        },
+      ]),
+      amountOut,
+      priceImpactBps: 0,
+    };
+  } catch {
+    return null;
+  }
+}
+
 // ── Uniswap V4 Quoting ──────────────────────────────────────────────────────
 const UNISWAP_V4_QUOTER_ADDRESS = (process.env.UNISWAP_V4_QUOTER_ADDRESS ||
   "0x0d5e0f971ed27fbff6c2837bf31316121532048d") as Address;
@@ -2210,6 +2382,190 @@ async function getSlipstreamQuoteCandidates(
   return candidates;
 }
 
+function algebraEnabled() {
+  return process.env.DUST_SWEEP_ENABLE_ALGEBRA === "true";
+}
+
+function alienBaseEnabled() {
+  return process.env.DUST_SWEEP_ENABLE_ALIENBASE === "true";
+}
+
+async function tryQuoteAlgebraSingle(
+  tokenIn: Address,
+  tokenOut: Address,
+  amountIn: bigint,
+  deployer: Address,
+) {
+  const data = encodeFunctionData({
+    abi: ALGEBRA_QUOTER_ABI,
+    functionName: "quoteExactInputSingle",
+    args: [{ tokenIn, tokenOut, deployer, amountIn, limitSqrtPrice: 0n }],
+  });
+  const result = await callContract(ALGEBRA_QUOTER_ADDRESS, data);
+  if (!result || result.length < 66) return null;
+  // amountOut is the first 32-byte return word across Algebra quoter versions.
+  const amountOut = BigInt(result.slice(0, 66) as Hex);
+  return amountOut > 0n ? amountOut : null;
+}
+
+async function getAlgebraQuoteCandidates(
+  tokenIn: Address,
+  tokenOut: Address,
+  amountIn: bigint,
+): Promise<QuoteCandidate[]> {
+  // Single-hop only (deepest pool, default deployer). Multi-hop is left to the aggregator fallback.
+  try {
+    const amountOut = await tryQuoteAlgebraSingle(tokenIn, tokenOut, amountIn, ZERO_ADDRESS);
+    if (!amountOut) return [];
+    return [
+      {
+        tokenIn,
+        amountIn: amountIn.toString(),
+        amountOutMin: "0",
+        estimatedOut: amountOut.toString(),
+        dex: DEX.ALGEBRA,
+        dexName: "QuickSwap (Algebra)",
+        dexData: encodeAbiParameters(ALGEBRA_DEX_DATA_PARAMETERS, [ZERO_ADDRESS]),
+        amountOut,
+      },
+    ];
+  } catch {
+    return [];
+  }
+}
+
+async function tryQuoteUniV2Path(router: Address, amountIn: bigint, path: Address[]) {
+  const data = encodeFunctionData({
+    abi: BASESWAP_ROUTER_ABI,
+    functionName: "getAmountsOut",
+    args: [amountIn, path],
+  });
+  const result = await callContract(router, data);
+  if (!result || result === "0x") return null;
+  const decoded = decodeFunctionResult({
+    abi: BASESWAP_ROUTER_ABI,
+    functionName: "getAmountsOut",
+    data: result,
+  });
+  const amountOut = decoded[decoded.length - 1] ?? 0n;
+  return amountOut > 0n ? amountOut : null;
+}
+
+// Generic UniV2 (getAmountsOut / swapExactTokensForTokens) quote adapter, parameterized by router.
+// Used for AlienBase; BaseSwap keeps its own (unchanged) adapter.
+async function getUniV2QuoteCandidates(args: {
+  router: Address;
+  dex: number;
+  dexName: string;
+  tokenIn: Address;
+  tokenOut: Address;
+  amountIn: bigint;
+}): Promise<QuoteCandidate[]> {
+  const candidates: QuoteCandidate[] = [];
+  const paths: Address[][] = [[args.tokenIn, args.tokenOut]];
+  if (
+    args.tokenIn.toLowerCase() !== WETH_ADDRESS.toLowerCase() &&
+    args.tokenOut.toLowerCase() !== WETH_ADDRESS.toLowerCase()
+  ) {
+    paths.push([args.tokenIn, WETH_ADDRESS, args.tokenOut]);
+  }
+  if (
+    args.tokenIn.toLowerCase() !== USDC_ADDRESS.toLowerCase() &&
+    args.tokenOut.toLowerCase() !== USDC_ADDRESS.toLowerCase()
+  ) {
+    paths.push([args.tokenIn, USDC_ADDRESS, args.tokenOut]);
+  }
+
+  for (const path of paths) {
+    try {
+      const amountOut = await tryQuoteUniV2Path(args.router, args.amountIn, path);
+      if (!amountOut) continue;
+      const midLabel =
+        path.length > 2
+          ? path[1].toLowerCase() === WETH_ADDRESS.toLowerCase()
+            ? " via WETH"
+            : " via USDC"
+          : "";
+      candidates.push({
+        tokenIn: args.tokenIn,
+        amountIn: args.amountIn.toString(),
+        amountOutMin: "0",
+        estimatedOut: amountOut.toString(),
+        dex: args.dex,
+        dexName: `${args.dexName}${midLabel}`,
+        dexData: encodeAbiParameters([{ type: "address[]" }], [path]),
+        amountOut,
+      });
+    } catch {
+      // Try the next path.
+    }
+  }
+
+  return candidates;
+}
+
+async function getAlienBaseQuoteCandidates(
+  tokenIn: Address,
+  tokenOut: Address,
+  amountIn: bigint,
+): Promise<QuoteCandidate[]> {
+  return getUniV2QuoteCandidates({
+    router: ALIENBASE_V2_ROUTER_ADDRESS,
+    dex: DEX.ALIENBASE,
+    dexName: "AlienBase",
+    tokenIn,
+    tokenOut,
+    amountIn,
+  });
+}
+
+// All native, on-chain DEX quote adapters. Aggregators (0x, LI.FI) are intentionally NOT here —
+// they are only consulted as a fallback when these return nothing.
+async function getNativeQuoteCandidates(
+  tokenIn: Address,
+  tokenOut: Address,
+  amountIn: bigint,
+): Promise<QuoteCandidate[]> {
+  const tasks: Array<Promise<QuoteCandidate[]>> = [
+    getV3QuoteCandidates({
+      dex: DEX.UNISWAP_V3,
+      dexName: "Uniswap V3",
+      quoter: UNISWAP_V3_QUOTER_ADDRESS,
+      tokenIn,
+      tokenOut,
+      amountIn,
+      feeTiers: UNISWAP_FEE_TIERS,
+    }),
+    getV3QuoteCandidates({
+      dex: DEX.PANCAKESWAP_V3,
+      dexName: "PancakeSwap V3",
+      quoter: PANCAKE_V3_QUOTER_ADDRESS,
+      tokenIn,
+      tokenOut,
+      amountIn,
+      feeTiers: PANCAKE_FEE_TIERS,
+    }),
+    getV4QuoteCandidates(tokenIn, tokenOut, amountIn),
+    getAerodromeQuoteCandidates(tokenIn, tokenOut, amountIn),
+    getSlipstreamQuoteCandidates(tokenIn, tokenOut, amountIn),
+    getBaseSwapQuoteCandidates(tokenIn, tokenOut, amountIn),
+  ];
+
+  // New native adapters — env-gated (default off) until allowlisted on the V3 router + fork-tested.
+  if (algebraEnabled()) tasks.push(getAlgebraQuoteCandidates(tokenIn, tokenOut, amountIn));
+  if (alienBaseEnabled()) tasks.push(getAlienBaseQuoteCandidates(tokenIn, tokenOut, amountIn));
+
+  return (await Promise.all(tasks)).flat();
+}
+
+function pickBestCandidate(candidates: QuoteCandidate[]) {
+  return (
+    candidates.sort((a, b) =>
+      a.amountOut > b.amountOut ? -1 : a.amountOut < b.amountOut ? 1 : 0,
+    )[0] || null
+  );
+}
+
 async function getBestQuote(
   tokenIn: Address,
   tokenOut: Address,
@@ -2217,39 +2573,21 @@ async function getBestQuote(
   slippageBps: number,
   executionLane: DustSweepExecutionLane,
 ) {
-  const candidates = (
-    await Promise.all([
-      getV3QuoteCandidates({
-        dex: DEX.UNISWAP_V3,
-        dexName: "Uniswap V3",
-        quoter: UNISWAP_V3_QUOTER_ADDRESS,
-        tokenIn,
-        tokenOut,
-        amountIn,
-        feeTiers: UNISWAP_FEE_TIERS,
-      }),
-      getV3QuoteCandidates({
-        dex: DEX.PANCAKESWAP_V3,
-        dexName: "PancakeSwap V3",
-        quoter: PANCAKE_V3_QUOTER_ADDRESS,
-        tokenIn,
-        tokenOut,
-        amountIn,
-        feeTiers: PANCAKE_FEE_TIERS,
-      }),
-      getV4QuoteCandidates(tokenIn, tokenOut, amountIn),
-      getAerodromeQuoteCandidates(tokenIn, tokenOut, amountIn),
-      getSlipstreamQuoteCandidates(tokenIn, tokenOut, amountIn),
-      getBaseSwapQuoteCandidates(tokenIn, tokenOut, amountIn),
-      get0xQuoteCandidate(tokenIn, tokenOut, amountIn, slippageBps).then((quote) =>
-        quote ? [quote] : [],
-      ),
-    ])
-  )
-    .flat()
-    .filter((candidate) => isCandidateExecutableInLane(candidate, executionLane));
+  // 1) Native DEX routers first. Aggregators are NEVER consulted when a native route exists.
+  const nativeCandidates = (await getNativeQuoteCandidates(tokenIn, tokenOut, amountIn)).filter(
+    (candidate) => isCandidateExecutableInLane(candidate, executionLane),
+  );
+  const bestNative = pickBestCandidate(nativeCandidates);
+  if (bestNative) return bestNative;
 
-  return candidates.sort((a, b) => (a.amountOut > b.amountOut ? -1 : a.amountOut < b.amountOut ? 1 : 0))[0] || null;
+  // 2) Aggregator FALLBACK — only for tokens with no native quote. 0x first, then LI.FI.
+  const zeroX = await get0xQuoteCandidate(tokenIn, tokenOut, amountIn, slippageBps);
+  if (zeroX && isCandidateExecutableInLane(zeroX, executionLane)) return zeroX;
+
+  const lifi = await getLifiQuoteCandidate(tokenIn, tokenOut, amountIn, slippageBps);
+  if (lifi && isCandidateExecutableInLane(lifi, executionLane)) return lifi;
+
+  return null;
 }
 
 function isCandidateExecutableInLane(candidate: QuoteCandidate, executionLane: DustSweepExecutionLane) {
@@ -2826,6 +3164,53 @@ function buildV2Route(route: DustSweepRoute, tokenOut: Address, receiver: Addres
       amountIn,
       target: AERODROME_SLIPSTREAM_ROUTER_ADDRESS,
       spender: AERODROME_SLIPSTREAM_ROUTER_ADDRESS,
+      value: 0n,
+      data,
+    };
+  }
+
+  if (route.dex === DEX.ALGEBRA) {
+    const [deployer] = decodeAbiParameters(ALGEBRA_DEX_DATA_PARAMETERS, route.dexData as Hex);
+    const data = encodeFunctionData({
+      abi: ALGEBRA_SWAP_ROUTER_ABI,
+      functionName: "exactInputSingle",
+      args: [
+        {
+          tokenIn: route.tokenIn,
+          tokenOut,
+          deployer: isAddress(deployer) ? normalizeAddress(deployer) : ZERO_ADDRESS,
+          recipient: receiver,
+          deadline: BigInt(deadline),
+          amountIn,
+          amountOutMinimum: amountOutMin,
+          limitSqrtPrice: 0n,
+        },
+      ],
+    });
+
+    return {
+      tokenIn: route.tokenIn,
+      amountIn,
+      target: ALGEBRA_SWAP_ROUTER_ADDRESS,
+      spender: ALGEBRA_SWAP_ROUTER_ADDRESS,
+      value: 0n,
+      data,
+    };
+  }
+
+  if (route.dex === DEX.ALIENBASE) {
+    const [path] = decodeAbiParameters([{ type: "address[]" }], route.dexData as Hex);
+    const data = encodeFunctionData({
+      abi: BASESWAP_SWAP_ABI,
+      functionName: "swapExactTokensForTokens",
+      args: [amountIn, amountOutMin, path, receiver, BigInt(deadline)],
+    });
+
+    return {
+      tokenIn: route.tokenIn,
+      amountIn,
+      target: ALIENBASE_V2_ROUTER_ADDRESS,
+      spender: ALIENBASE_V2_ROUTER_ADDRESS,
       value: 0n,
       data,
     };

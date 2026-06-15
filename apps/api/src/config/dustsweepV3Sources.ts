@@ -42,7 +42,9 @@ export type DustSweepV3CalldataStyle =
   | "aerodrome_classic_router" // Solidly swapExactTokensForTokens(Route[]{from,to,stable,factory})
   | "aerodrome_slipstream_router" // Uniswap-V3-style exactInputSingle with tickSpacing
   | "pancake_smart_router" // PancakeSwap SmartRouter (V2 + V3 + stable)
-  | "alienbase_smart_router" // AlienBase SmartRouter (V2 + stable + V3)
+  | "alienbase_smart_router" // AlienBase SmartRouter (V2 + stable + V3) — not on-chain quotable
+  | "alienbase_v2_router" // AlienBase UniV2-style router (getAmountsOut / swapExactTokensForTokens)
+  | "algebra_swaprouter" // QuickSwap Algebra Integral SwapRouter (exactInputSingle w/ deployer)
   | "dackie_smart_router" // DackieSwap SmartRouter
   | "baseswap_router"; // BaseSwap UniV2-style router
 
@@ -131,14 +133,32 @@ export const BASE_DUSTSWEEP_V3_TARGETS: DustSweepV3Target[] = [
     source: "PancakeSwap docs + eth_getCode; already used by V1/V2",
   },
   {
-    id: "alienbase-smart-router",
-    name: "AlienBase SmartRouter (V2+stable+V3)",
-    target: "0xB20C411FC84FBB27e78608C24d0056D974ea9411",
-    spender: "0xB20C411FC84FBB27e78608C24d0056D974ea9411",
+    id: "quickswap-algebra-swaprouter",
+    name: "QuickSwap Algebra Integral SwapRouter",
+    target: "0xe6c9bb24ddB4aE5c6632dbE0DE14e3E474c6Cb04",
+    spender: "0xe6c9bb24ddB4aE5c6632dbE0DE14e3E474c6Cb04",
     spenderModel: "self",
-    calldataStyle: "alienbase_smart_router",
+    calldataStyle: "algebra_swaprouter",
     enabled: true,
-    source: "AlienBase docs + eth_getCode",
+    source:
+      "QuickSwap Algebra Integral — verified live 2026-06-15: router.factory()=0xC539…9C7b, " +
+      "poolDeployer()=0xE080…aA75, WNativeToken()=WETH; QuoterV2 0x23E0…7fb5 returns a live " +
+      "WETH/USDC quote (pool 0x5a9A…be1a). App-side gated by DUST_SWEEP_ENABLE_ALGEBRA.",
+  },
+  {
+    // AlienBase's SmartRouter (0xB20C…9411) is NOT on-chain quotable (no getAmountsOut), so the
+    // app routes AlienBase through its UniV2-style router instead. Verified live 2026-06-15:
+    // getAmountsOut(1 WETH→USDC) succeeds and factory()=0x3E84…FdE7 resolves.
+    id: "alienbase-v2-router",
+    name: "AlienBase Router (UniV2)",
+    target: "0x8c1A3cF8f83074169FE5D7aD50B978e1cD6b37c7",
+    spender: "0x8c1A3cF8f83074169FE5D7aD50B978e1cD6b37c7",
+    spenderModel: "self",
+    calldataStyle: "alienbase_v2_router",
+    enabled: true,
+    source:
+      "AlienBase UniV2 router — verified live 2026-06-15 (getAmountsOut ok, factory() resolves). " +
+      "App-side gated by DUST_SWEEP_ENABLE_ALIENBASE.",
   },
   {
     id: "dackieswap-smart-router",
