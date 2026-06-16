@@ -20,6 +20,12 @@ import {
   parseClaimSuccessLog,
   type RuntimeState,
 } from "./earlyContributorBotCore";
+import {
+  findBlockedDomainsInMessage,
+  loadAntiScamFilterConfig,
+  startAntiScamLinkFilter,
+  type AntiScamFilterConfig,
+} from "./antiScamLinkFilter";
 import { loadBoosterOgConfig, startBoosterOgRoleWatcher } from "./boosterOgRole";
 
 const DEBUG_LOGGING_ENABLED = /^(1|true|yes|on)$/i.test(
@@ -253,6 +259,18 @@ async function main() {
     ],
   });
 
+  let antiScamConfig: AntiScamFilterConfig | null = null;
+  try {
+    antiScamConfig = loadAntiScamFilterConfig({ logPrefix: "[Anti-Scam Filter]" });
+    startAntiScamLinkFilter(client, antiScamConfig);
+  } catch (error) {
+    console.error(
+      `[Early Contributor Bot] Anti-scam link filter disabled: ${
+        error instanceof Error ? error.message : String(error)
+      }`
+    );
+  }
+
   try {
     const boosterOgConfig = loadBoosterOgConfig({ logPrefix: "[Booster OG]" });
     startBoosterOgRoleWatcher(client, boosterOgConfig);
@@ -322,6 +340,11 @@ async function main() {
       if (DEBUG_LOGGING_ENABLED && !message.author.bot) {
         logDebug(`Ignoring message ${message.id} from channel ${message.channelId}.`);
       }
+      return;
+    }
+
+    if (antiScamConfig && findBlockedDomainsInMessage(message, antiScamConfig).length > 0) {
+      logDebug(`Skipping claim processing for blocked-link message ${message.id}.`);
       return;
     }
 

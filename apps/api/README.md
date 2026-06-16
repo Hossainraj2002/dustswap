@@ -23,6 +23,88 @@ Operational note:
 - Non-token campaign IDs and the max-claims value currently default to the values above in code, so you can override them later in Railway without changing the main API service.
 - The same running bot process now also watches server boosters and safely manages the custom OG role using a separate private log channel.
 
+## Global Discord Anti-Scam Link Filter
+
+The same Railway bot process also runs a server-wide anti-scam link filter. It listens globally, not channel-by-channel, across normal text channels, announcement channels, forum post threads, forum comments, public threads, visible private threads, new messages, and message edits.
+
+Allowed links:
+
+- `x.com`
+- `twitter.com`
+- `dustswap.wtf`
+- Any real subdomain ending in `.dustswap.wtf`, such as `app.dustswap.wtf`
+
+Blocked examples:
+
+- `dustswap-wtf.com`
+- `dustswap.web.app`
+- `dustswapwtf.com`
+- `dustswap.claim.xyz`
+- `dustswap-wtf.vercel.app`
+- `dustswap.wtf.evil.com`
+- `bit.ly`, `tinyurl.com`, `discord.gg`, `discord.com/invite`, and any other unapproved domain
+
+Anti-scam env:
+
+- `MOD_LOG_CHANNEL_ID`
+- `TRUSTED_ROLE_IDS=` comma-separated staff role IDs only
+- `ALLOWED_DOMAINS=x.com,twitter.com,dustswap.wtf`
+- `CHANNEL_WARNING_ENABLED=true`
+- `DM_WARNING_ENABLED=true`
+
+`DISCORD_BOT_TOKEN` and `DISCORD_GUILD_ID` are already used by this service. The aliases `DISCORD_TOKEN` and `GUILD_ID` are also supported.
+
+Violation policy:
+
+- 1st blocked-link message in 24 hours: delete full message, warn, timeout 1 hour
+- 2nd blocked-link message in 24 hours: delete full message, warn, timeout 12 hours
+- 3rd blocked-link message in 24 hours: delete full message, ban immediately
+
+Only roles in `TRUSTED_ROLE_IDS` are exempt from deletion. Normal community roles such as Verified, Early User, OG, Ambassador, Partner, and Server Booster should not be added there. Staff-exempt external links are still logged to `MOD_LOG_CHANNEL_ID` as `STAFF EXEMPT - EXTERNAL LINK NOT DELETED`.
+
+Developer Portal setup:
+
+1. Go to Discord Developer Portal.
+2. Open the Dustswap bot application.
+3. Go to the Bot tab.
+4. Scroll to Privileged Gateway Intents.
+5. Enable Message Content Intent.
+
+Required code intents are already enabled in `src/bots/earlyContributorBot.ts`:
+
+- `Guilds`
+- `GuildMessages`
+- `MessageContent`
+- `GuildMembers`
+
+OAuth2 invite scopes:
+
+- `bot`
+- `applications.commands`
+
+Recommended bot permissions:
+
+- View Channels
+- Read Message History
+- Manage Messages
+- Send Messages
+- Moderate Members
+- Ban Members
+
+Server role setup:
+
+- Put the bot role above normal community roles.
+- Put the bot role above every member role it must timeout or ban.
+- Do not give Administrator by default. Prefer the least privileges above.
+- Give the bot access to every channel and private thread area that should be protected.
+- If a private channel or private thread is hidden from the bot, the bot cannot protect it.
+
+Operational checks:
+
+- On startup, the bot scans guild channels and active threads for missing protection permissions.
+- Permission gaps are logged to console and `MOD_LOG_CHANNEL_ID` when possible.
+- Run the domain examples locally with `pnpm check:anti-scam`.
+
 Booster OG watcher env:
 
 - `DISCORD_SERVER_BOOSTER_ROLE_ID=1496260996627562628`

@@ -12,6 +12,7 @@
     "start": "node dist/index.js",
     "start:early-bot": "node dist/bots/earlyContributorBot.js",
     "start:booster-og-backfill": "node dist/bots/boosterOgBackfill.js",
+    "check:anti-scam": "ts-node src/scripts/checkAntiScamLinkFilter.ts",
     "backfill:early-bot": "ts-node src/scripts/backfillEarlyContributorClaims.ts",
     "lint": "eslint src --ext .ts",
     "grant-existing-user-reward": "ts-node src/scripts/grantExistingUserReward.ts",

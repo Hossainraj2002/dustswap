@@ -86,6 +86,26 @@ function readStringEnv(name: string, fallback: string | undefined, options: Load
   throw new Error(`${name} is required.`);
 }
 
+function readFirstStringEnv(
+  names: string[],
+  fallback: string | undefined,
+  options: LoadConfigOptions
+) {
+  for (const name of names) {
+    const value = process.env[name]?.trim();
+    if (value) {
+      return value;
+    }
+  }
+
+  if (fallback !== undefined) {
+    warnWithPrefix(options.logPrefix, `${names.join("/")} not set. Using default ${fallback}.`);
+    return fallback;
+  }
+
+  throw new Error(`${names.join(" or ")} is required.`);
+}
+
 function validateSnowflake(name: string, value: string) {
   if (!/^\d+$/.test(value)) {
     throw new Error(`${name} must be a Discord snowflake.`);
@@ -93,8 +113,12 @@ function validateSnowflake(name: string, value: string) {
 }
 
 export function loadConfig(options: LoadConfigOptions = {}): BotConfig {
-  const botToken = readStringEnv("DISCORD_BOT_TOKEN", undefined, options);
-  const guildId = readStringEnv("DISCORD_GUILD_ID", DEFAULT_CONFIG.guildId, options);
+  const botToken = readFirstStringEnv(["DISCORD_BOT_TOKEN", "DISCORD_TOKEN"], undefined, options);
+  const guildId = readFirstStringEnv(
+    ["DISCORD_GUILD_ID", "GUILD_ID"],
+    DEFAULT_CONFIG.guildId,
+    options
+  );
   const submitChannelId = readStringEnv(
     "DISCORD_EARLY_SUBMIT_CHANNEL_ID",
     DEFAULT_CONFIG.submitChannelId,
@@ -108,7 +132,7 @@ export function loadConfig(options: LoadConfigOptions = {}): BotConfig {
   const roleId = readStringEnv("DISCORD_EARLY_ROLE_ID", DEFAULT_CONFIG.roleId, options);
   const maxClaimsRaw = process.env.DISCORD_EARLY_MAX_CLAIMS?.trim();
 
-  validateSnowflake("DISCORD_GUILD_ID", guildId);
+  validateSnowflake("DISCORD_GUILD_ID/GUILD_ID", guildId);
   validateSnowflake("DISCORD_EARLY_SUBMIT_CHANNEL_ID", submitChannelId);
   validateSnowflake("DISCORD_EARLY_LOG_CHANNEL_ID", logChannelId);
   validateSnowflake("DISCORD_EARLY_ROLE_ID", roleId);
