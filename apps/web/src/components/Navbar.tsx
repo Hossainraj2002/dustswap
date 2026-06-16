@@ -204,6 +204,7 @@ export function Navbar() {
           <div className="flex h-16 items-center justify-between">
             <Link
               href="/"
+              scroll={false}
               className="group flex shrink-0 items-center gap-2 transition-opacity duration-200 hover:opacity-80"
               aria-label="DustSwap home"
             >
@@ -240,6 +241,7 @@ export function Navbar() {
                   <Link
                     key={link.href}
                     href={link.href}
+                    scroll={false}
                     className={`relative flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium transition-colors duration-200 ${
                       active
                         ? "text-[#8B5CF6]"
@@ -271,6 +273,7 @@ export function Navbar() {
               {isConnected && (
                 <Link
                   href="/particles"
+                  scroll={false}
                   className="hidden items-center gap-1.5 rounded-full border border-[#8B5CF6]/20 bg-[#8B5CF6]/10 px-3 py-1.5 text-sm font-medium text-[#8B5CF6] transition-all duration-200 hover:border-[#8B5CF6]/40 hover:bg-[#8B5CF6]/20 sm:flex"
                   title="Your Dust Particles"
                 >
@@ -382,6 +385,7 @@ export function Navbar() {
           <div className="border-b border-slate-200 px-4 py-3">
             <Link
               href="/particles"
+              scroll={false}
               onClick={() => setMobileMenuOpen(false)}
               className="flex items-center justify-between rounded-xl border border-[#8B5CF6]/20 bg-[#8B5CF6]/5 px-4 py-3 transition-colors duration-200 hover:bg-[#8B5CF6]/10"
             >
@@ -425,6 +429,7 @@ export function Navbar() {
                   ) : (
                     <Link
                       href={link.href}
+                      scroll={false}
                       onClick={() => setMobileMenuOpen(false)}
                       className={`flex items-center gap-3 rounded-xl px-4 py-3 text-sm font-medium transition-colors duration-200 ${
                         active

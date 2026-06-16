@@ -15,10 +15,11 @@ export const BASE_APP_LINK_BASE = (
   process.env.NEXT_PUBLIC_BASE_APP_LINK_BASE || "https://base.app/app/app.dustswap.wtf"
 ).replace(/\/+$/, "");
 
-// Build the Base App deep link for a wallet-link token. Opens DustSwap at
-// /link?token=… inside Base App.
+// Build the Base App deep link for a wallet-link token. Base App preserves the
+// URL path but strips query strings, so the token rides in the path:
+// https://base.app/app/app.dustswap.wtf/link/<token>
 export function buildBaseAppLink(token: string) {
-  return `${BASE_APP_LINK_BASE}/link?token=${encodeURIComponent(token)}`;
+  return `${BASE_APP_LINK_BASE}/link/${encodeURIComponent(token)}`;
 }
 
 export type LinkRequestPreview = {
