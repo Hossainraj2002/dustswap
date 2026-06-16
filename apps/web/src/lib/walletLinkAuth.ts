@@ -25,8 +25,8 @@ export function buildBaseAppLink(token: string) {
 
 // Wallet-link confirmation is a real on-chain micro-payment to the check-in
 // recipient (builder-code attributed), instead of a bare signature.
-export const WALLET_LINK_RECIPIENT = (process.env.NEXT_PUBLIC_STREAK_SAVE_RECIPIENT ||
-  "0xe641fB39Fd807B536f37F9268938D67587302E5d") as `0x${string}`;
+export const WALLET_LINK_RECIPIENT = (process.env.NEXT_PUBLIC_WALLET_LINK_RECIPIENT ||
+  "0x72Bd4b89fFb1e1f48253b7a7a65739ff1E696442") as `0x${string}`;
 export const WALLET_LINK_PAYMENT_ETH =
   process.env.NEXT_PUBLIC_WALLET_LINK_PAYMENT_ETH || "0.00001";
 

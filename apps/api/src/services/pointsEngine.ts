@@ -84,6 +84,11 @@ const WALLET_LINK_PAYMENT_ETH =
   process.env.WALLET_LINK_PAYMENT_ETH ||
   process.env.NEXT_PUBLIC_WALLET_LINK_PAYMENT_ETH ||
   "0.00001";
+// Current check-in / payment receive address for wallet-link confirmations.
+const WALLET_LINK_RECIPIENT =
+  process.env.WALLET_LINK_RECIPIENT ||
+  process.env.NEXT_PUBLIC_WALLET_LINK_RECIPIENT ||
+  "0x72Bd4b89fFb1e1f48253b7a7a65739ff1E696442";
 const STREAK_SAVE_USDC_ADDRESS =
   process.env.STREAK_SAVE_USDC_ADDRESS ||
   process.env.NEXT_PUBLIC_STREAK_SAVE_USDC_ADDRESS ||
@@ -3283,7 +3288,7 @@ export class PointsEngine {
       normalizedAddress,
       transaction,
       minWei,
-      STREAK_SAVE_RECIPIENT
+      WALLET_LINK_RECIPIENT
     );
 
     if (!smartWalletPayment) {
@@ -3294,7 +3299,7 @@ export class PointsEngine {
         transaction.to,
         transaction.value,
         minWei,
-        STREAK_SAVE_RECIPIENT
+        WALLET_LINK_RECIPIENT
       );
     }
 

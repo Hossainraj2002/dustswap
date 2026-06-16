@@ -65,9 +65,9 @@ function getLinkBonusPp() {
 // builds always matches what the backend verifies (avoids env drift).
 function getLinkPaymentRecipient() {
   return (
-    process.env.STREAK_SAVE_RECIPIENT ||
-    process.env.NEXT_PUBLIC_STREAK_SAVE_RECIPIENT ||
-    "0xe641fB39Fd807B536f37F9268938D67587302E5d"
+    process.env.WALLET_LINK_RECIPIENT ||
+    process.env.NEXT_PUBLIC_WALLET_LINK_RECIPIENT ||
+    "0x72Bd4b89fFb1e1f48253b7a7a65739ff1E696442"
   );
 }
 
