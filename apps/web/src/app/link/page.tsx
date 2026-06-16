@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { useAccount, useSignMessage } from "wagmi";
 import {
   useWalletConnection,
@@ -263,12 +264,12 @@ export default function WalletLinkPage() {
                 New balance: {formatPp(state.newTotalPp)} PP
               </p>
             )}
-            <a
+            <Link
               href="/"
               className="mt-5 inline-block w-full rounded-xl bg-blue-600 px-4 py-3 text-sm font-semibold text-white hover:bg-blue-700"
             >
               Back to DustSwap
-            </a>
+            </Link>
           </div>
         )}
       </div>
