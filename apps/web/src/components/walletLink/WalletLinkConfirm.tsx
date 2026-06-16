@@ -2,13 +2,14 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { useAccount, useSignMessage } from "wagmi";
+import { useAccount, useSendTransaction } from "wagmi";
 import { useWalletConnection } from "@/hooks/useWalletConnection";
 import { WALLET_LINKING_ENABLED } from "@/lib/dustsweep-feature-flags";
 import {
-  buildWalletLinkMessage,
+  buildLinkPaymentTx,
   confirmWalletLink,
   fetchWalletLinkRequest,
+  WALLET_LINK_PAYMENT_ETH,
   type LinkRequestPreview,
 } from "@/lib/walletLinkAuth";
 
@@ -45,12 +46,14 @@ export function WalletLinkConfirm({ token }: { token: string | null }) {
   const [state, setState] = useState<PageState>(() => initialState(token));
   const [preview, setPreview] = useState<LinkRequestPreview | null>(null);
   const [bonusPp, setBonusPp] = useState(0);
+  const [paymentTo, setPaymentTo] = useState<string | null>(null);
+  const [paymentEth, setPaymentEth] = useState(WALLET_LINK_PAYMENT_ETH);
   const [error, setError] = useState<string | null>(null);
 
   const { supportsBaseAccountFeatures, openWalletModal, disconnectWallet } =
     useWalletConnection();
   const { address: connectedAddress } = useAccount();
-  const { signMessageAsync } = useSignMessage();
+  const { sendTransactionAsync } = useSendTransaction();
 
   useEffect(() => {
     if (!WALLET_LINKING_ENABLED || !token) {
@@ -63,6 +66,8 @@ export function WalletLinkConfirm({ token }: { token: string | null }) {
         if (cancelled) return;
         setPreview(result.preview);
         setBonusPp(result.bonusPp);
+        setPaymentTo(result.paymentTo);
+        setPaymentEth(result.paymentEth);
         setState({ kind: "ready" });
       } catch (err) {
         if (cancelled) return;
@@ -98,17 +103,19 @@ export function WalletLinkConfirm({ token }: { token: string | null }) {
     setError(null);
     setState({ kind: "linking" });
     try {
-      const message = buildWalletLinkMessage({
-        address: connectedAddress,
-        action: "confirm-link",
-        token,
+      const tx = buildLinkPaymentTx(token, {
+        to: paymentTo ?? undefined,
+        eth: paymentEth,
       });
-      const signature = await signMessageAsync({ message });
+      const txHash = await sendTransactionAsync({
+        to: tx.to,
+        value: tx.value,
+        data: tx.data,
+      });
       const result = await confirmWalletLink({
         token,
         address: connectedAddress,
-        message,
-        signature,
+        txHash,
       });
       setState({
         kind: "success",
@@ -120,7 +127,14 @@ export function WalletLinkConfirm({ token }: { token: string | null }) {
       setError(err instanceof Error ? err.message : "Could not link your wallet.");
       setState({ kind: "ready" });
     }
-  }, [token, connectedAddress, supportsBaseAccountFeatures, signMessageAsync]);
+  }, [
+    token,
+    connectedAddress,
+    supportsBaseAccountFeatures,
+    sendTransactionAsync,
+    paymentTo,
+    paymentEth,
+  ]);
 
   const headerCopy = useMemo(
     () =>
@@ -211,8 +225,14 @@ export function WalletLinkConfirm({ token }: { token: string | null }) {
                     disabled={state.kind === "linking"}
                     className="w-full rounded-xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
                   >
-                    {state.kind === "linking" ? "Linking…" : "Sign to confirm link"}
+                    {state.kind === "linking"
+                      ? "Confirming…"
+                      : `Confirm link · ${paymentEth} ETH`}
                   </button>
+                  <p className="text-center text-[11px] text-slate-400">
+                    Confirms with a {paymentEth} ETH transaction from this wallet to
+                    verify ownership.
+                  </p>
                   <button
                     type="button"
                     onClick={() => void disconnectWallet()}

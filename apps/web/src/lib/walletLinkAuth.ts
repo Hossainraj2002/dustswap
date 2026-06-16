@@ -1,5 +1,6 @@
-import type { Hex } from "viem";
+import { concat, parseEther, sha256, stringToBytes, type Hex } from "viem";
 import { buildPublicApiUrl, publicApiFetch } from "@/lib/apiBase";
+import { DATA_SUFFIX } from "@/lib/builderCode";
 
 export type WalletLinkAction =
   | "create-link-request"
@@ -20,6 +21,36 @@ export const BASE_APP_LINK_BASE = (
 // https://base.app/app/app.dustswap.wtf/link/<token>
 export function buildBaseAppLink(token: string) {
   return `${BASE_APP_LINK_BASE}/link/${encodeURIComponent(token)}`;
+}
+
+// Wallet-link confirmation is a real on-chain micro-payment to the check-in
+// recipient (builder-code attributed), instead of a bare signature.
+export const WALLET_LINK_RECIPIENT = (process.env.NEXT_PUBLIC_STREAK_SAVE_RECIPIENT ||
+  "0xe641fB39Fd807B536f37F9268938D67587302E5d") as `0x${string}`;
+export const WALLET_LINK_PAYMENT_ETH =
+  process.env.NEXT_PUBLIC_WALLET_LINK_PAYMENT_ETH || "0.00001";
+
+// Build the confirm-link payment tx. The token's sha256 (== the backend's
+// stored token_hash) is embedded in the calldata so the backend can bind the
+// payment to THIS link; the ERC-8021 builder-code suffix attributes the tx.
+// Recipient/amount come from the backend (link-request response) so they always
+// match what the backend verifies; fall back to defaults if absent.
+export function buildLinkPaymentTx(
+  token: string,
+  opts?: { to?: string; eth?: string }
+): {
+  to: `0x${string}`;
+  value: bigint;
+  data: Hex;
+} {
+  const tokenHash = sha256(stringToBytes(token));
+  const to = (opts?.to || WALLET_LINK_RECIPIENT) as `0x${string}`;
+  const eth = opts?.eth || WALLET_LINK_PAYMENT_ETH;
+  return {
+    to,
+    value: parseEther(eth),
+    data: concat([tokenHash, DATA_SUFFIX]),
+  };
 }
 
 export type LinkRequestPreview = {
@@ -127,6 +158,8 @@ export async function fetchWalletLinkRequest(token: string) {
     success?: boolean;
     preview?: LinkRequestPreview;
     bonusPp?: number;
+    paymentTo?: string;
+    paymentEth?: string;
     expiresAt?: string;
     error?: string;
   }>(response);
@@ -136,6 +169,8 @@ export async function fetchWalletLinkRequest(token: string) {
   return {
     preview: data.preview,
     bonusPp: Number(data.bonusPp || 0),
+    paymentTo: data.paymentTo || WALLET_LINK_RECIPIENT,
+    paymentEth: data.paymentEth || WALLET_LINK_PAYMENT_ETH,
     expiresAt: data.expiresAt || "",
   };
 }
@@ -143,8 +178,7 @@ export async function fetchWalletLinkRequest(token: string) {
 export async function confirmWalletLink(input: {
   token: string;
   address: string;
-  message: string;
-  signature: Hex;
+  txHash: string;
 }) {
   const response = await publicApiFetch(apiUrl("/confirm-link"), {
     method: "POST",

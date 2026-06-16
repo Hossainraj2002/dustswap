@@ -58,7 +58,25 @@ export function isWalletLinkingEnabled() {
 
 function getLinkBonusPp() {
   const parsed = Number.parseInt(process.env.WALLET_LINK_BONUS_PP || "", 10);
-  return Number.isFinite(parsed) && parsed >= 0 ? parsed : 15000;
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : 10000;
+}
+
+// Authoritative confirm-link payment params, surfaced to the client so the tx it
+// builds always matches what the backend verifies (avoids env drift).
+function getLinkPaymentRecipient() {
+  return (
+    process.env.STREAK_SAVE_RECIPIENT ||
+    process.env.NEXT_PUBLIC_STREAK_SAVE_RECIPIENT ||
+    "0xe641fB39Fd807B536f37F9268938D67587302E5d"
+  );
+}
+
+function getLinkPaymentEth() {
+  return (
+    process.env.WALLET_LINK_PAYMENT_ETH ||
+    process.env.NEXT_PUBLIC_WALLET_LINK_PAYMENT_ETH ||
+    "0.00001"
+  );
 }
 
 function normalizeStored(address: string) {
@@ -366,12 +384,14 @@ class WalletLinkService {
         currentStreak: Number(user?.current_streak || 0),
       },
       bonusPp: getLinkBonusPp(),
+      paymentTo: getLinkPaymentRecipient(),
+      paymentEth: getLinkPaymentEth(),
       expiresAt: row.expires_at,
     };
   }
 
   async confirmLink(
-    input: SignedInput & { token?: string },
+    input: { token?: string; address?: string; txHash?: string },
     requestIp: string
   ) {
     if (!isWalletLinkingEnabled()) {
@@ -379,27 +399,34 @@ class WalletLinkService {
     }
 
     const token = input.token || "";
-    const auth = await this.assertAuthenticatedAction(
-      input,
-      "confirm-link",
-      requestIp,
-      CONFIRM_LIMIT
-    );
+    const address = input.address || "";
+    const txHash = input.txHash || "";
 
-    // The signed message must be bound to this exact token.
-    if (!auth.token || auth.token !== token) {
-      throw new WalletLinkError("Wallet linking signature is not bound to this link.", 401);
+    if (!token || !isAddress(address)) {
+      throw new WalletLinkError("token and address are required.", 400);
+    }
+    if (!/^0x[0-9a-fA-F]{64}$/.test(txHash)) {
+      throw new WalletLinkError("A valid payment transaction hash is required.", 400);
+    }
+
+    const rateLimit = runtimeCache.consumeRateLimit(
+      `wallet-link:confirm:rate:${address.toLowerCase()}:${requestIp}`,
+      CONFIRM_LIMIT,
+      ACTION_WINDOW_MS
+    );
+    if (!rateLimit.allowed) {
+      throw new WalletLinkError("Wallet linking is cooling down. Please wait.", 429);
     }
 
     const request = await this.loadPendingRequestByToken(token);
-    const targetWallet = normalizeStored(auth.address);
+    const targetWallet = normalizeStored(address);
 
     if (targetWallet === normalizeStored(request.source_wallet)) {
       throw new WalletLinkError("You can't link a wallet to itself.", 400);
     }
 
     // Resolve/auto-create the target account.
-    const target = await pointsEngine.getOrCreate(auth.address);
+    const target = await pointsEngine.getOrCreate(address);
 
     // Already linked to the source account → idempotent success.
     if (target.id === request.source_user_id) {
@@ -436,6 +463,18 @@ class WalletLinkService {
       throw new WalletLinkError(
         "The destination account already has the maximum number of linked wallets.",
         409
+      );
+    }
+
+    // Confirmation is a real on-chain payment from the Base Account, bound to
+    // THIS link by embedding the token hash in the tx calldata (so an unrelated
+    // payment can't be replayed to hijack a wallet).
+    try {
+      await pointsEngine.verifyWalletLinkPayment(targetWallet, txHash, hashToken(token));
+    } catch (err) {
+      throw new WalletLinkError(
+        err instanceof Error ? err.message : "Could not verify the link payment.",
+        400
       );
     }
 

@@ -9,6 +9,7 @@ import {
   getAddress,
   http,
   parseAbi,
+  parseEther,
 } from "viem";
 import { base } from "viem/chains";
 import { getPaymentStatus } from "@base-org/account/payment";
@@ -77,6 +78,12 @@ const STREAK_SAVE_RECIPIENT =
   process.env.STREAK_SAVE_RECIPIENT ||
   process.env.NEXT_PUBLIC_STREAK_SAVE_RECIPIENT ||
   "0xe641fB39Fd807B536f37F9268938D67587302E5d";
+// Fixed ETH amount required to confirm a wallet link (a real, builder-code
+// attributed micro-payment to the check-in recipient).
+const WALLET_LINK_PAYMENT_ETH =
+  process.env.WALLET_LINK_PAYMENT_ETH ||
+  process.env.NEXT_PUBLIC_WALLET_LINK_PAYMENT_ETH ||
+  "0.00001";
 const STREAK_SAVE_USDC_ADDRESS =
   process.env.STREAK_SAVE_USDC_ADDRESS ||
   process.env.NEXT_PUBLIC_STREAK_SAVE_USDC_ADDRESS ||
@@ -3230,6 +3237,68 @@ export class PointsEngine {
     } catch {
       return null;
     }
+  }
+
+  // Verify the wallet-link confirmation payment: a fixed ETH transfer from the
+  // linking (Base Account) wallet to the check-in recipient, bound to the link
+  // by requiring the link token hash to appear in the tx calldata. Works for
+  // plain/7702 txs (calldata at top level) and 4337 smart-wallet txs (calldata
+  // nested inside handleOps — the bytes still appear in transaction.input).
+  async verifyWalletLinkPayment(
+    targetAddress: string,
+    txHash: string,
+    expectedTokenHashHex: string
+  ): Promise<{ ok: true }> {
+    const normalizedAddress = this.normalizeStoredAddress(targetAddress);
+    const minWei = parseEther(WALLET_LINK_PAYMENT_ETH);
+    const wanted = expectedTokenHashHex.toLowerCase().replace(/^0x/, "");
+
+    let transaction: Awaited<ReturnType<typeof getBaseTransaction>> | null = null;
+    let receipt: Awaited<ReturnType<typeof getBaseTransactionReceipt>> | null = null;
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      try {
+        [transaction, receipt] = await Promise.all([
+          getBaseTransaction(txHash as `0x${string}`),
+          getBaseTransactionReceipt(txHash as `0x${string}`),
+        ]);
+        break;
+      } catch {
+        await new Promise((resolve) => setTimeout(resolve, 2500));
+      }
+    }
+
+    if (!transaction || !receipt) {
+      throw new Error("Link payment transaction was not found yet. Please try again.");
+    }
+    if (receipt.status !== "success") {
+      throw new Error("Link payment transaction failed");
+    }
+
+    const input = (transaction.input || "").toLowerCase();
+    if (!wanted || !input.includes(wanted)) {
+      throw new Error("Link payment is not bound to this link request");
+    }
+
+    const smartWalletPayment = this.verifySmartWalletEthPayment(
+      normalizedAddress,
+      transaction,
+      minWei,
+      STREAK_SAVE_RECIPIENT
+    );
+
+    if (!smartWalletPayment) {
+      if (transaction.from.toLowerCase() !== normalizedAddress) {
+        throw new Error("Link payment sender does not match this wallet");
+      }
+      this.verifyEthPayment(
+        transaction.to,
+        transaction.value,
+        minWei,
+        STREAK_SAVE_RECIPIENT
+      );
+    }
+
+    return { ok: true };
   }
 
   private async verifyFeeTransaction(
