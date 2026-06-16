@@ -21,7 +21,13 @@
       "Bash(wc -l src/../src/components/profile/ProfileSettingsModal.tsx 2>/dev/null || wc -l \"../web/src/components/profile/ProfileSettingsModal.tsx\")",
       "Read(//c/dustswap/apps/api/src/components/profile/**)",
       "Bash(cd /c/dustswap/apps/web && cat package.json | grep -A15 '\"scripts\"')",
-      "Read(//c/c/dustswap/apps/web/**)"
+      "Read(//c/c/dustswap/apps/web/**)",
+      "Bash(npm install *)",
+      "PowerShell($conns = Get-NetTCPConnection -LocalPort 3000 -State Listen -ErrorAction SilentlyContinue; if \\($conns\\) { $conns | Select-Object -ExpandProperty OwningProcess -Unique | ForEach-Object { try { Stop-Process -Id $_ -Force -ErrorAction Stop; \"killed PID $_\" } catch {} } } else { \"nothing on :3000\" })",
+      "Bash(curl -s --retry 60 --retry-delay 2 --retry-connrefused --retry-all-errors -m 180 -o /dev/null -w \"HTTP %{http_code}\\\\n\" http://localhost:3000/profile)",
+      "Bash(curl -s -m 10 -o /dev/null -w \"API /health/db HTTP %{http_code}\\\\n\" http://localhost:3001/health/db)",
+      "Bash(tail -40 /tmp/dustswap-web.log 2>/dev/null || echo \"\\(no web log\\)\")",
+      "Read(//tmp/**)"
     ]
   }
 }

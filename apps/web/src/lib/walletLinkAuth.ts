@@ -8,6 +8,19 @@ export type WalletLinkAction =
 
 const WALLET_LINK_STATEMENT = "DustSwap Wallet Linking";
 
+// Base App mini-app deep-link base. Opening this in Base App launches DustSwap
+// as a mini app at the appended path (confirmed working format). Override only
+// if the app domain changes.
+export const BASE_APP_LINK_BASE = (
+  process.env.NEXT_PUBLIC_BASE_APP_LINK_BASE || "https://base.app/app/app.dustswap.wtf"
+).replace(/\/+$/, "");
+
+// Build the Base App deep link for a wallet-link token. Opens DustSwap at
+// /link?token=… inside Base App.
+export function buildBaseAppLink(token: string) {
+  return `${BASE_APP_LINK_BASE}/link?token=${encodeURIComponent(token)}`;
+}
+
 export type LinkRequestPreview = {
   shortAddress: string;
   displayName: string | null;

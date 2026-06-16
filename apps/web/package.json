@@ -25,6 +25,7 @@
     "@tanstack/react-query": "^5.72.0",
     "next": "15.1.11",
     "ox": "^0.14.0",
+    "qrcode.react": "^4.2.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "viem": "^2.52.0",

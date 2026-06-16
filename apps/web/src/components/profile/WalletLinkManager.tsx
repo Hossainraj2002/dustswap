@@ -2,8 +2,11 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useSignMessage } from "wagmi";
+import { QRCodeSVG } from "qrcode.react";
 import { WALLET_LINKING_ENABLED } from "@/lib/dustsweep-feature-flags";
+import { isMobileDevice } from "@/lib/device";
 import {
+  buildBaseAppLink,
   buildWalletLinkMessage,
   createWalletLinkRequest,
   fetchLinkedWallets,
@@ -14,6 +17,8 @@ import {
 type Props = {
   address?: string;
 };
+
+type CopyTarget = "direct" | "baseapp";
 
 function shortAddr(value: string) {
   return `${value.slice(0, 6)}…${value.slice(-4)}`;
@@ -32,11 +37,18 @@ export function WalletLinkManager({ address }: Props) {
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [linkUrl, setLinkUrl] = useState<string | null>(null);
+  const [token, setToken] = useState<string | null>(null);
+  const [directLink, setDirectLink] = useState<string | null>(null);
   const [expiresAt, setExpiresAt] = useState<number | null>(null);
   const [bonusPp, setBonusPp] = useState(0);
-  const [copied, setCopied] = useState(false);
+  const [copied, setCopied] = useState<CopyTarget | null>(null);
   const [now, setNow] = useState(() => Date.now());
+  const [isMobile, setIsMobile] = useState(false);
+
+  // Compute device in an effect so SSR markup matches first client render.
+  useEffect(() => {
+    setIsMobile(isMobileDevice());
+  }, []);
 
   const refreshWallets = useCallback(async () => {
     if (!address) return;
@@ -63,6 +75,8 @@ export function WalletLinkManager({ address }: Props) {
 
   const linkExpired = Boolean(expiresAt && now >= expiresAt);
   const atWalletCap = wallets.length >= 2;
+  const baseAppLink = token ? buildBaseAppLink(token) : null;
+  const linkReady = Boolean(token && directLink) && !linkExpired;
 
   const handleCreateLink = useCallback(async () => {
     if (!address) return;
@@ -72,11 +86,14 @@ export function WalletLinkManager({ address }: Props) {
       const message = buildWalletLinkMessage({ address, action: "create-link-request" });
       const signature = await signMessageAsync({ message });
       const result = await createWalletLinkRequest({ address, message, signature });
-      setLinkUrl(result.url);
+      setToken(result.token);
+      setDirectLink(result.url);
       setBonusPp(result.bonusPp);
-      setExpiresAt(result.expiresAt ? new Date(result.expiresAt).getTime() : Date.now() + 30 * 60 * 1000);
+      setExpiresAt(
+        result.expiresAt ? new Date(result.expiresAt).getTime() : Date.now() + 30 * 60 * 1000
+      );
       setNow(Date.now());
-      setCopied(false);
+      setCopied(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not create a link.");
     } finally {
@@ -84,16 +101,15 @@ export function WalletLinkManager({ address }: Props) {
     }
   }, [address, signMessageAsync]);
 
-  const handleCopy = useCallback(async () => {
-    if (!linkUrl) return;
+  const handleCopy = useCallback(async (text: string, which: CopyTarget) => {
     try {
-      await navigator.clipboard.writeText(linkUrl);
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 1500);
+      await navigator.clipboard.writeText(text);
+      setCopied(which);
+      window.setTimeout(() => setCopied((c) => (c === which ? null : c)), 1500);
     } catch {
       setError("Couldn't copy — select and copy the link manually.");
     }
-  }, [linkUrl]);
+  }, []);
 
   const handleUnlink = useCallback(
     async (wallet: string) => {
@@ -165,9 +181,7 @@ export function WalletLinkManager({ address }: Props) {
                 </button>
               )}
               {!wallet.is_primary && !isConnected && (
-                <span className="text-[10px] text-slate-400">
-                  connect to unlink
-                </span>
+                <span className="text-[10px] text-slate-400">connect to unlink</span>
               )}
             </div>
           );
@@ -181,7 +195,7 @@ export function WalletLinkManager({ address }: Props) {
 
       {!atWalletCap && (
         <div className="mt-4">
-          {!linkUrl || linkExpired ? (
+          {!linkReady ? (
             <button
               type="button"
               onClick={() => void handleCreateLink()}
@@ -193,28 +207,64 @@ export function WalletLinkManager({ address }: Props) {
           ) : (
             <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3">
               {bonusPp > 0 && (
-                <p className="text-xs font-semibold text-emerald-700">
-                  Open this link in Base App to link and earn{" "}
+                <p className="text-center text-xs font-semibold text-emerald-700">
+                  Open in Base App to link and earn{" "}
                   {new Intl.NumberFormat("en-US").format(bonusPp)} PP.
                 </p>
               )}
-              <div className="mt-2 flex items-center gap-2">
-                <input
-                  readOnly
-                  value={linkUrl}
-                  className="min-w-0 flex-1 truncate rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700"
-                />
-                <button
-                  type="button"
-                  onClick={() => void handleCopy()}
-                  className="rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white"
+
+              {/* Base App deep link — mobile: open button; desktop: QR */}
+              {isMobile ? (
+                <a
+                  href={baseAppLink ?? "#"}
+                  rel="noreferrer"
+                  className="mt-3 block w-full rounded-xl bg-[#0052ff] px-4 py-2.5 text-center text-sm font-semibold text-white hover:bg-[#0047db]"
                 >
-                  {copied ? "Copied" : "Copy"}
-                </button>
+                  Open in Base App
+                </a>
+              ) : (
+                <div className="mt-3 flex flex-col items-center">
+                  <div className="rounded-xl bg-white p-3">
+                    {baseAppLink && (
+                      <QRCodeSVG value={baseAppLink} size={176} includeMargin={false} />
+                    )}
+                  </div>
+                  <p className="mt-2 text-[11px] text-slate-500">
+                    Scan with your phone to open in Base App
+                  </p>
+                </div>
+              )}
+
+              <button
+                type="button"
+                onClick={() => baseAppLink && void handleCopy(baseAppLink, "baseapp")}
+                className="mt-2 w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                {copied === "baseapp" ? "Copied Base App link" : "Copy Base App link"}
+              </button>
+
+              {/* Direct link — always available for manual/non-Base use */}
+              <div className="mt-3 border-t border-emerald-200 pt-3">
+                <p className="text-[11px] font-medium text-slate-500">Or copy the direct link</p>
+                <div className="mt-1 flex items-center gap-2">
+                  <input
+                    readOnly
+                    value={directLink ?? ""}
+                    className="min-w-0 flex-1 truncate rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => directLink && void handleCopy(directLink, "direct")}
+                    className="shrink-0 rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white"
+                  >
+                    {copied === "direct" ? "Copied" : "Copy"}
+                  </button>
+                </div>
               </div>
+
               {expiresAt && (
-                <p className="mt-2 text-[11px] text-slate-500">
-                  Expires in {formatCountdown(expiresAt - now)} · open inside Base App
+                <p className="mt-3 text-center text-[11px] text-slate-500">
+                  Expires in {formatCountdown(expiresAt - now)}
                 </p>
               )}
             </div>
