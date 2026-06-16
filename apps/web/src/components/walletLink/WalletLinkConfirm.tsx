@@ -28,6 +28,36 @@ type PageState =
 
 const BASE_ONLY_WALLET_LIST = ["base_account", "coinbase_wallet"] as const;
 
+// Base App can reload the mini-app frame after a wallet tx, destroying the JS
+// context before the confirm POST fires. Persist the attempt so we can resume
+// (and complete the link) on the next load — even without the wallet connected.
+type PendingLink = { address: string; txHash?: string };
+function pendingKey(token: string) {
+  return `dustswap:wl-pending:${token}`;
+}
+function readPending(token: string): PendingLink | null {
+  try {
+    const raw = window.localStorage.getItem(pendingKey(token));
+    return raw ? (JSON.parse(raw) as PendingLink) : null;
+  } catch {
+    return null;
+  }
+}
+function writePending(token: string, value: PendingLink) {
+  try {
+    window.localStorage.setItem(pendingKey(token), JSON.stringify(value));
+  } catch {
+    // ignore
+  }
+}
+function clearPending(token: string) {
+  try {
+    window.localStorage.removeItem(pendingKey(token));
+  } catch {
+    // ignore
+  }
+}
+
 function formatPp(value: number) {
   return new Intl.NumberFormat("en-US").format(Math.max(0, Math.round(value)));
 }
@@ -48,6 +78,7 @@ export function WalletLinkConfirm({ token }: { token: string | null }) {
   const [bonusPp, setBonusPp] = useState(0);
   const [paymentTo, setPaymentTo] = useState<string | null>(null);
   const [paymentEth, setPaymentEth] = useState(WALLET_LINK_PAYMENT_ETH);
+  const [hasPending, setHasPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const { supportsBaseAccountFeatures, openWalletModal, disconnectWallet } =
@@ -55,12 +86,57 @@ export function WalletLinkConfirm({ token }: { token: string | null }) {
   const { address: connectedAddress } = useAccount();
   const { sendTransactionAsync } = useSendTransaction();
 
+  const finishSuccess = useCallback(
+    (result: {
+      awardedPp: number;
+      newTotalPp: number;
+      alreadyLinked: boolean;
+    }) => {
+      if (token) clearPending(token);
+      setHasPending(false);
+      setState({
+        kind: "success",
+        awardedPp: result.awardedPp,
+        newTotalPp: result.newTotalPp,
+        alreadyLinked: result.alreadyLinked,
+      });
+    },
+    [token]
+  );
+
+  // On mount: resume a pending confirm (survives a Base App frame reload), else
+  // load the link preview.
   useEffect(() => {
     if (!WALLET_LINKING_ENABLED || !token) {
       return;
     }
     let cancelled = false;
+
     (async () => {
+      const pending = readPending(token);
+      if (pending?.address) {
+        setHasPending(true);
+        setState({ kind: "linking" });
+        try {
+          const result = await confirmWalletLink({
+            token,
+            address: pending.address,
+            txHash: pending.txHash,
+          });
+          if (!cancelled) finishSuccess(result);
+          return;
+        } catch (err) {
+          // Keep the pending marker so the user can retry without re-paying.
+          if (!cancelled) {
+            setError(
+              err instanceof Error
+                ? err.message
+                : "Couldn't finish linking — tap Finish linking to retry."
+            );
+          }
+        }
+      }
+
       try {
         const result = await fetchWalletLinkRequest(token);
         if (cancelled) return;
@@ -73,14 +149,16 @@ export function WalletLinkConfirm({ token }: { token: string | null }) {
         if (cancelled) return;
         setState({
           kind: "invalid",
-          message: err instanceof Error ? err.message : "This link is invalid or expired.",
+          message:
+            err instanceof Error ? err.message : "This link is invalid or expired.",
         });
       }
     })();
+
     return () => {
       cancelled = true;
     };
-  }, [token]);
+  }, [token, finishSuccess]);
 
   const isBaseAccountConnected = Boolean(connectedAddress) && supportsBaseAccountFeatures;
 
@@ -103,6 +181,11 @@ export function WalletLinkConfirm({ token }: { token: string | null }) {
     setError(null);
     setState({ kind: "linking" });
     try {
+      // Persist the attempt BEFORE sending, so a frame reload during the tx can
+      // still resume (the backend finds the payment from { token, address }).
+      writePending(token, { address: connectedAddress });
+      setHasPending(true);
+
       const tx = buildLinkPaymentTx(token, {
         to: paymentTo ?? undefined,
         eth: paymentEth,
@@ -112,17 +195,14 @@ export function WalletLinkConfirm({ token }: { token: string | null }) {
         value: tx.value,
         data: tx.data,
       });
+      writePending(token, { address: connectedAddress, txHash });
+
       const result = await confirmWalletLink({
         token,
         address: connectedAddress,
         txHash,
       });
-      setState({
-        kind: "success",
-        awardedPp: result.awardedPp,
-        newTotalPp: result.newTotalPp,
-        alreadyLinked: result.alreadyLinked,
-      });
+      finishSuccess(result);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not link your wallet.");
       setState({ kind: "ready" });
@@ -134,7 +214,42 @@ export function WalletLinkConfirm({ token }: { token: string | null }) {
     sendTransactionAsync,
     paymentTo,
     paymentEth,
+    finishSuccess,
   ]);
+
+  // Retry the confirm using the persisted attempt (already paid → no new tx).
+  const handleResume = useCallback(async () => {
+    if (!token) return;
+    const pending = readPending(token);
+    const address = pending?.address || connectedAddress;
+    if (!address) {
+      setError("Reconnect your Base Account to finish linking.");
+      return;
+    }
+    setError(null);
+    setState({ kind: "linking" });
+    try {
+      const result = await confirmWalletLink({
+        token,
+        address,
+        txHash: pending?.txHash,
+      });
+      finishSuccess(result);
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Still confirming your payment — please try again in a moment."
+      );
+      setState({ kind: "ready" });
+    }
+  }, [token, connectedAddress, finishSuccess]);
+
+  const handleStartOver = useCallback(() => {
+    if (token) clearPending(token);
+    setHasPending(false);
+    setError(null);
+  }, [token]);
 
   const headerCopy = useMemo(
     () =>
@@ -158,6 +273,10 @@ export function WalletLinkConfirm({ token }: { token: string | null }) {
           </p>
         )}
 
+        {state.kind === "linking" && (
+          <p className="mt-3 text-sm text-slate-500">Finishing your link…</p>
+        )}
+
         {state.kind === "invalid" && (
           <div className="mt-3">
             <p className="text-sm text-red-600">{state.message}</p>
@@ -168,7 +287,7 @@ export function WalletLinkConfirm({ token }: { token: string | null }) {
           </div>
         )}
 
-        {(state.kind === "ready" || state.kind === "linking") && (
+        {state.kind === "ready" && (
           <>
             {preview && (
               <div className="mt-4 flex items-center gap-3 rounded-xl border border-slate-100 bg-slate-50 p-3">
@@ -209,7 +328,28 @@ export function WalletLinkConfirm({ token }: { token: string | null }) {
             {error && <p className="mt-3 text-sm text-red-600">{error}</p>}
 
             <div className="mt-5 space-y-2">
-              {!isBaseAccountConnected ? (
+              {hasPending ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={handleResume}
+                    className="w-full rounded-xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white hover:bg-emerald-700"
+                  >
+                    Finish linking
+                  </button>
+                  <p className="text-center text-[11px] text-slate-400">
+                    You already paid — this finishes linking without another
+                    transaction.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={handleStartOver}
+                    className="w-full rounded-xl border border-slate-200 px-4 py-2 text-xs font-medium text-slate-500 hover:bg-slate-50"
+                  >
+                    Start over
+                  </button>
+                </>
+              ) : !isBaseAccountConnected ? (
                 <button
                   type="button"
                   onClick={handleConnect}
@@ -222,12 +362,9 @@ export function WalletLinkConfirm({ token }: { token: string | null }) {
                   <button
                     type="button"
                     onClick={handleConfirm}
-                    disabled={state.kind === "linking"}
-                    className="w-full rounded-xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
+                    className="w-full rounded-xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white hover:bg-emerald-700"
                   >
-                    {state.kind === "linking"
-                      ? "Confirming…"
-                      : `Confirm link · ${paymentEth} ETH`}
+                    {`Confirm link · ${paymentEth} ETH`}
                   </button>
                   <p className="text-center text-[11px] text-slate-400">
                     Confirms with a {paymentEth} ETH transaction from this wallet to
@@ -244,7 +381,7 @@ export function WalletLinkConfirm({ token }: { token: string | null }) {
               )}
             </div>
 
-            {Boolean(connectedAddress) && !supportsBaseAccountFeatures && (
+            {!hasPending && Boolean(connectedAddress) && !supportsBaseAccountFeatures && (
               <p className="mt-3 text-xs text-amber-600">
                 The connected wallet isn’t a Base Account. Open this link inside Base
                 App and connect your Base Account to continue.

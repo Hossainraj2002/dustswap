@@ -178,7 +178,7 @@ export async function fetchWalletLinkRequest(token: string) {
 export async function confirmWalletLink(input: {
   token: string;
   address: string;
-  txHash: string;
+  txHash?: string;
 }) {
   const response = await publicApiFetch(apiUrl("/confirm-link"), {
     method: "POST",

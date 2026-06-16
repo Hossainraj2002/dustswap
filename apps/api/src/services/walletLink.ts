@@ -405,8 +405,10 @@ class WalletLinkService {
     if (!token || !isAddress(address)) {
       throw new WalletLinkError("token and address are required.", 400);
     }
-    if (!/^0x[0-9a-fA-F]{64}$/.test(txHash)) {
-      throw new WalletLinkError("A valid payment transaction hash is required.", 400);
+    // txHash is optional: on the resume path (Base App reloaded the frame after
+    // the payment) the client may have lost it, and the backend discovers it.
+    if (txHash && !/^0x[0-9a-fA-F]{64}$/.test(txHash)) {
+      throw new WalletLinkError("Invalid payment transaction hash.", 400);
     }
 
     const rateLimit = runtimeCache.consumeRateLimit(
@@ -469,8 +471,22 @@ class WalletLinkService {
     // Confirmation is a real on-chain payment from the Base Account, bound to
     // THIS link by embedding the token hash in the tx calldata (so an unrelated
     // payment can't be replayed to hijack a wallet).
+    const tokenHash = hashToken(token);
+    let resolvedTxHash = txHash;
+    if (!resolvedTxHash) {
+      // Resume path: discover the payment on-chain from { token, address }.
+      const found = await pointsEngine.findWalletLinkPaymentTx(targetWallet, tokenHash);
+      if (!found) {
+        throw new WalletLinkError(
+          "We couldn't find your link payment yet. Please wait a moment and try again.",
+          404
+        );
+      }
+      resolvedTxHash = found;
+    }
+
     try {
-      await pointsEngine.verifyWalletLinkPayment(targetWallet, txHash, hashToken(token));
+      await pointsEngine.verifyWalletLinkPayment(targetWallet, resolvedTxHash, tokenHash);
     } catch (err) {
       throw new WalletLinkError(
         err instanceof Error ? err.message : "Could not verify the link payment.",

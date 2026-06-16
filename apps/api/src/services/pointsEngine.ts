@@ -15,6 +15,7 @@ import { base } from "viem/chains";
 import { getPaymentStatus } from "@base-org/account/payment";
 import { postgresDb } from "./postgres";
 import {
+  alchemyRpcRequest,
   getBaseRpcEndpoints,
   getRotatingBaseRpcEndpoint,
   type BaseRpcEndpoint,
@@ -3304,6 +3305,57 @@ export class PointsEngine {
     }
 
     return { ok: true };
+  }
+
+  // Resume fallback: when the client lost the tx hash (e.g. Base App reloaded the
+  // mini-app frame after the payment), find the on-chain link payment from the
+  // wallet to the recipient whose calldata carries the token hash.
+  async findWalletLinkPaymentTx(
+    targetAddress: string,
+    expectedTokenHashHex: string
+  ): Promise<string | null> {
+    const normalizedAddress = this.normalizeStoredAddress(targetAddress);
+    const wanted = expectedTokenHashHex.toLowerCase().replace(/^0x/, "");
+    if (!wanted) return null;
+
+    try {
+      const res = await alchemyRpcRequest<{ transfers?: Array<{ hash?: string }> }>(
+        "alchemy_getAssetTransfers",
+        [
+          {
+            fromAddress: normalizedAddress,
+            toAddress: WALLET_LINK_RECIPIENT,
+            category: ["external", "internal"],
+            order: "desc",
+            maxCount: "0x14",
+            excludeZeroValue: true,
+          },
+        ]
+      );
+
+      const hashes = Array.from(
+        new Set(
+          (res?.transfers || [])
+            .map((transfer) => transfer.hash)
+            .filter((hash): hash is string => Boolean(hash))
+        )
+      );
+
+      for (const hash of hashes) {
+        try {
+          const transaction = await getBaseTransaction(hash as `0x${string}`);
+          if ((transaction.input || "").toLowerCase().includes(wanted)) {
+            return hash;
+          }
+        } catch {
+          // ignore and try the next candidate
+        }
+      }
+    } catch {
+      // discovery is best-effort
+    }
+
+    return null;
   }
 
   private async verifyFeeTransaction(
