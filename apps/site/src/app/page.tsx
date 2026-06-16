@@ -3,6 +3,7 @@ import Image from "next/image";
 const APP_URL = "https://app.dustswap.wtf";
 const X_URL = "https://x.com/DustswapOnBase";
 const DISCORD_URL = "https://app.dustswap.wtf/discord";
+const DOCS_URL = "https://docs.dustswap.wtf";
 const INVESTOR_DECK_URL =
   "https://docs.google.com/forms/d/e/1FAIpQLSdH1DhID6_N2N8T9WDiiwjZLT2IskC2Ax0Djoz_5CqvRrW7LQ/viewform?usp=publish-editor";
 
@@ -246,6 +247,14 @@ function Header() {
             </a>
           ))}
           <a
+            href={DOCS_URL}
+            target="_blank"
+            rel="noreferrer"
+            className="rounded-xl px-4 py-2 text-sm font-bold text-slate-600 transition hover:bg-sky-50 hover:text-slate-950"
+          >
+            Docs
+          </a>
+          <a
             href={X_URL}
             target="_blank"
             rel="noreferrer"
@@ -281,6 +290,14 @@ function Header() {
                   {item.label}
                 </a>
               ))}
+              <a
+                href={DOCS_URL}
+                target="_blank"
+                rel="noreferrer"
+                className="rounded-2xl px-4 py-3 text-sm font-bold text-slate-700 hover:bg-sky-50"
+              >
+                Docs
+              </a>
               <a
                 href={X_URL}
                 target="_blank"
@@ -783,6 +800,9 @@ function FinalCTA() {
           <PrimaryButton>Open App</PrimaryButton>
         </div>
         <div className="mt-8 flex flex-wrap justify-center gap-5 text-sm font-bold text-slate-500">
+          <a href={DOCS_URL} target="_blank" rel="noreferrer" className="hover:text-sky-700">
+            Docs
+          </a>
           <a href={X_URL} target="_blank" rel="noreferrer" className="hover:text-sky-700">
             X
           </a>
@@ -833,6 +853,14 @@ function Footer() {
               <div className="mt-4 grid gap-3 text-sm text-slate-500">
                 <a href="#product" className="hover:text-sky-700">
                   About
+                </a>
+                <a
+                  href={DOCS_URL}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="hover:text-sky-700"
+                >
+                  Docs
                 </a>
                 <a href={X_URL} target="_blank" rel="noreferrer" className="hover:text-sky-700">
                   X
