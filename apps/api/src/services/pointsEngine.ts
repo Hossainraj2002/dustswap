@@ -2,6 +2,7 @@ import { createHash } from "crypto";
 import {
   createPublicClient,
   encodeFunctionData,
+  encodeEventTopics,
   decodeFunctionData,
   decodeEventLog,
   erc20Abi,
@@ -130,6 +131,13 @@ const PRICE_SCALE = 100_000_000;
 const WEI_PER_ETH = 10n ** 18n;
 const USER_CREATE_MAX_ATTEMPTS = 5;
 const REFERRAL_LEDGER_UPDATE_MAX_ATTEMPTS = 5;
+const USER_OPERATION_LOG_LOOKBACK_BLOCKS = Math.min(
+  Math.max(
+    Number.parseInt(process.env.USER_OPERATION_LOG_LOOKBACK_BLOCKS || "5000", 10) || 5000,
+    100
+  ),
+  100_000
+);
 const POINTS_SUMMARY_CACHE_TTL_MS = 15_000;
 const LEADERBOARD_CACHE_TTL_MS = 60_000;
 const FOOTPRINT_STATUS_CACHE_TTL_MS = 2 * 60 * 1000;
@@ -137,6 +145,9 @@ const LEADERBOARD_FALLBACK_USER_FILTER =
   "total_points.gt.0,last_check_in.not.is.null,current_streak.gt.0,spin_tickets.gt.0";
 const ENTRY_POINT_HANDLE_OPS_ABI = parseAbi([
   "function handleOps((address sender,uint256 nonce,bytes initCode,bytes callData,uint256 callGasLimit,uint256 verificationGasLimit,uint256 preVerificationGas,uint256 maxFeePerGas,uint256 maxPriorityFeePerGas,bytes paymasterAndData,bytes signature)[] ops,address beneficiary)",
+]);
+const USER_OPERATION_EVENT_ABI = parseAbi([
+  "event UserOperationEvent(bytes32 indexed userOpHash,address indexed sender,address indexed paymaster,uint256 nonce,bool success,uint256 actualGasCost,uint256 actualGasUsed)",
 ]);
 const SMART_WALLET_EXECUTION_ABI = parseAbi([
   "function execute(address target,uint256 value,bytes data)",
@@ -223,6 +234,138 @@ function getBaseBlock(blockNumber: bigint) {
     (client) => client.getBlock({ blockNumber }),
     "Load Base block"
   );
+}
+
+type BaseTransactionRecord = Awaited<ReturnType<typeof getBaseTransaction>>;
+type BaseTransactionReceiptRecord = Awaited<
+  ReturnType<typeof getBaseTransactionReceipt>
+>;
+
+function isTxHash(value?: string | null): value is `0x${string}` {
+  return /^0x[0-9a-fA-F]{64}$/.test(String(value || ""));
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function getBaseTransactionContext(txHash: string) {
+  const [transaction, receipt] = await Promise.all([
+    getBaseTransaction(txHash as `0x${string}`),
+    getBaseTransactionReceipt(txHash as `0x${string}`),
+  ]);
+
+  return { transaction, receipt };
+}
+
+async function resolveUserOperationReceiptTxHash(userOperationHash: string) {
+  try {
+    const response = await alchemyRpcRequest<{
+      receipt?: { transactionHash?: string | null } | null;
+      transactionHash?: string | null;
+    } | null>(
+      "eth_getUserOperationReceipt",
+      [userOperationHash],
+      { timeoutMs: 10_000 }
+    );
+    const resolvedHash =
+      response?.receipt?.transactionHash || response?.transactionHash || null;
+    if (!isTxHash(resolvedHash)) {
+      return null;
+    }
+    return resolvedHash.toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
+async function resolveUserOperationLogTxHash(userOperationHash: string) {
+  try {
+    const latestBlockHex = await alchemyRpcRequest<string>("eth_blockNumber", [], {
+      timeoutMs: 10_000,
+    });
+    const latestBlock = BigInt(latestBlockHex);
+    const lookback = BigInt(USER_OPERATION_LOG_LOOKBACK_BLOCKS);
+    const fromBlock = latestBlock > lookback ? latestBlock - lookback : 0n;
+    const topics = encodeEventTopics({
+      abi: USER_OPERATION_EVENT_ABI,
+      eventName: "UserOperationEvent",
+      args: {
+        userOpHash: userOperationHash as `0x${string}`,
+      },
+    });
+    const logs = await alchemyRpcRequest<Array<{ transactionHash?: string | null }>>(
+      "eth_getLogs",
+      [
+        {
+          address: ENTRY_POINT_V06_ADDRESS,
+          fromBlock: `0x${fromBlock.toString(16)}`,
+          toBlock: "latest",
+          topics,
+        },
+      ],
+      { timeoutMs: 15_000 }
+    );
+    const resolvedHash = logs.find((log) => isTxHash(log.transactionHash))
+      ?.transactionHash;
+    if (!isTxHash(resolvedHash)) {
+      return null;
+    }
+    return resolvedHash.toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
+async function resolveSubmittedBaseTransaction(
+  submittedHash: string,
+  attempts = 8
+): Promise<{
+  submittedHash: string;
+  resolvedTxHash: string;
+  submittedKind: "transaction" | "user_operation";
+  transaction: BaseTransactionRecord;
+  receipt: BaseTransactionReceiptRecord;
+}> {
+  let lastError: Error | null = null;
+
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      const context = await getBaseTransactionContext(submittedHash);
+      return {
+        submittedHash,
+        resolvedTxHash: submittedHash.toLowerCase(),
+        submittedKind: "transaction",
+        ...context,
+      };
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+    }
+
+    const resolvedUserOperationHash =
+      (await resolveUserOperationReceiptTxHash(submittedHash)) ||
+      (await resolveUserOperationLogTxHash(submittedHash));
+
+    if (resolvedUserOperationHash) {
+      try {
+        const context = await getBaseTransactionContext(resolvedUserOperationHash);
+        return {
+          submittedHash,
+          resolvedTxHash: resolvedUserOperationHash,
+          submittedKind: "user_operation",
+          ...context,
+        };
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+      }
+    }
+
+    if (attempt < attempts - 1) {
+      await sleep(2500);
+    }
+  }
+
+  throw lastError ?? new Error("Base transaction was not found yet");
 }
 
 type UserRecord = {
@@ -3259,23 +3402,14 @@ export class PointsEngine {
     const minWei = parseEther(WALLET_LINK_PAYMENT_ETH);
     const wanted = expectedTokenHashHex.toLowerCase().replace(/^0x/, "");
 
-    let transaction: Awaited<ReturnType<typeof getBaseTransaction>> | null = null;
-    let receipt: Awaited<ReturnType<typeof getBaseTransactionReceipt>> | null = null;
-    for (let attempt = 0; attempt < 8; attempt += 1) {
-      try {
-        [transaction, receipt] = await Promise.all([
-          getBaseTransaction(txHash as `0x${string}`),
-          getBaseTransactionReceipt(txHash as `0x${string}`),
-        ]);
-        break;
-      } catch {
-        await new Promise((resolve) => setTimeout(resolve, 2500));
-      }
-    }
-
-    if (!transaction || !receipt) {
+    let resolved;
+    try {
+      resolved = await resolveSubmittedBaseTransaction(txHash);
+    } catch {
       throw new Error("Link payment transaction was not found yet. Please try again.");
     }
+    const { transaction, receipt } = resolved;
+
     if (receipt.status !== "success") {
       throw new Error("Link payment transaction failed");
     }
