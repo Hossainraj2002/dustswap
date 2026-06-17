@@ -301,7 +301,7 @@ function getWindowEthereumProviders(walletKey?: DustSweepWalletKey): WalletRpcPr
 export function getWalletRequestCandidates(
   walletClient: unknown,
   walletKey?: DustSweepWalletKey,
-  options?: { preferInjected?: boolean },
+  options?: { preferInjected?: boolean; injectedOnly?: boolean; limit?: number },
 ): WalletRpcRequest[] {
   const clientCandidates: WalletRpcRequest[] = [];
   const providerCandidates: WalletRpcRequest[] = [];
@@ -317,9 +317,13 @@ export function getWalletRequestCandidates(
     }
   }
 
-  return options?.preferInjected
-    ? [...providerCandidates, ...clientCandidates]
-    : [...clientCandidates, ...providerCandidates];
+  const candidates = options?.injectedOnly
+    ? providerCandidates
+    : options?.preferInjected
+      ? [...providerCandidates, ...clientCandidates]
+      : [...clientCandidates, ...providerCandidates];
+
+  return typeof options?.limit === "number" ? candidates.slice(0, options.limit) : candidates;
 }
 
 export function getWalletRequest(

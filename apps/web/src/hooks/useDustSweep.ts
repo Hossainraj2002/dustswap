@@ -187,6 +187,8 @@ const TOKENPOCKET_SPLIT_BATCH_NOTICE =
 const METAMASK_LOCKED_MESSAGE = "Unlock MetaMask and try again. No transaction was sent.";
 const TOKENPOCKET_BATCH_FAILURE_MESSAGE =
   "TokenPocket batch execution failed. Please retry, reduce selected tokens, or use another supported wallet while we continue improving TokenPocket support.";
+const OKX_BATCH_STATUS_UNCLEAR_MESSAGE =
+  "OKX batch status was unclear. No fallback prompts were sent. Check OKX activity or retry once.";
 const TOKENPOCKET_EXECUTE_FAILURES_TOPIC =
   "0xc42159347c71974b140767e5ffe0d24cb03d38c0e86462ec59a240394c3b9b4c";
 const APPROVAL_CALL_GAS_LIMIT = 150_000n;
@@ -1624,6 +1626,8 @@ export function useDustSweep(): UseDustSweepReturn {
     }
 
     const requests = getWalletRequestCandidates(walletClient, args.walletKey, {
+      injectedOnly: preferInjectedWalletSendCalls,
+      limit: preferInjectedWalletSendCalls ? 1 : undefined,
       preferInjected: preferInjectedWalletSendCalls,
     });
     if (requests.length === 0) {
@@ -1925,6 +1929,7 @@ export function useDustSweep(): UseDustSweepReturn {
         batchMode &&
         hasV2Approvals &&
         usesTokenPocketExisting;
+      const usesOkxAtomicBatch = walletProfile.walletKey === "okx";
       // Below the single-batch limit Coinbase/Base bundle approvals + sweep into
       // ONE prompt. Only split (approvals batch, then sweep) once the sweep is
       // large enough that one bundle gets unwieldy — keeping it to two prompts.
@@ -1939,11 +1944,13 @@ export function useDustSweep(): UseDustSweepReturn {
         (canUseAtomicBatch || canUseTokenPocketBatch) &&
         bundledCallCount <= walletCallCap;
       const canBundleApprovalsOnly =
+        !usesOkxAtomicBatch &&
         (canUseAtomicBatch || canUseTokenPocketBatch) &&
         approvalCalls.length > 0 &&
         // TP uses parallel eth_sendTransaction (no wallet_sendCalls cap); other wallets respect the cap.
         (usesTokenPocketExisting || approvalCalls.length <= walletCallCap);
       const shouldChunkWalletBatch =
+        !usesOkxAtomicBatch &&
         canUseAtomicBatch &&
         !usesTokenPocketExisting &&
         approvalCalls.length > walletCallCap;
@@ -2222,6 +2229,10 @@ export function useDustSweep(): UseDustSweepReturn {
             message: getDebugErrorMessage(strictBundleError),
           });
 
+          if (usesOkxAtomicBatch) {
+            throw new Error(OKX_BATCH_STATUS_UNCLEAR_MESSAGE);
+          }
+
           if (usesTokenPocketExisting) {
             console.info("DustSweep TokenPocket strict batch failed; retrying compatible mode.", {
               walletKey: walletProfile.walletKey,
@@ -2304,6 +2315,9 @@ export function useDustSweep(): UseDustSweepReturn {
           `${walletProfile.walletName || "Wallet"} supports ${walletCallCap} calls per batch. DustSweep will send approvals in wallet batches, then sweep.`,
         );
       } else if (canUseAtomicBatch) {
+        if (usesOkxAtomicBatch) {
+          throw new Error(OKX_BATCH_STATUS_UNCLEAR_MESSAGE);
+        }
         setExecutionNotice(
           `Approval batching needs ${approvalCalls.length} wallet calls, above the ${walletCallCap} call cap. DustSweep will use Permit2 approvals and a standard sweep.`,
         );

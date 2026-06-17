@@ -3505,24 +3505,72 @@ async function fetchEthUsdPrice() {
     return ethUsdCache.price;
   }
 
-  try {
-    const response = await fetch("https://api.coinbase.com/v2/prices/ETH-USD/spot", {
-      headers: { Accept: "application/json" },
-      signal: AbortSignal.timeout(2_500),
-    });
-    if (!response.ok) throw new Error("ETH price unavailable");
-    const payload = (await response.json()) as { data?: { amount?: string } };
-    const price = Number(payload.data?.amount || 0);
-    if (Number.isFinite(price) && price > 0) {
-      ethUsdCache = { price, expiresAt: Date.now() + 60_000 };
-      return price;
+  const cacheAndReturn = (price: number, ttlMs = 60_000) => {
+    ethUsdCache = { price, expiresAt: Date.now() + ttlMs };
+    return price;
+  };
+
+  const livePriceLookups = [
+    async () => {
+      const response = await fetch("https://api.coinbase.com/v2/prices/ETH-USD/spot", {
+        headers: { Accept: "application/json" },
+        signal: AbortSignal.timeout(2_500),
+      });
+      if (!response.ok) throw new Error("Coinbase ETH price unavailable");
+      const payload = (await response.json()) as { data?: { amount?: string } };
+      return Number(payload.data?.amount || 0);
+    },
+    async () => {
+      const response = await fetch("https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd", {
+        headers: { Accept: "application/json" },
+        signal: AbortSignal.timeout(3_000),
+      });
+      if (!response.ok) throw new Error("CoinGecko ETH price unavailable");
+      const payload = (await response.json()) as { ethereum?: { usd?: number } };
+      return Number(payload.ethereum?.usd || 0);
+    },
+    async () => {
+      const quotes = await Promise.allSettled(
+        UNISWAP_FEE_TIERS.map((fee) =>
+          tryQuoteV3Single(
+            UNISWAP_V3_QUOTER_ADDRESS,
+            WETH_ADDRESS,
+            USDC_ADDRESS,
+            1_000_000_000_000_000_000n,
+            fee,
+          ),
+        ),
+      );
+      const prices = quotes
+        .map((result) =>
+          result.status === "fulfilled" && result.value
+            ? Number(formatUnits(result.value, 6))
+            : 0,
+        )
+        .filter((price) => Number.isFinite(price) && price > 0);
+      return prices.length > 0 ? Math.max(...prices) : 0;
+    },
+  ];
+
+  for (const lookup of livePriceLookups) {
+    try {
+      const price = await lookup();
+      if (Number.isFinite(price) && price > 0) {
+        return cacheAndReturn(price);
+      }
+    } catch {
+      // Continue to the next live source.
     }
-  } catch {
-    // Fallback below.
   }
-  const fallback = Number(process.env.DEFAULT_ETH_PRICE_USD || "3500");
-  ethUsdCache = { price: fallback, expiresAt: Date.now() + 15_000 };
-  return fallback;
+
+  const fallback = Number(process.env.DEFAULT_ETH_PRICE_USD || 0);
+  if (Number.isFinite(fallback) && fallback > 0) {
+    console.warn("[dustsweep] Using configured DEFAULT_ETH_PRICE_USD fallback", { fallback });
+    return cacheAndReturn(fallback, 15_000);
+  }
+
+  ethUsdCache = { price: 0, expiresAt: Date.now() + 15_000 };
+  return 0;
 }
 
 async function getLogsChunk(args: {
