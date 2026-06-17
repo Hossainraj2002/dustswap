@@ -914,12 +914,32 @@ export function useDustSweep(): UseDustSweepReturn {
       return "batch";
     }
 
-    // (2) Only trust the wallet's atomic batch claim when we're certain the
-    // account isn't sitting on a FOREIGN delegate. Wallets (e.g. TokenPocket)
-    // report atomic "supported"/"ready" even on an account delegated to another
-    // wallet, then the batch fails. So batch only when the account is
-    // undelegated, OR on a delegate we positively recognize as this wallet's own.
-    // (Coinbase/Base smart wallets aren't 7702 EOAs → not "delegated" here → OK.)
+    // (2a) The account already sits on THIS wallet's own EIP-7702 delegate —
+    // i.e. the connected wallet's own smart-account implementation. That proves
+    // it can bundle approvals + sweep through wallet_sendCalls even when
+    // wallet_getCapabilities probing is flaky/unknown (e.g. OKX, which reports
+    // "Batch status unknown" yet still executes wallet_sendCalls). Attempt the
+    // batch first; the execution path falls back to one-by-one approvals + a
+    // standard sweep if the wallet actually rejects the batch. Only an EXPLICIT
+    // "unsupported" probe (the wallet positively says it can't batch) opts out.
+    // Require a NAMED delegate family — never the "unknown" infra bucket, which
+    // could match when both the connected wallet and an infra delegate are
+    // unidentified.
+    if (
+      ownKnownDelegate &&
+      delegateWallet !== "unknown" &&
+      atomicStatus !== "unsupported"
+    ) {
+      return "batch";
+    }
+
+    // (2b) Otherwise only trust the wallet's atomic batch claim when we're
+    // certain the account isn't sitting on a FOREIGN delegate. Wallets (e.g.
+    // TokenPocket) report atomic "supported"/"ready" even on an account
+    // delegated to another wallet, then the batch fails. So batch only when the
+    // account is undelegated, OR on a delegate we positively recognize as this
+    // wallet's own. (Coinbase/Base smart wallets aren't 7702 EOAs → not
+    // "delegated" here → OK.)
     const safeToBatch = !isDelegated || ownKnownDelegate;
     if (safeToBatch && (atomicStatus === "supported" || atomicStatus === "ready")) {
       return "batch";
@@ -2251,10 +2271,14 @@ export function useDustSweep(): UseDustSweepReturn {
               }
             }
           } else {
-            if (!isBatchFallbackError(strictBundleError)) {
-              throw new Error(WALLET_BATCH_UNSUPPORTED_MESSAGE);
-            }
-
+            // User-cancel and wallet-locked errors are already rethrown above.
+            // Any other failure means the atomic batch did not go through, so
+            // always fall back to one-by-one approvals + a standard sweep —
+            // "try batch first, then fall back" — regardless of the exact error
+            // code. (Previously an unrecognized batch error hard-failed instead
+            // of falling back.) sendBundledApprovalsThenSweep /
+            // sendStandardSweepWithApprovals re-check allowances, so a partially
+            // applied batch is handled safely.
             const notice = getBatchFallbackNoticeForError({
               walletName: walletProfile.walletName,
               walletKey: walletProfile.walletKey,

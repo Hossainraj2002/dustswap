@@ -147,6 +147,13 @@ const DISCOVERY_DB_CACHE_TTL_MS = boundedEnvNumber("DUST_SWEEP_DB_CACHE_TTL_MS",
 const DISCOVERY_MARKET_HINT_CONCURRENCY = boundedEnvNumber("DUST_SWEEP_MARKET_HINT_CONCURRENCY", 4, 1, 8);
 const DISCOVERY_MARKET_HINT_TIMEOUT_MS = boundedEnvNumber("DUST_SWEEP_MARKET_HINT_TIMEOUT_MS", 3_500, 1_000, 8_000);
 const DISCOVERY_METADATA_CONCURRENCY = boundedEnvNumber("DUST_SWEEP_METADATA_CONCURRENCY", 10, 1, 24);
+// Per-token quote parallelism + hard deadline. Quoting a large dust basket used
+// to run at concurrency 4 with no per-token cap, so a handful of dead tokens
+// (native miss → 0x → LI.FI fallback) could stall the whole quote for minutes
+// and then time out. With a dedicated RPC we quote more tokens at once and cap
+// each token so slow/dead tokens are skipped instead of blocking the rest.
+const QUOTE_TOKEN_CONCURRENCY = boundedEnvNumber("DUST_SWEEP_QUOTE_CONCURRENCY", 10, 1, 50);
+const QUOTE_TOKEN_TIMEOUT_MS = boundedEnvNumber("DUST_SWEEP_QUOTE_TOKEN_TIMEOUT_MS", 12_000, 3_000, 30_000);
 const ERC20_METADATA_CACHE_TTL_MS = boundedEnvNumber("DUST_SWEEP_METADATA_CACHE_TTL_MS", 24 * 60 * 60_000, 60_000, 7 * 24 * 60 * 60_000);
 const WHITELIST_CACHE_TTL_MS = boundedEnvNumber("DUST_SWEEP_WHITELIST_CACHE_TTL_MS", 5 * 60_000, 30_000, 30 * 60_000);
 const DISCOVERY_MAX_ERC20_BALANCES = optionalBoundedEnvNumber(
@@ -5384,7 +5391,21 @@ dustsweepRoutes.post("/quote", async (c) => {
           // but we know a route exists. For now, we proceed to quote to be safe.
         }
 
-        return getBestQuote(tokenIn, actualTokenOut, amountIn, slippageBps, executionLane)
+        type QuoteTaskResult = {
+          tokenIn: Address;
+          amountIn: bigint;
+          best: QuoteCandidate | null;
+          error: string | null;
+          cachedNoRoute: boolean;
+        };
+
+        const quotePromise: Promise<QuoteTaskResult> = getBestQuote(
+          tokenIn,
+          actualTokenOut,
+          amountIn,
+          slippageBps,
+          executionLane,
+        )
           .then(async (best) => {
             if (best) {
               runtimeCache.set(cacheKey, { status: "OK", checkedAt: Date.now() }, ROUTEABILITY_OK_TTL);
@@ -5409,10 +5430,30 @@ dustsweepRoutes.post("/quote", async (c) => {
               cachedNoRoute: false,
             };
           });
+
+        // Hard per-token cap: a slow/dead token (native miss → aggregator
+        // fallback) must never stall the whole basket. On timeout we skip just
+        // this token; the quotePromise keeps running in the background so its
+        // routeability cache still gets populated for the next quote.
+        const timeoutPromise = new Promise<QuoteTaskResult>((resolve) =>
+          setTimeout(
+            () =>
+              resolve({
+                tokenIn,
+                amountIn,
+                best: null,
+                error: "Quote timed out",
+                cachedNoRoute: false,
+              }),
+            QUOTE_TOKEN_TIMEOUT_MS,
+          ),
+        );
+
+        return Promise.race([quotePromise, timeoutPromise]);
       },
   );
 
-  const quoteResults = await pLimit(quoteTasks, 4);
+  const quoteResults = await pLimit(quoteTasks, QUOTE_TOKEN_CONCURRENCY);
 
   for (const result of quoteResults) {
     if (result.error || !result.best) {
