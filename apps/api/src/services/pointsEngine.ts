@@ -133,11 +133,12 @@ const USER_CREATE_MAX_ATTEMPTS = 5;
 const REFERRAL_LEDGER_UPDATE_MAX_ATTEMPTS = 5;
 const USER_OPERATION_LOG_LOOKBACK_BLOCKS = Math.min(
   Math.max(
-    Number.parseInt(process.env.USER_OPERATION_LOG_LOOKBACK_BLOCKS || "5000", 10) || 5000,
+    Number.parseInt(process.env.USER_OPERATION_LOG_LOOKBACK_BLOCKS || "50000", 10) || 50_000,
     100
   ),
   100_000
 );
+const USER_OPERATION_LOG_CHUNK_BLOCKS = 9_500n;
 const POINTS_SUMMARY_CACHE_TTL_MS = 15_000;
 const LEADERBOARD_CACHE_TTL_MS = 60_000;
 const FOOTPRINT_STATUS_CACHE_TTL_MS = 2 * 60 * 1000;
@@ -281,12 +282,6 @@ async function resolveUserOperationReceiptTxHash(userOperationHash: string) {
 
 async function resolveUserOperationLogTxHash(userOperationHash: string) {
   try {
-    const latestBlockHex = await alchemyRpcRequest<string>("eth_blockNumber", [], {
-      timeoutMs: 10_000,
-    });
-    const latestBlock = BigInt(latestBlockHex);
-    const lookback = BigInt(USER_OPERATION_LOG_LOOKBACK_BLOCKS);
-    const fromBlock = latestBlock > lookback ? latestBlock - lookback : 0n;
     const topics = encodeEventTopics({
       abi: USER_OPERATION_EVENT_ABI,
       eventName: "UserOperationEvent",
@@ -294,18 +289,7 @@ async function resolveUserOperationLogTxHash(userOperationHash: string) {
         userOpHash: userOperationHash as `0x${string}`,
       },
     });
-    const logs = await alchemyRpcRequest<Array<{ transactionHash?: string | null }>>(
-      "eth_getLogs",
-      [
-        {
-          address: ENTRY_POINT_V06_ADDRESS,
-          fromBlock: `0x${fromBlock.toString(16)}`,
-          toBlock: "latest",
-          topics,
-        },
-      ],
-      { timeoutMs: 15_000 }
-    );
+    const logs = await getRecentEntryPointLogsByTopics(topics);
     const resolvedHash = logs.find((log) => isTxHash(log.transactionHash))
       ?.transactionHash;
     if (!isTxHash(resolvedHash)) {
@@ -315,6 +299,50 @@ async function resolveUserOperationLogTxHash(userOperationHash: string) {
   } catch {
     return null;
   }
+}
+
+async function getRecentEntryPointLogsByTopics(
+  topics: ReturnType<typeof encodeEventTopics>
+) {
+  const latestBlockHex = await alchemyRpcRequest<string>("eth_blockNumber", [], {
+    timeoutMs: 10_000,
+  });
+  const latestBlock = BigInt(latestBlockHex);
+  const lookback = BigInt(USER_OPERATION_LOG_LOOKBACK_BLOCKS);
+  const minBlock = latestBlock > lookback ? latestBlock - lookback : 0n;
+  const logs: Array<{
+    blockNumber?: string | null;
+    logIndex?: string | null;
+    transactionHash?: string | null;
+  }> = [];
+
+  for (let toBlock = latestBlock; toBlock >= minBlock; ) {
+    const fromBlock =
+      toBlock > USER_OPERATION_LOG_CHUNK_BLOCKS
+        ? toBlock - USER_OPERATION_LOG_CHUNK_BLOCKS + 1n
+        : 0n;
+    const boundedFromBlock = fromBlock > minBlock ? fromBlock : minBlock;
+    const page = await alchemyRpcRequest<typeof logs>(
+      "eth_getLogs",
+      [
+        {
+          address: ENTRY_POINT_V06_ADDRESS,
+          fromBlock: `0x${boundedFromBlock.toString(16)}`,
+          toBlock: `0x${toBlock.toString(16)}`,
+          topics,
+        },
+      ],
+      { timeoutMs: 15_000 }
+    );
+    logs.push(...page);
+
+    if (boundedFromBlock === minBlock) {
+      break;
+    }
+    toBlock = boundedFromBlock - 1n;
+  }
+
+  return logs;
 }
 
 async function resolveSubmittedBaseTransaction(
@@ -3450,6 +3478,7 @@ export class PointsEngine {
   ): Promise<string | null> {
     const normalizedAddress = this.normalizeStoredAddress(targetAddress);
     const wanted = expectedTokenHashHex.toLowerCase().replace(/^0x/, "");
+    const minWei = parseEther(WALLET_LINK_PAYMENT_ETH);
     if (!wanted) return null;
 
     try {
@@ -3479,6 +3508,53 @@ export class PointsEngine {
         try {
           const transaction = await getBaseTransaction(hash as `0x${string}`);
           if ((transaction.input || "").toLowerCase().includes(wanted)) {
+            return hash;
+          }
+        } catch {
+          // ignore and try the next candidate
+        }
+      }
+    } catch {
+      // discovery is best-effort
+    }
+
+    try {
+      const logs = await getRecentEntryPointLogsByTopics(
+        encodeEventTopics({
+          abi: USER_OPERATION_EVENT_ABI,
+          eventName: "UserOperationEvent",
+          args: {
+            sender: normalizedAddress as `0x${string}`,
+          },
+        })
+      );
+      const hashes = Array.from(
+        new Set(
+          logs
+            .sort((a, b) => {
+              const blockDelta =
+                Number(BigInt(b.blockNumber || 0)) - Number(BigInt(a.blockNumber || 0));
+              if (blockDelta !== 0) return blockDelta;
+              return Number(BigInt(b.logIndex || 0)) - Number(BigInt(a.logIndex || 0));
+            })
+            .map((log) => log.transactionHash)
+            .filter(isTxHash)
+        )
+      );
+
+      for (const hash of hashes) {
+        try {
+          const transaction = await getBaseTransaction(hash);
+          if (!(transaction.input || "").toLowerCase().includes(wanted)) {
+            continue;
+          }
+          const smartWalletPayment = this.verifySmartWalletEthPayment(
+            normalizedAddress,
+            transaction,
+            minWei,
+            WALLET_LINK_RECIPIENT
+          );
+          if (smartWalletPayment) {
             return hash;
           }
         } catch {
