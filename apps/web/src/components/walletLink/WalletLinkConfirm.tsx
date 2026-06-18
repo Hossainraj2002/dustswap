@@ -28,6 +28,15 @@ type PageState =
 
 const BASE_ONLY_WALLET_LIST = ["base_account", "coinbase_wallet"] as const;
 
+// Resume polling: how many times (and how far apart) to re-try the confirm while
+// the payment mines/indexes before falling back to the manual "Finish linking".
+const RESUME_ATTEMPTS = 3;
+const RESUME_RETRY_MS = 3000;
+
+function sleep(ms: number) {
+  return new Promise<void>((resolve) => setTimeout(resolve, ms));
+}
+
 // Base App can reload the mini-app frame after a wallet tx, destroying the JS
 // context before the confirm POST fires. Persist the attempt so we can resume
 // (and complete the link) on the next load — even without the wallet connected.
@@ -117,22 +126,30 @@ export function WalletLinkConfirm({ token }: { token: string | null }) {
       if (pending?.address) {
         setHasPending(true);
         setState({ kind: "linking" });
-        try {
-          const result = await confirmWalletLink({
-            token,
-            address: pending.address,
-            txHash: pending.txHash,
-          });
-          if (!cancelled) finishSuccess(result);
-          return;
-        } catch (err) {
-          // Keep the pending marker so the user can retry without re-paying.
-          if (!cancelled) {
-            setError(
-              err instanceof Error
-                ? err.message
-                : "Couldn't finish linking — tap Finish linking to retry."
-            );
+        // The payment is usually still mining/indexing right after the Base App
+        // frame reloads, so poll the confirm a few times before showing the
+        // manual retry. The marker is kept either way so retrying never re-pays.
+        for (let attempt = 0; attempt < RESUME_ATTEMPTS; attempt += 1) {
+          try {
+            const result = await confirmWalletLink({
+              token,
+              address: pending.address,
+              txHash: pending.txHash,
+            });
+            if (!cancelled) finishSuccess(result);
+            return;
+          } catch (err) {
+            if (cancelled) return;
+            if (attempt === RESUME_ATTEMPTS - 1) {
+              setError(
+                err instanceof Error
+                  ? err.message
+                  : "Couldn't finish linking — tap Finish linking to retry."
+              );
+              break;
+            }
+            await sleep(RESUME_RETRY_MS);
+            if (cancelled) return;
           }
         }
       }
@@ -274,7 +291,10 @@ export function WalletLinkConfirm({ token }: { token: string | null }) {
         )}
 
         {state.kind === "linking" && (
-          <p className="mt-3 text-sm text-slate-500">Finishing your link…</p>
+          <p className="mt-3 text-sm text-slate-500">
+            Confirming your payment on-chain and finishing your link… this can
+            take a few seconds.
+          </p>
         )}
 
         {state.kind === "invalid" && (

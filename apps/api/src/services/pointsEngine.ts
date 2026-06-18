@@ -139,6 +139,12 @@ const USER_OPERATION_LOG_LOOKBACK_BLOCKS = Math.min(
   100_000
 );
 const USER_OPERATION_LOG_CHUNK_BLOCKS = 9_500n;
+// Wallet-link payment discovery (resume path) only needs to look back a short
+// window — the payment was just made — so each attempt stays fast (one getLogs
+// chunk) and we can afford to retry while the tx mines/indexes.
+const WALLET_LINK_DISCOVERY_LOOKBACK_BLOCKS = 5_000;
+const WALLET_LINK_DISCOVERY_ATTEMPTS = 4;
+const WALLET_LINK_DISCOVERY_RETRY_MS = 2_500;
 const POINTS_SUMMARY_CACHE_TTL_MS = 15_000;
 const LEADERBOARD_CACHE_TTL_MS = 60_000;
 const FOOTPRINT_STATUS_CACHE_TTL_MS = 2 * 60 * 1000;
@@ -302,13 +308,14 @@ async function resolveUserOperationLogTxHash(userOperationHash: string) {
 }
 
 async function getRecentEntryPointLogsByTopics(
-  topics: ReturnType<typeof encodeEventTopics>
+  topics: ReturnType<typeof encodeEventTopics>,
+  lookbackBlocks: number = USER_OPERATION_LOG_LOOKBACK_BLOCKS
 ) {
   const latestBlockHex = await alchemyRpcRequest<string>("eth_blockNumber", [], {
     timeoutMs: 10_000,
   });
   const latestBlock = BigInt(latestBlockHex);
-  const lookback = BigInt(USER_OPERATION_LOG_LOOKBACK_BLOCKS);
+  const lookback = BigInt(lookbackBlocks);
   const minBlock = latestBlock > lookback ? latestBlock - lookback : 0n;
   const logs: Array<{
     blockNumber?: string | null;
@@ -3472,52 +3479,60 @@ export class PointsEngine {
   // Resume fallback: when the client lost the tx hash (e.g. Base App reloaded the
   // mini-app frame after the payment), find the on-chain link payment from the
   // wallet to the recipient whose calldata carries the token hash.
+  //
+  // The frame typically reloads the instant the tx is submitted, so on the first
+  // resume the payment may not be mined/indexed yet. We retry with backoff and,
+  // on each attempt, run BOTH discovery strategies so we cover either account
+  // shape: a 4337 smart-wallet userOp (found via the EntryPoint event log — the
+  // proven, near-real-time path) and a plain/EIP-7702 direct tx (found via the
+  // asset-transfers indexer — the only path for a payment that emits no userOp).
   async findWalletLinkPaymentTx(
     targetAddress: string,
     expectedTokenHashHex: string
   ): Promise<string | null> {
     const normalizedAddress = this.normalizeStoredAddress(targetAddress);
     const wanted = expectedTokenHashHex.toLowerCase().replace(/^0x/, "");
-    const minWei = parseEther(WALLET_LINK_PAYMENT_ETH);
     if (!wanted) return null;
 
-    try {
-      const res = await alchemyRpcRequest<{ transfers?: Array<{ hash?: string }> }>(
-        "alchemy_getAssetTransfers",
-        [
-          {
-            fromAddress: normalizedAddress,
-            toAddress: WALLET_LINK_RECIPIENT,
-            category: ["external", "internal"],
-            order: "desc",
-            maxCount: "0x14",
-            excludeZeroValue: true,
-          },
-        ]
-      );
-
-      const hashes = Array.from(
-        new Set(
-          (res?.transfers || [])
-            .map((transfer) => transfer.hash)
-            .filter((hash): hash is string => Boolean(hash))
-        )
-      );
-
-      for (const hash of hashes) {
-        try {
-          const transaction = await getBaseTransaction(hash as `0x${string}`);
-          if ((transaction.input || "").toLowerCase().includes(wanted)) {
-            return hash;
-          }
-        } catch {
-          // ignore and try the next candidate
-        }
+    for (let attempt = 1; attempt <= WALLET_LINK_DISCOVERY_ATTEMPTS; attempt += 1) {
+      const viaLogs = await this.findLinkPaymentViaUserOpLogs(normalizedAddress, wanted);
+      if (viaLogs) {
+        console.log(
+          `[wallet-link] discovery: matched userOp log on attempt ${attempt} for ${normalizedAddress} -> ${viaLogs}`
+        );
+        return viaLogs;
       }
-    } catch {
-      // discovery is best-effort
+
+      const viaTransfers = await this.findLinkPaymentViaAssetTransfers(
+        normalizedAddress,
+        wanted
+      );
+      if (viaTransfers) {
+        console.log(
+          `[wallet-link] discovery: matched asset transfer on attempt ${attempt} for ${normalizedAddress} -> ${viaTransfers}`
+        );
+        return viaTransfers;
+      }
+
+      if (attempt < WALLET_LINK_DISCOVERY_ATTEMPTS) {
+        await sleep(WALLET_LINK_DISCOVERY_RETRY_MS);
+      }
     }
 
+    console.warn(
+      `[wallet-link] discovery: no link payment found for ${normalizedAddress} after ${WALLET_LINK_DISCOVERY_ATTEMPTS} attempts`
+    );
+    return null;
+  }
+
+  // 4337 path: find the payment via the EntryPoint UserOperationEvent for this
+  // sender, then confirm the token hash is in the (handleOps) calldata and the
+  // nested call actually pays the recipient.
+  private async findLinkPaymentViaUserOpLogs(
+    normalizedAddress: string,
+    wanted: string
+  ): Promise<string | null> {
+    const minWei = parseEther(WALLET_LINK_PAYMENT_ETH);
     try {
       const logs = await getRecentEntryPointLogsByTopics(
         encodeEventTopics({
@@ -3526,7 +3541,8 @@ export class PointsEngine {
           args: {
             sender: normalizedAddress as `0x${string}`,
           },
-        })
+        }),
+        WALLET_LINK_DISCOVERY_LOOKBACK_BLOCKS
       );
       const hashes = Array.from(
         new Set(
@@ -3561,10 +3577,61 @@ export class PointsEngine {
           // ignore and try the next candidate
         }
       }
-    } catch {
-      // discovery is best-effort
+    } catch (err) {
+      console.warn(
+        `[wallet-link] discovery: userOp-log lookup failed for ${normalizedAddress}:`,
+        err instanceof Error ? err.message : err
+      );
     }
+    return null;
+  }
 
+  // Plain / EIP-7702 path (and a backstop for smart wallets): find a value
+  // transfer from this wallet to the recipient via the asset-transfers indexer,
+  // then confirm the token hash is present in that tx's calldata.
+  private async findLinkPaymentViaAssetTransfers(
+    normalizedAddress: string,
+    wanted: string
+  ): Promise<string | null> {
+    try {
+      const res = await alchemyRpcRequest<{ transfers?: Array<{ hash?: string }> }>(
+        "alchemy_getAssetTransfers",
+        [
+          {
+            fromAddress: normalizedAddress,
+            toAddress: WALLET_LINK_RECIPIENT,
+            category: ["external", "internal"],
+            order: "desc",
+            maxCount: "0x14",
+            excludeZeroValue: true,
+          },
+        ]
+      );
+
+      const hashes = Array.from(
+        new Set(
+          (res?.transfers || [])
+            .map((transfer) => transfer.hash)
+            .filter((hash): hash is string => Boolean(hash))
+        )
+      );
+
+      for (const hash of hashes) {
+        try {
+          const transaction = await getBaseTransaction(hash as `0x${string}`);
+          if ((transaction.input || "").toLowerCase().includes(wanted)) {
+            return hash;
+          }
+        } catch {
+          // ignore and try the next candidate
+        }
+      }
+    } catch (err) {
+      console.warn(
+        `[wallet-link] discovery: asset-transfers lookup failed for ${normalizedAddress}:`,
+        err instanceof Error ? err.message : err
+      );
+    }
     return null;
   }
 

@@ -11,7 +11,10 @@ const SIGNATURE_TTL_MS = 5 * 60 * 1000;
 const SIGNATURE_FUTURE_SKEW_MS = 60 * 1000;
 const ACTION_WINDOW_MS = 60 * 1000;
 const CREATE_LIMIT = 3;
-const CONFIRM_LIMIT = 6;
+// Confirm is idempotent and gated by the one-time token + on-chain payment, and
+// the client may poll it a few times while the payment mines/indexes (resume
+// path), so allow some headroom before cooling down.
+const CONFIRM_LIMIT = 12;
 const UNLINK_LIMIT = 6;
 const GET_REQUEST_IP_WINDOW_MS = 60 * 1000;
 const GET_REQUEST_IP_LIMIT = 60;
@@ -475,6 +478,9 @@ class WalletLinkService {
     let resolvedTxHash = txHash;
     if (!resolvedTxHash) {
       // Resume path: discover the payment on-chain from { token, address }.
+      console.log(
+        `[wallet-link] confirm: resume discovery for wallet=${targetWallet} request=${request.id}`
+      );
       const found = await pointsEngine.findWalletLinkPaymentTx(targetWallet, tokenHash);
       if (!found) {
         throw new WalletLinkError(
