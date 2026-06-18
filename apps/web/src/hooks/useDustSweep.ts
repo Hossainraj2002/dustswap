@@ -37,6 +37,11 @@ import {
   isBatchCapabilitySupported,
   type WalletRpcRequest,
 } from "@/lib/dustsweep-wallets";
+import {
+  buildWalletSendCallsPayload,
+  canSubmitOkxBatchWithoutUpgrade,
+  requestWalletSendCalls,
+} from "@/lib/dustsweep-wallet-rpc";
 import { DATA_SUFFIX } from "@/lib/builderCode";
 import { buildBasePaymasterCapabilities } from "@/lib/paymaster";
 import { USDC_ADDRESS, WETH_ADDRESS } from "@/lib/tokens";
@@ -189,6 +194,8 @@ const TOKENPOCKET_BATCH_FAILURE_MESSAGE =
   "TokenPocket batch execution failed. Please retry, reduce selected tokens, or use another supported wallet while we continue improving TokenPocket support.";
 const OKX_BATCH_STATUS_UNCLEAR_MESSAGE =
   "OKX batch status was unclear. No fallback prompts were sent. Check OKX activity or retry once.";
+const OKX_UPGRADE_AVOIDED_NOTICE =
+  "OKX reports that this address still needs its one-time smart-account setup. DustSweep will use Sign & Sweep instead and will not request an empty setup transaction.";
 const TOKENPOCKET_EXECUTE_FAILURES_TOPIC =
   "0xc42159347c71974b140767e5ffe0d24cb03d38c0e86462ec59a240394c3b9b4c";
 const APPROVAL_CALL_GAS_LIMIT = 150_000n;
@@ -581,8 +588,14 @@ function appendDataSuffix(data: Hex, dataSuffix?: Hex) {
   return dataSuffix && dataSuffix !== "0x" ? concatHex([data, dataSuffix]) : data;
 }
 
-function normalizeWalletSendCall(call: WalletSendCall, appendSuffix = true): WalletSendCall {
-  const capabilities = mergeCallCapabilities(call);
+function normalizeWalletSendCall(
+  call: WalletSendCall,
+  appendSuffix = true,
+  includeCallCapabilities = true,
+): WalletSendCall {
+  const capabilities = includeCallCapabilities
+    ? mergeCallCapabilities(call)
+    : undefined;
 
   if (!appendSuffix) {
     return {
@@ -697,18 +710,28 @@ export function useDustSweep(): UseDustSweepReturn {
       walletStatus.walletName,
     ],
   );
-  const walletProfile = useMemo<DustSweepWalletProfile>(
-    () => ({
+  const walletProfile = useMemo<DustSweepWalletProfile>(() => {
+    const hasOwnOkxDelegation =
+      walletProfileBase.walletKey === "okx" &&
+      delegation.info.state === "known" &&
+      delegation.info.wallet === "okx";
+    const avoidsOkxUpgrade =
+      walletProfileBase.walletKey === "okx" &&
+      atomicStatus === "ready" &&
+      !hasOwnOkxDelegation;
+
+    return {
       ...walletProfileBase,
       atomicStatus,
-      batchNotice: getWalletBatchNotice(
-        walletProfileBase.walletName,
-        walletProfileBase.walletKey,
-        atomicStatus,
-      ),
-    }),
-    [atomicStatus, walletProfileBase],
-  );
+      batchNotice: avoidsOkxUpgrade
+        ? OKX_UPGRADE_AVOIDED_NOTICE
+        : getWalletBatchNotice(
+            walletProfileBase.walletName,
+            walletProfileBase.walletKey,
+            atomicStatus,
+          ),
+    };
+  }, [atomicStatus, delegation.info, walletProfileBase]);
 
   const allSwappableTokens = balances.swappableTokens;
   const outputTokens = useMemo(() => {
@@ -905,6 +928,20 @@ export function useDustSweep(): UseDustSweepReturn {
     // offer the switch (+ Permit2 fallback).
     if (knownForeignDelegate && canRecommendOneClickWallet(delegateWallet)) {
       return "switch_or_permit2";
+    }
+
+    // OKX's `ready` status means its one-time EIP-7702 upgrade still has to be
+    // submitted. Do not request an atomic batch in that state: the upgrade can
+    // appear as an empty transaction before the requested approval+sweep calls.
+    // Once the account is already on OKX's delegate, a flaky/unknown capability
+    // probe must not suppress the real batch; only explicit `unsupported` does.
+    if (walletProfileBase.walletKey === "okx") {
+      return canSubmitOkxBatchWithoutUpgrade({
+        atomicStatus,
+        hasOwnDelegation: ownKnownDelegate,
+      })
+        ? "batch"
+        : "permit2";
     }
 
     // TokenPocket's Base delegate is enough to prove the connected TokenPocket
@@ -1554,22 +1591,26 @@ export function useDustSweep(): UseDustSweepReturn {
     };
 
     const requireAtomic = args.requireAtomic ?? true;
+    const useSingleOkxRequest = args.walletKey === "okx";
     const calls = args.calls.map((call) =>
-      normalizeWalletSendCall(call, args.appendDataSuffixes ?? true),
+      normalizeWalletSendCall(
+        call,
+        args.appendDataSuffixes ?? true,
+        !useSingleOkxRequest,
+      ),
     );
     const callCount = calls.length;
-    const capabilities = buildSendCallsCapabilities({
-      usePaymasterCapabilities: args.usePaymasterCapabilities,
-    });
-    // OKX decodes raw wallet_sendCalls approval+sweep batches well, but the
-    // viem walletClient.sendCalls wrapper can report an error while OKX still
-    // opens/queues a confirmation. Use exactly one raw request through the
-    // connected wallet client so we keep the successful OKX review shape without
-    // looping through duplicate injected provider objects.
-    const useSingleRawOkxRequest = args.walletKey === "okx";
+    // OKX documents EIP-5792 request capabilities as unsupported. Keep its
+    // payload to the standard {to,data,value} calls and carry builder attribution
+    // in calldata, as the existing production path did.
+    const capabilities = useSingleOkxRequest
+      ? undefined
+      : buildSendCallsCapabilities({
+          usePaymasterCapabilities: args.usePaymasterCapabilities,
+        });
 
     if (
-      !useSingleRawOkxRequest &&
+      !useSingleOkxRequest &&
       typeof client.sendCalls === "function" &&
       typeof client.waitForCallsStatus === "function"
     ) {
@@ -1627,35 +1668,34 @@ export function useDustSweep(): UseDustSweepReturn {
     }
 
     const requests = getWalletRequestCandidates(walletClient, args.walletKey, {
-      limit: useSingleRawOkxRequest ? 1 : undefined,
+      // Prefer window.okxwallet, which is the provider OKX documents for this
+      // RPC. Keep the connected client as a WalletConnect fallback when no OKX
+      // injected provider exists, and submit through exactly one transport.
+      limit: useSingleOkxRequest ? 1 : undefined,
+      preferInjected: useSingleOkxRequest,
     });
     if (requests.length === 0) {
-      throw new Error("wallet_sendCalls is unavailable");
+      throw new Error(
+        useSingleOkxRequest
+          ? "The connected OKX provider is unavailable. Reconnect OKX Wallet and retry."
+          : "wallet_sendCalls is unavailable",
+      );
     }
+
+    const sendCallsPayload = buildWalletSendCallsPayload({
+      account: args.account,
+      chainId: base.id,
+      calls,
+      atomicRequired: requireAtomic,
+      capabilities,
+    });
 
     let sendCallsResult: unknown;
     let requestForStatus: WalletRpcRequest | null = null;
     let lastSendCallsError: unknown;
     for (const request of requests) {
       try {
-        sendCallsResult = await request({
-          method: "wallet_sendCalls",
-          params: [
-            {
-              version: "2.0.0",
-              atomicRequired: requireAtomic,
-              chainId: `0x${base.id.toString(16)}`,
-              from: args.account,
-              calls: calls.map((call) => ({
-                to: call.to,
-                data: call.data,
-                value: toRpcQuantity(call.value),
-                ...(call.capabilities ? { capabilities: call.capabilities } : {}),
-              })),
-              ...(capabilities ? { capabilities } : {}),
-            },
-          ],
-        });
+        sendCallsResult = await requestWalletSendCalls(request, sendCallsPayload);
         requestForStatus = request;
         break;
       } catch (error) {
@@ -1906,8 +1946,19 @@ export function useDustSweep(): UseDustSweepReturn {
       // browser. Attempt the bundle for them regardless of the probe result —
       // sendAtomicWalletCalls falls back to standard approvals if the wallet
       // genuinely can't batch, so this can only reduce prompts, never break.
+      const usesOkxAtomicBatch = walletProfile.walletKey === "okx";
+      const hasOwnOkxDelegation =
+        usesOkxAtomicBatch &&
+        delegation.info.state === "known" &&
+        delegation.info.wallet === "okx";
       const canUseWalletSendCalls =
-        supportsWalletSendCalls || walletStatus.isCoinbaseSmartWallet;
+        supportsWalletSendCalls ||
+        walletStatus.isCoinbaseSmartWallet ||
+        (usesOkxAtomicBatch &&
+          canSubmitOkxBatchWithoutUpgrade({
+            atomicStatus: walletProfile.atomicStatus,
+            hasOwnDelegation: hasOwnOkxDelegation,
+          }));
       // Only attempt wallet batching on the batch route. When the account is
       // delegated to a foreign/unknown impl (routeKind !== "batch"), the wallet's
       // atomic batch can't actually work, so skip it and go straight to standard
@@ -1928,7 +1979,6 @@ export function useDustSweep(): UseDustSweepReturn {
         batchMode &&
         hasV2Approvals &&
         usesTokenPocketExisting;
-      const usesOkxAtomicBatch = walletProfile.walletKey === "okx";
       // Below the single-batch limit Coinbase/Base bundle approvals + sweep into
       // ONE prompt. Only split (approvals batch, then sweep) once the sweep is
       // large enough that one bundle gets unwieldy — keeping it to two prompts.

@@ -17,11 +17,13 @@ import {
   type DustSweepWalletKey,
   type DustSweepWalletProfile,
 } from "@/types/dustsweep";
+import {
+  orderWalletRequestCandidates,
+  type WalletRequestCandidateOptions,
+  type WalletRpcRequest,
+} from "@/lib/dustsweep-wallet-rpc";
 
-export type WalletRpcRequest = (args: {
-  method: string;
-  params?: unknown[];
-}) => Promise<unknown>;
+export type { WalletRpcRequest } from "@/lib/dustsweep-wallet-rpc";
 
 type EthereumFlags = {
   isAmbire?: boolean;
@@ -301,7 +303,7 @@ function getWindowEthereumProviders(walletKey?: DustSweepWalletKey): WalletRpcPr
 export function getWalletRequestCandidates(
   walletClient: unknown,
   walletKey?: DustSweepWalletKey,
-  options?: { preferInjected?: boolean; limit?: number },
+  options?: WalletRequestCandidateOptions,
 ): WalletRpcRequest[] {
   const clientCandidates: WalletRpcRequest[] = [];
   const providerCandidates: WalletRpcRequest[] = [];
@@ -317,11 +319,7 @@ export function getWalletRequestCandidates(
     }
   }
 
-  const candidates = options?.preferInjected
-    ? [...providerCandidates, ...clientCandidates]
-    : [...clientCandidates, ...providerCandidates];
-
-  return typeof options?.limit === "number" ? candidates.slice(0, options.limit) : candidates;
+  return orderWalletRequestCandidates(clientCandidates, providerCandidates, options);
 }
 
 export function getWalletRequest(
