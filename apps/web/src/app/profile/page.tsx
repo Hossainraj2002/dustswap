@@ -225,7 +225,7 @@ function ProfilePageContent() {
   const { address, isConnected } = useAccount();
   const { signMessageAsync } = useSignMessage();
   const { data: walletClient } = useWalletClient();
-  const { supportsBaseAccountFeatures } = useWalletConnection();
+  const { disconnectWallet, supportsBaseAccountFeatures } = useWalletConnection();
   const { isOnBase, isSwitching: isSwitchingToBase, switchToBase } = useBaseChainSwitch();
   const publicClient = usePublicClient();
 
@@ -257,6 +257,8 @@ function ProfilePageContent() {
     useState<ProfileSettingsFocusTarget | null>(null);
   const [settingsConnectionSource, setSettingsConnectionSource] =
     useState<string | null>(null);
+  const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false);
+  const [isDisconnectingProfile, setIsDisconnectingProfile] = useState(false);
   const [pendingReferralCode, setPendingReferralCode] = useState<string | null>(null);
 
   // Inline referral code entry state — profile fallback, completely separate from link-based flow
@@ -274,6 +276,7 @@ function ProfilePageContent() {
   const inlineDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const silentRefreshPromiseRef = useRef<Promise<void> | null>(null);
   const lastSilentRefreshAtRef = useRef(0);
+  const profileMenuRef = useRef<HTMLDivElement | null>(null);
   const referralSectionRef = useRef<HTMLElement | null>(null);
   const trackerImpressionAddressRef = useRef<string | null>(null);
   const modalImpressionAddressRef = useRef<string | null>(null);
@@ -515,6 +518,26 @@ function ProfilePageContent() {
     void fetchProfileCompletionData({ silent: true });
   }, [fetchProfileCompletionData]);
 
+  const handleProfileDisconnect = useCallback(async () => {
+    if (isDisconnectingProfile) {
+      return;
+    }
+
+    setIsDisconnectingProfile(true);
+    try {
+      await disconnectWallet();
+      setIsProfileMenuOpen(false);
+    } catch (error) {
+      console.error("Profile disconnect failed", error);
+      setToast({
+        kind: "error",
+        message: "Could not disconnect wallet. Please try again.",
+      });
+    } finally {
+      setIsDisconnectingProfile(false);
+    }
+  }, [disconnectWallet, isDisconnectingProfile]);
+
   useEffect(() => {
     setIsMounted(true);
     if (typeof window === "undefined") {
@@ -558,6 +581,8 @@ function ProfilePageContent() {
     setSettingsInitialFocusTarget(null);
     setSettingsConnectionSource(null);
     setIsSettingsOpen(false);
+    setIsProfileMenuOpen(false);
+    setIsDisconnectingProfile(false);
     setIsLoading(false);
   }, [
     fetchNeynarProfile,
@@ -566,6 +591,32 @@ function ProfilePageContent() {
     fetchProfileSettingsData,
     isConnected,
   ]);
+
+  useEffect(() => {
+    if (!isProfileMenuOpen) {
+      return;
+    }
+
+    const handlePointerDown = (event: MouseEvent) => {
+      if (!profileMenuRef.current?.contains(event.target as Node)) {
+        setIsProfileMenuOpen(false);
+      }
+    };
+
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setIsProfileMenuOpen(false);
+      }
+    };
+
+    document.addEventListener("mousedown", handlePointerDown);
+    document.addEventListener("keydown", handleEscape);
+
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      document.removeEventListener("keydown", handleEscape);
+    };
+  }, [isProfileMenuOpen]);
 
   useEffect(() => {
     if (
@@ -1643,31 +1694,95 @@ function ProfilePageContent() {
             </svg>
           </button>
 
-          <div className="flex items-center gap-3 pr-10">
-            {profileDisplay.avatarUrl ? (
-              <img
-                src={profileDisplay.avatarUrl}
-                alt="Profile"
-                className="h-11 w-11 rounded-[14px] border border-white/70 object-cover shadow-[0_10px_28px_rgba(56,189,248,0.18)]"
-                referrerPolicy="no-referrer"
-              />
-            ) : (
-              <div className="flex h-11 w-11 items-center justify-center rounded-[14px] border border-sky-200 bg-[linear-gradient(135deg,#38bdf8,#0ea5e9)] text-base font-black text-white shadow-[0_10px_28px_rgba(14,165,233,0.22)]">
-                {profileDisplay.initials}
-              </div>
-            )}
+          <div ref={profileMenuRef} className="relative z-20 max-w-full pr-10 sm:max-w-xl">
+            <button
+              type="button"
+              onClick={() => setIsProfileMenuOpen((current) => !current)}
+              className="group flex max-w-full items-center gap-3 rounded-[20px] border border-transparent p-1 pr-3 text-left transition hover:border-sky-100 hover:bg-white/70 focus-visible:border-sky-200 focus-visible:bg-white/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-100"
+              aria-label="Open profile wallet menu"
+              aria-expanded={isProfileMenuOpen}
+              aria-haspopup="menu"
+            >
+              {profileDisplay.avatarUrl ? (
+                <img
+                  src={profileDisplay.avatarUrl}
+                  alt="Profile"
+                  className="h-11 w-11 shrink-0 rounded-[14px] border border-white/70 object-cover shadow-[0_10px_28px_rgba(56,189,248,0.18)]"
+                  referrerPolicy="no-referrer"
+                />
+              ) : (
+                <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[14px] border border-sky-200 bg-[linear-gradient(135deg,#38bdf8,#0ea5e9)] text-base font-black text-white shadow-[0_10px_28px_rgba(14,165,233,0.22)]">
+                  {profileDisplay.initials}
+                </span>
+              )}
 
-            <div className="min-w-0">
-              <p className="text-[9px] font-black uppercase tracking-[0.32em] text-slate-500">
-                Profile Hub
-              </p>
-              <h1 className="truncate text-xl font-black tracking-tight text-slate-950">
-                {profileDisplay.displayName}
-              </h1>
-              <p className="truncate text-xs text-slate-600">
-                {profileDisplay.subtitle}
-              </p>
-            </div>
+              <span className="min-w-0">
+                <span className="block text-[9px] font-black uppercase tracking-[0.32em] text-slate-500">
+                  Profile Hub
+                </span>
+                <span className="block truncate text-xl font-black tracking-tight text-slate-950">
+                  {profileDisplay.displayName}
+                </span>
+                <span className="block truncate text-xs text-slate-600">
+                  {profileDisplay.subtitle}
+                </span>
+              </span>
+
+              <span
+                className={`ml-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-400 transition group-hover:border-sky-200 group-hover:text-sky-600 ${
+                  isProfileMenuOpen ? "rotate-180 border-sky-200 text-sky-600" : ""
+                }`}
+                aria-hidden="true"
+              >
+                <svg
+                  className="h-4 w-4"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="m6 9 6 6 6-6"
+                  />
+                </svg>
+              </span>
+            </button>
+
+            {isProfileMenuOpen && address ? (
+              <div
+                role="menu"
+                className="absolute left-0 top-[calc(100%+0.5rem)] z-40 w-[calc(100vw-2rem)] max-w-[20rem] rounded-[20px] border border-slate-200 bg-white p-2 shadow-[0_22px_52px_rgba(15,23,42,0.16)]"
+              >
+                <div className="rounded-[16px] bg-slate-50 px-3 py-2">
+                  <p className="text-[10px] font-black uppercase tracking-[0.22em] text-slate-400">
+                    Connected Wallet
+                  </p>
+                  <p className="mt-1 font-mono text-sm font-black text-slate-900">
+                    {shortAddress(address)}
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => void handleProfileDisconnect()}
+                  disabled={isDisconnectingProfile}
+                  className="mt-2 flex w-full items-center justify-center rounded-[14px] border border-slate-200 bg-white px-3 py-2 text-sm font-black text-slate-700 transition hover:border-rose-200 hover:bg-rose-50 hover:text-rose-700 disabled:cursor-not-allowed disabled:opacity-60"
+                  aria-label="Disconnect wallet"
+                >
+                  {isDisconnectingProfile ? (
+                    <span className="flex items-center gap-2">
+                      <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-rose-200 border-t-rose-500" />
+                      Disconnecting...
+                    </span>
+                  ) : (
+                    "Disconnect"
+                  )}
+                </button>
+              </div>
+            ) : null}
           </div>
 
           <div className="mt-3 grid grid-cols-2 gap-2 xl:grid-cols-4">
