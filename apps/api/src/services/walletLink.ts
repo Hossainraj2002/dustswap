@@ -11,10 +11,11 @@ const SIGNATURE_TTL_MS = 5 * 60 * 1000;
 const SIGNATURE_FUTURE_SKEW_MS = 60 * 1000;
 const ACTION_WINDOW_MS = 60 * 1000;
 const CREATE_LIMIT = 3;
-// Confirm is idempotent and gated by the one-time token + on-chain payment, and
-// the client may poll it a few times while the payment mines/indexes (resume
-// path), so allow some headroom before cooling down.
-const CONFIRM_LIMIT = 12;
+// Confirm is idempotent and gated by the one-time token + the on-chain payment
+// binding (a wrong wallet can't be linked no matter how often it's called), so
+// this limit is only anti-RPC-cost. The client auto-polls the resume while the
+// payment mines/indexes, so keep generous headroom to avoid false cooldowns.
+const CONFIRM_LIMIT = 30;
 const UNLINK_LIMIT = 6;
 const GET_REQUEST_IP_WINDOW_MS = 60 * 1000;
 const GET_REQUEST_IP_LIMIT = 60;

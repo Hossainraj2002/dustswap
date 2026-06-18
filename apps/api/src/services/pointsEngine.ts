@@ -17,6 +17,7 @@ import { getPaymentStatus } from "@base-org/account/payment";
 import { postgresDb } from "./postgres";
 import {
   alchemyRpcRequest,
+  baseRpcRequest,
   getBaseRpcEndpoints,
   getRotatingBaseRpcEndpoint,
   type BaseRpcEndpoint,
@@ -3534,15 +3535,41 @@ export class PointsEngine {
   ): Promise<string | null> {
     const minWei = parseEther(WALLET_LINK_PAYMENT_ETH);
     try {
-      const logs = await getRecentEntryPointLogsByTopics(
-        encodeEventTopics({
-          abi: USER_OPERATION_EVENT_ABI,
-          eventName: "UserOperationEvent",
-          args: {
-            sender: normalizedAddress as `0x${string}`,
+      // Use the rotating base RPC (which always includes the public Base RPC as a
+      // fallback) rather than alchemyRpcRequest: when Alchemy endpoints are
+      // configured but failing, alchemyRpcRequest throws instead of falling back,
+      // which would silently break discovery. The window is a single sub-10k
+      // getLogs chunk (public Base RPC caps eth_getLogs at a 10k-block range).
+      const topics = encodeEventTopics({
+        abi: USER_OPERATION_EVENT_ABI,
+        eventName: "UserOperationEvent",
+        args: {
+          sender: normalizedAddress as `0x${string}`,
+        },
+      });
+      const latestHex = await baseRpcRequest<string>("eth_blockNumber", [], {
+        timeoutMs: 10_000,
+      });
+      const latest = BigInt(latestHex);
+      const lookback = BigInt(WALLET_LINK_DISCOVERY_LOOKBACK_BLOCKS);
+      const fromBlock = latest > lookback ? latest - lookback : 0n;
+      const logs = await baseRpcRequest<
+        Array<{
+          blockNumber?: string | null;
+          logIndex?: string | null;
+          transactionHash?: string | null;
+        }>
+      >(
+        "eth_getLogs",
+        [
+          {
+            address: ENTRY_POINT_V06_ADDRESS,
+            fromBlock: `0x${fromBlock.toString(16)}`,
+            toBlock: `0x${latest.toString(16)}`,
+            topics,
           },
-        }),
-        WALLET_LINK_DISCOVERY_LOOKBACK_BLOCKS
+        ],
+        { timeoutMs: 15_000 }
       );
       const hashes = Array.from(
         new Set(
