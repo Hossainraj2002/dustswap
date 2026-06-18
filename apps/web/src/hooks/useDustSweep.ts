@@ -41,6 +41,7 @@ import {
   buildWalletSendCallsPayload,
   canSubmitOkxBatchWithoutUpgrade,
   requestWalletSendCalls,
+  shouldSplitOkxApprovalAndSweep,
 } from "@/lib/dustsweep-wallet-rpc";
 import { DATA_SUFFIX } from "@/lib/builderCode";
 import { buildBasePaymasterCapabilities } from "@/lib/paymaster";
@@ -189,6 +190,8 @@ const BASE_ACCOUNT_SPLIT_BATCH_NOTICE =
   "Base Account will batch approvals first, then send the sweep in a second wallet request for more reliable estimation.";
 const TOKENPOCKET_SPLIT_BATCH_NOTICE =
   "TokenPocket estimates DustSweep more reliably when approvals are batched first. DustSweep will send approvals first, then send the sweep after allowances are confirmed.";
+const OKX_SPLIT_BATCH_NOTICE =
+  "OKX Wallet will send token approvals in one real batch first, then send the sweep after the approval batch is confirmed.";
 const METAMASK_LOCKED_MESSAGE = "Unlock MetaMask and try again. No transaction was sent.";
 const TOKENPOCKET_BATCH_FAILURE_MESSAGE =
   "TokenPocket batch execution failed. Please retry, reduce selected tokens, or use another supported wallet while we continue improving TokenPocket support.";
@@ -1668,11 +1671,10 @@ export function useDustSweep(): UseDustSweepReturn {
     }
 
     const requests = getWalletRequestCandidates(walletClient, args.walletKey, {
-      // Prefer window.okxwallet, which is the provider OKX documents for this
-      // RPC. Keep the connected client as a WalletConnect fallback when no OKX
-      // injected provider exists, and submit through exactly one transport.
+      // The connected client is the transport that produced the last confirmed
+      // OKX approval batch for this app. Submit through exactly one transport so
+      // an unclear result can never open a second prompt through another provider.
       limit: useSingleOkxRequest ? 1 : undefined,
-      preferInjected: useSingleOkxRequest,
     });
     if (requests.length === 0) {
       throw new Error(
@@ -1987,13 +1989,23 @@ export function useDustSweep(): UseDustSweepReturn {
         walletProfile.executionStrategy === "coinbase_paymaster" &&
         exceedsSingleBatchLimit;
       const shouldSplitTokenPocketBatch = hasV2Approvals && usesTokenPocketExisting;
-      const shouldSplitWalletBatch = shouldSplitBaseAccountBatch || shouldSplitTokenPocketBatch;
+      // OKX successfully handles the approval batch, while a large combined
+      // approval+sweep request can be rejected after confirmation before a hash
+      // exists. Keep OKX on the proven two-stage flow: one real approval batch,
+      // wait for its receipt, then the canonical sweep transaction.
+      const shouldSplitOkxBatch = shouldSplitOkxApprovalAndSweep({
+        isOkx: usesOkxAtomicBatch,
+        approvalCallCount: approvalCalls.length,
+      });
+      const shouldSplitWalletBatch =
+        shouldSplitBaseAccountBatch ||
+        shouldSplitTokenPocketBatch ||
+        shouldSplitOkxBatch;
       const canBundleAllCalls =
         !shouldSplitWalletBatch &&
         (canUseAtomicBatch || canUseTokenPocketBatch) &&
         bundledCallCount <= walletCallCap;
       const canBundleApprovalsOnly =
-        !usesOkxAtomicBatch &&
         (canUseAtomicBatch || canUseTokenPocketBatch) &&
         approvalCalls.length > 0 &&
         // TP uses parallel eth_sendTransaction (no wallet_sendCalls cap); other wallets respect the cap.
@@ -2024,6 +2036,7 @@ export function useDustSweep(): UseDustSweepReturn {
         walletCallCap,
         walletApprovalBatchingEnabled,
         tokenPocketCompatibleBatch: canUseTokenPocketBatch,
+        splitOkxBatch: shouldSplitOkxBatch,
         splitWalletBatch: shouldSplitWalletBatch,
         chunkWalletBatch: shouldChunkWalletBatch,
       });
@@ -2120,6 +2133,16 @@ export function useDustSweep(): UseDustSweepReturn {
             throw approvalBatchError;
           }
 
+          if (usesOkxAtomicBatch) {
+            console.warn("DustSweep OKX approval batch status was unclear; stopping without fallback prompts.", {
+              walletKey: walletProfile.walletKey,
+              approvalCallCount: approvalCalls.length,
+              code: getErrorCode(approvalBatchError),
+              message: getDebugErrorMessage(approvalBatchError),
+            });
+            throw new Error(OKX_BATCH_STATUS_UNCLEAR_MESSAGE);
+          }
+
           console.warn("DustSweep approval batch failed; falling back to standard approvals.", {
             walletKey: walletProfile.walletKey,
             approvalCallCount: approvalCalls.length,
@@ -2134,6 +2157,14 @@ export function useDustSweep(): UseDustSweepReturn {
 
         const remainingApprovals = await getTokenApprovalRequirements(quote.routes, approvalSpender);
         if (remainingApprovals.length > 0) {
+          if (usesOkxAtomicBatch) {
+            console.warn("DustSweep OKX approval batch left missing allowances; stopping without follow-up prompts.", {
+              walletKey: walletProfile.walletKey,
+              missingApprovalCount: remainingApprovals.length,
+            });
+            throw new Error(OKX_BATCH_STATUS_UNCLEAR_MESSAGE);
+          }
+
           console.warn("DustSweep approval batch left missing allowances; completing standard approvals.", {
             walletKey: walletProfile.walletKey,
             missingApprovalCount: remainingApprovals.length,
@@ -2353,7 +2384,9 @@ export function useDustSweep(): UseDustSweepReturn {
         }
       } else if (canBundleApprovalsOnly) {
         hash = await sendBundledApprovalsThenSweep(
-          shouldSplitBaseAccountBatch
+          shouldSplitOkxBatch
+            ? OKX_SPLIT_BATCH_NOTICE
+            : shouldSplitBaseAccountBatch
             ? BASE_ACCOUNT_SPLIT_BATCH_NOTICE
             : shouldSplitTokenPocketBatch
             ? TOKENPOCKET_SPLIT_BATCH_NOTICE

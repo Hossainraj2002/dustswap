@@ -37,6 +37,18 @@ export function canSubmitOkxBatchWithoutUpgrade(args: {
   return args.atomicStatus === "supported";
 }
 
+/**
+ * Keep OKX approval calls separate from the expensive router sweep. This is
+ * still two user confirmations, but the first transaction contains the real
+ * approval batch and avoids OKX rejecting a large combined call after confirm.
+ */
+export function shouldSplitOkxApprovalAndSweep(args: {
+  isOkx: boolean;
+  approvalCallCount: number;
+}) {
+  return args.isOkx && args.approvalCallCount > 0;
+}
+
 export function orderWalletRequestCandidates(
   clientCandidates: WalletRpcRequest[],
   injectedCandidates: WalletRpcRequest[],
