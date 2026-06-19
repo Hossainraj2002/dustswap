@@ -560,17 +560,14 @@ async function getExistingSwap(txHash: string, chainId?: number | null) {
 }
 
 async function getUserByAddress(address: string) {
-  const { data, error } = await postgresDb
-    .from("users")
-    .select("id")
-    .eq("address", normalizeAddress(address))
-    .maybeSingle();
-
-  if (error) {
-    throw new Error(`Load user: ${error.message}`);
-  }
-
-  return (data as UserRow | null) ?? null;
+  // Merge-aware: a linked secondary wallet has no `users` row of its own (it
+  // lives in user_wallets under the primary account, whose merged-away row is
+  // tombstoned), so a raw users.address lookup returns null and the wallet would
+  // report zero volume. Resolve through the account resolver so both wallets see
+  // the account's (summed) volume. Volume itself is account-level (keyed by
+  // user_id and summed at merge).
+  const account = await pointsEngine.getAccountByWallet(address);
+  return account ? ({ id: account.id } as UserRow) : null;
 }
 
 async function getTransactionContextByHash(client: SwapPublicClient, txHash: Hex) {
