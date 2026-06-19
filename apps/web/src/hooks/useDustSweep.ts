@@ -199,8 +199,10 @@ const OKX_BATCH_STATUS_UNCLEAR_MESSAGE =
   "OKX batch status was unclear. No fallback prompts were sent. Check OKX activity or retry once.";
 const OKX_BATCH_TOO_LARGE_MESSAGE =
   "This sweep needs more wallet calls than OKX can batch into one transaction. Select fewer tokens so DustSweep can approve and sweep them together in a single OKX transaction.";
-const OKX_STANDARD_SWEEP_NOTICE =
-  "OKX Wallet approves any not-yet-approved tokens (one-time per token), then sweeps them in a single transaction.";
+const OKX_COMBINED_BATCH_NOTICE =
+  "OKX Wallet batches your token approvals and the sweep into one transaction.";
+const OKX_BATCH_FALLBACK_NOTICE =
+  "OKX couldn't combine approvals and the sweep into one transaction; approving each token, then sweeping.";
 const TOKENPOCKET_EXECUTE_FAILURES_TOPIC =
   "0xc42159347c71974b140767e5ffe0d24cb03d38c0e86462ec59a240394c3b9b4c";
 const WALLET_SEND_CALLS_MAX_CALLS = Math.max(
@@ -709,15 +711,15 @@ export function useDustSweep(): UseDustSweepReturn {
     ],
   );
   const walletProfile = useMemo<DustSweepWalletProfile>(() => {
-    // OKX uses the standard single-tx sweep path (it can't reliably batch via
-    // wallet_sendCalls), so show the standard-sweep notice rather than a batch one.
+    // OKX targets one combined approve+sweep wallet_sendCalls (atomicRequired:false),
+    // so show the combined-batch notice.
     const isOkx = walletProfileBase.walletKey === "okx";
 
     return {
       ...walletProfileBase,
       atomicStatus,
       batchNotice: isOkx
-        ? OKX_STANDARD_SWEEP_NOTICE
+        ? OKX_COMBINED_BATCH_NOTICE
         : getWalletBatchNotice(
             walletProfileBase.walletName,
             walletProfileBase.walletKey,
@@ -923,16 +925,15 @@ export function useDustSweep(): UseDustSweepReturn {
       return "switch_or_permit2";
     }
 
-    // OKX: always use the standard approvals + single router sweep transaction.
-    // OKX cannot reliably execute a wallet_sendCalls approve+sweep batch — it
-    // either trips its drainer filter (bare approval batch → "risky signature,
-    // canceled") or hangs simulating and shows "Unable to decode / Confirm
-    // disabled" (combined batch). Its PROVEN path (on-chain tx 0x482869…, a V3
-    // sweep(mode=Allowance) regular tx) is per-token approvals + ONE router sweep
-    // tx, which the wallet estimates and confirms cleanly. Permit2 routeKind drives
-    // exactly that standard path.
+    // OKX: target ONE combined approve+sweep wallet_sendCalls (the user's goal).
+    // OKX bundles it into a single tx via its 7702 smart account when sent with
+    // atomicRequired:false through the injected provider (atomicRequired:true is
+    // what produced "Unable to decode / Confirm disabled"). Only batch when it's
+    // safe — the account is not on a foreign delegate (own OKX delegate or
+    // undelegated). If the batch fails, execution falls back to standard approvals
+    // + a single sweep tx so the sweep still completes.
     if (walletProfileBase.walletKey === "okx") {
-      return "permit2";
+      return !isDelegated || ownKnownDelegate ? "batch" : "permit2";
     }
 
     // TokenPocket's Base delegate is enough to prove the connected TokenPocket
@@ -1581,8 +1582,12 @@ export function useDustSweep(): UseDustSweepReturn {
       }) => Promise<WalletCallsStatusResult>;
     };
 
-    const requireAtomic = args.requireAtomic ?? true;
     const useSingleOkxRequest = args.walletKey === "okx";
+    // OKX rejects atomicRequired:true on wallet_sendCalls (→ "Unable to decode /
+    // Confirm disabled"); with false it bundles approvals + sweep into ONE tx via
+    // its 7702 smart account — the same mode TokenPocket accepts. Other wallets
+    // keep the caller's choice.
+    const requireAtomic = useSingleOkxRequest ? false : (args.requireAtomic ?? true);
     const calls = args.calls.map((call) =>
       normalizeWalletSendCall(
         call,
@@ -1659,9 +1664,10 @@ export function useDustSweep(): UseDustSweepReturn {
     }
 
     const requests = getWalletRequestCandidates(walletClient, args.walletKey, {
-      // The connected client is the transport that produced the last confirmed
-      // OKX approval batch for this app. Submit through exactly one transport so
-      // an unclear result can never open a second prompt through another provider.
+      // For OKX use exactly the injected window.okxwallet provider (the one OKX
+      // documents for wallet_sendCalls), through a single transport so an unclear
+      // result can never open a second prompt via another provider.
+      preferInjected: useSingleOkxRequest,
       limit: useSingleOkxRequest ? 1 : undefined,
     });
     if (requests.length === 0) {
@@ -1937,15 +1943,12 @@ export function useDustSweep(): UseDustSweepReturn {
       // sendAtomicWalletCalls falls back to standard approvals if the wallet
       // genuinely can't batch, so this can only reduce prompts, never break.
       const usesOkxAtomicBatch = walletProfile.walletKey === "okx";
-      const hasOwnOkxDelegation =
-        usesOkxAtomicBatch &&
-        delegation.info.state === "known" &&
-        delegation.info.wallet === "okx";
-      // OKX is routed to the standard single-tx sweep (routeKind "permit2"), so it
-      // is intentionally NOT enabled here for wallet_sendCalls batching.
+      // OKX always attempts the combined wallet_sendCalls batch on the batch route
+      // (its capability probe is unreliable), submitted with atomicRequired:false.
       const canUseWalletSendCalls =
         supportsWalletSendCalls ||
-        walletStatus.isCoinbaseSmartWallet;
+        walletStatus.isCoinbaseSmartWallet ||
+        usesOkxAtomicBatch;
       // Only attempt wallet batching on the batch route. When the account is
       // delegated to a foreign/unknown impl (routeKind !== "batch"), the wallet's
       // atomic batch can't actually work, so skip it and go straight to standard
@@ -1988,14 +1991,12 @@ export function useDustSweep(): UseDustSweepReturn {
       const canBundleApprovalsOnly =
         (canUseAtomicBatch || canUseTokenPocketBatch) &&
         approvalCalls.length > 0 &&
-        // A standalone approval-only batch on a NON-delegated OKX account bundles
-        // the one-time 7702 upgrade with bare approvals (no swap) — the exact
-        // shape OKX hard-blocks as a "risky signature type". Keep non-delegated
-        // OKX on the combined approve+sweep batch only; if that can't fit the call
-        // cap it surfaces a "reduce tokens for the first sweep" message below
-        // rather than the blocked split. (A delegated OKX account adds no upgrade,
-        // so its approval-only batch is fine.)
-        !(usesOkxAtomicBatch && !hasOwnOkxDelegation) &&
+        // NEVER use a standalone approval-only batch for OKX: a batch of bare
+        // approvals (no swap) is the exact shape OKX hard-blocks as a "risky
+        // signature type". OKX only ever does the COMBINED approve+sweep batch; if
+        // that can't fit the call cap it surfaces a "select fewer tokens" message
+        // below rather than the blocked approval-only split.
+        !usesOkxAtomicBatch &&
         // TP uses parallel eth_sendTransaction (no wallet_sendCalls cap); other wallets respect the cap.
         (usesTokenPocketExisting || approvalCalls.length <= walletCallCap);
       const shouldChunkWalletBatch =
@@ -2357,10 +2358,13 @@ export function useDustSweep(): UseDustSweepReturn {
           });
 
           if (usesOkxAtomicBatch) {
-            throw new Error(OKX_BATCH_STATUS_UNCLEAR_MESSAGE);
-          }
-
-          if (usesTokenPocketExisting) {
+            // The one-tx combined batch didn't go through (e.g. OKX rejected it).
+            // Don't hard-fail — fall back to standard per-token approvals + a
+            // single sweep tx so the sweep still completes.
+            console.info("DustSweep OKX combined batch failed; falling back to standard approvals + sweep.");
+            setExecutionNotice(OKX_BATCH_FALLBACK_NOTICE);
+            hash = await sendStandardSweepWithApprovals();
+          } else if (usesTokenPocketExisting) {
             console.info("DustSweep TokenPocket strict batch failed; retrying compatible mode.", {
               walletKey: walletProfile.walletKey,
               requireAtomic: false,

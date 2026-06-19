@@ -42,7 +42,10 @@ type ProfileSettingsModalProps = {
 };
 
 export type ProfileSettingsInitialSection = "profile" | "connections";
-export type ProfileSettingsFocusTarget = "x_connection" | "discord_connection";
+export type ProfileSettingsFocusTarget =
+  | "x_connection"
+  | "discord_connection"
+  | "wallet_linking";
 
 const MAX_PFP_BYTES = 1024 * 1024;
 
@@ -162,6 +165,7 @@ export function ProfileSettingsModal({
   const connectionsSectionRef = useRef<HTMLDivElement>(null);
   const xCardRef = useRef<HTMLDivElement>(null);
   const discordCardRef = useRef<HTMLDivElement>(null);
+  const walletLinkSectionRef = useRef<HTMLDivElement>(null);
 
   const inheritedUsername = normalizeProfileUsername(profile?.fallback.username || "");
   const inheritedDisplayName = profile?.fallback.displayName || "";
@@ -258,26 +262,30 @@ export function ProfileSettingsModal({
       return;
     }
 
-    if (initialSection !== "connections") {
+    const targetElement =
+      initialFocusTarget === "wallet_linking"
+        ? walletLinkSectionRef.current
+        : initialFocusTarget === "discord_connection"
+          ? discordCardRef.current
+          : initialFocusTarget === "x_connection"
+            ? xCardRef.current
+            : initialSection === "connections"
+              ? connectionsSectionRef.current
+              : null;
+
+    if (!targetElement) {
       return;
     }
 
-    const targetElement =
-      initialFocusTarget === "discord_connection"
-        ? discordCardRef.current
-        : initialFocusTarget === "x_connection"
-          ? xCardRef.current
-          : connectionsSectionRef.current;
-
     const scrollTimer = window.setTimeout(() => {
-      targetElement?.scrollIntoView({
+      targetElement.scrollIntoView({
         behavior: "smooth",
         block: "center",
       });
 
       if (initialFocusTarget) {
         setHighlightTarget(initialFocusTarget);
-        targetElement?.querySelector<HTMLButtonElement>("button")?.focus();
+        targetElement.querySelector<HTMLButtonElement>("button")?.focus();
       }
     }, 80);
 
@@ -858,7 +866,14 @@ export function ProfileSettingsModal({
             </div>
           </div>
 
-          <div className="mt-4">
+          <div
+            ref={walletLinkSectionRef}
+            className={`mt-4 rounded-2xl transition ${
+              highlightTarget === "wallet_linking"
+                ? "ring-4 ring-emerald-200 dark:ring-emerald-400/30"
+                : ""
+            }`}
+          >
             <WalletLinkManager address={address} />
           </div>
 

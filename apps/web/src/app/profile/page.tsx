@@ -17,6 +17,7 @@ import {
   type ProfileSettingsFocusTarget,
   type ProfileSettingsInitialSection,
 } from "@/components/profile/ProfileSettingsModal";
+import { WalletLinkPromo } from "@/components/profile/WalletLinkPromo";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { ThemeLongLogo } from "@/components/ThemeLongLogo";
 import { WalletConnectButton } from "@/components/wallet/WalletConnectButton";
@@ -509,6 +510,14 @@ function ProfilePageContent() {
       profileSettings,
     ]
   );
+
+  const openWalletLinking = useCallback(() => {
+    openProfileSettings({
+      section: "connections",
+      focusTarget: "wallet_linking",
+      source: "wallet_link_promo",
+    });
+  }, [openProfileSettings]);
 
   const closeProfileSettings = useCallback(() => {
     setIsSettingsOpen(false);
@@ -1625,6 +1634,10 @@ function ProfilePageContent() {
       style={{ minHeight: "calc(100dvh - 4rem)" }}
     >
       <div className="mx-auto flex w-full max-w-4xl flex-col gap-3 sm:gap-5 xl:max-w-5xl 2xl:max-w-6xl">
+        {isConnected ? (
+          <WalletLinkPromo address={address} onOpenLinking={openWalletLinking} />
+        ) : null}
+
         {toast ? (
           <div
             className={`rounded-[18px] border px-4 py-3 text-sm shadow-[0_16px_36px_rgba(15,23,42,0.08)] ${
