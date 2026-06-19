@@ -94,7 +94,10 @@ test("uses one injected fallback when the connected client is unavailable", asyn
   assert.equal(injectedCalls, 1);
 });
 
-test("does not trigger an OKX upgrade transaction for atomic-ready accounts", () => {
+test("only batches OKX when the account already holds OKX's own 7702 delegate", () => {
+  // No proven OKX delegation: never batch, regardless of the capability probe.
+  // OKX advertises `supported`/`ready` even pre-upgrade, and batching then forces
+  // the set-code authorization OKX's security hard-blocks as a risky signature.
   assert.equal(
     canSubmitOkxBatchWithoutUpgrade({
       atomicStatus: "ready",
@@ -107,8 +110,9 @@ test("does not trigger an OKX upgrade transaction for atomic-ready accounts", ()
       atomicStatus: "supported",
       hasOwnDelegation: false,
     }),
-    true,
+    false,
   );
+  // Proven own delegation: batch even when the probe is flaky/unknown.
   assert.equal(
     canSubmitOkxBatchWithoutUpgrade({
       atomicStatus: "unknown",
@@ -118,6 +122,14 @@ test("does not trigger an OKX upgrade transaction for atomic-ready accounts", ()
   );
   assert.equal(
     canSubmitOkxBatchWithoutUpgrade({
+      atomicStatus: "supported",
+      hasOwnDelegation: true,
+    }),
+    true,
+  );
+  // An explicit `unsupported` capability stays authoritative.
+  assert.equal(
+    canSubmitOkxBatchWithoutUpgrade({
       atomicStatus: "unsupported",
       hasOwnDelegation: true,
     }),
@@ -125,13 +137,16 @@ test("does not trigger an OKX upgrade transaction for atomic-ready accounts", ()
   );
 });
 
-test("keeps OKX approval calls separate from the sweep", () => {
+test("never force-splits the OKX approval batch from the sweep", () => {
+  // OKX is only batched on a proven own delegate, where approvals + sweep go out
+  // as one atomic wallet_sendCalls. Forcing a standalone approval batch triggered
+  // a second "risky signature type" prompt, so the split is always disabled.
   assert.equal(
     shouldSplitOkxApprovalAndSweep({
       isOkx: true,
       approvalCallCount: 47,
     }),
-    true,
+    false,
   );
   assert.equal(
     shouldSplitOkxApprovalAndSweep({

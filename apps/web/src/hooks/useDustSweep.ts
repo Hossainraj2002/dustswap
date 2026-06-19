@@ -718,10 +718,15 @@ export function useDustSweep(): UseDustSweepReturn {
       walletProfileBase.walletKey === "okx" &&
       delegation.info.state === "known" &&
       delegation.info.wallet === "okx";
+    // DustSweep only batches OKX when the account is already on OKX's own 7702
+    // delegate. Until then, batching would force OKX's one-time set-code
+    // authorization (which OKX now flags as a "risky signature type"), so any
+    // non-delegated OKX connection uses Sign & Sweep instead of a setup tx —
+    // regardless of what the capability probe (ready/supported/unknown) claims.
     const avoidsOkxUpgrade =
       walletProfileBase.walletKey === "okx" &&
-      atomicStatus === "ready" &&
-      !hasOwnOkxDelegation;
+      !hasOwnOkxDelegation &&
+      atomicStatus !== "unsupported";
 
     return {
       ...walletProfileBase,
@@ -933,11 +938,13 @@ export function useDustSweep(): UseDustSweepReturn {
       return "switch_or_permit2";
     }
 
-    // OKX's `ready` status means its one-time EIP-7702 upgrade still has to be
-    // submitted. Do not request an atomic batch in that state: the upgrade can
-    // appear as an empty transaction before the requested approval+sweep calls.
-    // Once the account is already on OKX's delegate, a flaky/unknown capability
-    // probe must not suppress the real batch; only explicit `unsupported` does.
+    // OKX advertises atomic batching as a static capability even before its
+    // one-time EIP-7702 upgrade. Requesting a wallet_sendCalls batch then forces
+    // OKX's set-code authorization, which OKX's security engine hard-blocks as a
+    // "risky signature type". So batch OKX ONLY when the account is proven to
+    // already sit on OKX's own delegate (on-chain eth_getCode); otherwise use
+    // Sign & Sweep. A flaky/unknown probe never suppresses a proven-delegate
+    // batch; only explicit `unsupported` does. See canSubmitOkxBatchWithoutUpgrade.
     if (walletProfileBase.walletKey === "okx") {
       return canSubmitOkxBatchWithoutUpgrade({
         atomicStatus,

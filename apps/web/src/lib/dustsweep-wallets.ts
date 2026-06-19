@@ -244,7 +244,7 @@ export function getWalletBatchNotice(
       return `${walletName} can batch token approvals; DustSweep sends approvals first, then the sweep for a reliable Base Account review.`;
     }
     if (walletKey === "okx") {
-      return "OKX Wallet sends token approvals in one batch first, then sends the sweep after the approval batch is confirmed.";
+      return "OKX Wallet batches token approvals and the sweep into one atomic transaction.";
     }
     if (walletKey === "tokenpocket") {
       return "TokenPocket estimates DustSweep more reliably with explicit-gas approvals. DustSweep sends approvals first, then the sweep after allowances are confirmed.";
