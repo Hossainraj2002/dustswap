@@ -234,6 +234,20 @@ export class ProfileCompletionService {
     return normalizeUserRow(data as UserRow | null);
   }
 
+  // Map a connected wallet to the address that owns its SHARED account data: the
+  // primary wallet of its (possibly merged) account. A linked secondary wallet
+  // has no `users`/guide row of its own, so keying profile completion by the
+  // primary address makes both wallets show the same progress + claim state.
+  // Falls back to the given address if the wallet has never been seen.
+  private async resolveAccountAddress(normalizedAddress: string): Promise<string> {
+    try {
+      const account = await pointsEngine.getAccountByWallet(normalizedAddress);
+      return account?.address ? account.address.toLowerCase() : normalizedAddress;
+    } catch {
+      return normalizedAddress;
+    }
+  }
+
   private async loadGuideState(address: string) {
     const { data, error } = await postgresDb
       .from<GuideStateRow>("user_onboarding_guides")
@@ -400,7 +414,10 @@ export class ProfileCompletionService {
   }
 
   async getGuide(address: string) {
-    const normalizedAddress = normalizeAddress(address);
+    // Resolve to the account's primary wallet so a linked secondary wallet shows
+    // the same shared progress (steps are derived from the account's socials /
+    // referral; guide state is keyed by the primary address).
+    const normalizedAddress = await this.resolveAccountAddress(normalizeAddress(address));
     const [user, guideState] = await Promise.all([
       this.loadUserByAddress(normalizedAddress),
       this.loadGuideState(normalizedAddress),
@@ -444,7 +461,9 @@ export class ProfileCompletionService {
       throw new ProfileCompletionError("address is required", 400);
     }
 
-    const normalizedAddress = normalizeAddress(input.address);
+    const normalizedAddress = await this.resolveAccountAddress(
+      normalizeAddress(input.address)
+    );
     const surface = normalizeGuideSurface(input.surface);
     await this.upsertGuideState(normalizedAddress, {
       incrementModalImpressions: surface === "modal" ? 1 : 0,
@@ -458,7 +477,9 @@ export class ProfileCompletionService {
       throw new ProfileCompletionError("address is required", 400);
     }
 
-    const normalizedAddress = normalizeAddress(input.address);
+    const normalizedAddress = await this.resolveAccountAddress(
+      normalizeAddress(input.address)
+    );
     await this.upsertGuideState(normalizedAddress, {
       incrementDismissCount: 1,
     });
@@ -604,6 +625,10 @@ export class ProfileCompletionService {
       "claim-profile-completion",
       requestIp
     );
+    // The signature is verified against the connected wallet, but the reward and
+    // guide state belong to the (possibly merged) account, so operate on the
+    // account's primary wallet — both wallets then share a single claim.
+    const accountAddress = await this.resolveAccountAddress(auth.address);
     const pool = getDbPool();
     const client = await pool.connect();
 
@@ -617,7 +642,7 @@ export class ProfileCompletionService {
           WHERE address = $1
           FOR UPDATE
         `,
-        [auth.address]
+        [accountAddress]
       );
       const user = normalizeUserRow(userResult.rows[0] || null);
 
@@ -679,7 +704,7 @@ export class ProfileCompletionService {
 
       if (insertResult.rowCount === 0) {
         await client.query("ROLLBACK");
-        const guideState = await this.getGuide(auth.address);
+        const guideState = await this.getGuide(accountAddress);
         return {
           success: false as const,
           error: "Reward already claimed.",
@@ -727,13 +752,16 @@ export class ProfileCompletionService {
             ),
             updated_at = EXCLUDED.updated_at
         `,
-        [auth.address, GUIDE_KEY, GUIDE_VERSION]
+        [accountAddress, GUIDE_KEY, GUIDE_VERSION]
       );
 
       await client.query("COMMIT");
 
       pointsEngine.invalidateUserReadCaches(auth.address);
-      const guideState = await this.getGuide(auth.address);
+      if (accountAddress !== auth.address) {
+        pointsEngine.invalidateUserReadCaches(accountAddress);
+      }
+      const guideState = await this.getGuide(accountAddress);
 
       return {
         success: true as const,

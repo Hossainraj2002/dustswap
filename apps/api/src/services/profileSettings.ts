@@ -428,17 +428,14 @@ export class ProfileSettingsService {
 
   async getProfileSettings(address: string) {
     const normalizedAddress = normalizeAddress(address);
-    const { data: userData, error: userError } = await postgresDb
-      .from("users")
-      .select("id, address")
-      .eq("address", normalizedAddress)
-      .maybeSingle();
-
-    if (userError) {
-      throw new ProfileSettingsError(`Failed to load user profile: ${userError.message}`, 500);
-    }
-
-    const user = (userData as UserRecord | null) ?? null;
+    // Merge-aware resolution: a linked secondary wallet has no `users` row of its
+    // own (it lives in user_wallets under the primary account, whose merged-away
+    // row was tombstoned), so a direct `users.address` lookup returns nothing and
+    // the wallet shows an empty profile. Resolve through the account resolver so
+    // both wallets surface the SAME shared profile + socials. (The save path
+    // already resolves via pointsEngine.getOrCreate for the same reason.)
+    const account = await pointsEngine.getAccountByWallet(normalizedAddress);
+    const user = account ? ({ id: account.id, address: account.address } as UserRecord) : null;
     let custom: UserProfileRecord | null = null;
     let fallback: SocialAccountRecord | null = null;
     let xAccount: SocialAccountRecord | null = null;

@@ -1222,6 +1222,16 @@ export class PointsEngine {
     throw new Error("Backfill user referral code: failed to allocate referral code");
   }
 
+  // Public, read-only, merge-aware wallet → account resolution. Returns the
+  // account that owns this wallet — its own primary account, or the primary
+  // account it's linked to as a secondary wallet — or null if the wallet has
+  // never been seen. Unlike getOrCreate it never creates rows, so it's safe for
+  // unauthenticated GET reads (profile settings, profile completion, …) that
+  // must show the SHARED account data for linked secondary wallets.
+  async getAccountByWallet(address: string): Promise<UserRecord | null> {
+    return this.resolveUserByWallet(this.normalizeStoredAddress(address));
+  }
+
   async getOrCreate(address: string): Promise<UserRecord> {
     const normalizedAddress = this.normalizeStoredAddress(address);
 
