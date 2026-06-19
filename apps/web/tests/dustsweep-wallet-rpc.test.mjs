@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   buildWalletSendCallsPayload,
-  canSubmitOkxBatchWithoutUpgrade,
+  canBatchOkxSweep,
   orderWalletRequestCandidates,
   requestWalletSendCalls,
   shouldSplitOkxApprovalAndSweep,
@@ -94,45 +94,33 @@ test("uses one injected fallback when the connected client is unavailable", asyn
   assert.equal(injectedCalls, 1);
 });
 
-test("only batches OKX when the account already holds OKX's own 7702 delegate", () => {
-  // No proven OKX delegation: never batch, regardless of the capability probe.
-  // OKX advertises `supported`/`ready` even pre-upgrade, and batching then forces
-  // the set-code authorization OKX's security hard-blocks as a risky signature.
+test("batches OKX (upgrading if needed) unless on a foreign delegate or unsupported", () => {
+  // Non-delegated OKX: batch on any non-unsupported probe. The combined batch
+  // performs OKX's one-time EIP-7702 upgrade, then sweeps — the one-tx path.
+  for (const atomicStatus of ["ready", "supported", "unknown"]) {
+    assert.equal(
+      canBatchOkxSweep({ atomicStatus, isDelegated: false, hasOwnDelegation: false }),
+      true,
+      `non-delegated OKX should batch when atomicStatus=${atomicStatus}`,
+    );
+  }
+  // Already on OKX's own delegate: batch (no new authorization needed).
   assert.equal(
-    canSubmitOkxBatchWithoutUpgrade({
-      atomicStatus: "ready",
-      hasOwnDelegation: false,
-    }),
-    false,
-  );
-  assert.equal(
-    canSubmitOkxBatchWithoutUpgrade({
-      atomicStatus: "supported",
-      hasOwnDelegation: false,
-    }),
-    false,
-  );
-  // Proven own delegation: batch even when the probe is flaky/unknown.
-  assert.equal(
-    canSubmitOkxBatchWithoutUpgrade({
-      atomicStatus: "unknown",
-      hasOwnDelegation: true,
-    }),
+    canBatchOkxSweep({ atomicStatus: "unknown", isDelegated: true, hasOwnDelegation: true }),
     true,
   );
+  // On a FOREIGN delegate (another wallet's impl): never batch over it.
   assert.equal(
-    canSubmitOkxBatchWithoutUpgrade({
-      atomicStatus: "supported",
-      hasOwnDelegation: true,
-    }),
-    true,
+    canBatchOkxSweep({ atomicStatus: "supported", isDelegated: true, hasOwnDelegation: false }),
+    false,
   );
   // An explicit `unsupported` capability stays authoritative.
   assert.equal(
-    canSubmitOkxBatchWithoutUpgrade({
-      atomicStatus: "unsupported",
-      hasOwnDelegation: true,
-    }),
+    canBatchOkxSweep({ atomicStatus: "unsupported", isDelegated: false, hasOwnDelegation: false }),
+    false,
+  );
+  assert.equal(
+    canBatchOkxSweep({ atomicStatus: "unsupported", isDelegated: true, hasOwnDelegation: true }),
     false,
   );
 });

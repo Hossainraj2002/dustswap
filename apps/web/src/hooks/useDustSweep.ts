@@ -39,7 +39,7 @@ import {
 } from "@/lib/dustsweep-wallets";
 import {
   buildWalletSendCallsPayload,
-  canSubmitOkxBatchWithoutUpgrade,
+  canBatchOkxSweep,
   requestWalletSendCalls,
   shouldSplitOkxApprovalAndSweep,
 } from "@/lib/dustsweep-wallet-rpc";
@@ -190,6 +190,8 @@ const BASE_ACCOUNT_SPLIT_BATCH_NOTICE =
   "Base Account will batch approvals first, then send the sweep in a second wallet request for more reliable estimation.";
 const TOKENPOCKET_SPLIT_BATCH_NOTICE =
   "TokenPocket estimates DustSweep more reliably when approvals are batched first. DustSweep will send approvals first, then send the sweep after allowances are confirmed.";
+const TOKENPOCKET_BUNDLED_NOTICE =
+  "TokenPocket batches your token approvals and the sweep into one transaction.";
 const OKX_SPLIT_BATCH_NOTICE =
   "OKX Wallet will send token approvals in one real batch first, then send the sweep after the approval batch is confirmed.";
 const METAMASK_LOCKED_MESSAGE = "Unlock MetaMask and try again. No transaction was sent.";
@@ -197,8 +199,10 @@ const TOKENPOCKET_BATCH_FAILURE_MESSAGE =
   "TokenPocket batch execution failed. Please retry, reduce selected tokens, or use another supported wallet while we continue improving TokenPocket support.";
 const OKX_BATCH_STATUS_UNCLEAR_MESSAGE =
   "OKX batch status was unclear. No fallback prompts were sent. Check OKX activity or retry once.";
-const OKX_UPGRADE_AVOIDED_NOTICE =
-  "OKX reports that this address still needs its one-time smart-account setup. DustSweep will use Sign & Sweep instead and will not request an empty setup transaction.";
+const OKX_BATCH_TOO_LARGE_MESSAGE =
+  "This sweep needs more wallet calls than OKX can batch into one transaction. Select fewer tokens so DustSweep can approve and sweep them together in a single OKX transaction.";
+const OKX_FIRST_SWEEP_UPGRADE_NOTICE =
+  "First sweep upgrades your OKX account to a smart account (a one-time EIP-7702 setup), then runs token approvals and the sweep together as a single transaction. Later sweeps are one transaction with no setup.";
 const TOKENPOCKET_EXECUTE_FAILURES_TOPIC =
   "0xc42159347c71974b140767e5ffe0d24cb03d38c0e86462ec59a240394c3b9b4c";
 const APPROVAL_CALL_GAS_LIMIT = 150_000n;
@@ -718,21 +722,21 @@ export function useDustSweep(): UseDustSweepReturn {
       walletProfileBase.walletKey === "okx" &&
       delegation.info.state === "known" &&
       delegation.info.wallet === "okx";
-    // DustSweep only batches OKX when the account is already on OKX's own 7702
-    // delegate. Until then, batching would force OKX's one-time set-code
-    // authorization (which OKX now flags as a "risky signature type"), so any
-    // non-delegated OKX connection uses Sign & Sweep instead of a setup tx —
-    // regardless of what the capability probe (ready/supported/unknown) claims.
-    const avoidsOkxUpgrade =
+    // Non-delegated OKX: the first sweep performs OKX's documented one-time
+    // EIP-7702 upgrade, then runs approvals + sweep as a single atomic batch, so
+    // surface the one-time setup up front. (An OKX account on a foreign delegate
+    // or that reports `unsupported` falls through to the standard batch notice.)
+    const okxFirstSweepUpgrade =
       walletProfileBase.walletKey === "okx" &&
       !hasOwnOkxDelegation &&
+      delegation.address === null &&
       atomicStatus !== "unsupported";
 
     return {
       ...walletProfileBase,
       atomicStatus,
-      batchNotice: avoidsOkxUpgrade
-        ? OKX_UPGRADE_AVOIDED_NOTICE
+      batchNotice: okxFirstSweepUpgrade
+        ? OKX_FIRST_SWEEP_UPGRADE_NOTICE
         : getWalletBatchNotice(
             walletProfileBase.walletName,
             walletProfileBase.walletKey,
@@ -938,16 +942,17 @@ export function useDustSweep(): UseDustSweepReturn {
       return "switch_or_permit2";
     }
 
-    // OKX advertises atomic batching as a static capability even before its
-    // one-time EIP-7702 upgrade. Requesting a wallet_sendCalls batch then forces
-    // OKX's set-code authorization, which OKX's security engine hard-blocks as a
-    // "risky signature type". So batch OKX ONLY when the account is proven to
-    // already sit on OKX's own delegate (on-chain eth_getCode); otherwise use
-    // Sign & Sweep. A flaky/unknown probe never suppresses a proven-delegate
-    // batch; only explicit `unsupported` does. See canSubmitOkxBatchWithoutUpgrade.
+    // OKX supports EIP-7702: the combined approve+sweep wallet_sendCalls batch
+    // upgrades a non-delegated EOA (one-time) and then sweeps in a single tx, and
+    // runs with no new authorization once the account is on OKX's own delegate.
+    // Offer the batch whenever it is safe (not on a foreign delegate) and OKX
+    // doesn't report it `unsupported` — so non-delegated users get the upgrade +
+    // one-tx sweep rather than N approvals. The combined-batch shape is what OKX
+    // accepts; a standalone approval batch is hard-blocked. See canBatchOkxSweep.
     if (walletProfileBase.walletKey === "okx") {
-      return canSubmitOkxBatchWithoutUpgrade({
+      return canBatchOkxSweep({
         atomicStatus,
+        isDelegated,
         hasOwnDelegation: ownKnownDelegate,
       })
         ? "batch"
@@ -1430,22 +1435,84 @@ export function useDustSweep(): UseDustSweepReturn {
     walletStatus.isCoinbaseSmartWallet,
   ]);
 
-  // Sends all approvals as a single wallet_sendCalls batch so TokenPocket shows
-  // them all at once. The gas field is included directly on each call object
-  // (as a hex quantity per EIP-5792), which bypasses TP's internal eth_estimateGas
-  // call that always fails with "Contract error, cannot estimate gas limit".
-  const sendTokenPocketBatchApprovals = useCallback(async (
-    approvalRequirements: ApprovalRequirement[],
-    spender: Address,
-  ) => {
-    if (!address || !walletClient || approvalRequirements.length === 0) return;
-
+  // Submits one raw wallet_sendCalls through TokenPocket's provider and resolves
+  // to the resulting tx hash. Each call carries its gas as a direct top-level
+  // field (EIP-5792) so TP never runs its own eth_estimateGas, which fails with
+  // "Contract error, cannot estimate gas limit" on complex sweeps. Shared by the
+  // approvals-only batch and the combined approve+sweep batch.
+  const sendTokenPocketWalletSendCalls = useCallback(async (
+    calls: Array<{ to: string; data: Hex; value: string; gas: string }>,
+    atomicRequired: boolean,
+  ): Promise<Hex> => {
+    if (!address || !walletClient) {
+      throw new Error("TokenPocket provider unavailable");
+    }
     const requests = getWalletRequestCandidates(walletClient, "tokenpocket", {
       preferInjected: true,
     });
     if (requests.length === 0) {
       throw new Error("TokenPocket provider unavailable");
     }
+
+    let lastError: unknown;
+    for (const request of requests) {
+      try {
+        const result = await request({
+          method: "wallet_sendCalls",
+          params: [
+            {
+              version: "2.0.0",
+              atomicRequired,
+              chainId: `0x${base.id.toString(16)}`,
+              from: address,
+              calls,
+            },
+          ],
+        });
+
+        const immediateHash = getSendCallsResultTxHash(result);
+        if (immediateHash) return immediateHash;
+
+        const callId = resolveSendCallsId(result);
+        if (!callId) throw new Error("wallet_sendCalls did not return an id");
+
+        const deadline = Date.now() + 180_000;
+        while (Date.now() < deadline) {
+          const status = (await request({
+            method: "wallet_getCallsStatus",
+            params: [callId],
+          })) as WalletCallsStatusResult | null;
+
+          const hash = getLatestCallsStatusTxHash(status);
+          if (hash) {
+            if (hasFailedCallsReceipt(status)) throw new Error("TokenPocket batch failed");
+            return hash;
+          }
+          if (getCallsStatusState(status) === "failure") throw new Error("TokenPocket batch failed");
+          await delay(1500);
+        }
+        throw new Error("TokenPocket batch timed out");
+      } catch (error) {
+        if (isRejectedByUser(error) || isWalletLockedError(error)) throw error;
+        lastError = error;
+        console.warn("DustSweep TokenPocket wallet_sendCalls failed.", {
+          callCount: calls.length,
+          atomicRequired,
+          code: getErrorCode(error),
+          message: getDebugErrorMessage(error),
+        });
+      }
+    }
+    throw lastError instanceof Error ? lastError : new Error("TokenPocket wallet_sendCalls failed");
+  }, [address, walletClient]);
+
+  // Sends all approvals as a single wallet_sendCalls batch so TokenPocket shows
+  // them all at once, using explicit per-call gas (see sendTokenPocketWalletSendCalls).
+  const sendTokenPocketBatchApprovals = useCallback(async (
+    approvalRequirements: ApprovalRequirement[],
+    spender: Address,
+  ) => {
+    if (!address || !walletClient || approvalRequirements.length === 0) return;
 
     const needsReset = approvalRequirements.filter(r => r.resetFirst);
     const noReset = approvalRequirements.filter(r => !r.resetFirst);
@@ -1464,74 +1531,22 @@ export function useDustSweep(): UseDustSweepReturn {
         gas: toRpcQuantity(APPROVAL_CALL_GAS_LIMIT),
       }));
 
-    const sendBatch = async (batchCalls: ReturnType<typeof buildRpcCalls>) => {
-      let lastError: unknown;
-      for (const request of requests) {
-        try {
-          const result = await request({
-            method: "wallet_sendCalls",
-            params: [
-              {
-                version: "2.0.0",
-                atomicRequired: false,
-                chainId: `0x${base.id.toString(16)}`,
-                from: address,
-                calls: batchCalls,
-              },
-            ],
-          });
-
-          const immediateHash = getSendCallsResultTxHash(result);
-          if (immediateHash) return immediateHash;
-
-          const callId = resolveSendCallsId(result);
-          if (!callId) throw new Error("wallet_sendCalls did not return an id");
-
-          const deadline = Date.now() + 180_000;
-          while (Date.now() < deadline) {
-            const status = (await request({
-              method: "wallet_getCallsStatus",
-              params: [callId],
-            })) as WalletCallsStatusResult | null;
-
-            const hash = getLatestCallsStatusTxHash(status);
-            if (hash) {
-              if (hasFailedCallsReceipt(status)) throw new Error("Approval batch failed");
-              return hash;
-            }
-            if (getCallsStatusState(status) === "failure") throw new Error("Approval batch failed");
-            await delay(1500);
-          }
-          throw new Error("Approval batch timed out");
-        } catch (error) {
-          if (isRejectedByUser(error) || isWalletLockedError(error)) throw error;
-          lastError = error;
-          console.warn("DustSweep TokenPocket wallet_sendCalls approval batch failed.", {
-            callCount: batchCalls.length,
-            code: getErrorCode(error),
-            message: getDebugErrorMessage(error),
-          });
-        }
-      }
-      throw lastError instanceof Error ? lastError : new Error("TokenPocket wallet_sendCalls failed");
-    };
-
     // Batch 1: all direct approvals + reset-to-zero for tokens that need it.
     const firstBatch = [
       ...buildRpcCalls(noReset, r => r.approvalAmount),
       ...buildRpcCalls(needsReset, () => 0n),
     ];
-    const firstHash = await sendBatch(firstBatch);
+    const firstHash = await sendTokenPocketWalletSendCalls(firstBatch, false);
     await waitForSuccessfulTransaction(firstHash);
 
     // Batch 2 (only if needed): follow-up approvals for tokens that were reset.
     // Resets must be confirmed on-chain before the approval can succeed.
     if (needsReset.length > 0) {
       const followupBatch = buildRpcCalls(needsReset, r => r.approvalAmount);
-      const followupHash = await sendBatch(followupBatch);
+      const followupHash = await sendTokenPocketWalletSendCalls(followupBatch, false);
       await waitForSuccessfulTransaction(followupHash);
     }
-  }, [address, waitForSuccessfulTransaction, walletClient]);
+  }, [address, sendTokenPocketWalletSendCalls, waitForSuccessfulTransaction, walletClient]);
 
   const buildApprovalCalls = useCallback((
     approvalRequirements: ApprovalRequirement[],
@@ -1964,8 +1979,9 @@ export function useDustSweep(): UseDustSweepReturn {
         supportsWalletSendCalls ||
         walletStatus.isCoinbaseSmartWallet ||
         (usesOkxAtomicBatch &&
-          canSubmitOkxBatchWithoutUpgrade({
+          canBatchOkxSweep({
             atomicStatus: walletProfile.atomicStatus,
+            isDelegated: delegation.address !== null,
             hasOwnDelegation: hasOwnOkxDelegation,
           }));
       // Only attempt wallet batching on the batch route. When the account is
@@ -2015,6 +2031,14 @@ export function useDustSweep(): UseDustSweepReturn {
       const canBundleApprovalsOnly =
         (canUseAtomicBatch || canUseTokenPocketBatch) &&
         approvalCalls.length > 0 &&
+        // A standalone approval-only batch on a NON-delegated OKX account bundles
+        // the one-time 7702 upgrade with bare approvals (no swap) — the exact
+        // shape OKX hard-blocks as a "risky signature type". Keep non-delegated
+        // OKX on the combined approve+sweep batch only; if that can't fit the call
+        // cap it surfaces a "reduce tokens for the first sweep" message below
+        // rather than the blocked split. (A delegated OKX account adds no upgrade,
+        // so its approval-only batch is fine.)
+        !(usesOkxAtomicBatch && !hasOwnOkxDelegation) &&
         // TP uses parallel eth_sendTransaction (no wallet_sendCalls cap); other wallets respect the cap.
         (usesTokenPocketExisting || approvalCalls.length <= walletCallCap);
       const shouldChunkWalletBatch =
@@ -2022,6 +2046,14 @@ export function useDustSweep(): UseDustSweepReturn {
         canUseAtomicBatch &&
         !usesTokenPocketExisting &&
         approvalCalls.length > walletCallCap;
+      // TokenPocket can put approvals + the sweep in ONE wallet_sendCalls when the
+      // whole bundle fits its call cap. Each call carries explicit gas (TP can't
+      // estimate the sweep), and if TP rejects the combined batch the execution
+      // path falls back to the proven approvals-then-sweep split below.
+      const canBundleTokenPocketAllCalls =
+        canUseTokenPocketBatch &&
+        approvalCalls.length > 0 &&
+        bundledCallCount <= walletCallCap;
       const usePaymasterCapabilities =
         walletStatus.isCoinbaseSmartWallet && Boolean(paymasterUrl);
 
@@ -2256,6 +2288,72 @@ export function useDustSweep(): UseDustSweepReturn {
         return sendSweepTransaction(sweepCalldata);
       };
 
+      // TokenPocket: approvals + sweep in ONE wallet_sendCalls. Mirrors the proven
+      // TP approval-batch mechanism (raw wallet_sendCalls with explicit per-call
+      // gas) and just appends the sweep call, so a fresh wallet upgrades (7702),
+      // approves, and sweeps in a single transaction.
+      const sendTokenPocketBundledSweep = async () => {
+        currentStep = "approving";
+        setSweepStep(currentStep);
+
+        const sweepCalldata = await getCanonicalCalldata();
+
+        // The sweep gas can't be estimated before the approvals land (the router
+        // can't pull tokens yet), so default to the same generous static estimate
+        // the split path trusts; still try a live estimate in case allowances
+        // already exist (a repeat sweep) and use it when it is larger.
+        let sweepGas = getTokenPocketSweepFallbackGas(quote.routes.length);
+        try {
+          const estimated = await publicClient.estimateGas({
+            account: address,
+            to: sweepTarget,
+            data: concatHex([sweepCalldata, DATA_SUFFIX]),
+            value: txValue,
+          });
+          const buffered = (estimated * 16n) / 10n; // 60% buffer
+          if (buffered > sweepGas) sweepGas = buffered;
+        } catch {
+          // keep the static fallback
+        }
+
+        const bundledCalls: Array<{ to: string; data: Hex; value: string; gas: string }> = [];
+        for (const requirement of approvalRequirements) {
+          // USDT-style reset: approve(0) then approve(amount). Within one atomic
+          // batch they run in sequence, so both can live in the same tx.
+          if (requirement.resetFirst) {
+            bundledCalls.push({
+              to: requirement.token,
+              data: appendDataSuffix(
+                encodeFunctionData({ abi: erc20Abi, functionName: "approve", args: [approvalSpender, 0n] }),
+                DATA_SUFFIX,
+              ),
+              value: toRpcQuantity(0n),
+              gas: toRpcQuantity(APPROVAL_CALL_GAS_LIMIT),
+            });
+          }
+          bundledCalls.push({
+            to: requirement.token,
+            data: appendDataSuffix(
+              encodeFunctionData({ abi: erc20Abi, functionName: "approve", args: [approvalSpender, requirement.approvalAmount] }),
+              DATA_SUFFIX,
+            ),
+            value: toRpcQuantity(0n),
+            gas: toRpcQuantity(APPROVAL_CALL_GAS_LIMIT),
+          });
+        }
+        bundledCalls.push({
+          to: sweepTarget,
+          data: appendDataSuffix(sweepCalldata, DATA_SUFFIX),
+          value: toRpcQuantity(txValue),
+          gas: toRpcQuantity(sweepGas),
+        });
+
+        currentStep = "pending";
+        setSweepStep(currentStep);
+        // atomicRequired:true forces the approvals + sweep into a single tx.
+        return sendTokenPocketWalletSendCalls(bundledCalls, true);
+      };
+
       if (
         batchMode &&
         hasV2Approvals &&
@@ -2274,7 +2372,29 @@ export function useDustSweep(): UseDustSweepReturn {
       }
 
       let hash: Hex;
-      if (canBundleAllCalls) {
+      if (canBundleTokenPocketAllCalls) {
+        // Try TokenPocket's combined approve+sweep (one tx). If TP rejects the
+        // combined batch for any non-cancel reason, fall back to the proven
+        // approvals-then-sweep split so a working flow is never lost.
+        setExecutionNotice(TOKENPOCKET_BUNDLED_NOTICE);
+        try {
+          hash = await sendTokenPocketBundledSweep();
+        } catch (tokenPocketBundleError) {
+          if (
+            isRejectedByUser(tokenPocketBundleError) ||
+            isWalletLockedError(tokenPocketBundleError)
+          ) {
+            throw tokenPocketBundleError;
+          }
+          console.warn("DustSweep TokenPocket combined approve+sweep failed; using the approvals-then-sweep split.", {
+            walletKey: walletProfile.walletKey,
+            callCount: approvalCalls.length + 1,
+            code: getErrorCode(tokenPocketBundleError),
+            message: getDebugErrorMessage(tokenPocketBundleError),
+          });
+          hash = await sendBundledApprovalsThenSweep(TOKENPOCKET_SPLIT_BATCH_NOTICE);
+        }
+      } else if (canBundleAllCalls) {
         const sweepCalldata = await getCanonicalCalldata();
         const fullBundleCalls: WalletSendCall[] = [
           ...approvalCalls,
@@ -2405,7 +2525,10 @@ export function useDustSweep(): UseDustSweepReturn {
         );
       } else if (canUseAtomicBatch) {
         if (usesOkxAtomicBatch) {
-          throw new Error(OKX_BATCH_STATUS_UNCLEAR_MESSAGE);
+          // OKX is combined-batch only (approve+sweep in one tx). Reaching here
+          // means that bundle exceeds OKX's per-batch call cap, so ask the user
+          // to reduce the selection rather than splitting into a shape OKX blocks.
+          throw new Error(OKX_BATCH_TOO_LARGE_MESSAGE);
         }
         setExecutionNotice(
           `Approval batching needs ${approvalCalls.length} wallet calls, above the ${walletCallCap} call cap. DustSweep will use Permit2 approvals and a standard sweep.`,
@@ -2515,6 +2638,7 @@ export function useDustSweep(): UseDustSweepReturn {
     sendAtomicWalletCalls,
     sendTokenApprovals,
     sendTokenPocketBatchApprovals,
+    sendTokenPocketWalletSendCalls,
     sendTokenPocketRawTransaction,
     selectedTokens,
     supportsWalletSendCalls,

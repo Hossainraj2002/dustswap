@@ -20,36 +20,43 @@ export type WalletRequestCandidateOptions = {
 };
 
 /**
- * OKX advertises atomic batching as a STATIC capability (`wallet_getCapabilities`
- * returns `supported`) even on a plain EOA that has NOT yet performed its
- * one-time EIP-7702 upgrade. Submitting a `wallet_sendCalls` (atomicRequired)
- * batch in that state forces OKX to sign an EIP-7702 set-code authorization
- * first, which OKX's own security engine now hard-blocks as a "risky signature
- * type" ("This transaction will be canceled to protect your assets").
+ * OKX supports EIP-7702: a `wallet_sendCalls` batch upgrades the connected EOA to
+ * OKX's smart account (a one-time set-code authorization) and then runs the
+ * requested calls as ONE atomic transaction. On an already-upgraded account the
+ * same batch runs with no new authorization. This is OKX's documented path and
+ * what gives the user a one-transaction sweep.
  *
- * So only batch when the account is PROVEN to already sit on OKX's own delegate
- * (read on-chain via eth_getCode on Base). In that state wallet_sendCalls
- * executes through the existing delegate with no new authorization signature, so
- * OKX does not flag it. Without that proof — regardless of what the capability
- * probe claims — fall back to the standard approvals + sweep flow, which OKX
- * does not block. An explicit `unsupported` capability is still authoritative.
+ * DustSweep offers OKX the combined batch whenever it is SAFE and not opted out:
+ * - the account must NOT sit on a FOREIGN delegate (another wallet's
+ *   implementation — batching over it can conflict); a non-delegated account is
+ *   safe, since the batch performs OKX's documented first-time upgrade, and so is
+ *   the account already on OKX's own delegate.
+ * - OKX must not explicitly report atomic batching as `unsupported`. A `ready`,
+ *   `supported`, or even `unknown` probe still attempts the batch (OKX returns
+ *   "Batch status unknown" in-app yet executes wallet_sendCalls fine).
+ *
+ * CRITICAL: send approvals + the sweep as ONE combined batch (see
+ * shouldSplitOkxApprovalAndSweep). A standalone approval-only batch makes OKX's
+ * security engine hard-block a "risky signature type" — a 7702 upgrade bundled
+ * with bare token approvals and no consuming call reads like a drainer. The
+ * combined approve→sweep batch reads as a normal swap and is accepted.
  */
-export function canSubmitOkxBatchWithoutUpgrade(args: {
+export function canBatchOkxSweep(args: {
   atomicStatus: AtomicStatus;
+  isDelegated: boolean;
   hasOwnDelegation: boolean;
 }) {
-  return args.hasOwnDelegation && args.atomicStatus !== "unsupported";
+  const onForeignDelegate = args.isDelegated && !args.hasOwnDelegation;
+  return !onForeignDelegate && args.atomicStatus !== "unsupported";
 }
 
 /**
- * OKX no longer force-splits the approval batch from the sweep. DustSweep only
- * batches OKX when the account is already on OKX's own EIP-7702 delegate (see
- * canSubmitOkxBatchWithoutUpgrade), and in that state approvals + sweep go out as
- * ONE atomic wallet_sendCalls — the single transaction the combined-batch path
- * handles. A standalone approval-only batch made OKX surface a separate "risky
- * signature type" prompt, so forcing the split is disabled; the only remaining
- * split is the automatic one when a bundle would exceed the wallet call cap,
- * which the execution path handles on its own.
+ * OKX never force-splits the approval batch from the sweep. Approvals + sweep go
+ * out as ONE atomic wallet_sendCalls — the single transaction the combined-batch
+ * path handles, and the only shape OKX's security engine accepts (a standalone
+ * approval-only batch is hard-blocked as a "risky signature type"; see
+ * canBatchOkxSweep). The only remaining split is the automatic one when a bundle
+ * would exceed the wallet call cap, which the execution path handles on its own.
  */
 export function shouldSplitOkxApprovalAndSweep(_args: {
   isOkx: boolean;
