@@ -24,6 +24,18 @@ function CheckIcon() {
   );
 }
 
+function SparkleIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className="h-[18px] w-[18px]">
+      <path
+        fill="currentColor"
+        d="M12 2.5l1.7 4.6a3 3 0 0 0 1.8 1.8L20 10.5l-4.5 1.6a3 3 0 0 0-1.8 1.8L12 18.5l-1.7-4.6a3 3 0 0 0-1.8-1.8L4 10.5l4.5-1.6a3 3 0 0 0 1.8-1.8L12 2.5z"
+      />
+      <path fill="currentColor" d="M18.5 14.5l.7 1.9 1.9.7-1.9.7-.7 1.9-.7-1.9-1.9-.7 1.9-.7.7-1.9z" opacity="0.7" />
+    </svg>
+  );
+}
+
 function ExternalLinkIcon() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true" className="h-4 w-4">
@@ -50,6 +62,7 @@ export function SweepButton({
     visualState.state === "pending";
   const isSuccess = visualState.state === "success" && txHash;
   const isPreview = visualState.state === "preview";
+  const isPrimary = isPreview || visualState.state === "ready";
 
   if (isSuccess) {
     return (
@@ -57,7 +70,7 @@ export function SweepButton({
         href={`https://basescan.org/tx/${txHash}`}
         target="_blank"
         rel="noreferrer"
-        className="flex min-h-[44px] w-full items-center justify-center gap-2 rounded-[8px] bg-emerald-500 px-4 text-base font-semibold text-white shadow-[0_8px_22px_rgba(16,185,129,0.26)] transition-all hover:bg-emerald-600"
+        className="flex min-h-[52px] w-full items-center justify-center gap-2 rounded-[15px] bg-emerald-500 px-4 text-base font-bold text-white shadow-[0_14px_28px_-10px_rgba(16,185,129,0.55)] transition-all hover:bg-emerald-600"
       >
         <CheckIcon />
         {visualState.label}
@@ -72,16 +85,14 @@ export function SweepButton({
       onClick={onClick}
       disabled={disabled || isBusy}
       className={cx(
-        "flex min-h-[44px] w-full items-center justify-center gap-2.5 rounded-[8px] px-4 text-base font-semibold transition-all",
-        isPreview
-          ? "bg-blue-600 text-white shadow-[0_8px_22px_rgba(37,99,235,0.24)] hover:bg-blue-700"
-          : visualState.state === "ready"
-            ? "bg-blue-600 text-white shadow-[0_8px_22px_rgba(37,99,235,0.24)] hover:bg-blue-700"
-            : visualState.state === "error"
-              ? "bg-red-500 text-white shadow-[0_8px_22px_rgba(239,68,68,0.22)] hover:bg-red-600"
-              : visualState.state === "loading" || isBusy
-                ? "cursor-wait bg-blue-50 text-blue-500"
-                : "cursor-not-allowed bg-slate-100 text-slate-400",
+        "flex min-h-[52px] w-full items-center justify-center gap-2.5 rounded-[15px] px-4 text-base font-bold transition-all",
+        isPrimary
+          ? "sweep-cta"
+          : visualState.state === "error"
+            ? "bg-red-500 text-white shadow-[0_14px_28px_-10px_rgba(239,68,68,0.5)] hover:bg-red-600"
+            : isBusy
+              ? "cursor-wait bg-blue-50 text-blue-500 dark:bg-blue-400/10 dark:text-blue-300"
+              : "cursor-not-allowed bg-slate-100 text-slate-400 dark:bg-white/[0.06] dark:text-slate-500",
       )}
     >
       {isBusy ? <Spinner /> : null}
@@ -91,6 +102,11 @@ export function SweepButton({
             <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
             <circle cx="12" cy="12" r="3" />
           </svg>
+          {visualState.label}
+        </>
+      ) : visualState.state === "ready" ? (
+        <>
+          <SparkleIcon />
           {visualState.label}
         </>
       ) : (

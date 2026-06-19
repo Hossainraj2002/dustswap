@@ -19,7 +19,7 @@ export function WalletGateNotice({
   return (
     <div
       role="alert"
-      className="rounded-[8px] border border-blue-200 bg-blue-50 p-4 shadow-sm dark:border-blue-400/20 dark:bg-blue-400/10"
+      className="rounded-[16px] border border-blue-200 bg-blue-50 p-4 shadow-[0_1px_2px_rgba(16,24,40,0.04)] dark:border-blue-400/20 dark:bg-blue-400/10"
     >
       <p className="text-sm font-semibold text-slate-900 dark:text-white">
         {walletName} can&apos;t sign for DustSweep
@@ -31,7 +31,7 @@ export function WalletGateNotice({
       <button
         type="button"
         onClick={onSwitchWallet}
-        className="mt-3 flex min-h-[44px] w-full items-center justify-center rounded-[8px] bg-blue-600 px-4 text-sm font-semibold text-white shadow-[0_8px_24px_rgba(37,99,235,0.28)] transition-colors hover:bg-blue-700"
+        className="sweep-cta mt-3 flex min-h-[44px] w-full items-center justify-center rounded-[13px] px-4 text-sm font-bold"
       >
         Switch wallet
       </button>

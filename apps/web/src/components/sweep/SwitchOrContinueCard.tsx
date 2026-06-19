@@ -48,7 +48,7 @@ export function SwitchOrContinueCard({
     <div
       role="region"
       aria-label={`This address is set up with ${walletLabel}`}
-      className="rounded-[8px] border border-blue-200 bg-blue-50 p-4 shadow-sm dark:border-blue-400/20 dark:bg-blue-400/10"
+      className="rounded-[16px] border border-blue-200 bg-blue-50 p-4 shadow-[0_1px_2px_rgba(16,24,40,0.04)] dark:border-blue-400/20 dark:bg-blue-400/10"
     >
       <div className="flex items-start gap-3">
         <BlueAlertIcon />
@@ -70,14 +70,14 @@ export function SwitchOrContinueCard({
             <button
               type="button"
               onClick={onSwitch}
-              className="flex min-h-[44px] flex-1 items-center justify-center rounded-[8px] bg-blue-600 px-4 text-sm font-semibold text-white shadow-[0_8px_24px_rgba(37,99,235,0.28)] transition-colors hover:bg-blue-700"
+              className="sweep-cta flex min-h-[44px] flex-1 items-center justify-center rounded-[13px] px-4 text-sm font-bold"
             >
               Switch to {walletLabel}
             </button>
             <button
               type="button"
               onClick={onContinue}
-              className="flex min-h-[44px] flex-1 items-center justify-center rounded-[8px] border border-blue-300 bg-white px-4 text-sm font-semibold text-blue-700 transition-colors hover:bg-blue-50 dark:border-blue-400/30 dark:bg-transparent dark:text-blue-300 dark:hover:bg-blue-400/10"
+              className="flex min-h-[44px] flex-1 items-center justify-center rounded-[13px] border border-blue-300 bg-white px-4 text-sm font-semibold text-blue-700 transition-colors hover:bg-blue-50 dark:border-blue-400/30 dark:bg-transparent dark:text-blue-300 dark:hover:bg-blue-400/10"
             >
               Continue with {currentWalletName}
             </button>

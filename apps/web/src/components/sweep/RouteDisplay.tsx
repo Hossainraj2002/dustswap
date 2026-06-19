@@ -108,7 +108,7 @@ function ClockIcon() {
 
 function TinyArrow() {
   return (
-    <svg viewBox="0 0 24 24" aria-hidden="true" className="h-3 w-3 shrink-0 text-slate-300">
+    <svg viewBox="0 0 24 24" aria-hidden="true" className="h-3 w-3 shrink-0 text-slate-300 dark:text-slate-600">
       <path d="M5 12h13m-5-6 6 6-6 6" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" />
     </svg>
   );
@@ -148,11 +148,11 @@ function RoutePill({ token, route }: { token: SelectedToken; route: DustSweepRou
   const dexLabel = formatDexName(route.dexName);
   return (
     <div
-      className="flex min-w-0 items-center gap-1 rounded-full border border-slate-100 bg-slate-50 py-1 pl-1 pr-1 sm:gap-1.5"
+      className="flex min-w-0 items-center gap-1 rounded-full border border-slate-100 bg-slate-50 py-1 pl-1 pr-1 sm:gap-1.5 dark:border-white/10 dark:bg-white/[0.04]"
       title={`${token.symbol} via ${dexLabel}`}
     >
       <MiniTokenIcon token={token} />
-      <span className="min-w-0 flex-1 truncate text-[11px] font-bold text-slate-800">
+      <span className="min-w-0 flex-1 truncate text-[11px] font-bold text-slate-800 dark:text-slate-200">
         {token.symbol}
       </span>
       {/* The connector arrow only fits once pills are wider than ~110px. */}
@@ -162,7 +162,7 @@ function RoutePill({ token, route }: { token: SelectedToken; route: DustSweepRou
       <img
         src={getDexIcon(route.dexName)}
         alt={dexLabel}
-        className="h-5 w-5 shrink-0 rounded-full bg-white object-contain p-px shadow-sm ring-1 ring-slate-200"
+        className="h-5 w-5 shrink-0 rounded-full bg-white object-contain p-px shadow-sm ring-1 ring-slate-200 dark:ring-white/10"
       />
     </div>
   );
@@ -207,28 +207,28 @@ export function RouteDisplay({
     (extraDexCount > 0 ? ` +${extraDexCount}` : "");
 
   return (
-    <div className="overflow-hidden rounded-[8px] border border-blue-200 bg-white shadow-sm">
+    <div className="overflow-hidden rounded-[16px] border border-[#dbe3ff] bg-white shadow-[0_1px_2px_rgba(16,24,40,0.04)] dark:border-blue-400/20 dark:bg-white/[0.04]">
       {/* ── Header: title + meta on the left, estimated output on the right ── */}
       <div className="flex items-start justify-between gap-3 px-3.5 pt-3.5">
         <div className="flex min-w-0 items-center gap-2.5">
-          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[8px] bg-blue-600 text-white shadow-[0_6px_14px_rgba(37,99,235,0.3)]">
+          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[10px] bg-gradient-to-br from-blue-600 to-[#0052ff] text-white shadow-[0_6px_14px_-4px_rgba(0,82,255,0.5)]">
             <BoltIcon />
           </span>
           <div className="min-w-0">
-            <p className="text-sm font-bold text-slate-950">Smart Routing</p>
-            <div className="mt-0.5 flex flex-wrap items-center gap-x-2.5 gap-y-0.5 text-[11px] font-medium text-slate-500">
+            <p className="text-sm font-bold text-slate-900 dark:text-white">Smart routing</p>
+            <div className="mt-0.5 flex flex-wrap items-center gap-x-2.5 gap-y-0.5 text-[11px] font-medium text-slate-500 dark:text-slate-400">
               <span>
                 {quote.routes.length}/{selectedTokens.length} tokens
               </span>
-              <span className="text-slate-300">|</span>
+              <span className="text-slate-300 dark:text-slate-600">|</span>
               <span>
                 {providerCount} provider{providerCount === 1 ? "" : "s"}
               </span>
-              <span className="text-slate-300">|</span>
+              <span className="text-slate-300 dark:text-slate-600">|</span>
               <span className="inline-flex items-center gap-1">
                 <GasIcon />~{formatUsd(quote.gasEstimateUSD)}
               </span>
-              <span className="text-slate-300">|</span>
+              <span className="text-slate-300 dark:text-slate-600">|</span>
               <span className="inline-flex items-center gap-1">
                 <ClockIcon />
                 ~2s
@@ -238,10 +238,10 @@ export function RouteDisplay({
         </div>
 
         <div className="shrink-0 text-right">
-          <p className="font-mono text-base font-bold leading-tight text-slate-950">
+          <p className="font-mono text-base font-bold leading-tight tabular-nums text-slate-900 dark:text-white">
             {formatOutput(quote, tokenOut)} {tokenOut.symbol}
           </p>
-          <p className="text-[11px] font-medium text-slate-500">
+          <p className="text-[11px] font-medium text-slate-500 dark:text-slate-400">
             ~${(quote.netEstimatedOutUSD ?? quote.totalEstimatedOutUSD).toFixed(2)}
           </p>
         </div>
@@ -256,7 +256,7 @@ export function RouteDisplay({
           <button
             type="button"
             onClick={() => setExpanded(true)}
-            className="flex items-center justify-center rounded-full border border-dashed border-blue-200 bg-blue-50/50 px-2 py-1 text-[11px] font-bold text-blue-600 transition hover:border-blue-300 hover:bg-blue-50"
+            className="flex items-center justify-center rounded-full border border-dashed border-blue-200 bg-blue-50/50 px-2 py-1 text-[11px] font-bold text-blue-600 transition hover:border-blue-300 hover:bg-blue-50 dark:border-blue-400/25 dark:bg-blue-400/5 dark:text-blue-300 dark:hover:bg-blue-400/10"
           >
             +{remainder} more
           </button>
@@ -265,7 +265,7 @@ export function RouteDisplay({
           <button
             type="button"
             onClick={() => setExpanded(false)}
-            className="flex items-center justify-center rounded-full border border-dashed border-slate-200 px-2 py-1 text-[11px] font-bold text-slate-400 transition hover:border-slate-300 hover:bg-slate-50 hover:text-slate-600"
+            className="flex items-center justify-center rounded-full border border-dashed border-slate-200 px-2 py-1 text-[11px] font-bold text-slate-400 transition hover:border-slate-300 hover:bg-slate-50 hover:text-slate-600 dark:border-white/10 dark:hover:bg-white/5"
           >
             Show less
           </button>
@@ -273,7 +273,7 @@ export function RouteDisplay({
       </div>
 
       {/* ── Footer: providers used → output token ── */}
-      <div className="flex items-center justify-between gap-3 border-t border-slate-100 bg-slate-50/80 px-3.5 py-2.5">
+      <div className="flex items-center justify-between gap-3 border-t border-slate-100 bg-slate-50/80 px-3.5 py-2.5 dark:border-white/5 dark:bg-white/[0.02]">
         <div className="flex min-w-0 items-center gap-2">
           <div className="flex shrink-0 -space-x-1.5">
             {/* Dedupe by icon: Aerodrome classic + Slipstream share one brand logo. */}
@@ -284,16 +284,16 @@ export function RouteDisplay({
                   key={icon}
                   src={icon}
                   alt=""
-                  className="h-5 w-5 rounded-full border-2 border-white bg-white object-contain shadow-sm"
+                  className="h-5 w-5 rounded-full border-2 border-white bg-white object-contain shadow-sm dark:border-[#0e1830]"
                 />
               ))}
           </div>
-          <span className="truncate text-[11px] font-medium text-slate-500">via {dexSummary}</span>
+          <span className="truncate text-[11px] font-medium text-slate-500 dark:text-slate-400">via {dexSummary}</span>
         </div>
 
         <div className="flex shrink-0 items-center gap-1.5">
           <TinyArrow />
-          <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-950 py-1 pl-1 pr-2.5 text-white shadow-sm">
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-900 py-1 pl-1 pr-2.5 text-white shadow-sm dark:bg-white/10">
             <MiniTokenIcon token={tokenOut} />
             <span className="text-xs font-bold">{tokenOut.symbol}</span>
           </span>

@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useAccount } from "wagmi";
 import { type WalletListEntry } from "@privy-io/react-auth";
 import {
@@ -55,6 +55,10 @@ const WALLET_KEY_TO_PRIVY: Partial<Record<DustSweepWalletKey, WalletListEntry>> 
   cryptocom: "cryptocom",
 };
 
+function cx(...parts: Array<string | false | null | undefined>) {
+  return parts.filter(Boolean).join(" ");
+}
+
 function shortAddress(address: string) {
   return `${address.slice(0, 4)}...${address.slice(-6)}`;
 }
@@ -64,6 +68,23 @@ function BlueAlertIcon() {
     <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-blue-600 text-[12px] font-bold text-white">
       !
     </span>
+  );
+}
+
+function MergeIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      aria-hidden="true"
+      className="h-[18px] w-[18px]"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M12 5v14M6 13l6 6 6-6" />
+    </svg>
   );
 }
 
@@ -96,42 +117,161 @@ function getSweepButtonState(args: {
 }
 
 /* ─── Main sweep view ───────────────────────────────────────────────── */
+function CheckMiniIcon({ className = "h-3 w-3" }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className={className} fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M5 13l4 4L19 7" />
+    </svg>
+  );
+}
+
+// Three discovery phases that map to the real scan timers in useTokenBalances
+// (balances → prices → routes). The active phase is derived from elapsed time,
+// so each step advances because the backend actually moved on — not theatre.
+function ScanPhaseStepper({ stage }: { stage: number }) {
+  const phases = ["Balances", "Pricing", "Routes"];
+  return (
+    <div className="flex items-center gap-1.5">
+      {phases.map((label, index) => {
+        const done = index < stage;
+        const active = index === stage;
+        return (
+          <div key={label} className="flex flex-1 items-center gap-1.5">
+            <span
+              className={cx(
+                "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10.5px] font-semibold transition-colors",
+                done
+                  ? "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-400/25 dark:bg-emerald-400/10 dark:text-emerald-300"
+                  : active
+                    ? "border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-400/25 dark:bg-blue-400/10 dark:text-blue-300"
+                    : "border-slate-200 bg-slate-50 text-slate-400 dark:border-white/10 dark:bg-white/[0.04] dark:text-slate-500",
+              )}
+            >
+              {done ? (
+                <CheckMiniIcon className="h-2.5 w-2.5" />
+              ) : active ? (
+                <span className="h-2.5 w-2.5 animate-spin rounded-full border-[1.5px] border-current border-t-transparent" />
+              ) : (
+                <span className="h-1.5 w-1.5 rounded-full bg-current" />
+              )}
+              {label}
+            </span>
+            {index < phases.length - 1 ? (
+              <span className={cx("h-px flex-1", done ? "bg-emerald-200 dark:bg-emerald-400/20" : "bg-slate-200 dark:bg-white/10")} />
+            ) : null}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function BalanceScanStatus({
   isLoading,
   message,
   discoveredCount,
   elapsedMs,
+  sweepableCount,
 }: {
   isLoading: boolean;
   message: string;
   discoveredCount: number;
   elapsedMs?: number;
+  sweepableCount: number;
 }) {
-  if (!isLoading) return null;
+  const [progress, setProgress] = useState(0);
+  const [elapsed, setElapsed] = useState(0);
+  const [showDone, setShowDone] = useState(false);
+  const startRef = useRef<number | null>(null);
+  const wasLoadingRef = useRef(false);
 
-  const seconds = elapsedMs ? Math.max(1, Math.round(elapsedMs / 1000)) : null;
+  useEffect(() => {
+    if (isLoading) {
+      setShowDone(false);
+      startRef.current = Date.now();
+      wasLoadingRef.current = true;
+      const tick = () => {
+        const seconds = (Date.now() - (startRef.current ?? Date.now())) / 1000;
+        setElapsed(seconds);
+        // Time-estimated trickle: eases toward 92%, snaps to 100% on completion.
+        setProgress(Math.min(92, 92 * (1 - Math.exp(-seconds / 4.5))));
+      };
+      tick();
+      const interval = window.setInterval(tick, 120);
+      return () => window.clearInterval(interval);
+    }
+    if (wasLoadingRef.current) {
+      wasLoadingRef.current = false;
+      startRef.current = null;
+      setProgress(100);
+      setShowDone(true);
+      const timer = window.setTimeout(() => setShowDone(false), 2400);
+      return () => window.clearTimeout(timer);
+    }
+    return;
+  }, [isLoading]);
+
+  if (!isLoading) {
+    if (!showDone || (discoveredCount <= 0 && sweepableCount <= 0)) return null;
+    return (
+      <div className="flex items-center justify-between gap-3 rounded-[16px] border border-emerald-200 bg-emerald-50 px-4 py-3 shadow-[0_1px_2px_rgba(16,24,40,0.04)] dark:border-emerald-400/20 dark:bg-emerald-400/10">
+        <div className="flex min-w-0 items-center gap-3">
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[11px] bg-emerald-500 text-white">
+            <CheckMiniIcon className="h-4 w-4" />
+          </span>
+          <div className="min-w-0">
+            <p className="text-sm font-bold text-emerald-800 dark:text-emerald-200">Scan complete</p>
+            <p className="truncate text-xs text-emerald-700 dark:text-emerald-300">
+              {discoveredCount} balance{discoveredCount === 1 ? "" : "s"} scanned
+              {sweepableCount > 0 ? ` · ${sweepableCount} sweepable` : ""}
+            </p>
+          </div>
+        </div>
+        {elapsedMs ? (
+          <span className="shrink-0 text-[11px] font-semibold text-emerald-700 dark:text-emerald-300">
+            {(elapsedMs / 1000).toFixed(1)}s
+          </span>
+        ) : null}
+      </div>
+    );
+  }
+
+  const stage = elapsed < 3.5 ? 0 : elapsed < 8 ? 1 : 2;
+  const seconds = Math.max(1, Math.round(elapsed));
 
   return (
-    <div className="rounded-[8px] border border-blue-100 bg-white px-4 py-3 shadow-sm">
+    <div className="rounded-[16px] border border-blue-100 bg-white px-4 py-3.5 shadow-[0_1px_2px_rgba(16,24,40,0.04)] dark:border-blue-400/20 dark:bg-white/[0.04]">
       <div className="flex items-center gap-3">
-        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[8px] bg-blue-50 text-blue-600">
-          <span className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
+        <span className="sweep-radar flex h-10 w-10 shrink-0 items-center justify-center">
+          <span className="relative z-[1] h-1.5 w-1.5 rounded-full bg-[#0052ff] dark:bg-blue-300" />
         </span>
         <div className="min-w-0 flex-1">
           <div className="flex items-center justify-between gap-3">
-            <p className="truncate text-sm font-semibold text-slate-900">{message}</p>
-            <span className="shrink-0 rounded-full bg-blue-50 px-2 py-0.5 text-[11px] font-semibold text-blue-700">
-              {discoveredCount > 0 ? `${discoveredCount} found` : "Scanning"}
+            <p className="truncate text-sm font-bold text-slate-900 dark:text-white">Scanning your wallet</p>
+            <span className="shrink-0 text-xs font-bold tabular-nums text-[#0052ff] dark:text-blue-300">
+              {Math.round(progress)}%
             </span>
           </div>
-          <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-100">
-            <div className="h-full w-2/5 animate-pulse rounded-full bg-blue-500" />
-          </div>
-          <p className="mt-2 text-xs text-slate-500">
-            Checking wallet balances, token prices, and route hints{seconds ? ` for ${seconds}s` : ""}.
-          </p>
+          <p className="mt-0.5 truncate text-xs text-slate-500 dark:text-slate-400">{message}</p>
         </div>
       </div>
+
+      <div className="mt-3">
+        <ScanPhaseStepper stage={stage} />
+      </div>
+
+      <div className="mt-3 h-2 overflow-hidden rounded-full bg-blue-100 dark:bg-white/10">
+        <div
+          className="sweep-bar-shimmer h-full rounded-full bg-gradient-to-r from-blue-600 to-[#0052ff] transition-[width] duration-200 ease-out"
+          style={{ width: `${progress}%` }}
+        />
+      </div>
+
+      <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
+        {elapsed > 6
+          ? "Large wallets take a few seconds — your funds aren't touched while we scan."
+          : `Checking balances, prices, and routes · ${seconds}s`}
+      </p>
     </div>
   );
 }
@@ -298,19 +438,25 @@ export default function DustSweepPage() {
 
       <div className="mx-auto max-w-[600px] pb-[calc(69px+var(--safe-area-bottom))] sm:pb-8">
         {/* ── Header ── */}
-        <div className="mb-6 flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2.5">
-            <Image src="/logo.png" alt="DustSwap" width={44} height={44} priority className="rounded-xl" />
-            <div>
-              <p className="text-base font-bold text-slate-900">Sweep</p>
-              <p className="text-[11px] text-slate-400">Base dust aggregator</p>
-            </div>
+        <div className="mb-5 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <Image
+              src="/logo.png"
+              alt="DustSwap"
+              width={40}
+              height={40}
+              priority
+              className="rounded-[13px] shadow-[0_8px_18px_-6px_rgba(37,99,235,0.45)]"
+            />
+            <span className="text-[22px] font-bold tracking-[-0.02em] text-slate-900 dark:text-white">
+              Sweep
+            </span>
           </div>
           <WalletConnectButton
             connectedLabel={address ? shortAddress(address) : undefined}
             walletList={DUST_SWEEP_PRIVY_WALLET_LIST}
             showDisconnect
-            className="rounded-[8px] border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-semibold text-blue-700 shadow-sm hover:border-blue-300 hover:bg-blue-100 hover:text-blue-800"
+            className="rounded-full border-slate-200/80 bg-white/80 px-3.5 py-2 text-[13px] font-semibold text-slate-700 shadow-[0_1px_2px_rgba(16,24,40,0.05)] backdrop-blur hover:border-slate-300 hover:bg-white dark:border-white/10 dark:bg-white/[0.06] dark:text-slate-200 dark:hover:bg-white/10"
           />
         </div>
 
@@ -345,40 +491,48 @@ export default function DustSweepPage() {
             message={sweep.balanceScan.message}
             discoveredCount={sweep.balanceScan.discoveredCount}
             elapsedMs={sweep.balanceScan.elapsedMs}
+            sweepableCount={sweep.swappableTokens.length}
           />
 
-          {/* From panel */}
-          <TokenFromPanel
-            selectedTokens={sweep.selectedTokens}
-            onRemove={sweep.removeToken}
-            onClearAll={sweep.clearSelectedTokens}
-            onAddMore={() => setTokenModalMode("multi")}
-            autoMode={sweep.autoMode}
-            onToggleAuto={() => sweep.setAutoMode(!sweep.autoMode)}
-            onOpenSettings={() => setSettingsOpen(true)}
-            routeMaxCap={sweep.routeMaxCap}
-            failedTokenAddresses={sweep.quoteFailedTokenAddresses}
-          />
+          {/* Unified trade card: From → merge → To → receiver */}
+          <div className="sweep-card space-y-1.5 p-2.5">
+            <TokenFromPanel
+              selectedTokens={sweep.selectedTokens}
+              onRemove={sweep.removeToken}
+              onClearAll={sweep.clearSelectedTokens}
+              onAddMore={() => setTokenModalMode("multi")}
+              autoMode={sweep.autoMode}
+              onToggleAuto={() => sweep.setAutoMode(!sweep.autoMode)}
+              onOpenSettings={() => setSettingsOpen(true)}
+              routeMaxCap={sweep.routeMaxCap}
+              failedTokenAddresses={sweep.quoteFailedTokenAddresses}
+            />
 
-          {/* To panel */}
-          <TokenToPanel
-            tokenOut={sweep.tokenOut}
-            quote={sweep.quote}
-            balanceUSD={tokenOutBalanceUSD}
-            onOpenSelect={() => setTokenModalMode("single")}
-          />
+            <div className="relative z-10 -my-3.5 flex justify-center" aria-hidden="true">
+              <span className="sweep-merge flex h-9 w-9 items-center justify-center rounded-[12px]">
+                <MergeIcon />
+              </span>
+            </div>
 
-          {/* Receiver address */}
-          <div className="flex items-center justify-between rounded-[8px] bg-white px-4 py-3 shadow-sm">
-            <span className="text-sm font-medium text-slate-500">Receiver address:</span>
-            <span className="font-mono text-xs font-semibold text-slate-700">
-              {address ? shortAddress(address) : "—"}
-            </span>
+            <TokenToPanel
+              tokenOut={sweep.tokenOut}
+              quote={sweep.quote}
+              balanceUSD={tokenOutBalanceUSD}
+              onOpenSelect={() => setTokenModalMode("single")}
+            />
+
+            {/* Receiver address */}
+            <div className="flex items-center justify-between border-t border-slate-100/80 px-2 pb-1 pt-3 dark:border-white/5">
+              <span className="text-[12.5px] text-slate-400 dark:text-slate-500">Receiver</span>
+              <span className="inline-flex items-center gap-1.5 font-mono text-[12.5px] font-semibold tabular-nums text-slate-600 dark:text-slate-300">
+                {address ? shortAddress(address) : "—"}
+              </span>
+            </div>
           </div>
 
           {/* Quote/sweep errors */}
           {sweep.quoteError ? (
-            <div className="flex items-center justify-between gap-3 rounded-[8px] border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+            <div className="flex items-center justify-between gap-3 rounded-[14px] border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
               <span>Could not get quote.</span>
               <button
                 type="button"
@@ -391,7 +545,7 @@ export default function DustSweepPage() {
           ) : null}
 
           {sweep.error ? (
-            <div className="rounded-[8px] border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+            <div className="rounded-[14px] border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
               {sweep.error}
             </div>
           ) : null}
@@ -399,7 +553,9 @@ export default function DustSweepPage() {
           {/* Route section */}
           {sweep.selectedTokens.length > 0 ? (
             <div className="space-y-2">
-              <p className="px-1 text-xs font-semibold uppercase tracking-wider text-slate-400">Route</p>
+              <p className="px-1 text-[11px] font-semibold uppercase tracking-[0.09em] text-slate-400 dark:text-slate-500">
+                Route
+              </p>
               {sweep.quote ? (
                 <RouteDisplay
                   quote={sweep.quote}
@@ -407,7 +563,7 @@ export default function DustSweepPage() {
                   selectedTokens={sweep.selectedTokens}
                 />
               ) : (
-                <div className="flex items-center justify-center gap-2 rounded-[8px] border border-dashed border-slate-200 bg-white py-6 text-sm text-slate-400">
+                <div className="flex items-center justify-center gap-2 rounded-[16px] border border-dashed border-slate-200 bg-white py-6 text-sm text-slate-400 dark:border-white/10 dark:bg-white/[0.03] dark:text-slate-500">
                   {sweep.isQuoting ? (
                     <>
                       <span className="h-4 w-4 animate-spin rounded-full border-2 border-blue-400 border-t-transparent" />
@@ -423,7 +579,7 @@ export default function DustSweepPage() {
 
           {/* Slippage / Fee / Price Impact */}
           {sweep.quote ? (
-            <div className="rounded-[8px] bg-white px-4 py-3 shadow-sm">
+            <div className="rounded-[16px] border border-slate-200/70 bg-white px-4 py-3.5 shadow-[0_1px_2px_rgba(16,24,40,0.04)] dark:border-white/10 dark:bg-white/[0.04]">
               <SweepDetails quote={sweep.quote} slippageBps={sweep.slippageBps} />
             </div>
           ) : null}
@@ -439,14 +595,14 @@ export default function DustSweepPage() {
 
           {/* High price impact warning */}
           {sweep.quote?.routes.some((route) => route.priceImpactBps > 500) ? (
-            <div className="flex items-start gap-2.5 rounded-[8px] border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800">
+            <div className="flex items-start gap-2.5 rounded-[14px] border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800">
               <BlueAlertIcon />
               <span>High price impact detected. Review the route carefully before sweeping.</span>
             </div>
           ) : null}
 
           {walletModeNotice ? (
-            <div className="rounded-[8px] border border-blue-200 bg-blue-50 px-4 py-3 text-sm font-medium text-blue-700">
+            <div className="rounded-[14px] border border-blue-200 bg-blue-50 px-4 py-3 text-sm font-medium text-blue-700">
               {walletModeNotice}
             </div>
           ) : null}

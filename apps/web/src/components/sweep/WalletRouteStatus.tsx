@@ -379,7 +379,7 @@ export function WalletRouteStatus({
     return (
       <div
         aria-live="polite"
-        className="flex items-center gap-2.5 rounded-[8px] border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-600 shadow-sm dark:border-white/10 dark:bg-white/[0.06] dark:text-slate-300"
+        className="flex items-center gap-2.5 rounded-[16px] border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-600 shadow-[0_1px_2px_rgba(16,24,40,0.04)] dark:border-white/10 dark:bg-white/[0.06] dark:text-slate-300"
       >
         <Spinner />
         Checking your wallet…
@@ -402,13 +402,15 @@ export function WalletRouteStatus({
     <div className="space-y-2" aria-live="polite">
       <div
         className={cx(
-          "rounded-[8px] border px-4 py-2.5 shadow-sm",
+          "rounded-[16px] border px-4 py-3 shadow-[0_1px_2px_rgba(16,24,40,0.04)]",
           visual.container,
         )}
       >
         <div className="flex items-center justify-between gap-3">
-          <p className={cx("flex items-center gap-2 text-sm font-semibold", visual.text)}>
-            {visual.icon}
+          <p className={cx("flex items-center gap-2.5 text-sm font-bold", visual.text)}>
+            <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[9px] bg-white/70 dark:bg-white/10">
+              {visual.icon}
+            </span>
             {visual.title}
           </p>
           <button
@@ -416,22 +418,22 @@ export function WalletRouteStatus({
             onClick={() => setShowWhy((value) => !value)}
             aria-expanded={showWhy}
             className={cx(
-              "flex shrink-0 items-center gap-1 rounded-full px-1.5 py-0.5 text-xs font-medium transition-colors",
+              "flex shrink-0 items-center gap-1 rounded-full px-2 py-1 text-xs font-semibold transition-colors",
               visual.whyButton,
             )}
           >
             <span aria-hidden="true">ⓘ</span> Why?
           </button>
         </div>
-        <p className={cx("mt-1 text-xs leading-5 opacity-80", visual.text)}>
+        <p className={cx("mt-1.5 pl-[38px] text-xs leading-5 opacity-80", visual.text)}>
           {visual.subtext}
         </p>
-        <div className="mt-2 flex flex-wrap gap-1.5">
+        <div className="mt-2.5 flex flex-wrap gap-1.5 pl-[38px]">
           {visual.statusItems.map((item) => (
             <span
               key={item}
               className={cx(
-                "rounded-full border border-current/15 px-2 py-0.5 text-[10px] font-semibold leading-4 opacity-80",
+                "rounded-full border border-current/15 bg-white/50 px-2.5 py-0.5 text-[10.5px] font-semibold leading-4 opacity-80 dark:bg-white/5",
                 visual.text,
               )}
             >
@@ -453,7 +455,7 @@ export function WalletRouteStatus({
       </div>
 
       {showSetupHint ? (
-        <div className="rounded-[8px] border border-slate-200 bg-white px-4 py-2.5 text-xs leading-5 text-slate-600 shadow-sm dark:border-white/10 dark:bg-white/[0.06] dark:text-slate-300">
+        <div className="rounded-[14px] border border-slate-200 bg-white px-4 py-3 text-xs leading-5 text-slate-600 shadow-[0_1px_2px_rgba(16,24,40,0.04)] dark:border-white/10 dark:bg-white/[0.06] dark:text-slate-300">
           <p className="font-semibold text-slate-700 dark:text-slate-200">
             🔧 One-time setup for {permit2SetupCount} token
             {permit2SetupCount === 1 ? "" : "s"}

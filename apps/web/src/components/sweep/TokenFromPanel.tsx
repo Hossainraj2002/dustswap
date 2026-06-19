@@ -19,7 +19,7 @@ function formatAmount(value: string) {
 
 function SettingsIcon() {
   return (
-    <svg viewBox="0 0 24 24" aria-hidden="true" className="h-5 w-5">
+    <svg viewBox="0 0 24 24" aria-hidden="true" className="h-[18px] w-[18px]">
       <path
         fill="none"
         stroke="currentColor"
@@ -62,6 +62,21 @@ function PlusIcon() {
   );
 }
 
+function CloseIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className="h-3.5 w-3.5">
+      <path
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2.2"
+        d="M6 6l12 12M18 6 6 18"
+      />
+    </svg>
+  );
+}
+
 export function TokenFromPanel({
   selectedTokens,
   onRemove,
@@ -87,24 +102,28 @@ export function TokenFromPanel({
   const sorted = [...selectedTokens].sort((a, b) => (b.valueUSD ?? 0) - (a.valueUSD ?? 0));
 
   return (
-    <section className="rounded-[8px] border border-slate-200 bg-white px-3 py-3 shadow-sm">
-      <div className="mb-2 flex items-center justify-between gap-2">
-        <p className="text-sm font-medium text-slate-600">From:</p>
-        <div className="flex items-center gap-2">
+    <section className="sweep-well p-3">
+      <div className="mb-2.5 flex items-center justify-between gap-2">
+        <p className="text-[11px] font-semibold uppercase tracking-[0.09em] text-slate-400 dark:text-slate-500">
+          Sweep from
+        </p>
+        <div className="flex items-center gap-1">
           <button
             type="button"
             onClick={onClearAll}
             disabled={selectedTokens.length === 0}
-            className="min-h-0 rounded-[6px] px-1.5 py-1 text-sm font-medium text-slate-500 transition hover:bg-slate-100 hover:text-slate-800 disabled:opacity-40"
+            className="min-h-0 rounded-[9px] px-2 py-1 text-xs font-semibold text-slate-500 transition hover:bg-slate-100 hover:text-slate-800 disabled:opacity-40 dark:text-slate-400 dark:hover:bg-white/10 dark:hover:text-white"
           >
-            Clear all
+            Clear
           </button>
           <button
             type="button"
             onClick={onToggleAuto}
             className={cx(
-              "min-h-0 rounded-[6px] px-1.5 py-1 text-sm font-semibold transition",
-              autoMode ? "bg-blue-600 text-white shadow-sm" : "text-blue-700 hover:bg-blue-50",
+              "min-h-0 rounded-[9px] px-2.5 py-1 text-xs font-bold transition",
+              autoMode
+                ? "bg-[#0052ff] text-white shadow-[0_4px_10px_-2px_rgba(0,82,255,0.5)]"
+                : "text-[#0052ff] hover:bg-blue-50 dark:text-blue-300 dark:hover:bg-blue-400/10",
             )}
           >
             Auto
@@ -112,7 +131,7 @@ export function TokenFromPanel({
           <button
             type="button"
             onClick={onOpenSettings}
-            className="flex h-8 w-8 items-center justify-center rounded-[6px] text-slate-400 transition hover:bg-slate-100 hover:text-slate-800"
+            className="flex h-7 w-7 items-center justify-center rounded-[9px] text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 dark:text-slate-400 dark:hover:bg-white/10 dark:hover:text-white"
             aria-label="Sweep settings"
             title="Settings"
           >
@@ -121,70 +140,74 @@ export function TokenFromPanel({
         </div>
       </div>
 
-      <div className="min-h-[100px] rounded-[8px] bg-slate-50 p-2">
-        {sorted.length === 0 ? (
-          <div className="flex min-h-[74px] items-center justify-between gap-3 rounded-[6px] border border-dashed border-blue-100 bg-white px-3">
-            <div className="min-w-0">
-              <p className="font-mono text-3xl font-semibold leading-none text-slate-950">0</p>
-              <p className="mt-1 truncate text-sm text-slate-500">Select tokens or use Auto</p>
-            </div>
+      {sorted.length === 0 ? (
+        <div className="flex min-h-[64px] items-center justify-between gap-3 rounded-[14px] border border-dashed border-blue-200/70 bg-white/60 px-3.5 py-3 dark:border-blue-400/20 dark:bg-white/[0.03]">
+          <div className="min-w-0">
+            <p className="text-[26px] font-bold leading-none tabular-nums text-slate-900 dark:text-white">0</p>
+            <p className="mt-1.5 truncate text-[13px] text-slate-500 dark:text-slate-400">
+              Select tokens or use Auto
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onAddMore}
+            className="sweep-select inline-flex h-11 shrink-0 items-center gap-2 px-3.5 text-sm font-semibold text-[#0052ff] dark:text-blue-300"
+          >
+            <PlusIcon />
+            Select tokens
+          </button>
+        </div>
+      ) : (
+        <div className="flex flex-wrap gap-2">
+          {sorted.map((token) => {
+            const failed = failedSet.has(token.address.toLowerCase());
+
+            return (
+              <div
+                key={token.address}
+                className={cx(
+                  "inline-flex h-[34px] max-w-full items-center gap-1.5 rounded-[11px] pl-1.5 pr-1 text-sm",
+                  failed
+                    ? "border border-red-200 bg-red-50 text-red-800 dark:border-red-400/30 dark:bg-red-400/10"
+                    : "sweep-chip text-slate-900 dark:text-white",
+                )}
+                title={failed ? `${token.symbol} has no current route` : token.symbol}
+              >
+                <TokenLogo token={token} size="sm" muted={failed} />
+                <span className="max-w-[92px] truncate font-semibold tabular-nums">
+                  {formatAmount(token.balanceFormatted)}
+                </span>
+                <span className="max-w-[58px] truncate text-xs font-medium text-slate-400 dark:text-slate-500">
+                  {token.symbol}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => onRemove(token.address)}
+                  className={cx(
+                    "flex h-6 w-6 items-center justify-center rounded-[8px] transition",
+                    failed
+                      ? "text-red-400 hover:bg-red-100 hover:text-red-700 dark:hover:bg-red-400/20"
+                      : "text-slate-300 hover:bg-slate-100 hover:text-slate-600 dark:text-slate-500 dark:hover:bg-white/10 dark:hover:text-white",
+                  )}
+                  aria-label={`Remove ${token.symbol}`}
+                >
+                  <CloseIcon />
+                </button>
+              </div>
+            );
+          })}
+          {selectedTokens.length < routeMaxCap ? (
             <button
               type="button"
               onClick={onAddMore}
-              className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-[7px] border border-blue-300 bg-blue-50 px-3 text-sm font-semibold text-blue-700 shadow-sm transition hover:bg-blue-100"
+              className="inline-flex h-[34px] items-center gap-1.5 rounded-[11px] border border-dashed border-blue-200 bg-transparent px-3 text-xs font-semibold text-[#0052ff] transition hover:border-blue-300 hover:bg-blue-50/60 dark:border-blue-400/25 dark:text-blue-300 dark:hover:bg-blue-400/10"
             >
-              <PlusIcon />
-              Select tokens
+              Add more
+              <ChevronDownIcon />
             </button>
-          </div>
-        ) : (
-          <div className="flex flex-wrap gap-2">
-            {sorted.map((token) => {
-              const failed = failedSet.has(token.address.toLowerCase());
-
-              return (
-                <div
-                  key={token.address}
-                  className={cx(
-                    "inline-flex h-[30px] max-w-full items-center gap-1.5 rounded-[7px] border px-1.5 text-sm shadow-sm",
-                    failed
-                      ? "border-red-200 bg-red-50 text-red-800"
-                      : "border-blue-200 bg-blue-50 text-slate-900",
-                  )}
-                  title={failed ? `${token.symbol} has no current route` : token.symbol}
-                >
-                  <TokenLogo token={token} size="sm" muted={failed} />
-                  <span className="max-w-[92px] truncate font-medium">
-                    {formatAmount(token.balanceFormatted)}
-                  </span>
-                  <span className="max-w-[58px] truncate text-xs text-slate-500">{token.symbol}</span>
-                  <button
-                    type="button"
-                    onClick={() => onRemove(token.address)}
-                    className={cx(
-                      "flex h-6 w-6 items-center justify-center rounded-[6px] text-lg leading-none transition",
-                      failed ? "text-red-400 hover:bg-red-100 hover:text-red-700" : "text-blue-700 hover:bg-blue-100",
-                    )}
-                    aria-label={`Remove ${token.symbol}`}
-                  >
-                    &times;
-                  </button>
-                </div>
-              );
-            })}
-            {selectedTokens.length < routeMaxCap ? (
-              <button
-                type="button"
-                onClick={onAddMore}
-                className="inline-flex h-[30px] items-center gap-1.5 rounded-[7px] bg-white px-3 text-xs font-medium text-slate-500 shadow-sm ring-1 ring-slate-200 transition hover:bg-blue-50 hover:text-slate-900 hover:ring-blue-200"
-              >
-                Add more assets
-                <ChevronDownIcon />
-              </button>
-            ) : null}
-          </div>
-        )}
-      </div>
+          ) : null}
+        </div>
+      )}
     </section>
   );
 }

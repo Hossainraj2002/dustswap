@@ -1212,6 +1212,173 @@
   }
 
 }
+/* ===== DUSTSWEEP — PREMIUM SWEEP SURFACES ===== */
+/* Signature surfaces for the /dustsweep widget. Light + dark are defined here
+   so the component markup stays clean and theme parity is centralized. */
+.sweep-card {
+  background: linear-gradient(180deg, #ffffff 0%, #fbfcff 100%);
+  border: 1px solid rgba(15, 23, 42, 0.07);
+  border-radius: 24px;
+  box-shadow:
+    0 1px 2px rgba(16, 24, 40, 0.04),
+    0 24px 50px -22px rgba(16, 24, 40, 0.2);
+}
+.dark .sweep-card {
+  background: linear-gradient(180deg, rgba(17, 26, 45, 0.72) 0%, rgba(11, 18, 32, 0.66) 100%);
+  border-color: rgba(148, 163, 184, 0.14);
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.3),
+    0 28px 60px -26px rgba(0, 0, 0, 0.6);
+}
+
+.sweep-well {
+  background: #f4f7fc;
+  border: 1px solid rgba(15, 23, 42, 0.055);
+  border-radius: 18px;
+}
+.dark .sweep-well {
+  background: rgba(2, 6, 23, 0.42);
+  border-color: rgba(148, 163, 184, 0.12);
+}
+
+.sweep-merge {
+  background: #ffffff;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  color: #0052ff;
+  box-shadow: 0 8px 18px -8px rgba(16, 24, 40, 0.3);
+}
+.dark .sweep-merge {
+  background: #0e1830;
+  border-color: rgba(148, 163, 184, 0.2);
+  color: #60a5fa;
+  box-shadow: 0 8px 18px -8px rgba(0, 0, 0, 0.7);
+}
+
+.sweep-cta {
+  background: linear-gradient(135deg, #2563eb 0%, #0052ff 100%);
+  color: #ffffff;
+  box-shadow: 0 14px 28px -10px rgba(0, 82, 255, 0.55);
+  transition: background 0.18s ease, box-shadow 0.18s ease, transform 0.1s ease;
+}
+.sweep-cta:hover:not(:disabled) {
+  background: linear-gradient(135deg, #1d4ed8 0%, #0048e6 100%);
+  box-shadow: 0 18px 34px -10px rgba(0, 82, 255, 0.6);
+}
+.sweep-cta:active:not(:disabled) {
+  transform: translateY(1px);
+}
+.dark .sweep-cta {
+  box-shadow: 0 16px 30px -12px rgba(37, 99, 235, 0.55);
+}
+
+.sweep-select {
+  background: #ffffff;
+  border: 1px solid rgba(15, 23, 42, 0.1);
+  border-radius: 13px;
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.05);
+  transition: border-color 0.15s ease, background 0.15s ease, transform 0.1s ease;
+}
+.sweep-select:hover {
+  border-color: rgba(0, 82, 255, 0.45);
+  background: #fbfdff;
+}
+.sweep-select:active {
+  transform: scale(0.985);
+}
+.dark .sweep-select {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(148, 163, 184, 0.18);
+}
+.dark .sweep-select:hover {
+  border-color: rgba(96, 165, 250, 0.5);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.sweep-chip {
+  background: #ffffff;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
+}
+.dark .sweep-chip {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(148, 163, 184, 0.16);
+}
+
+/* ── Token-discovery loaders: radar sweep, trickle shimmer, skeletons ── */
+@keyframes sweep-shimmer {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(200%); }
+}
+
+.sweep-radar {
+  position: relative;
+  border-radius: 9999px;
+  background: #eaf1ff;
+  overflow: hidden;
+}
+.dark .sweep-radar {
+  background: rgba(96, 165, 250, 0.12);
+}
+.sweep-radar::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: conic-gradient(from 0deg, rgba(0, 82, 255, 0.4), transparent 65%);
+  animation: radar-spin 1.4s linear infinite;
+}
+.dark .sweep-radar::before {
+  background: conic-gradient(from 0deg, rgba(96, 165, 250, 0.5), transparent 65%);
+}
+.sweep-radar::after {
+  content: "";
+  position: absolute;
+  inset: 32%;
+  border-radius: 9999px;
+  border: 1px solid rgba(0, 82, 255, 0.25);
+}
+.dark .sweep-radar::after {
+  border-color: rgba(96, 165, 250, 0.3);
+}
+
+.sweep-bar-shimmer {
+  position: relative;
+  overflow: hidden;
+}
+.sweep-bar-shimmer::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.5), transparent);
+  animation: sweep-shimmer 1.2s linear infinite;
+}
+
+.sweep-skel {
+  position: relative;
+  overflow: hidden;
+  background: #e9eef6;
+}
+.dark .sweep-skel {
+  background: rgba(255, 255, 255, 0.06);
+}
+.sweep-skel::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.6), transparent);
+  animation: sweep-shimmer 1.4s linear infinite;
+}
+.dark .sweep-skel::after {
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.08), transparent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sweep-radar::before,
+  .sweep-bar-shimmer::after,
+  .sweep-skel::after {
+    animation: none;
+  }
+}
+
 /* ===== SWAP PAGE STYLES ===== */
 /* Dark theme, glass cards, Syne + DM Sans fonts, electric blue accent */
 

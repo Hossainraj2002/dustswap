@@ -84,7 +84,7 @@ export function SweepStepper({
   );
 
   return (
-    <div className="rounded-[8px] border border-slate-200 bg-white px-4 py-3 shadow-sm dark:border-white/10 dark:bg-white/[0.06]">
+    <div className="rounded-[16px] border border-slate-200 bg-white px-4 py-3.5 shadow-[0_1px_2px_rgba(16,24,40,0.04)] dark:border-white/10 dark:bg-white/[0.06]">
       <ol className="flex items-center justify-between gap-1">
         {steps.map((label, index) => {
           const isComplete = index < activeIndex;

@@ -175,7 +175,7 @@ function FlowGraphic({ summary }: { summary: DustSweepCompletionSummary }) {
   const hiddenCount = Math.max(0, summary.routeCount - visibleInputs.length);
 
   return (
-    <div className="rounded-[8px] border border-slate-200 bg-slate-50 px-3 py-3 shadow-inner sm:px-4 sm:py-4">
+    <div className="rounded-[16px] border border-slate-200 bg-slate-50 px-3 py-3 shadow-inner dark:border-white/10 dark:bg-white/[0.03] sm:px-4 sm:py-4">
       <div className="flex items-center justify-between gap-2 sm:gap-3">
         <div className="flex min-w-0 flex-1 items-center">
           {visibleInputs.map((token, index) => (
@@ -243,7 +243,7 @@ export function SweepSuccessModal({
         if (event.target === event.currentTarget) onClose();
       }}
     >
-      <div className="relative max-h-[calc(100dvh_-_1.5rem_-_env(safe-area-inset-top)_-_var(--safe-area-bottom))] w-full max-w-[350px] overflow-y-auto overscroll-contain rounded-[8px] bg-white px-4 pb-4 pt-7 text-center shadow-[0_26px_90px_rgba(15,23,42,0.28)] sm:max-h-[calc(100dvh_-_3rem)] sm:max-w-[540px] sm:px-7 sm:pb-7 sm:pt-9">
+      <div className="relative max-h-[calc(100dvh_-_1.5rem_-_env(safe-area-inset-top)_-_var(--safe-area-bottom))] w-full max-w-[350px] overflow-y-auto overscroll-contain rounded-[24px] bg-white px-4 pb-4 pt-7 text-center shadow-[0_26px_90px_rgba(15,23,42,0.28)] dark:bg-[#0b1220] sm:max-h-[calc(100dvh_-_3rem)] sm:max-w-[540px] sm:px-7 sm:pb-7 sm:pt-9">
         <button
           type="button"
           onClick={onClose}
@@ -289,7 +289,7 @@ export function SweepSuccessModal({
             href={explorerUrl}
             target="_blank"
             rel="noreferrer"
-            className="inline-flex min-h-[46px] w-full items-center justify-center gap-2 rounded-[8px] bg-blue-600 px-3 text-base font-bold text-white shadow-[0_14px_34px_rgba(37,99,235,0.28)] transition hover:bg-blue-700 sm:min-h-[56px] sm:gap-3 sm:px-4 sm:text-lg"
+            className="sweep-cta inline-flex min-h-[46px] w-full items-center justify-center gap-2 rounded-[15px] px-3 text-base font-bold sm:min-h-[56px] sm:gap-3 sm:px-4 sm:text-lg"
           >
             <ExternalLinkIcon />
             View on explorer
@@ -297,7 +297,7 @@ export function SweepSuccessModal({
           <button
             type="button"
             onClick={onClose}
-            className="inline-flex min-h-[46px] w-full items-center justify-center rounded-[8px] border border-slate-200 px-3 text-sm font-bold text-slate-950 transition hover:bg-slate-50 sm:min-h-[56px] sm:px-4 sm:text-base"
+            className="inline-flex min-h-[46px] w-full items-center justify-center rounded-[14px] border border-slate-200 px-3 text-sm font-bold text-slate-950 transition hover:bg-slate-50 dark:border-white/10 dark:text-white dark:hover:bg-white/[0.04] sm:min-h-[56px] sm:px-4 sm:text-base"
           >
             Done
           </button>

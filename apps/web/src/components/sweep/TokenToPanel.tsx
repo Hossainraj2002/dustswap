@@ -20,7 +20,7 @@ function formatOutput(quote: DustSweepQuoteResponse | null, token: Token | null)
 
 function ChevronDownIcon() {
   return (
-    <svg viewBox="0 0 24 24" aria-hidden="true" className="h-3.5 w-3.5 text-slate-500">
+    <svg viewBox="0 0 24 24" aria-hidden="true" className="h-4 w-4 text-slate-400">
       <path fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="m6 9 6 6 6-6" />
     </svg>
   );
@@ -41,32 +41,50 @@ export function TokenToPanel({
   const estimatedUsd = quote ? quote.netEstimatedOutUSD ?? quote.totalEstimatedOutUSD : null;
 
   return (
-    <section className="rounded-[8px] border border-slate-200 bg-white px-3 py-3 shadow-sm">
-      <p className="mb-2 text-sm font-medium text-slate-600">To:</p>
-      <div className="rounded-[8px] bg-slate-50 px-3 py-3">
-        <div className="flex items-center justify-between gap-3">
-          <div className="min-w-0">
-            <p className="truncate font-mono text-[28px] font-semibold leading-none text-slate-950">
-              {output || "0"}
-            </p>
-            <p className="mt-2 truncate text-sm text-slate-500">
-              {estimatedUsd == null ? "Waiting for route" : `~$${estimatedUsd.toFixed(2)} estimated`}
-            </p>
-          </div>
-
-          <div className="flex shrink-0 flex-col items-end gap-1.5">
-            <button
-              type="button"
-              onClick={onOpenSelect}
-              className="inline-flex h-9 items-center gap-1.5 rounded-[7px] border border-blue-300 bg-blue-50 px-2 text-sm font-semibold text-blue-800 shadow-sm transition hover:bg-blue-100"
-            >
-              {tokenOut ? <TokenLogo token={tokenOut} size="sm" /> : null}
-              <span>{tokenOut?.symbol || "Select"}</span>
-              <ChevronDownIcon />
-            </button>
-            <span className="text-xs text-slate-500">${balanceUSD.toFixed(2)}</span>
-          </div>
+    <section className="sweep-well p-3">
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <p className="text-[11px] font-semibold uppercase tracking-[0.09em] text-slate-400 dark:text-slate-500">
+          Receive
+        </p>
+        {balanceUSD > 0 ? (
+          <span className="text-[11px] font-medium text-slate-400 dark:text-slate-500">
+            Balance ${balanceUSD.toFixed(2)}
+          </span>
+        ) : null}
+      </div>
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <p className="truncate text-[30px] font-bold leading-none tracking-[-0.02em] tabular-nums text-slate-900 dark:text-white">
+            {output || "0"}
+          </p>
+          <p
+            className={
+              estimatedUsd == null
+                ? "mt-2 truncate text-[13px] font-medium text-slate-400 dark:text-slate-500"
+                : "mt-2 truncate text-[13px] font-semibold text-emerald-600 dark:text-emerald-300"
+            }
+          >
+            {estimatedUsd == null ? "Waiting for route" : `≈ $${estimatedUsd.toFixed(2)} estimated`}
+          </p>
         </div>
+
+        <button
+          type="button"
+          onClick={onOpenSelect}
+          className="sweep-select inline-flex h-11 shrink-0 items-center gap-2 px-3 text-[15px] font-bold text-slate-900 dark:text-white"
+        >
+          {tokenOut ? (
+            <TokenLogo token={tokenOut} size="sm" />
+          ) : (
+            <span className="flex h-7 w-7 items-center justify-center rounded-full bg-slate-100 text-slate-400 dark:bg-white/10">
+              <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                <circle cx="12" cy="12" r="9" />
+              </svg>
+            </span>
+          )}
+          <span>{tokenOut?.symbol || "Select"}</span>
+          <ChevronDownIcon />
+        </button>
       </div>
     </section>
   );

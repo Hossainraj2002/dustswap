@@ -14,13 +14,15 @@ function Toggle({
   onChange: (value: boolean) => void;
 }) {
   return (
-    <div className="grid h-10 w-[150px] grid-cols-2 rounded-[8px] bg-blue-50 p-1">
+    <div className="grid h-10 w-[150px] grid-cols-2 rounded-[12px] bg-slate-100 p-1 dark:bg-white/[0.06]">
       <button
         type="button"
         onClick={() => onChange(false)}
         className={cx(
-          "min-h-0 rounded-[7px] text-sm font-medium transition",
-          !value ? "bg-blue-600 text-white shadow-sm" : "text-slate-500 hover:text-slate-900",
+          "min-h-0 rounded-[9px] text-sm font-semibold transition",
+          !value
+            ? "bg-white text-slate-900 shadow-[0_1px_2px_rgba(16,24,40,0.08)] dark:bg-white/15 dark:text-white"
+            : "text-slate-500 hover:text-slate-800 dark:text-slate-400",
         )}
       >
         Off
@@ -29,8 +31,10 @@ function Toggle({
         type="button"
         onClick={() => onChange(true)}
         className={cx(
-          "min-h-0 rounded-[7px] text-sm font-medium transition",
-          value ? "bg-blue-600 text-white shadow-sm" : "text-slate-500 hover:text-slate-900",
+          "min-h-0 rounded-[9px] text-sm font-semibold transition",
+          value
+            ? "bg-[#0052ff] text-white shadow-[0_4px_10px_-2px_rgba(0,82,255,0.5)]"
+            : "text-slate-500 hover:text-slate-800 dark:text-slate-400",
         )}
       >
         On
@@ -43,7 +47,7 @@ function InfoIcon({ title }: { title: string }) {
   return (
     <span
       title={title}
-      className="inline-flex h-4 w-4 items-center justify-center rounded-full text-xs text-slate-400 ring-1 ring-slate-300"
+      className="inline-flex h-4 w-4 cursor-help items-center justify-center rounded-full text-[11px] font-semibold text-slate-400 ring-1 ring-slate-300 dark:ring-white/20"
     >
       i
     </span>
@@ -60,9 +64,9 @@ function SettingRow({
   children: ReactNode;
 }) {
   return (
-    <div className="flex min-h-[42px] items-center justify-between gap-4">
+    <div className="flex min-h-[44px] items-center justify-between gap-4">
       <div className="flex min-w-0 items-center gap-1.5">
-        <span className="truncate text-base text-slate-900">{label}</span>
+        <span className="truncate text-[15px] font-medium text-slate-900 dark:text-white">{label}</span>
         <InfoIcon title={info} />
       </div>
       {children}
@@ -112,28 +116,32 @@ export function SlippageSettings({
 
   return (
     <div className="fixed inset-0 z-[95] flex items-end justify-center bg-slate-950/45 px-0 backdrop-blur-sm sm:items-center sm:px-4">
-      <div className="w-full max-w-[380px] rounded-t-[8px] bg-white p-5 shadow-[0_30px_80px_rgba(15,23,42,0.22)] sm:rounded-[8px]">
+      <div className="w-full max-w-[400px] rounded-t-[24px] bg-white p-5 shadow-[0_30px_90px_rgba(15,23,42,0.28)] dark:bg-[#0b1220] sm:rounded-[24px]">
         <div className="mb-5 flex items-center justify-between">
-          <h2 className="text-xl font-semibold text-slate-950">Settings</h2>
+          <h2 className="text-xl font-bold tracking-[-0.01em] text-slate-950 dark:text-white">Settings</h2>
           <button
             type="button"
             onClick={onClose}
-            className="flex h-10 w-10 items-center justify-center rounded-[8px] text-2xl font-light text-slate-500 transition hover:bg-slate-100 hover:text-slate-900"
+            className="flex h-9 w-9 items-center justify-center rounded-[11px] text-slate-400 transition hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-white/10 dark:hover:text-white"
             aria-label="Close settings"
           >
-            &times;
+            <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M6 6l12 12M18 6 6 18" />
+            </svg>
           </button>
         </div>
 
-        <div className="space-y-4">
+        <div className="space-y-3.5">
           <SettingRow label="Slippage" info="Maximum accepted price movement before the sweep reverts.">
-            <div className="flex h-10 w-[150px] items-center rounded-[8px] bg-blue-50 p-1">
+            <div className="flex h-10 w-[150px] items-center rounded-[12px] bg-slate-100 p-1 dark:bg-white/[0.06]">
               <button
                 type="button"
                 onClick={() => onChange(50)}
                 className={cx(
-                  "min-h-0 h-8 rounded-[7px] px-3 text-sm font-medium transition",
-                  slippageBps === 50 ? "bg-blue-600 text-white shadow-sm" : "text-slate-600",
+                  "min-h-0 h-8 rounded-[9px] px-3 text-sm font-semibold transition",
+                  slippageBps === 50
+                    ? "bg-[#0052ff] text-white shadow-[0_4px_10px_-2px_rgba(0,82,255,0.5)]"
+                    : "text-slate-600 dark:text-slate-300",
                 )}
               >
                 Auto
@@ -149,9 +157,9 @@ export function SlippageSettings({
                   }
                 }}
                 inputMode="decimal"
-                className="h-8 min-w-0 flex-1 bg-transparent px-2 text-center text-sm text-slate-950 outline-none"
+                className="h-8 min-w-0 flex-1 bg-transparent px-2 text-center text-sm font-semibold text-slate-950 outline-none dark:text-white"
               />
-              <span className="px-1 text-sm text-slate-600">%</span>
+              <span className="px-1 text-sm text-slate-500 dark:text-slate-400">%</span>
             </div>
           </SettingRow>
 
@@ -174,7 +182,7 @@ export function SlippageSettings({
                   onAutoSelectionUsdChange(parsed);
                 }
               }}
-              className="h-10 w-[150px] rounded-[8px] bg-blue-50 px-3 text-center text-sm font-medium text-slate-950 outline-none ring-1 ring-transparent transition focus:ring-blue-300"
+              className="h-10 w-[150px] rounded-[12px] bg-slate-100 px-3 text-center text-sm font-semibold text-slate-950 outline-none ring-1 ring-transparent transition focus:bg-white focus:ring-blue-400 dark:bg-white/[0.06] dark:text-white"
             />
           </SettingRow>
 

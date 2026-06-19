@@ -53,21 +53,6 @@ function BoltIcon() {
   );
 }
 
-function ShieldCheckIcon() {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true" className="h-3.5 w-3.5 sm:h-5 sm:w-5">
-      <path
-        d="M12 2.5 4.5 5.5v6c0 4.6 3.2 8 7.5 10 4.3-2 7.5-5.4 7.5-10v-6L12 2.5Z"
-        fill="none"
-        stroke="currentColor"
-        strokeLinejoin="round"
-        strokeWidth="2"
-      />
-      <path d="m8.8 11.8 2.2 2.2 4.2-4.5" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" />
-    </svg>
-  );
-}
-
 function StepRow({
   icon,
   title,
@@ -78,13 +63,13 @@ function StepRow({
   description: string;
 }) {
   return (
-    <div className="flex items-start gap-2 rounded-[8px] border border-slate-100 bg-slate-50 px-2.5 py-2 text-left sm:gap-3 sm:px-3.5 sm:py-3">
-      <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-[8px] bg-blue-600/10 text-blue-600 sm:h-9 sm:w-9">
+    <div className="flex items-start gap-2 rounded-[14px] border border-slate-100 bg-slate-50 px-2.5 py-2 text-left dark:border-white/10 dark:bg-white/[0.03] sm:gap-3 sm:px-3.5 sm:py-3">
+      <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-[11px] bg-blue-600/10 text-blue-600 dark:bg-blue-400/15 dark:text-blue-300 sm:h-9 sm:w-9">
         {icon}
       </span>
       <div className="min-w-0">
-        <p className="text-[12px] font-bold text-slate-900 sm:text-sm">{title}</p>
-        <p className="mt-0.5 text-[11px] leading-snug text-slate-500 sm:text-[13px]">{description}</p>
+        <p className="text-[12px] font-bold text-slate-900 dark:text-white sm:text-sm">{title}</p>
+        <p className="mt-0.5 text-[11px] leading-snug text-slate-500 dark:text-slate-400 sm:text-[13px]">{description}</p>
       </div>
     </div>
   );
@@ -135,7 +120,7 @@ function GuideStepTwo() {
         {SUPPORTED_WALLETS.map((wallet) => (
           <div
             key={wallet.name}
-            className="flex flex-col items-center gap-1.5 rounded-[8px] border border-slate-100 bg-slate-50 px-1.5 py-2.5 sm:gap-2 sm:px-2 sm:py-3"
+            className="flex flex-col items-center gap-1.5 rounded-[14px] border border-slate-100 bg-slate-50 px-1.5 py-2.5 dark:border-white/10 dark:bg-white/[0.03] sm:gap-2 sm:px-2 sm:py-3"
           >
             <Image
               src={wallet.logo}
@@ -158,37 +143,7 @@ function GuideStepTwo() {
   );
 }
 
-function GuideStepThree() {
-  return (
-    <div>
-      <h2 className="text-[17px] font-bold text-slate-950 sm:text-xl">
-        Approvals you can trust
-      </h2>
-      <p className="mt-1.5 text-[12px] leading-snug text-slate-500 sm:mt-2 sm:text-sm sm:leading-relaxed">
-        DustSweep is built so nothing risky is ever left behind in your wallet.
-      </p>
-      <div className="mt-3.5 space-y-1.5 sm:mt-5 sm:space-y-2.5">
-        <StepRow
-          icon={<ShieldCheckIcon />}
-          title="Never unlimited"
-          description="We only request the exact amount each sweep needs — never unlimited approvals."
-        />
-        <StepRow
-          icon={<ShieldCheckIcon />}
-          title="Nothing left behind"
-          description="Approvals are consumed inside the same transaction, so no token allowances linger afterwards."
-        />
-        <StepRow
-          icon={<ShieldCheckIcon />}
-          title="Self-custodial"
-          description="Your tokens never sit with us — the swept output goes straight to your own address."
-        />
-      </div>
-    </div>
-  );
-}
-
-const STEPS = [GuideStepOne, GuideStepTwo, GuideStepThree];
+const STEPS = [GuideStepTwo, GuideStepOne];
 
 export function SweepGuideModal() {
   const [isOpen, setIsOpen] = useState(false);
@@ -240,7 +195,7 @@ export function SweepGuideModal() {
     >
       <div
         id="dustsweep-guide-title"
-        className="max-h-[calc(100dvh_-_1.5rem_-_env(safe-area-inset-top)_-_var(--safe-area-bottom))] w-full max-w-[340px] overflow-y-auto overscroll-contain rounded-[8px] bg-white px-3.5 pb-3.5 pt-4 shadow-[0_26px_90px_rgba(15,23,42,0.28)] sm:max-h-[calc(100dvh_-_3rem)] sm:max-w-[420px] sm:px-6 sm:pb-6 sm:pt-6"
+        className="max-h-[calc(100dvh_-_1.5rem_-_env(safe-area-inset-top)_-_var(--safe-area-bottom))] w-full max-w-[340px] overflow-y-auto overscroll-contain rounded-[24px] bg-white px-3.5 pb-3.5 pt-4 shadow-[0_26px_90px_rgba(15,23,42,0.28)] dark:bg-[#0b1220] sm:max-h-[calc(100dvh_-_3rem)] sm:max-w-[420px] sm:px-6 sm:pb-6 sm:pt-6"
       >
         {/* Progress dots + counter */}
         <div className="mb-3.5 flex items-center justify-between sm:mb-5">
@@ -250,8 +205,8 @@ export function SweepGuideModal() {
                 key={index}
                 className={
                   index === step
-                    ? "h-1.5 w-6 rounded-full bg-blue-600 transition-all"
-                    : "h-1.5 w-1.5 rounded-full bg-slate-200 transition-all"
+                    ? "h-1.5 w-6 rounded-full bg-[#0052ff] transition-all"
+                    : "h-1.5 w-1.5 rounded-full bg-slate-200 transition-all dark:bg-white/15"
                 }
               />
             ))}
@@ -275,7 +230,7 @@ export function SweepGuideModal() {
           <button
             type="button"
             onClick={() => (isLastStep ? close() : setStep(step + 1))}
-            className="inline-flex min-h-[40px] items-center gap-2 rounded-[8px] bg-blue-600 px-4 text-sm font-bold text-white shadow-[0_10px_24px_rgba(37,99,235,0.28)] transition hover:bg-blue-700 sm:min-h-[44px] sm:px-5"
+            className="sweep-cta inline-flex min-h-[40px] items-center gap-2 rounded-[13px] px-4 text-sm font-bold sm:min-h-[44px] sm:px-5"
           >
             {isLastStep ? "Start sweeping" : "Next"}
             {!isLastStep ? (

@@ -33,11 +33,15 @@ export function SweepDetails({
   ];
 
   return (
-    <dl className="flex flex-col gap-1.5">
+    <dl className="flex flex-col gap-2">
       {rows.map(({ label, value, warn }) => (
         <div key={label} className="flex items-center justify-between gap-3">
-          <dt className="text-sm text-slate-500">{label}</dt>
-          <dd className={`text-sm font-medium ${warn ? "text-red-600" : "text-slate-900"}`}>
+          <dt className="text-[13px] text-slate-500 dark:text-slate-400">{label}</dt>
+          <dd
+            className={`text-[13px] font-semibold tabular-nums ${
+              warn ? "text-red-600 dark:text-red-300" : "text-slate-900 dark:text-white"
+            }`}
+          >
             {value}
           </dd>
         </div>

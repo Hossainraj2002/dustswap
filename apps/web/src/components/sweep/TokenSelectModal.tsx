@@ -82,35 +82,36 @@ function discoveryBadge(token: Token, mutedReason?: string) {
   return token.name;
 }
 
-function NetworkButton({
-  active,
-  label,
-  icon,
-}: {
-  active?: boolean;
-  label: string;
-  icon?: string;
-}) {
+// Small confidence dot colour, mirroring discoveryBadge. Hidden when muted.
+function confidenceDot(token: Token, mutedReason?: string) {
+  if (mutedReason) return null;
+  if (token.status === "PRICED") {
+    return token.priceConfidence === "HIGH" ? "bg-emerald-500" : "bg-blue-500";
+  }
+  if (token.status === "LIQUIDITY_PENDING") return "bg-amber-500";
+  if (token.status === "UNKNOWN_PRICE" || token.status === "HIDDEN") return "bg-slate-300 dark:bg-slate-600";
+  if (token.status === "SPAM") return "bg-red-400";
+  return "bg-slate-300 dark:bg-slate-600";
+}
+
+function NetworkRow() {
   return (
-    <button
-      type="button"
-      className={cx(
-        "flex h-[60px] w-[60px] items-center justify-center rounded-[8px] border transition",
-        active
-          ? "border-blue-500 bg-blue-50 shadow-sm"
-          : "border-transparent bg-blue-50/70 hover:border-blue-200",
-      )}
-      title={label}
-    >
-      {icon ? <img src={icon} alt={label} className="h-8 w-8 rounded-[6px]" /> : (
-        <span className="grid h-8 w-8 grid-cols-2 gap-1">
-          <span className="rounded-[3px] bg-blue-700" />
-          <span className="rounded-[3px] bg-slate-700" />
-          <span className="rounded-[3px] bg-violet-600" />
-          <span className="rounded-[3px] bg-emerald-600" />
-        </span>
-      )}
-    </button>
+    <div className="flex items-center gap-2">
+      <button
+        type="button"
+        className="inline-flex h-11 items-center gap-2 rounded-[13px] border-[1.5px] border-[#0052ff] bg-blue-50 px-3.5 text-[15px] font-bold text-slate-900 shadow-[0_1px_2px_rgba(16,24,40,0.05)] dark:bg-blue-400/10 dark:text-white"
+        aria-pressed="true"
+      >
+        <img src={BASE_ICON} alt="Base" className="h-5 w-5 rounded-full" />
+        Base
+      </button>
+      <span
+        className="inline-flex h-11 cursor-default select-none items-center gap-1.5 rounded-[13px] border border-dashed border-slate-300 px-3.5 text-[13px] font-semibold text-slate-400 dark:border-white/15 dark:text-slate-500"
+        title="More networks coming soon"
+      >
+        More soon
+      </span>
+    </div>
   );
 }
 
@@ -119,17 +120,20 @@ function AssetRow({
   selected,
   disabled,
   mutedReason,
+  multi,
   onClick,
 }: {
   token: Token & Partial<Pick<SwappableToken, "balanceFormatted" | "valueUSD">>;
   selected?: boolean;
   disabled?: boolean;
   mutedReason?: string;
+  multi?: boolean;
   onClick?: () => void;
 }) {
   const balance = fmtBalance(token.balanceFormatted);
   const usd = fmtUSD(token.valueUSD);
   const subtitle = discoveryBadge(token, mutedReason);
+  const dot = confidenceDot(token, mutedReason);
 
   return (
     <button
@@ -138,24 +142,62 @@ function AssetRow({
       disabled={disabled}
       title={mutedReason}
       className={cx(
-        "group flex min-h-[62px] w-full items-center justify-between gap-3 rounded-[8px] px-2 py-2 text-left transition",
-        selected && "bg-blue-50 ring-1 ring-blue-300",
-        !selected && !disabled && "hover:bg-blue-50",
+        "group flex min-h-[60px] w-full items-center justify-between gap-3 rounded-[12px] px-2.5 py-2 text-left transition",
+        selected && "bg-blue-50 ring-1 ring-blue-300 dark:bg-blue-400/10 dark:ring-blue-400/30",
+        !selected && !disabled && "hover:bg-slate-50 dark:hover:bg-white/[0.04]",
         disabled && "cursor-not-allowed opacity-50",
       )}
     >
       <span className="flex min-w-0 items-center gap-3">
         <TokenLogo token={token} size="md" muted={disabled} />
         <span className="min-w-0">
-          <span className="block truncate text-base font-semibold text-slate-950">{token.symbol}</span>
-          <span className="block truncate text-sm text-slate-500">{subtitle}</span>
+          <span className="block truncate text-[15px] font-bold text-slate-900 dark:text-white">{token.symbol}</span>
+          <span className="flex items-center gap-1.5">
+            {dot ? <span className={cx("h-1.5 w-1.5 shrink-0 rounded-full", dot)} /> : null}
+            <span className="block truncate text-[13px] text-slate-500 dark:text-slate-400">{subtitle}</span>
+          </span>
         </span>
       </span>
-      <span className="shrink-0 text-right">
-        <span className="block font-mono text-sm text-slate-950">{balance}</span>
-        <span className="block text-xs text-slate-400">{usd}</span>
+      <span className="flex shrink-0 items-center gap-2.5">
+        <span className="text-right">
+          <span className="block font-mono text-sm font-semibold tabular-nums text-slate-900 dark:text-white">{balance}</span>
+          <span className="block text-xs text-slate-400 dark:text-slate-500">{usd}</span>
+        </span>
+        {multi && !disabled ? (
+          <span
+            className={cx(
+              "flex h-5 w-5 shrink-0 items-center justify-center rounded-md border transition",
+              selected
+                ? "border-[#0052ff] bg-[#0052ff] text-white"
+                : "border-slate-300 text-transparent group-hover:border-slate-400 dark:border-white/20",
+            )}
+            aria-hidden="true"
+          >
+            <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M5 13l4 4L19 7" />
+            </svg>
+          </span>
+        ) : null}
       </span>
     </button>
+  );
+}
+
+function SkeletonRow() {
+  return (
+    <div className="flex items-center justify-between gap-3 px-2.5 py-2.5">
+      <div className="flex min-w-0 flex-1 items-center gap-3">
+        <span className="sweep-skel h-9 w-9 shrink-0 rounded-full" />
+        <div className="min-w-0 flex-1">
+          <span className="sweep-skel block h-3 w-1/3 rounded" />
+          <span className="sweep-skel mt-2 block h-2.5 w-1/2 rounded" />
+        </div>
+      </div>
+      <div className="text-right">
+        <span className="sweep-skel ml-auto block h-3 w-12 rounded" />
+        <span className="sweep-skel ml-auto mt-2 block h-2.5 w-8 rounded" />
+      </div>
+    </div>
   );
 }
 
@@ -244,16 +286,18 @@ export function TokenSelectModal({
 
   return (
     <div className="fixed inset-0 z-[90] flex items-end justify-center bg-slate-950/45 px-0 backdrop-blur-sm sm:items-center sm:px-4">
-      <div className="flex max-h-[86dvh] w-full max-w-[540px] flex-col rounded-t-[8px] bg-white shadow-[0_30px_80px_rgba(15,23,42,0.22)] sm:rounded-[8px]">
-        <div className="flex items-center justify-between px-5 pb-3 pt-4">
-          <h2 className="text-xl font-semibold text-slate-950">{title}</h2>
+      <div className="flex max-h-[86dvh] w-full max-w-[540px] flex-col rounded-t-[24px] bg-white shadow-[0_30px_90px_rgba(15,23,42,0.28)] dark:bg-[#0b1220] sm:rounded-[24px]">
+        <div className="flex items-center justify-between px-5 pb-3 pt-5">
+          <h2 className="text-xl font-bold tracking-[-0.01em] text-slate-950 dark:text-white">{title}</h2>
           <button
             type="button"
             onClick={onClose}
-            className="flex h-10 w-10 items-center justify-center rounded-[8px] text-2xl font-light text-slate-500 transition hover:bg-slate-100 hover:text-slate-900"
+            className="flex h-9 w-9 items-center justify-center rounded-[11px] text-slate-400 transition hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-white/10 dark:hover:text-white"
             aria-label="Close token selector"
           >
-            &times;
+            <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M6 6l12 12M18 6 6 18" />
+            </svg>
           </button>
         </div>
 
@@ -263,22 +307,18 @@ export function TokenSelectModal({
               value={query}
               onChange={(event) => setQuery(event.target.value)}
               placeholder="Search for a token or paste address"
-              className="h-10 w-full rounded-[8px] border border-transparent bg-slate-50 px-4 pr-11 text-base text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-blue-300 focus:bg-white"
+              className="h-11 w-full rounded-[13px] border border-slate-200 bg-slate-50 px-4 pr-11 text-base text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-blue-400 focus:bg-white focus:ring-4 focus:ring-blue-500/10 dark:border-white/10 dark:bg-white/[0.04] dark:text-white dark:focus:bg-white/[0.06]"
             />
-            <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-slate-400">
+            <span className="pointer-events-none absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400">
               <SearchIcon />
             </span>
           </div>
 
-          <div className="flex gap-3 overflow-x-auto pb-1">
-            <NetworkButton active={mode === "single"} label="All" />
-            <NetworkButton active={mode === "multi"} label="Base" icon={BASE_ICON} />
-            <NetworkButton label="More networks" />
-          </div>
+          <NetworkRow />
 
           {mode === "single" ? (
             <div>
-              <p className="mb-2 text-sm font-medium text-slate-500">Popular tokens:</p>
+              <p className="mb-2 text-[13px] font-semibold text-slate-500 dark:text-slate-400">Popular tokens</p>
               <div className="flex flex-wrap gap-2">
                 {visibleOutputTokens.slice(0, 5).map((token) => (
                   <button
@@ -289,10 +329,10 @@ export function TokenSelectModal({
                       onClose();
                     }}
                     className={cx(
-                      "inline-flex min-h-[34px] items-center gap-1.5 rounded-[7px] border px-2.5 text-sm font-semibold transition",
+                      "inline-flex min-h-[36px] items-center gap-1.5 rounded-[11px] border px-3 text-sm font-bold transition",
                       selectedOutputToken?.address.toLowerCase() === token.address.toLowerCase()
-                        ? "border-blue-400 bg-blue-50 text-blue-700"
-                        : "border-blue-100 bg-blue-50 text-slate-800 hover:border-blue-300",
+                        ? "border-[#0052ff] bg-blue-50 text-[#0052ff] dark:bg-blue-400/10 dark:text-blue-300"
+                        : "sweep-chip text-slate-800 hover:border-blue-300 dark:text-slate-100",
                     )}
                   >
                     <TokenLogo token={token} size="sm" />
@@ -305,10 +345,10 @@ export function TokenSelectModal({
 
           <div>
             <div className="mb-2 flex items-center justify-between gap-3">
-              <p className="text-sm font-medium text-slate-500">
+              <p className="text-[13px] font-semibold text-slate-500 dark:text-slate-400">
                 {mode === "single" ? "Your tokens" : "Base"}
                 {mode === "multi" ? (
-                  <span className="ml-2 text-xs text-slate-400">
+                  <span className="ml-2 text-xs font-normal text-slate-400 dark:text-slate-500">
                     {visibleSwappable.length} sweepable / {discoveryLabel}
                   </span>
                 ) : null}
@@ -317,14 +357,14 @@ export function TokenSelectModal({
                 <button
                   type="button"
                   onClick={onSelectAll}
-                  className="min-h-0 rounded-[6px] px-1.5 py-1 text-sm font-medium text-blue-700 transition hover:bg-blue-50"
+                  className="min-h-0 rounded-[9px] px-2 py-1 text-sm font-semibold text-[#0052ff] transition hover:bg-blue-50 dark:text-blue-300 dark:hover:bg-blue-400/10"
                 >
                   Select all
                 </button>
               ) : null}
             </div>
 
-            <div className="space-y-1">
+            <div className="space-y-0.5">
               {disabledOutputToken ? (
                 <AssetRow token={disabledOutputToken} disabled mutedReason="Selected output token" />
               ) : null}
@@ -340,6 +380,7 @@ export function TokenSelectModal({
                     key={token.address}
                     token={token}
                     selected={selected}
+                    multi={mode === "multi"}
                     onClick={() => {
                       if (mode === "single") {
                         onSelectOutputToken(token);
@@ -359,15 +400,15 @@ export function TokenSelectModal({
               {mode === "multi" && visibleUnavailable.length > 0 ? (
                 <div className="pt-3">
                   <div className="mb-2">
-                    <p className="text-sm font-medium text-slate-500">
+                    <p className="text-[13px] font-semibold text-slate-500 dark:text-slate-400">
                       Hidden / unavailable
-                      <span className="ml-2 text-xs text-slate-400">{visibleUnavailable.length} tokens</span>
+                      <span className="ml-2 text-xs font-normal text-slate-400 dark:text-slate-500">{visibleUnavailable.length} tokens</span>
                     </p>
-                    <p className="text-xs text-slate-400">
+                    <p className="text-xs text-slate-400 dark:text-slate-500">
                       Below $0.01, no price, output assets, native ETH, or risk-filtered.
                     </p>
                   </div>
-                  <div className="space-y-1">
+                  <div className="space-y-0.5">
                     {visibleUnavailable.map((token) => (
                       <AssetRow
                         key={token.address}
@@ -381,9 +422,17 @@ export function TokenSelectModal({
               ) : null}
 
               {visibleSwappable.length === 0 && visibleUnavailable.length === 0 && mode === "multi" ? (
-                <div className="rounded-[8px] border border-dashed border-slate-200 px-4 py-8 text-center text-sm text-slate-500">
-                  No tokens found
-                </div>
+                isScanning && !query.trim() ? (
+                  <div className="space-y-0.5">
+                    {Array.from({ length: 6 }).map((_, index) => (
+                      <SkeletonRow key={index} />
+                    ))}
+                  </div>
+                ) : (
+                  <div className="rounded-[14px] border border-dashed border-slate-200 px-4 py-8 text-center text-sm text-slate-500 dark:border-white/10 dark:text-slate-400">
+                    No tokens found
+                  </div>
+                )
               ) : null}
             </div>
           </div>
