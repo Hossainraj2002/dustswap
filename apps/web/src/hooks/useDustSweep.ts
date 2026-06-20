@@ -1558,15 +1558,15 @@ export function useDustSweep(): UseDustSweepReturn {
 
     const useSingleOkxRequest = args.walletKey === "okx";
     // OKX one-click: send the exact ERC20 approvals + the V3 sweep as ONE
-    // wallet_sendCalls with atomicRequired:FALSE. Per OKX's provider docs, OKX
-    // executes ALL wallet_sendCalls atomically anyway (one tx via its EIP-7702
-    // smart account), so false still yields the single combined transaction — and
-    // it AVOIDS the "Unable to decode / Confirm disabled" prompt that
-    // atomicRequired:true triggers on OKX (which is what forced the multi-tx
-    // fallback). Combined with clean approval calldata (no builder suffix on
-    // approvals), this restores the one-prompt approve+sweep. Other wallets honour
-    // the caller's atomicity choice (true).
-    const requireAtomic = useSingleOkxRequest ? false : (args.requireAtomic ?? true);
+    // wallet_sendCalls with atomicRequired:TRUE. This is REQUIRED for OKX to
+    // PREVIEW the bundle correctly: OKX simulates an atomic batch sequentially
+    // (state flows call→call), so the 49 approvals are applied before the sweep's
+    // transferFrom is previewed. With atomicRequired:false OKX previews each call
+    // against current state, the sweep reverts (no allowance yet), OKX can't build
+    // a preview, and "Confirm" stays disabled ("Unknown transaction"). The earlier
+    // "Unable to decode" on true came from the builder suffix on approval calldata,
+    // which is now removed (approvals are clean; only the sweep carries the suffix).
+    const requireAtomic = args.requireAtomic ?? true;
     const calls = args.calls.map((call) =>
       normalizeWalletSendCall(call, args.appendDataSuffixes ?? true),
     );
@@ -1660,6 +1660,29 @@ export function useDustSweep(): UseDustSweepReturn {
       atomicRequired: requireAtomic,
       capabilities,
     });
+
+    // Full payload trace so the EXACT wallet_sendCalls OKX receives can be
+    // inspected from the console (selector + calldata length per call; the last
+    // call is the V3 sweep). Helps diagnose "Unknown transaction / Confirm
+    // disabled": confirm atomicRequired:true, the spender on every approve, and
+    // that no call carries unexpected trailing bytes.
+    if (useSingleOkxRequest) {
+      console.info("DustSweep OKX wallet_sendCalls payload", {
+        version: sendCallsPayload.version,
+        atomicRequired: sendCallsPayload.atomicRequired,
+        chainId: sendCallsPayload.chainId,
+        from: sendCallsPayload.from,
+        callCount: sendCallsPayload.calls.length,
+        calls: sendCallsPayload.calls.map((call, index) => ({
+          index,
+          to: call.to,
+          selector: call.data.slice(0, 10),
+          dataLength: call.data.length,
+          value: call.value,
+          isSweep: index === sendCallsPayload.calls.length - 1,
+        })),
+      });
+    }
 
     let sendCallsResult: unknown;
     let requestForStatus: WalletRpcRequest | null = null;
@@ -2294,9 +2317,10 @@ export function useDustSweep(): UseDustSweepReturn {
             artificialCallCapApplied: false,
             approvalCallsHaveSuffix: false,
             sweepCallHasSuffix: true,
-            // OKX runs all wallet_sendCalls atomically (one tx) regardless; we send
-            // atomicRequired:false to avoid OKX's "Unable to decode" on true.
-            atomicRequired: false,
+            // atomicRequired:true so OKX previews the batch sequentially (approvals
+            // applied before the sweep's transferFrom) — otherwise the sweep reverts
+            // in OKX's preview and Confirm is disabled.
+            atomicRequired: true,
           });
         }
 
