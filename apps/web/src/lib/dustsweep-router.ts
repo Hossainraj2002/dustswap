@@ -11,11 +11,22 @@ export const DUST_SWEEP_ROUTER_V2_ADDRESS = (process.env.NEXT_PUBLIC_DUST_SWEEP_
   "0x0000000000000000000000000000000000000000") as Address;
 
 export const DUST_SWEEP_EXECUTION_LANE = (process.env.NEXT_PUBLIC_DUST_SWEEP_EXECUTION_LANE ||
-  "owned_v1") as "owned_v1" | "owned_v2" | "basket_aggregator";
+  "owned_v1") as "owned_v1" | "owned_v2" | "owned_v3" | "basket_aggregator";
 
 export const dustSweepRouterAbi = DustSweepRouterABI;
 export const V1_MAX_BATCH_SIZE = 10;
 export const V2_MAX_BATCH_SIZE = 50;
+
+/**
+ * The modern owned lane that approves the router and then has it pull tokens with
+ * transferFrom. `owned_v2` is the original name; `owned_v3` is a clean alias for
+ * the same lane now that it routes through the DustSwapSweepRouter (V3) whenever
+ * NEXT_PUBLIC_DUST_SWEEP_ROUTER_V3_ADDRESS is configured. Use this instead of
+ * `lane === "owned_v2"` so V3 is no longer mentally tied to V2.
+ */
+export function isOwnedModernLane(lane?: string | null): boolean {
+  return lane === "owned_v2" || lane === "owned_v3";
+}
 
 export const dustSweepRouterV2Abi = [
   {

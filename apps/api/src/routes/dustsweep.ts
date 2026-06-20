@@ -188,9 +188,18 @@ type DustSweepExecutionLane = "owned_v1" | "owned_v2" | "basket_aggregator";
 
 function getExecutionLane(): DustSweepExecutionLane {
   const raw = String(process.env.DUST_SWEEP_EXECUTION_LANE || "owned_v1").toLowerCase();
-  if (raw === "owned_v2") return "owned_v2";
+  // owned_v3 is a clean alias for the modern owned lane: same approve + router
+  // transferFrom flow, transparently routed through the V3 router when configured.
+  // Normalize it to owned_v2 so every downstream check keeps working unchanged.
+  if (raw === "owned_v2" || raw === "owned_v3") return "owned_v2";
   if (raw === "basket_aggregator") return "basket_aggregator";
   return "owned_v1";
+}
+
+// True for the modern owned lane (owned_v2 / owned_v3 alias). Use this instead of
+// hard-coding `=== "owned_v2"` so V3 is decoupled from the V2 name.
+function isOwnedModernLane(executionLane: DustSweepExecutionLane) {
+  return executionLane === "owned_v2";
 }
 
 function getRouteMaxCap(executionLane: DustSweepExecutionLane) {
@@ -214,7 +223,7 @@ function getRouterMinAmountOut(
 ) {
   if (!routes.length) return 0n;
 
-  if (executionLane === "owned_v2" && isV3Active()) {
+  if (isOwnedModernLane(executionLane) && isV3Active()) {
     // V3 executes routes best-effort: every DEX leg still enforces its own
     // slippage floor, and failed legs are refunded. The router-level floor
     // should therefore only require at least one quoted leg to settle, not the
@@ -229,7 +238,7 @@ function getRouterMinAmountOut(
 }
 
 function getRouterAddressForLane(executionLane: DustSweepExecutionLane) {
-  if (executionLane === "owned_v2") {
+  if (isOwnedModernLane(executionLane)) {
     return isV3Active() ? DUST_SWEEP_ROUTER_V3_ADDRESS : DUST_SWEEP_ROUTER_V2_ADDRESS;
   }
   return DUST_SWEEP_ROUTER_V1_ADDRESS;

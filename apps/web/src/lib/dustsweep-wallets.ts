@@ -241,7 +241,7 @@ export function getWalletBatchNotice(
 
   if (atomicStatus === "supported") {
     if (walletKey === "base_account" || walletKey === "coinbase") {
-      return `${walletName} can batch token approvals; DustSweep sends approvals first, then the sweep for a reliable Base Account review.`;
+      return `${walletName} batches your token approvals and the sweep into one atomic transaction.`;
     }
     if (walletKey === "okx") {
       return "OKX Wallet batches token approvals and the sweep into one atomic transaction.";

@@ -34,7 +34,7 @@ export type TokenDiscoveryStatus =
 
 export type TokenPriceConfidence = "HIGH" | "MEDIUM" | "LOW" | "NONE";
 
-export type DustSweepExecutionLane = "owned_v1" | "owned_v2" | "basket_aggregator";
+export type DustSweepExecutionLane = "owned_v1" | "owned_v2" | "owned_v3" | "basket_aggregator";
 export type DustSweepSignatureMode = "none" | "permit2_witness";
 
 export type SweepStep = "idle" | "approving" | "signing" | "pending" | "success" | "error";
