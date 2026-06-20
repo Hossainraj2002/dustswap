@@ -1189,27 +1189,57 @@ export function useDustSweep(): UseDustSweepReturn {
     spender: Address,
   ) => {
     if (!address) return [];
+    const requirements = uniqueApprovalRequirements(routes);
+    if (requirements.length === 0) return [];
+
+    // Read ALL allowances in ONE multicall (Multicall3 on Base) instead of N
+    // sequential eth_call round-trips. For a 49-token sweep this turns ~1-3 minutes
+    // of per-token RPC latency into a single ~1s call, so the wallet prompt opens
+    // fast. Falls back to parallel reads if multicall is unavailable.
+    let allowances: bigint[];
+    try {
+      const results = await publicClient.multicall({
+        allowFailure: true,
+        contracts: requirements.map((requirement) => ({
+          address: requirement.token,
+          abi: erc20Abi,
+          functionName: "allowance",
+          args: [address, spender],
+        })),
+      });
+      allowances = results.map((result) =>
+        result.status === "success" ? (result.result as bigint) : 0n,
+      );
+    } catch {
+      allowances = await Promise.all(
+        requirements.map(async (requirement) => {
+          try {
+            return (await publicClient.readContract({
+              address: requirement.token,
+              abi: erc20Abi,
+              functionName: "allowance",
+              args: [address, spender],
+            })) as bigint;
+          } catch {
+            return 0n;
+          }
+        }),
+      );
+    }
+
     const approvalRequirements: ApprovalRequirement[] = [];
-
-    for (const requirement of uniqueApprovalRequirements(routes)) {
-      const allowance = (await publicClient.readContract({
-        address: requirement.token,
-        abi: erc20Abi,
-        functionName: "allowance",
-        args: [address, spender],
-      })) as bigint;
-
+    requirements.forEach((requirement, index) => {
+      const allowance = allowances[index] ?? 0n;
       if (allowance >= requirement.amount) {
-        continue;
+        return;
       }
-
       approvalRequirements.push({
         ...requirement,
         allowance,
         approvalAmount: requirement.amount,
         resetFirst: allowance > 0n && requiresApprovalReset(requirement.token),
       });
-    }
+    });
 
     return approvalRequirements;
   }, [address, publicClient]);
