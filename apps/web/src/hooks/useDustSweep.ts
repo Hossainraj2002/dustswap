@@ -656,6 +656,12 @@ export function useDustSweep(): UseDustSweepReturn {
   const [isDetectingRoute, setIsDetectingRoute] = useState(false);
   const [permit2SetupCount, setPermit2SetupCount] = useState(0);
   const sweepInFlightRef = useRef(false);
+  // Sticky flag: once the OKX one-click combined batch is abandoned (the user
+  // hits "Reject all" because OKX left Confirm disabled, or it errors), the NEXT
+  // Sweep click skips the combined batch and uses the proven approve+sweep path so
+  // the sweep always completes instead of dead-ending. Reset on account change and
+  // after a successful sweep.
+  const okxOneClickAbandonedRef = useRef(false);
 
   const configuredRouteCap = getCapForLane(DUST_SWEEP_EXECUTION_LANE);
   const routeMaxCap = quote?.routeMaxCap ?? configuredRouteCap;
@@ -730,6 +736,7 @@ export function useDustSweep(): UseDustSweepReturn {
     setError(null);
     setSweepStep("idle");
     setAutoMode(false);
+    okxOneClickAbandonedRef.current = false;
   }, [address]);
 
   useEffect(() => {
@@ -1313,12 +1320,16 @@ export function useDustSweep(): UseDustSweepReturn {
     const paymasterUrl = process.env.NEXT_PUBLIC_PAYMASTER_URL;
     const usesTokenPocketExisting =
       walletProfile.executionStrategy === "tokenpocket_existing";
+    // OKX must get CLEAN exact ERC20 approve calldata (no builder-code suffix) so
+    // each approval decodes as a normal "Approve" in OKX. Builder attribution stays
+    // on the sweep. Other wallets keep the suffix on approvals as before.
+    const attachBuilderSuffix = walletProfile.walletKey !== "okx";
     for (const requirement of approvalRequirements) {
       const txBase = {
         account: address,
         chain: base,
         to: requirement.token,
-        dataSuffix: DATA_SUFFIX,
+        ...(attachBuilderSuffix ? { dataSuffix: DATA_SUFFIX } : {}),
         ...(walletStatus.isCoinbaseSmartWallet && paymasterUrl
           ? {
               capabilities: buildBasePaymasterCapabilities(),
@@ -1373,6 +1384,7 @@ export function useDustSweep(): UseDustSweepReturn {
     waitForSuccessfulTransaction,
     walletClient,
     walletProfile.executionStrategy,
+    walletProfile.walletKey,
     walletStatus.isCoinbaseSmartWallet,
   ]);
 
@@ -1807,6 +1819,10 @@ export function useDustSweep(): UseDustSweepReturn {
     };
 
     let currentStep: SweepStep = "approving";
+    // Tracks whether THIS attempt sent the OKX one-click combined batch, so the
+    // outer catch can turn a reject/abandon of an unconfirmable batch into a sticky
+    // fall-through to the proven approve+sweep path (instead of a dead-end cancel).
+    let attemptedOkxOneClick = false;
     setIsSweeping(true);
     setSweepStep(currentStep);
     setError(null);
@@ -1933,6 +1949,12 @@ export function useDustSweep(): UseDustSweepReturn {
       // supportsWalletSendCalls.
       const canTryOkxRawSendCalls =
         walletProfile.walletKey === "okx" && routeKind === "batch";
+      // Guaranteed fallback: once the OKX one-click combined batch has been
+      // abandoned this session (OKX left Confirm disabled and the user rejected,
+      // or it errored), skip the combined batch and run the proven approve+sweep
+      // path so the sweep completes. Reset on account change / on success.
+      const okxUseStandardPath =
+        canTryOkxRawSendCalls && okxOneClickAbandonedRef.current;
       // (C) OKX must receive CLEAN exact ERC20 approve calldata (no builder-code
       // suffix) so it decodes the bundle and shows a normal approval+sweep prompt.
       // The builder code stays on the final V3 sweep call. Other wallets keep the
@@ -1993,7 +2015,10 @@ export function useDustSweep(): UseDustSweepReturn {
       // call-count cap.)
       const canBundleAllCalls =
         !shouldSplitWalletBatch &&
-        (canUseAtomicBatch || canUseTokenPocketBatch);
+        (canUseAtomicBatch || canUseTokenPocketBatch) &&
+        // After the OKX one-click batch was abandoned this session, fall through to
+        // the proven approve+sweep path instead of re-attempting the combined batch.
+        !okxUseStandardPath;
       const canBundleApprovalsOnly =
         (canUseAtomicBatch || canUseTokenPocketBatch) &&
         approvalCalls.length > 0 &&
@@ -2294,6 +2319,9 @@ export function useDustSweep(): UseDustSweepReturn {
 
         // (G) Full telemetry for the OKX one-click bundle before the single prompt.
         if (canTryOkxRawSendCalls) {
+          // Mark the one-click attempt so a reject/abandon falls through to the
+          // proven approve+sweep path on the next Sweep click.
+          attemptedOkxOneClick = true;
           console.info("DustSweep OKX wallet_sendCalls bundle", {
             walletKey: walletProfile.walletKey,
             routeKind,
@@ -2476,11 +2504,18 @@ export function useDustSweep(): UseDustSweepReturn {
             : `Approval+sweep needs ${bundledCallCount} wallet calls, so DustSweep will batch approvals first and then send the sweep.`,
         );
       } else {
+        if (okxUseStandardPath) {
+          setExecutionNotice(
+            "OKX couldn't confirm the one-click batch, so DustSweep is approving your tokens and sweeping them step by step.",
+          );
+        }
         hash = await sendStandardSweepWithApprovals();
       }
 
       setTxHash(hash);
       await waitForSuccessfulTransaction(hash);
+      // Sweep completed — clear the OKX fallback flag for the next sweep.
+      okxOneClickAbandonedRef.current = false;
 
       const completedInputs: DustSweepCompletionSummary["inputs"] = [];
       for (const route of quote.routes) {
@@ -2543,6 +2578,25 @@ export function useDustSweep(): UseDustSweepReturn {
 
       return { txHash: hash };
     } catch (sweepError) {
+      // OKX left the combined batch with Confirm disabled and the user rejected it.
+      // This only fires on a genuine pre-submission rejection (nothing was sent —
+      // a clear pre-submission failure already falls back inline, and a submitted-
+      // but-status-unclear batch throws OKX_BATCH_STATUS_UNCLEAR_MESSAGE and is NOT
+      // caught here, so we never risk a duplicate). Arm the sticky fallback so the
+      // NEXT Sweep click runs the proven approve+sweep path — never dead-end.
+      if (
+        attemptedOkxOneClick &&
+        isRejectedByUser(sweepError) &&
+        !okxOneClickAbandonedRef.current
+      ) {
+        okxOneClickAbandonedRef.current = true;
+        setError(
+          "OKX couldn't confirm the one-click approve+sweep. Tap Sweep again — DustSweep will approve your tokens and sweep them step by step instead.",
+        );
+        setSweepStep("error");
+        logSweepTelemetry("cancelled");
+        return null;
+      }
       const message =
         isWalletLockedError(sweepError)
           ? METAMASK_LOCKED_MESSAGE
