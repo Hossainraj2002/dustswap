@@ -27,6 +27,30 @@ const WARNING_MESSAGE =
   "Your message was removed because only official Dustswap links and X links are allowed in this server. Repeated violations will result in timeout or ban.";
 const BAN_REASON = "Repeated blocked/scam link violations in Dustswap Discord";
 const LOG_HEADER = "ANTI_SCAM_LINK_FILTER";
+const COMMON_FILE_EXTENSIONS = new Set([
+  "avif",
+  "bmp",
+  "csv",
+  "doc",
+  "docx",
+  "gif",
+  "heic",
+  "jpeg",
+  "jpg",
+  "json",
+  "mov",
+  "mp3",
+  "mp4",
+  "pdf",
+  "png",
+  "svg",
+  "txt",
+  "webm",
+  "webp",
+  "xls",
+  "xlsx",
+  "zip",
+]);
 
 export type AntiScamFilterConfig = {
   guildId: string;
@@ -198,6 +222,15 @@ function trimUrlCandidate(candidate: string) {
     .replace(/[>\])}.,!?;:'"]+$/g, "");
 }
 
+function looksLikeBareFileName(candidate: string, url: URL, hasProtocol: boolean) {
+  if (hasProtocol || /[/?#]/.test(candidate)) {
+    return false;
+  }
+
+  const lastPart = url.hostname.split(".").pop()?.toLowerCase();
+  return Boolean(lastPart && COMMON_FILE_EXTENSIONS.has(lastPart));
+}
+
 export function extractHostnamesFromText(text: string) {
   const hostnames = new Set<string>();
   const patterns = [
@@ -214,7 +247,12 @@ export function extractHostnamesFromText(text: string) {
       }
 
       try {
-        const url = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(candidate) ? candidate : `https://${candidate}`);
+        const hasProtocol = /^[a-z][a-z0-9+.-]*:\/\//i.test(candidate);
+        const url = new URL(hasProtocol ? candidate : `https://${candidate}`);
+        if (looksLikeBareFileName(candidate, url, hasProtocol)) {
+          continue;
+        }
+
         const hostname = normalizeHostname(url.hostname);
         if (hostname) {
           hostnames.add(hostname);

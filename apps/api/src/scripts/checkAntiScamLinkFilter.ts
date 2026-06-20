@@ -27,6 +27,10 @@ const messageExamples = [
   ["masked [claim](https://bad.com/path)", ["bad.com"]],
   ["bare domain example.com/path?user=name", ["example.com"]],
   ["many links x.com https://bit.ly/claim https://app.dustswap.wtf", ["bit.ly"]],
+  ["ordinary image filename screenshot.png", []],
+  ["ordinary image filename final.banner.JPG", []],
+  ["ordinary document filename audit-report.pdf", []],
+  ["real URL with image path https://bad.com/screenshot.png", ["bad.com"]],
 ] as const;
 
 let failures = 0;
