@@ -2313,7 +2313,12 @@ export function useDustSweep(): UseDustSweepReturn {
             to: sweepTarget,
             data: sweepCalldata,
             value: txValue,
-            dataSuffix: DATA_SUFFIX,
+            // OKX: omit the builder-code suffix on the sweep too. The non-ABI
+            // trailing bytes on the custom router call make OKX's atomic-batch
+            // decoder fail ("Unable to decode transaction data") and disable
+            // Confirm. The whole OKX bundle must be clean ABI calldata. All other
+            // wallets keep builder attribution on the sweep.
+            ...(canTryOkxRawSendCalls ? {} : { dataSuffix: DATA_SUFFIX }),
           },
         ];
 
@@ -2344,7 +2349,9 @@ export function useDustSweep(): UseDustSweepReturn {
             fullBundleCallsLength: fullBundleCalls.length,
             artificialCallCapApplied: false,
             approvalCallsHaveSuffix: false,
-            sweepCallHasSuffix: true,
+            // OKX bundle is now 100% clean ABI calldata (no builder suffix on any
+            // call) so OKX's batch decoder can decode it.
+            sweepCallHasSuffix: false,
             // atomicRequired:true so OKX previews the batch sequentially (approvals
             // applied before the sweep's transferFrom) — otherwise the sweep reverts
             // in OKX's preview and Confirm is disabled.
