@@ -852,7 +852,7 @@ async function resolveSwapRoutingContext(args: {
     };
   }
 
-  if (isEip7702Transaction(args.transaction) && isSupportedDelegationManager(transactionTo)) {
+  if (isSupportedDelegationManager(transactionTo)) {
     if (!OPENOCEAN_ROUTER_ADDRESSES.has(args.decodedSwap.emitterAddress)) {
       throw new UnprocessableSwapError(
         "Delegated transaction did not execute a supported OpenOcean swap"
@@ -863,14 +863,24 @@ async function resolveSwapRoutingContext(args: {
       throw new UnprocessableSwapError("Swap event sender does not match the connected wallet");
     }
 
-    const authorizedAddresses = await resolveAuthorizedEip7702Addresses(args.transaction);
-    if (
-      authorizedAddresses.length > 0 &&
-      !authorizedAddresses.includes(normalizedExpectedAddress)
-    ) {
-      throw new UnprocessableSwapError(
-        "Delegated transaction authorization does not belong to this wallet"
-      );
+    // The EIP-7702 authorization list only rides on the upgrade transaction
+    // (type 0x4). Once an account is already delegated, the wallet's relayer
+    // submits every later swap as a plain type-0x2 transaction to the same
+    // delegation manager, carrying no authorization list to recover. Validate
+    // the list only when it is actually present (type 0x4); for type-0x2
+    // executions ownership is bound by the `decodedSwap.sender ===
+    // expectedAddress` check above — under 7702 the OpenOcean `Swapped` sender
+    // is the delegated EOA itself, so a foreign swap cannot match this wallet.
+    if (isEip7702Transaction(args.transaction)) {
+      const authorizedAddresses = await resolveAuthorizedEip7702Addresses(args.transaction);
+      if (
+        authorizedAddresses.length > 0 &&
+        !authorizedAddresses.includes(normalizedExpectedAddress)
+      ) {
+        throw new UnprocessableSwapError(
+          "Delegated transaction authorization does not belong to this wallet"
+        );
+      }
     }
 
     return {

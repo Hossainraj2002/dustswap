@@ -8,7 +8,7 @@ import { base } from "viem/chains";
 import { pointsEngine } from "./pointsEngine";
 import { recordSwap } from "./swapRecorder";
 import { postgresDb } from "./postgres";
-import { createBasePublicClient } from "../utils/baseRpc";
+import { alchemyRpcRequest, createBasePublicClient } from "../utils/baseRpc";
 import { runtimeCache } from "../utils/runtimeCache";
 import { isAllowedAppDomain, isAllowedAppOrigin } from "../config/appOrigins";
 import {
@@ -3323,22 +3323,57 @@ export class QuestEngine {
         history = [];
       }
 
-      const candidateSwaps = Array.from(
-        (history ?? [])
-          .slice(0, OPENOCEAN_SWAP_SYNC_MAX_RECORDS)
-          .reduce((itemsByHash, item) => {
-            const txHash = item.txHash?.toLowerCase();
-            if (txHash && !itemsByHash.has(txHash)) {
-              itemsByHash.set(txHash, {
-                txHash,
-                amountUsd: item.usd_valuation,
-              });
-            }
+      // Primary discovery: OpenOcean wallet history (indexed by tx `from`).
+      const candidateByHash = new Map<
+        string,
+        { txHash: string; amountUsd?: number | string }
+      >();
+      for (const item of (history ?? []).slice(0, OPENOCEAN_SWAP_SYNC_MAX_RECORDS)) {
+        const txHash = item.txHash?.toLowerCase();
+        if (txHash && !candidateByHash.has(txHash)) {
+          candidateByHash.set(txHash, { txHash, amountUsd: item.usd_valuation });
+        }
+      }
 
-            return itemsByHash;
-          }, new Map<string, { txHash: string; amountUsd?: number | string }>())
-          .values()
-      ).filter((item) => !knownSwaps.has(getSwapTransactionKey(base.id, item.txHash)));
+      // Secondary discovery: on-chain asset transfers FROM this wallet. This
+      // recovers DustSwap swaps that OpenOcean's per-account history misses —
+      // notably EIP-7702 smart-account swaps relayed by the wallet, where the
+      // tx `from` is the relayer (so OpenOcean indexes them under the relayer,
+      // not the user) yet the swapped input token still leaves the user's
+      // address. recordSwap re-verifies each candidate on-chain and rejects
+      // anything that is not an attributable DustSwap swap, so over-fetching is
+      // safe. Best-effort: any failure leaves the OpenOcean candidates intact.
+      try {
+        const onchain = await alchemyRpcRequest<{
+          transfers?: Array<{ hash?: string }>;
+        }>("alchemy_getAssetTransfers", [
+          {
+            fromAddress: normalizedAddress,
+            category: ["external", "erc20"],
+            order: "desc",
+            maxCount: "0x32",
+            excludeZeroValue: false,
+          },
+        ]);
+
+        for (const transfer of onchain?.transfers ?? []) {
+          const txHash = transfer.hash?.toLowerCase();
+          if (
+            txHash &&
+            !candidateByHash.has(txHash) &&
+            candidateByHash.size < OPENOCEAN_SWAP_SYNC_MAX_RECORDS
+          ) {
+            // No trusted USD from this source; recordSwap prices it itself.
+            candidateByHash.set(txHash, { txHash });
+          }
+        }
+      } catch {
+        // On-chain discovery is best-effort; OpenOcean stays the primary source.
+      }
+
+      const candidateSwaps = Array.from(candidateByHash.values()).filter(
+        (item) => !knownSwaps.has(getSwapTransactionKey(base.id, item.txHash))
+      );
 
       const importedHashes: string[] = [];
       const currentReferenceDate = getNow();
