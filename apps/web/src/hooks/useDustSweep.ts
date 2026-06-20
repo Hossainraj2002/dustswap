@@ -193,7 +193,7 @@ const TOKENPOCKET_BATCH_FAILURE_MESSAGE =
 const OKX_BATCH_STATUS_UNCLEAR_MESSAGE =
   "OKX batch status was unclear. No fallback prompts were sent. Check OKX activity or retry once.";
 const OKX_COMBINED_BATCH_NOTICE =
-  "OKX Wallet batches your token approvals and the sweep into one transaction.";
+  "OKX approves your selected tokens in one batch, then sweeps them — two quick prompts.";
 const OKX_BATCH_FALLBACK_NOTICE =
   "OKX couldn't combine approvals and the sweep into one transaction; approving each token, then sweeping.";
 const TOKENPOCKET_EXECUTE_FAILURES_TOPIC =
@@ -2046,16 +2046,23 @@ export function useDustSweep(): UseDustSweepReturn {
       const canBundleAllCalls =
         !shouldSplitWalletBatch &&
         (canUseAtomicBatch || canUseTokenPocketBatch) &&
+        // OKX is OFF the combined approve+sweep batch: even with 100% clean calldata
+        // OKX decodes it ("Sign multiple txns") but its preview reverts the sweep —
+        // OKX does NOT apply the in-batch approvals before previewing the sweep's
+        // transferFrom, so it shows "Third-party contract execution error" and
+        // disables Confirm. Proven unconfirmable across every variation.
+        !canTryOkxRawSendCalls &&
         // After the OKX one-click batch was abandoned this session, fall through to
         // the proven approve+sweep path instead of re-attempting the combined batch.
         !okxUseStandardPath;
+      // OKX now takes the approvals-batch-then-sweep path: ALL approvals in ONE
+      // wallet_sendCalls prompt (clean calldata, no per-token prompts), then the
+      // sweep as its own tx — which OKX simulates fine standalone (proven by the
+      // user's on-chain sweep 0x4828…). If OKX rejects the approval batch, the
+      // execution degrades to the remaining approvals + sweep (never dead-ends).
       const canBundleApprovalsOnly =
         (canUseAtomicBatch || canUseTokenPocketBatch) &&
-        approvalCalls.length > 0 &&
-        // NEVER use a standalone approval-only batch for OKX: a batch of bare
-        // approvals (no swap) is the exact shape OKX hard-blocks as a "risky
-        // signature type". OKX only ever does the COMBINED approve+sweep batch.
-        !canTryOkxRawSendCalls;
+        approvalCalls.length > 0;
       // TokenPocket can put approvals + the sweep in ONE wallet_sendCalls. If TP
       // rejects the combined batch the execution path falls back to the proven
       // approvals-then-sweep split below.
@@ -2156,16 +2163,9 @@ export function useDustSweep(): UseDustSweepReturn {
             throw approvalBatchError;
           }
 
-          if (canTryOkxRawSendCalls) {
-            console.warn("DustSweep OKX approval batch status was unclear; stopping without fallback prompts.", {
-              walletKey: walletProfile.walletKey,
-              approvalCallCount: approvalCalls.length,
-              code: getErrorCode(approvalBatchError),
-              message: getDebugErrorMessage(approvalBatchError),
-            });
-            throw new Error(OKX_BATCH_STATUS_UNCLEAR_MESSAGE);
-          }
-
+          // Approval-only batch failed (e.g. OKX flagged the bare-approval batch).
+          // This is SAFE to degrade to per-token approvals — there is no sweep in
+          // this batch, so re-approving can't double-spend; the sweep follows after.
           console.warn("DustSweep approval batch failed; falling back to standard approvals.", {
             walletKey: walletProfile.walletKey,
             approvalCallCount: approvalCalls.length,
@@ -2173,21 +2173,13 @@ export function useDustSweep(): UseDustSweepReturn {
             message: getDebugErrorMessage(approvalBatchError),
           });
           setExecutionNotice(
-            `${walletProfile.walletName || "Wallet"} approval batch was not ready, sending approvals one by one before the sweep.`,
+            `${walletProfile.walletName || "Wallet"} couldn't take the approvals in one batch, approving the remaining tokens before the sweep.`,
           );
           return sendStandardSweepWithApprovals();
         }
 
         const remainingApprovals = await getTokenApprovalRequirements(quote.routes, approvalSpender);
         if (remainingApprovals.length > 0) {
-          if (canTryOkxRawSendCalls) {
-            console.warn("DustSweep OKX approval batch left missing allowances; stopping without follow-up prompts.", {
-              walletKey: walletProfile.walletKey,
-              missingApprovalCount: remainingApprovals.length,
-            });
-            throw new Error(OKX_BATCH_STATUS_UNCLEAR_MESSAGE);
-          }
-
           console.warn("DustSweep approval batch left missing allowances; completing standard approvals.", {
             walletKey: walletProfile.walletKey,
             missingApprovalCount: remainingApprovals.length,
@@ -2534,7 +2526,9 @@ export function useDustSweep(): UseDustSweepReturn {
         }
       } else if (canBundleApprovalsOnly) {
         hash = await sendBundledApprovalsThenSweep(
-          shouldSplitOkxBatch
+          canTryOkxRawSendCalls
+            ? "OKX approves your tokens in one batch, then sweeps — two quick prompts."
+            : shouldSplitOkxBatch
             ? OKX_SPLIT_BATCH_NOTICE
             : shouldSplitTokenPocketBatch
             ? TOKENPOCKET_SPLIT_BATCH_NOTICE
