@@ -23,7 +23,6 @@ import {
 import { ReferralOnboardingModal } from '@/components/referrals/ReferralOnboardingModal';
 import { ThemeLongLogo } from '@/components/ThemeLongLogo';
 import { useTheme } from '@/components/theme/ThemeProvider';
-import { useAppShellMode } from '@/hooks/useAppShellMode';
 import { clearPointsSummaryCache, fetchPointsSummary } from '@/lib/points';
 import {
   getPendingReferralCode,
@@ -82,38 +81,23 @@ function AppShellIcon({
 function MobileShellNav({
   isLightShell,
   pathname,
-  placement,
 }: {
   isLightShell: boolean;
   pathname: string;
-  placement: 'bottom' | 'top';
 }) {
-  const isTopNav = placement === 'top';
-  const navClassName = `fixed left-0 right-0 z-50 backdrop-blur-2xl md:hidden ${
-    isTopNav
-      ? 'top-0'
-      : 'bottom-0 border-t shadow-[0_-18px_44px_rgba(148,163,184,0.16)]'
-  } ${
+  // Bottom navigation only. (A previous "top" placement that flipped the nav to
+  // the top of the screen when a browser/wallet bottom bar was detected — e.g.
+  // inside Base App — was removed; the nav now always sits at the bottom.)
+  const navClassName = `fixed bottom-0 left-0 right-0 z-50 border-t shadow-[0_-18px_44px_rgba(148,163,184,0.16)] backdrop-blur-2xl md:hidden ${
     isLightShell
-      ? isTopNav
-        ? 'bg-[rgba(255,255,255,0.96)] shadow-[inset_0_-1px_0_rgba(226,232,240,0.8),0_18px_44px_rgba(148,163,184,0.14)]'
-        : 'border-slate-200/80 bg-[rgba(255,255,255,0.96)]'
-      : isTopNav
-        ? 'bg-[rgba(6,10,18,0.9)] shadow-[inset_0_-1px_0_rgba(255,255,255,0.08)]'
-        : 'border-white/10 bg-[rgba(6,10,18,0.9)]'
+      ? 'border-slate-200/80 bg-[rgba(255,255,255,0.96)]'
+      : 'border-white/10 bg-[rgba(6,10,18,0.9)]'
   }`;
-  const navStyle: CSSProperties = isTopNav
-    ? {
-        height: 'calc(60px + env(safe-area-inset-top))',
-        paddingTop: 'env(safe-area-inset-top)',
-      }
-    : { paddingBottom: 'var(--safe-area-bottom)' };
-  const navRowClassName = isTopNav
-    ? 'grid h-[60px] w-full grid-cols-5 items-center gap-1 px-2'
-    : 'grid h-[69px] w-full grid-cols-5 items-start gap-1 px-2 pt-[7px]';
-  const navLinkClassName = isTopNav
-    ? 'group flex min-w-0 flex-col items-center justify-center gap-1 transition-transform active:scale-95'
-    : 'group flex min-w-0 flex-col items-center justify-start gap-2 transition-transform active:scale-95';
+  const navStyle: CSSProperties = { paddingBottom: 'var(--safe-area-bottom)' };
+  const navRowClassName =
+    'grid h-[69px] w-full grid-cols-5 items-start gap-1 px-2 pt-[7px]';
+  const navLinkClassName =
+    'group flex min-w-0 flex-col items-center justify-start gap-2 transition-transform active:scale-95';
 
   return (
     <nav className={navClassName} style={navStyle} aria-label="Primary navigation">
@@ -175,8 +159,6 @@ export function AppShell({ children }: AppShellProps) {
   const isLandingPage = pathname === '/';
   const isMaintenancePage = pathname === '/maintenance';
   const isShelllessPage = isMaintenancePage;
-  const shellMode = useAppShellMode({ enabled: !isShelllessPage });
-  const isTopNavMobileMode = shellMode === 'top';
   const { address, isConnected } = useAccount();
   const [showReferralModal, setShowReferralModal] = useState(false);
   const checkedRef = useRef<string | null>(null);
@@ -251,15 +233,11 @@ export function AppShell({ children }: AppShellProps) {
   }, [address]);
 
   const rootStyle = {
-    '--ds-mobile-fixed-bottom-offset': isTopNavMobileMode
-      ? 'var(--safe-area-bottom)'
-      : 'calc(77px + var(--safe-area-bottom))',
+    '--ds-mobile-fixed-bottom-offset': 'calc(77px + var(--safe-area-bottom))',
   } as CSSProperties;
   const mainShellClassName = isShelllessPage
     ? ''
-    : isTopNavMobileMode
-      ? 'pt-[calc(60px+env(safe-area-inset-top))] md:ml-[236px] md:pt-0'
-      : 'pb-[calc(77px+var(--safe-area-bottom))] md:ml-[236px] md:pb-0';
+    : 'pb-[calc(77px+var(--safe-area-bottom))] md:ml-[236px] md:pb-0';
 
   return (
     <div
@@ -267,7 +245,7 @@ export function AppShell({ children }: AppShellProps) {
         isLightShell ? 'bg-[#f2f6fb] text-slate-900' : 'bg-[#07111f] text-white'
       }`}
       style={rootStyle}
-      data-shell-mode={shellMode}
+      data-shell-mode="bottom"
     >
       {!isLightShell && (
         <div
@@ -344,26 +322,14 @@ export function AppShell({ children }: AppShellProps) {
         </nav>
       )}
 
-      {!isShelllessPage && isTopNavMobileMode && (
-        <MobileShellNav
-          isLightShell={isLightShell}
-          pathname={pathname}
-          placement="top"
-        />
-      )}
-
       <main
         className={`relative z-10 flex-1 transition-opacity duration-100 ease-in-out ${mainShellClassName}`}
       >
         {children}
       </main>
 
-      {!isShelllessPage && !isTopNavMobileMode && (
-        <MobileShellNav
-          isLightShell={isLightShell}
-          pathname={pathname}
-          placement="bottom"
-        />
+      {!isShelllessPage && (
+        <MobileShellNav isLightShell={isLightShell} pathname={pathname} />
       )}
 
       {showReferralModal && address && (

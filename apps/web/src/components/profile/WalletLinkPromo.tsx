@@ -8,14 +8,11 @@ import { fetchLinkedWallets } from "@/lib/walletLinkAuth";
 const PROMO_DISMISS_KEY = "dustswap:wl-promo-dismissed:v1";
 const MAX_WALLETS = 2;
 
-const BANNER_TEXT =
-  "Wallet linking is LIVE — link your Base App wallet & instantly get 10,000 PP   ·   Tap to link";
-
 const BENEFITS = [
-  { icon: "🎁", text: "10,000 PP airdrop — instant & one-time" },
+  { icon: "🎁", text: "Instant 10,000 PP airdrop (one-time)" },
   { icon: "➕", text: "Both wallets' PP combine into one account" },
-  { icon: "✅", text: "Check in from either wallet — spin tickets in both" },
-  { icon: "⚡", text: "Earn onchain-quest PP from both wallets" },
+  { icon: "✅", text: "Check in from either wallet, spin tickets in both" },
+  { icon: "⚡", text: "Earn onchain quest PP from both wallets" },
 ];
 
 function hasDismissedPromo() {
@@ -34,11 +31,10 @@ function markPromoDismissed() {
   }
 }
 
-// Promotes wallet linking on the profile page: a green moving top banner plus a
-// one-time premium popup. Both route into the profile settings → wallet-linking
-// section. Self-gates: only shows when linking is enabled, a wallet is
-// connected, and the account has not linked a second wallet yet (so the 10k PP
-// reward is still claimable).
+// Promotes wallet linking on the profile page with a one-time premium popup
+// that routes into the profile settings → wallet-linking section. Self-gates:
+// only shows when linking is enabled, a wallet is connected, and the account has
+// not linked a second wallet yet (so the 10k PP reward is still claimable).
 export function WalletLinkPromo({
   address,
   onOpenLinking,
@@ -98,33 +94,6 @@ export function WalletLinkPromo({
 
   return (
     <>
-      {/* Moving banner — ~1.3cm tall, green, tappable */}
-      <button
-        type="button"
-        onClick={openLinking}
-        aria-label="Link your Base App wallet and get 10,000 PP"
-        className="ds-wl-banner relative flex h-[1.3cm] w-full items-center overflow-hidden rounded-[14px] border border-emerald-400/40 bg-[linear-gradient(110deg,#059669,#10b981_45%,#22c55e)] text-white shadow-[0_12px_30px_rgba(16,185,129,0.28)] transition active:scale-[0.99]"
-      >
-        <span className="ds-wl-marquee flex shrink-0 items-center whitespace-nowrap text-sm font-black tracking-tight">
-          <span className="flex items-center gap-2 px-6">
-            <span aria-hidden="true">🎉</span>
-            {BANNER_TEXT}
-            <span aria-hidden="true">→</span>
-          </span>
-          <span className="flex items-center gap-2 px-6" aria-hidden="true">
-            <span>🎉</span>
-            {BANNER_TEXT}
-            <span>→</span>
-          </span>
-        </span>
-        <style>{`
-          @keyframes ds-wl-marquee { 0% { transform: translateX(0); } 100% { transform: translateX(-50%); } }
-          .ds-wl-marquee { animation: ds-wl-marquee 20s linear infinite; will-change: transform; }
-          .ds-wl-banner:hover .ds-wl-marquee, .ds-wl-banner:active .ds-wl-marquee { animation-play-state: paused; }
-          @media (prefers-reduced-motion: reduce) { .ds-wl-marquee { animation: none; } }
-        `}</style>
-      </button>
-
       {/* Premium popup — capped at 7cm tall */}
       {showModal ? (
         <div className="fixed inset-0 z-[90] flex items-center justify-center px-4">
@@ -143,7 +112,7 @@ export function WalletLinkPromo({
                   Live
                 </span>
                 <h2 className="mt-1.5 text-base font-black leading-tight tracking-tight text-emerald-950 dark:text-emerald-50">
-                  Link your wallets, get 10,000 PP
+                  Link your Base App wallet, get 10,000 PP
                 </h2>
               </div>
               <button
@@ -162,7 +131,7 @@ export function WalletLinkPromo({
               <p className="text-[11px] leading-4 text-emerald-800/80 dark:text-emerald-200/70">
                 Connect your Base App wallet to your DustSwap account and claim{" "}
                 <span className="font-black text-emerald-700 dark:text-emerald-300">10,000 PP</span>{" "}
-                — instantly.
+                instantly.
               </p>
 
               <ul className="mt-2 grid gap-1.5">
