@@ -1557,14 +1557,16 @@ export function useDustSweep(): UseDustSweepReturn {
     };
 
     const useSingleOkxRequest = args.walletKey === "okx";
-    // OKX one-click: send the bundle with atomicRequired:true so OKX shows its
-    // official EIP-7702 upgrade/enable prompt (when undelegated) and then runs the
-    // exact ERC20 approvals + the V3 sweep as ONE atomic transaction. The earlier
-    // "Unable to decode / Confirm disabled" problem came from extra builder-code
-    // bytes appended to the approval calldata, which is now removed (approvals are
-    // clean; only the final sweep carries the suffix). All wallets honour the
-    // caller's atomicity choice.
-    const requireAtomic = args.requireAtomic ?? true;
+    // OKX one-click: send the exact ERC20 approvals + the V3 sweep as ONE
+    // wallet_sendCalls with atomicRequired:FALSE. Per OKX's provider docs, OKX
+    // executes ALL wallet_sendCalls atomically anyway (one tx via its EIP-7702
+    // smart account), so false still yields the single combined transaction — and
+    // it AVOIDS the "Unable to decode / Confirm disabled" prompt that
+    // atomicRequired:true triggers on OKX (which is what forced the multi-tx
+    // fallback). Combined with clean approval calldata (no builder suffix on
+    // approvals), this restores the one-prompt approve+sweep. Other wallets honour
+    // the caller's atomicity choice (true).
+    const requireAtomic = useSingleOkxRequest ? false : (args.requireAtomic ?? true);
     const calls = args.calls.map((call) =>
       normalizeWalletSendCall(call, args.appendDataSuffixes ?? true),
     );
@@ -2292,7 +2294,9 @@ export function useDustSweep(): UseDustSweepReturn {
             artificialCallCapApplied: false,
             approvalCallsHaveSuffix: false,
             sweepCallHasSuffix: true,
-            atomicRequired: true,
+            // OKX runs all wallet_sendCalls atomically (one tx) regardless; we send
+            // atomicRequired:false to avoid OKX's "Unable to decode" on true.
+            atomicRequired: false,
           });
         }
 
