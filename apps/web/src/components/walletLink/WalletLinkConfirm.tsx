@@ -384,11 +384,11 @@ export function WalletLinkConfirm({ token }: { token: string | null }) {
                     onClick={handleConfirm}
                     className="w-full rounded-xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white hover:bg-emerald-700"
                   >
-                    {`Confirm link · ${paymentEth} ETH`}
+                    Confirm link
                   </button>
                   <p className="text-center text-[11px] text-slate-400">
-                    Confirms with a {paymentEth} ETH transaction from this wallet to
-                    verify ownership.
+                    Confirms with a free (0 ETH) transaction from this wallet to
+                    verify ownership — you only pay network gas.
                   </p>
                   <button
                     type="button"

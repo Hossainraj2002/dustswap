@@ -81,12 +81,13 @@ const STREAK_SAVE_RECIPIENT =
   process.env.STREAK_SAVE_RECIPIENT ||
   process.env.NEXT_PUBLIC_STREAK_SAVE_RECIPIENT ||
   "0xe641fB39Fd807B536f37F9268938D67587302E5d";
-// Fixed ETH amount required to confirm a wallet link (a real, builder-code
-// attributed micro-payment to the check-in recipient).
+// ETH amount required to confirm a wallet link. The confirmation is a free
+// (0 ETH) builder-code-attributed verification tx to the recipient — ownership
+// is proven by the link token hash embedded in the calldata, not by any value.
 const WALLET_LINK_PAYMENT_ETH =
   process.env.WALLET_LINK_PAYMENT_ETH ||
   process.env.NEXT_PUBLIC_WALLET_LINK_PAYMENT_ETH ||
-  "0.00001";
+  "0";
 // Current check-in / payment receive address for wallet-link confirmations.
 const WALLET_LINK_RECIPIENT =
   process.env.WALLET_LINK_RECIPIENT ||

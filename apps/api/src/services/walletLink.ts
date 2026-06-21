@@ -76,10 +76,12 @@ function getLinkPaymentRecipient() {
 }
 
 function getLinkPaymentEth() {
+  // Confirmation is a free (0 ETH) verification tx; ownership is bound by the
+  // token hash in the calldata, not by any transferred value.
   return (
     process.env.WALLET_LINK_PAYMENT_ETH ||
     process.env.NEXT_PUBLIC_WALLET_LINK_PAYMENT_ETH ||
-    "0.00001"
+    "0"
   );
 }
 

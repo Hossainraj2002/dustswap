@@ -2046,21 +2046,22 @@ export function useDustSweep(): UseDustSweepReturn {
       const canBundleAllCalls =
         !shouldSplitWalletBatch &&
         (canUseAtomicBatch || canUseTokenPocketBatch) &&
-        // OKX is OFF the combined approve+sweep batch: even with 100% clean calldata
-        // OKX decodes it ("Sign multiple txns") but its preview reverts the sweep —
-        // OKX does NOT apply the in-batch approvals before previewing the sweep's
-        // transferFrom, so it shows "Third-party contract execution error" and
-        // disables Confirm. Proven unconfirmable across every variation.
-        !canTryOkxRawSendCalls &&
-        // After the OKX one-click batch was abandoned this session, fall through to
-        // the proven approve+sweep path instead of re-attempting the combined batch.
+        // OKX: approvals + sweep MUST go out as ONE clean atomic wallet_sendCalls.
+        // A standalone approval-only batch is HARD-BLOCKED by OKX's security engine
+        // ("This signature type is risky — will be canceled"): a 7702 set-code auth
+        // bundled with bare approvals and no consuming call reads like a drainer.
+        // The combined batch carries the sweep as the consuming call, so OKX accepts
+        // it as a normal swap. Calldata is kept 100% clean (no builder suffix on any
+        // call — see canTryOkxRawSendCalls below) so OKX can decode + simulate it.
+        // After the OKX one-click batch is abandoned this session, fall through to
+        // the per-token approvals + standalone sweep path instead of re-attempting it.
         !okxUseStandardPath;
-      // OKX now takes the approvals-batch-then-sweep path: ALL approvals in ONE
-      // wallet_sendCalls prompt (clean calldata, no per-token prompts), then the
-      // sweep as its own tx — which OKX simulates fine standalone (proven by the
-      // user's on-chain sweep 0x4828…). If OKX rejects the approval batch, the
-      // execution degrades to the remaining approvals + sweep (never dead-ends).
+      // Approvals-only batch (no sweep) — NEVER for OKX. OKX hard-blocks a bare
+      // approval/7702 batch as a "risky signature type" (confirmed live), so OKX
+      // must always use the combined bundle above, or (on abandonment) the
+      // per-token approvals + sweep fallback. Other wallets keep the split.
       const canBundleApprovalsOnly =
+        !canTryOkxRawSendCalls &&
         (canUseAtomicBatch || canUseTokenPocketBatch) &&
         approvalCalls.length > 0;
       // TokenPocket can put approvals + the sweep in ONE wallet_sendCalls. If TP

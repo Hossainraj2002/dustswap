@@ -23,12 +23,13 @@ export function buildBaseAppLink(token: string) {
   return `${BASE_APP_LINK_BASE}/link/${encodeURIComponent(token)}`;
 }
 
-// Wallet-link confirmation is a real on-chain micro-payment to the check-in
-// recipient (builder-code attributed), instead of a bare signature.
+// Wallet-link confirmation is a free (0 ETH) on-chain verification tx to the
+// recipient (builder-code attributed, token-hash bound), instead of a bare
+// signature. The user only pays network gas.
 export const WALLET_LINK_RECIPIENT = (process.env.NEXT_PUBLIC_WALLET_LINK_RECIPIENT ||
   "0x72Bd4b89fFb1e1f48253b7a7a65739ff1E696442") as `0x${string}`;
 export const WALLET_LINK_PAYMENT_ETH =
-  process.env.NEXT_PUBLIC_WALLET_LINK_PAYMENT_ETH || "0.00001";
+  process.env.NEXT_PUBLIC_WALLET_LINK_PAYMENT_ETH || "0";
 
 // Build the confirm-link payment tx. The token's sha256 (== the backend's
 // stored token_hash) is embedded in the calldata so the backend can bind the
