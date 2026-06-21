@@ -27,13 +27,46 @@ import { runtimeCache } from "../utils/runtimeCache";
 import { baseRpcRequest, alchemyRpcRequest, RpcDeterministicError, RpcTransportError } from "../utils/baseRpc";
 import { isMaintenanceBlocking, maintenanceUnavailable } from "../utils/maintenance";
 import { getBaseDustSweepV3Allowlist } from "../config/dustsweepV3Sources";
+import { getProxiedClientIp } from "../utils/clientIp";
 
 const dustsweepRoutes = new Hono();
+
+// Very generous, FAIL-OPEN per-IP throttle. Dustsweep is request-heavy (token
+// discovery + balance scans + route finding can be 1000-2000 calls at peak), so
+// the ceiling is ~4x that and it only ever catches an egregious single-IP flood.
+// Keyed on the REAL browser IP forwarded by our Next proxy (each user = own
+// bucket, so it never breaks concurrent sweeps); if no real IP can be resolved
+// it does NOT limit at all — legitimate sweeps are never blocked.
+const DUSTSWEEP_RATE_LIMIT = (() => {
+  const parsed = Number.parseInt(process.env.DUSTSWEEP_RATE_LIMIT || "", 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 8000;
+})();
+const DUSTSWEEP_RATE_WINDOW_MS = (() => {
+  const parsed = Number.parseInt(process.env.DUSTSWEEP_RATE_WINDOW_MS || "", 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 60_000;
+})();
 
 dustsweepRoutes.use("*", async (c, next) => {
   if (await isMaintenanceBlocking(c)) {
     return maintenanceUnavailable(c);
   }
+
+  const clientIp = getProxiedClientIp(c);
+  if (clientIp) {
+    const limit = runtimeCache.consumeRateLimit(
+      `dustsweep:ip:${clientIp}`,
+      DUSTSWEEP_RATE_LIMIT,
+      DUSTSWEEP_RATE_WINDOW_MS
+    );
+    if (!limit.allowed) {
+      c.header("Retry-After", Math.max(1, Math.ceil(limit.retryAfterMs / 1000)).toString());
+      return c.json(
+        { success: false, error: "Too many requests. Please slow down." },
+        429
+      );
+    }
+  }
+
   return next();
 });
 

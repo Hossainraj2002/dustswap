@@ -41,6 +41,9 @@ const MAX_SLIPPAGE_BPS = 3_000;
 const DEFAULT_DEADLINE_SECONDS = 20 * 60;
 const MAX_INPUTS = 6;
 const MAX_OUTPUTS = 6;
+// Generous cap so a malicious payload can't send a giant routes array (CPU/memory
+// bomb). Real builds derive from <=6 inputs/outputs, so 64 is ample headroom.
+const MAX_ROUTES = 64;
 const NATIVE_SENTINELS = new Set([
   "0x0000000000000000000000000000000000000000",
   "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
@@ -566,6 +569,9 @@ function routeCallsFromBuilt(routes: BuiltRoute[]) {
 function validateBuiltRoutes(routes: unknown): BuiltRoute[] {
   if (!Array.isArray(routes) || routes.length === 0) {
     throw new Error("routes are required");
+  }
+  if (routes.length > MAX_ROUTES) {
+    throw new Error(`Too many routes (max ${MAX_ROUTES})`);
   }
 
   return routes.map((route) => {

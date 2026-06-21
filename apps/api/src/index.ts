@@ -17,6 +17,8 @@ import { Hono, type Context } from "hono";
 import { cors } from "hono/cors";
 import { logger } from "hono/logger";
 import { prettyJSON } from "hono/pretty-json";
+import { bodyLimit } from "hono/body-limit";
+import { getClientIp } from "./utils/clientIp";
 import { authRoutes } from "./routes/auth";
 import { partnerRoutes } from "./routes/partner";
 import { pointsRoutes } from "./routes/points";
@@ -56,28 +58,33 @@ app.use(
   })
 );
 
+// Global request body cap so a single huge POST can't exhaust memory (OOM).
+// Generous — real bodies (even a 50-token sweep quote) are tens of KB, so this
+// is ~150x headroom and never affects legitimate requests. Tunable via env.
+const MAX_BODY_BYTES = (() => {
+  const parsed = Number.parseInt(process.env.API_MAX_BODY_BYTES || "", 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 5 * 1024 * 1024;
+})();
+app.use(
+  "*",
+  bodyLimit({
+    maxSize: MAX_BODY_BYTES,
+    onError: (c) =>
+      c.json({ success: false, error: "Request body too large." }, 413),
+  })
+);
+
 // Per-IP read throttle to stop bulk enumeration/scraping of address-keyed data.
 // GET-only so signed writes and server-to-server POSTs (e.g. profile-cache) are
 // unaffected. Generous for normal browsing; tunable via env.
 const API_READ_RATE_LIMIT = (() => {
   const parsed = Number.parseInt(process.env.API_READ_RATE_LIMIT || "", 10);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : 600;
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 1200;
 })();
 const API_READ_RATE_WINDOW_MS = (() => {
   const parsed = Number.parseInt(process.env.API_READ_RATE_WINDOW_MS || "", 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 60_000;
 })();
-
-function getRateLimitIp(c: Context) {
-  const forwarded = c.req.header("x-forwarded-for");
-  if (forwarded) {
-    const first = forwarded.split(",")[0]?.trim();
-    if (first) {
-      return first;
-    }
-  }
-  return c.req.header("cf-connecting-ip") || c.req.header("x-real-ip") || "unknown";
-}
 
 // Scope the throttle to address-keyed READ endpoints (the enumeration targets).
 // Deliberately excludes server-proxied routes like /api/dustsweep (whose calls
@@ -102,7 +109,7 @@ app.use("/api/*", async (c, next) => {
   }
 
   const limit = runtimeCache.consumeRateLimit(
-    `api:read:ip:${getRateLimitIp(c)}`,
+    `api:read:ip:${getClientIp(c)}`,
     API_READ_RATE_LIMIT,
     API_READ_RATE_WINDOW_MS
   );
@@ -130,6 +137,7 @@ app.route("/api/wallet-link", walletLinkRoutes);
 
 pointsEngine.startReferralLeaderboardSnapshotScheduler();
 repostQuestRewardScheduler.start();
+runtimeCache.startEvictionLoop();
 
 app.get("/health/db", async (c) => {
   const startedAt = Date.now();

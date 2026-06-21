@@ -12,6 +12,11 @@ export class RuntimeCache {
   private readonly values = new Map<string, CacheEntry<unknown>>();
   private readonly inflight = new Map<string, Promise<unknown>>();
   private readonly counters = new Map<string, CounterEntry>();
+  private evictionTimer: ReturnType<typeof setInterval> | null = null;
+
+  // Hard ceiling so a flood of unique keys (e.g. many IPs) can't grow the maps
+  // without bound between sweeps. Generous — far above real concurrent usage.
+  private static readonly MAX_ENTRIES = 250_000;
 
   get<T>(key: string): T | null {
     const entry = this.values.get(key);
@@ -28,6 +33,9 @@ export class RuntimeCache {
   }
 
   set<T>(key: string, value: T, ttlMs: number) {
+    if (this.values.size > RuntimeCache.MAX_ENTRIES) {
+      this.prune();
+    }
     this.values.set(key, {
       value,
       expiresAt: Date.now() + ttlMs,
@@ -66,8 +74,39 @@ export class RuntimeCache {
     );
   }
 
+  // Drop expired cache values and rate-limit counters. Never touches in-flight
+  // promises. Cheap and safe to call periodically.
+  prune() {
+    const now = Date.now();
+    for (const [key, entry] of this.values) {
+      if (entry.expiresAt <= now) {
+        this.values.delete(key);
+      }
+    }
+    for (const [key, entry] of this.counters) {
+      if (entry.expiresAt <= now) {
+        this.counters.delete(key);
+      }
+    }
+  }
+
+  // Start a background sweep (idempotent). `unref` so it never keeps the process
+  // alive on its own.
+  startEvictionLoop(intervalMs = 60_000) {
+    if (this.evictionTimer) {
+      return;
+    }
+    this.evictionTimer = setInterval(() => this.prune(), intervalMs);
+    this.evictionTimer.unref?.();
+  }
+
   consumeRateLimit(key: string, limit: number, windowMs: number) {
     const now = Date.now();
+    // Safety valve: if the counter map has ballooned, sweep expired entries
+    // before adding more (defends against unique-key flooding between sweeps).
+    if (this.counters.size > RuntimeCache.MAX_ENTRIES) {
+      this.prune();
+    }
     const existing = this.counters.get(key);
 
     if (!existing || existing.expiresAt <= now) {
