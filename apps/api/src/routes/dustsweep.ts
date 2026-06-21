@@ -154,6 +154,11 @@ const DISCOVERY_METADATA_CONCURRENCY = boundedEnvNumber("DUST_SWEEP_METADATA_CON
 // each token so slow/dead tokens are skipped instead of blocking the rest.
 const QUOTE_TOKEN_CONCURRENCY = boundedEnvNumber("DUST_SWEEP_QUOTE_CONCURRENCY", 10, 1, 50);
 const QUOTE_TOKEN_TIMEOUT_MS = boundedEnvNumber("DUST_SWEEP_QUOTE_TOKEN_TIMEOUT_MS", 12_000, 3_000, 30_000);
+// Concurrency for the build-tx pre-flight balance/allowance reads. These used to
+// run one RPC call per token in series, so a 50-token sweep took ~a minute before
+// the wallet prompt could even open. Reading them in parallel collapses that to
+// roughly one round-trip's worth of latency.
+const PREFLIGHT_READ_CONCURRENCY = boundedEnvNumber("DUST_SWEEP_PREFLIGHT_READ_CONCURRENCY", 25, 1, 50);
 const ERC20_METADATA_CACHE_TTL_MS = boundedEnvNumber("DUST_SWEEP_METADATA_CACHE_TTL_MS", 24 * 60 * 60_000, 60_000, 7 * 24 * 60 * 60_000);
 const WHITELIST_CACHE_TTL_MS = boundedEnvNumber("DUST_SWEEP_WHITELIST_CACHE_TTL_MS", 5 * 60_000, 30_000, 30 * 60_000);
 const DISCOVERY_MAX_ERC20_BALANCES = optionalBoundedEnvNumber(
@@ -3777,11 +3782,18 @@ async function findStaleRouteBalances(userAddress: Address, routes: DustSweepRou
     balance: string;
   }> = [];
 
-  for (const route of routes) {
-    const amountIn = BigInt(route.amountIn || "0");
-    if (amountIn <= 0n) continue;
+  // Read every balance in parallel. This previously awaited one balanceOf per
+  // token in series, which made a large (e.g. 50-token) build-tx spend ~a minute
+  // on RPC round-trips before the wallet prompt could open.
+  const items = routes.filter((route) => BigInt(route.amountIn || "0") > 0n);
+  const balances = await pLimit(
+    items.map((route) => () => readErc20Balance(route.tokenIn, userAddress)),
+    PREFLIGHT_READ_CONCURRENCY,
+  );
 
-    const balance = await readErc20Balance(route.tokenIn, userAddress);
+  items.forEach((route, index) => {
+    const amountIn = BigInt(route.amountIn || "0");
+    const balance = balances[index] ?? 0n;
     if (balance < amountIn) {
       stale.push({
         token: route.tokenIn,
@@ -3789,7 +3801,7 @@ async function findStaleRouteBalances(userAddress: Address, routes: DustSweepRou
         balance: balance.toString(),
       });
     }
-  }
+  });
 
   return stale;
 }
@@ -3820,8 +3832,16 @@ async function findMissingTokenApprovals(userAddress: Address, routes: DustSweep
     spender: Address;
   }> = [];
 
-  for (const item of requiredByToken.values()) {
-    const allowance = await readErc20Allowance(item.token, userAddress, spender);
+  // Parallel allowance reads (was one sequential RPC per token — the other half of
+  // the pre-prompt delay on large sweeps).
+  const items = Array.from(requiredByToken.values());
+  const allowances = await pLimit(
+    items.map((item) => () => readErc20Allowance(item.token, userAddress, spender)),
+    PREFLIGHT_READ_CONCURRENCY,
+  );
+
+  items.forEach((item, index) => {
+    const allowance = allowances[index] ?? 0n;
     if (allowance < item.amount) {
       approvals.push({
         token: item.token,
@@ -3830,7 +3850,7 @@ async function findMissingTokenApprovals(userAddress: Address, routes: DustSweep
         spender,
       });
     }
-  }
+  });
 
   return approvals;
 }
