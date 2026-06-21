@@ -1,4 +1,4 @@
-# Environment variables — NEVER commit these!
+# Environment variables — NEVER commit these (including .example templates)!
 .env
 .env.local
 .env.*
@@ -10,8 +10,9 @@ apps/web/.env.local
 apps/*/.env
 apps/*/.env.local
 apps/*/.env.*
-!.env.example
-!apps/*/.env.example
+# Ignore ALL env files, including example/template files, in every directory.
+**/.env.example
+.env.example
 *.dump
 *.sql.gz
 backup/
