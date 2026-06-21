@@ -1,5 +1,6 @@
 import type { Hex } from "viem";
 import { buildPublicApiUrl, publicApiFetch } from "@/lib/apiBase";
+import { authedApiFetch } from "@/lib/siweAuth";
 
 const PARTNER_JOIN_STATEMENT = "DustSwap Partner Program Join";
 const PARTNER_CONTENT_SUBMISSION_STATEMENT = "DustSwap Partner Content Submission";
@@ -303,7 +304,7 @@ export function buildPartnerContentSubmissionMessage(address: string, url: strin
 export async function fetchPartnerDashboard(address: string) {
   const url = new URL(getPartnerApiUrl("/dashboard"));
   url.searchParams.set("address", address);
-  const response = await publicApiFetch(url.toString(), {
+  const response = await authedApiFetch(url.toString(), {
     headers: {
       "Content-Type": "application/json",
     },
@@ -316,7 +317,7 @@ export async function fetchPartnerDashboard(address: string) {
 export async function fetchPartnerHistory(address: string) {
   const url = new URL(getPartnerApiUrl("/history"));
   url.searchParams.set("address", address);
-  const response = await publicApiFetch(url.toString(), {
+  const response = await authedApiFetch(url.toString(), {
     headers: {
       "Content-Type": "application/json",
     },
@@ -329,7 +330,7 @@ export async function fetchPartnerHistory(address: string) {
 export async function fetchPartnerSubmissions(address: string) {
   const url = new URL(getPartnerApiUrl("/submissions"));
   url.searchParams.set("address", address);
-  const response = await publicApiFetch(url.toString(), {
+  const response = await authedApiFetch(url.toString(), {
     headers: {
       "Content-Type": "application/json",
     },

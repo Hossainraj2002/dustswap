@@ -3,6 +3,47 @@ import { maintenanceBypassHeadersFromRequest } from '@/lib/maintenanceForward';
 
 const DEFAULT_API_URL = "http://localhost:3001";
 
+// Lightweight per-IP throttle to stop enumeration of Farcaster profiles and
+// abuse of the (rate-limited, billable) Neynar API key via this proxy.
+const NEYNAR_RATE_LIMIT = 60;
+const NEYNAR_RATE_WINDOW_MS = 60_000;
+const neynarRateCounters = new Map<string, { count: number; expiresAt: number }>();
+
+function getClientIp(request: Request) {
+  const forwarded = request.headers.get('x-forwarded-for');
+  if (forwarded) {
+    const first = forwarded.split(',')[0]?.trim();
+    if (first) return first;
+  }
+  return request.headers.get('cf-connecting-ip') || request.headers.get('x-real-ip') || 'unknown';
+}
+
+function isRateLimited(ip: string) {
+  const now = Date.now();
+  const existing = neynarRateCounters.get(ip);
+  if (!existing || existing.expiresAt <= now) {
+    neynarRateCounters.set(ip, { count: 1, expiresAt: now + NEYNAR_RATE_WINDOW_MS });
+    return false;
+  }
+  if (existing.count >= NEYNAR_RATE_LIMIT) {
+    return true;
+  }
+  existing.count += 1;
+  return false;
+}
+
+// Reject cross-origin browser callers. Same-origin GET fetches omit the Origin
+// header, so a present-but-mismatched Origin is the abuse signal.
+function isCrossOrigin(request: Request) {
+  const origin = request.headers.get('origin');
+  if (!origin) return false;
+  try {
+    return new URL(origin).host !== request.headers.get('host');
+  } catch {
+    return true;
+  }
+}
+
 function getPointsApiUrl(path = "") {
   const baseUrl = (process.env.NEXT_PUBLIC_API_URL || DEFAULT_API_URL)
     .replace(/\/+$/, "")
@@ -12,6 +53,14 @@ function getPointsApiUrl(path = "") {
 }
 
 export async function GET(request: Request) {
+  if (isCrossOrigin(request)) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  }
+
+  if (isRateLimited(getClientIp(request))) {
+    return NextResponse.json({ error: 'Too many requests' }, { status: 429 });
+  }
+
   const { searchParams } = new URL(request.url);
   const address = searchParams.get('address');
 

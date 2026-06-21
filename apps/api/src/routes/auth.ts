@@ -5,6 +5,7 @@ import { generateSiweNonce, parseSiweMessage } from "viem/siwe";
 import { isAllowedAppDomain } from "../config/appOrigins";
 import { runtimeCache } from "../utils/runtimeCache";
 import { createBasePublicClient } from "../utils/baseRpc";
+import { issueSessionToken } from "../utils/sessionToken";
 
 const authRoutes = new Hono();
 
@@ -25,6 +26,7 @@ type NonceResponse = {
 type VerifyResponse = {
   success: true;
   address: `0x${string}`;
+  token: string;
   expiresAt: string;
 };
 
@@ -212,10 +214,12 @@ authRoutes.post("/siwe/verify", async (c) => {
         pendingNonces.delete(nonce);
         runtimeCache.invalidate(`auth:siwe:nonce:recent:${fingerprint}`);
 
+        const { token, expiresAt } = issueSessionToken(normalizedAddress);
         const result = {
           success: true,
           address: normalizedAddress,
-          expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+          token,
+          expiresAt: new Date(expiresAt).toISOString(),
         } satisfies VerifyResponse;
 
         runtimeCache.set(

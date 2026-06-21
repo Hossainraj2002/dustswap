@@ -4,8 +4,33 @@ import {
   partnerProgramService,
 } from "../services/partnerProgram";
 import { isMaintenanceBlocking, maintenanceUnavailable } from "../utils/maintenance";
+import { getAuthAddress, isSameAddress } from "../middleware/requireWalletAuth";
 
 const partnerRoutes = new Hono();
+
+/**
+ * Require a verified session that owns `address`. Returns the validated address,
+ * or a Response to short-circuit with (401/403). Partner data exposes earnings
+ * and fee-share metrics, so it must not be readable for arbitrary addresses.
+ */
+function requireOwnedAddress(
+  c: Context,
+  address: string | undefined
+): { ok: true; address: string } | { ok: false; response: Response } {
+  if (!address) {
+    return { ok: false, response: c.json({ success: false, error: "address is required" }, 400) };
+  }
+
+  const authAddress = getAuthAddress(c);
+  if (!authAddress) {
+    return { ok: false, response: c.json({ success: false, error: "Authentication required." }, 401) };
+  }
+  if (!isSameAddress(authAddress, address)) {
+    return { ok: false, response: c.json({ success: false, error: "Forbidden." }, 403) };
+  }
+
+  return { ok: true, address };
+}
 
 function getRequestIp(c: Context) {
   const forwarded = c.req.header("x-forwarded-for");
@@ -68,12 +93,12 @@ partnerRoutes.get("/dashboard", async (c) => {
   }
 
   try {
-    const address = c.req.query("address");
-    if (!address) {
-      return c.json({ success: false, error: "address is required" }, 400);
+    const guard = requireOwnedAddress(c, c.req.query("address"));
+    if (!guard.ok) {
+      return guard.response;
     }
 
-    const data = await partnerProgramService.getDashboard(address);
+    const data = await partnerProgramService.getDashboard(guard.address);
     return c.json({ success: true, ...data });
   } catch (error) {
     const payload = getErrorPayload(error);
@@ -87,12 +112,12 @@ partnerRoutes.get("/history", async (c) => {
   }
 
   try {
-    const address = c.req.query("address");
-    if (!address) {
-      return c.json({ success: false, error: "address is required" }, 400);
+    const guard = requireOwnedAddress(c, c.req.query("address"));
+    if (!guard.ok) {
+      return guard.response;
     }
 
-    const data = await partnerProgramService.getHistory(address);
+    const data = await partnerProgramService.getHistory(guard.address);
     return c.json({ success: true, ...data });
   } catch (error) {
     const payload = getErrorPayload(error);
@@ -106,12 +131,12 @@ partnerRoutes.get("/submissions", async (c) => {
   }
 
   try {
-    const address = c.req.query("address");
-    if (!address) {
-      return c.json({ success: false, error: "address is required" }, 400);
+    const guard = requireOwnedAddress(c, c.req.query("address"));
+    if (!guard.ok) {
+      return guard.response;
     }
 
-    const data = await partnerProgramService.getSubmissions(address);
+    const data = await partnerProgramService.getSubmissions(guard.address);
     return c.json({ success: true, ...data });
   } catch (error) {
     const payload = getErrorPayload(error);

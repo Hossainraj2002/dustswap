@@ -1,5 +1,6 @@
 import type { Hex } from "viem";
 import { buildPublicApiUrl, publicApiFetch } from "@/lib/apiBase";
+import { authedApiFetch } from "@/lib/siweAuth";
 
 export type ProfileCompletionStepKey =
   | "add_referral"
@@ -107,7 +108,7 @@ export async function recordProfileCompletionImpression(input: {
   address: string;
   surface?: "tracker" | "modal";
 }) {
-  const response = await publicApiFetch(getProfileCompletionApiUrl("/impression"), {
+  const response = await authedApiFetch(getProfileCompletionApiUrl("/impression"), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -119,7 +120,7 @@ export async function recordProfileCompletionImpression(input: {
 }
 
 export async function dismissProfileCompletion(address: string) {
-  const response = await publicApiFetch(getProfileCompletionApiUrl("/dismiss"), {
+  const response = await authedApiFetch(getProfileCompletionApiUrl("/dismiss"), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",

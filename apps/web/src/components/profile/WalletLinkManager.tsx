@@ -2,9 +2,12 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useSignMessage } from "wagmi";
+import type { Hex } from "viem";
 import { QRCodeSVG } from "qrcode.react";
 import { WALLET_LINKING_ENABLED } from "@/lib/dustsweep-feature-flags";
 import { isMobileDevice } from "@/lib/device";
+import { ensureSiweSession } from "@/lib/siweAuth";
+import { BASE_CHAIN_ID } from "@/lib/tokens";
 import {
   buildBaseAppLink,
   buildWalletLinkMessage,
@@ -54,6 +57,13 @@ export function WalletLinkManager({ address }: Props) {
     if (!address) return;
     setLoading(true);
     try {
+      // /wallet-link/wallets now requires a verified session for this address.
+      await ensureSiweSession({
+        address: address as `0x${string}`,
+        chainId: BASE_CHAIN_ID,
+        signMessage: ({ message }) => signMessageAsync({ message }) as Promise<Hex>,
+        statement: "Sign in to DustSwap to view your profile.",
+      }).catch(() => null);
       const result = await fetchLinkedWallets(address);
       setWallets(result.wallets);
     } catch {
@@ -61,7 +71,7 @@ export function WalletLinkManager({ address }: Props) {
     } finally {
       setLoading(false);
     }
-  }, [address]);
+  }, [address, signMessageAsync]);
 
   useEffect(() => {
     void refreshWallets();

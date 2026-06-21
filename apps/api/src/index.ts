@@ -13,7 +13,7 @@ if (
 }
 
 import { serve } from "@hono/node-server";
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { cors } from "hono/cors";
 import { logger } from "hono/logger";
 import { prettyJSON } from "hono/pretty-json";
@@ -34,6 +34,7 @@ import tokens from "./routes/tokens";
 import { getAllowedAppOrigins, isAllowedAppOrigin } from "./config/appOrigins";
 import { getDatabaseDiagnostics } from "./services/postgres";
 import { testDbConnection } from "./lib/db";
+import { runtimeCache } from "./utils/runtimeCache";
 
 const app = new Hono();
 const allowedOrigins = getAllowedAppOrigins();
@@ -54,6 +55,65 @@ app.use(
     maxAge: 86400,
   })
 );
+
+// Per-IP read throttle to stop bulk enumeration/scraping of address-keyed data.
+// GET-only so signed writes and server-to-server POSTs (e.g. profile-cache) are
+// unaffected. Generous for normal browsing; tunable via env.
+const API_READ_RATE_LIMIT = (() => {
+  const parsed = Number.parseInt(process.env.API_READ_RATE_LIMIT || "", 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 600;
+})();
+const API_READ_RATE_WINDOW_MS = (() => {
+  const parsed = Number.parseInt(process.env.API_READ_RATE_WINDOW_MS || "", 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 60_000;
+})();
+
+function getRateLimitIp(c: Context) {
+  const forwarded = c.req.header("x-forwarded-for");
+  if (forwarded) {
+    const first = forwarded.split(",")[0]?.trim();
+    if (first) {
+      return first;
+    }
+  }
+  return c.req.header("cf-connecting-ip") || c.req.header("x-real-ip") || "unknown";
+}
+
+// Scope the throttle to address-keyed READ endpoints (the enumeration targets).
+// Deliberately excludes server-proxied routes like /api/dustsweep (whose calls
+// share the Next server's IP) and unrelated routes, so normal app traffic and
+// sweeping are never throttled.
+const RATE_LIMITED_READ_PREFIXES = [
+  "/api/points/",
+  "/api/profile-settings",
+  "/api/profile-completion",
+  "/api/partner/",
+  "/api/wallet-link/",
+];
+
+app.use("/api/*", async (c, next) => {
+  if (c.req.method !== "GET") {
+    return next();
+  }
+
+  const path = c.req.path;
+  if (!RATE_LIMITED_READ_PREFIXES.some((prefix) => path.startsWith(prefix))) {
+    return next();
+  }
+
+  const limit = runtimeCache.consumeRateLimit(
+    `api:read:ip:${getRateLimitIp(c)}`,
+    API_READ_RATE_LIMIT,
+    API_READ_RATE_WINDOW_MS
+  );
+
+  if (!limit.allowed) {
+    c.header("Retry-After", Math.max(1, Math.ceil(limit.retryAfterMs / 1000)).toString());
+    return c.json({ success: false, error: "Too many requests. Please slow down." }, 429);
+  }
+
+  return next();
+});
 
 app.route("/api/tokens", tokens);
 app.route("/api/auth", authRoutes);

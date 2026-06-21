@@ -1,4 +1,6 @@
 import type { Address, Hex } from "viem";
+import { createSiweMessage } from "viem/siwe";
+import { base } from "viem/chains";
 import { buildPublicApiUrl, publicApiFetch } from "@/lib/apiBase";
 
 const SIWE_SESSION_STORAGE_KEY = "dustswap:siwe-session";
@@ -21,6 +23,8 @@ const recentVerifiedSessions = new Map<
 
 export type StoredSiweSession = {
   address: Address;
+  /** Bearer token sent on protected API reads. Optional for legacy sessions. */
+  token?: string;
   expiresAt: string;
 };
 
@@ -59,6 +63,36 @@ export function getStoredSiweSession() {
   }
 
   return session;
+}
+
+export function getStoredSiweToken(address?: string) {
+  const session = getStoredSiweSession();
+  if (!session?.token) {
+    return null;
+  }
+
+  if (address && session.address.toLowerCase() !== address.toLowerCase()) {
+    return null;
+  }
+
+  return session.token;
+}
+
+/**
+ * fetch() that attaches the SIWE bearer token (when present) plus the existing
+ * maintenance-bypass headers. Use for endpoints that require wallet auth.
+ */
+export function authedApiFetch(
+  input: RequestInfo | URL,
+  init?: RequestInit
+): Promise<Response> {
+  const token = getStoredSiweToken();
+  const headers = new Headers(init?.headers);
+  if (token) {
+    headers.set("Authorization", `Bearer ${token}`);
+  }
+
+  return publicApiFetch(input, { ...init, headers });
 }
 
 export function hasStoredSiweSession(address?: string) {
@@ -166,6 +200,7 @@ export async function verifySiweSession(input: {
       const data = (await response.json()) as {
         success?: boolean;
         address?: Address;
+        token?: string;
         expiresAt?: string;
         error?: string;
       };
@@ -174,8 +209,9 @@ export async function verifySiweSession(input: {
         throw new Error(data.error || "Failed to verify sign-in");
       }
 
-      const result = {
+      const result: StoredSiweSession = {
         address: data.address,
+        token: data.token,
         expiresAt: data.expiresAt,
       };
 
@@ -191,5 +227,61 @@ export async function verifySiweSession(input: {
     });
 
   verifyRequestInFlight.set(cacheKey, request);
+  return request;
+}
+
+const ensureSessionInFlight = new Map<string, Promise<StoredSiweSession>>();
+
+/**
+ * Return a stored SIWE session with a bearer token for `address`, performing the
+ * nonce → sign → verify flow once if none exists. Throws if the user rejects the
+ * signature. Callers should treat a thrown error as "not signed in" and degrade
+ * gracefully (the protected sections will simply stay empty).
+ */
+export async function ensureSiweSession(input: {
+  address: Address;
+  signMessage: (args: { message: string }) => Promise<Hex>;
+  chainId?: number;
+  statement?: string;
+}): Promise<StoredSiweSession> {
+  const existing = getStoredSiweSession();
+  if (
+    existing?.token &&
+    existing.address.toLowerCase() === input.address.toLowerCase()
+  ) {
+    return existing;
+  }
+
+  const key = input.address.toLowerCase();
+  const inflight = ensureSessionInFlight.get(key);
+  if (inflight) {
+    return inflight;
+  }
+
+  const request = (async () => {
+    const { nonce } = await requestSiweNonce();
+    const message = createSiweMessage({
+      address: input.address,
+      chainId: input.chainId ?? base.id,
+      domain: typeof window !== "undefined" ? window.location.host : "localhost",
+      issuedAt: new Date(),
+      nonce,
+      statement: input.statement || "Sign in to DustSwap to view your profile.",
+      uri: typeof window !== "undefined" ? window.location.origin : "http://localhost",
+      version: "1",
+    });
+    const signature = await input.signMessage({ message });
+    const session = await verifySiweSession({
+      address: input.address,
+      message,
+      signature,
+    });
+    saveStoredSiweSession(session);
+    return session;
+  })().finally(() => {
+    ensureSessionInFlight.delete(key);
+  });
+
+  ensureSessionInFlight.set(key, request);
   return request;
 }

@@ -4,6 +4,7 @@ import {
   getPublicApiOrigin,
   publicApiFetch,
 } from "@/lib/apiBase";
+import { authedApiFetch } from "@/lib/siweAuth";
 
 export type ProfileSettingsAction = "save-profile" | "pfp-upload-url";
 
@@ -277,16 +278,24 @@ export function resolveProfileDisplay(input: {
   };
 }
 
-export async function fetchProfileSettings(address: string) {
+export async function fetchProfileSettings(
+  address: string,
+  options?: { adminToken?: string }
+) {
   const url = new URL(getProfileSettingsApiUrl("/"));
   url.searchParams.set("address", address);
 
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+  if (options?.adminToken) {
+    headers["x-admin-token"] = options.adminToken;
+  }
+
   let response: Response;
   try {
-    response = await fetch(url.toString(), {
-      headers: {
-        "Content-Type": "application/json",
-      },
+    response = await authedApiFetch(url.toString(), {
+      headers,
       cache: "no-store",
     });
   } catch (error) {

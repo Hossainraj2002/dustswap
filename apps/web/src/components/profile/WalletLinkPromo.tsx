@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { WALLET_LINKING_ENABLED } from "@/lib/dustsweep-feature-flags";
 import { fetchLinkedWallets } from "@/lib/walletLinkAuth";
+import { getStoredSiweToken } from "@/lib/siweAuth";
 
 // One-time popup dismissal (banner stays as a persistent reminder).
 const PROMO_DISMISS_KEY = "dustswap:wl-promo-dismissed:v1";
@@ -47,6 +48,15 @@ export function WalletLinkPromo({
 
   useEffect(() => {
     if (!WALLET_LINKING_ENABLED || !address) {
+      setEligible(false);
+      setShowModal(false);
+      return;
+    }
+
+    // The linked-wallet list requires a verified session. Don't prompt for a
+    // signature just to show a promo — only evaluate eligibility once the user
+    // has already signed in (e.g. after opening settings); otherwise stay hidden.
+    if (!getStoredSiweToken(address)) {
       setEligible(false);
       setShowModal(false);
       return;

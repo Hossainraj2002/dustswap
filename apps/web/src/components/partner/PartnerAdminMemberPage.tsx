@@ -102,7 +102,7 @@ export function PartnerAdminMemberPage({
       try {
         const [response, nextProfileSettings] = await Promise.all([
           fetchPartnerAdminMember(tokenToUse, address),
-          fetchProfileSettings(address).catch(() => null),
+          fetchProfileSettings(address, { adminToken: tokenToUse }).catch(() => null),
         ]);
         if (!response.success) {
           throw new Error(response.error || "Failed to load partner profile");

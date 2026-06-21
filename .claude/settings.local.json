@@ -27,7 +27,9 @@
       "Bash(curl -s --retry 60 --retry-delay 2 --retry-connrefused --retry-all-errors -m 180 -o /dev/null -w \"HTTP %{http_code}\\\\n\" http://localhost:3000/profile)",
       "Bash(curl -s -m 10 -o /dev/null -w \"API /health/db HTTP %{http_code}\\\\n\" http://localhost:3001/health/db)",
       "Bash(tail -40 /tmp/dustswap-web.log 2>/dev/null || echo \"\\(no web log\\)\")",
-      "Read(//tmp/**)"
+      "Read(//tmp/**)",
+      "Bash(grep -n \"dangerouslySetInnerHTML\\\\|innerHTML\\\\|\\\\\\\\.html\\(\" /c/dustswap/apps/web/src/app/profile/page.tsx)",
+      "Bash(grep -E \"\\\\.\\(ts|js\\)$\")"
     ]
   }
 }

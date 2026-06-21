@@ -30,6 +30,7 @@ import {
   resolveProfileDisplay,
   type ProfileSettingsResponse,
 } from "@/lib/profileSettings";
+import { ensureSiweSession } from "@/lib/siweAuth";
 
 type NoticeState =
   | {
@@ -152,6 +153,19 @@ export function PartnerMemberPage() {
 
     setIsLoading(true);
     try {
+      // Partner reads now require a verified session for this wallet. Sign in
+      // once (best-effort) before loading; skipped if the wallet client isn't
+      // ready yet — loadData re-runs when it becomes available.
+      if (walletClient) {
+        await ensureSiweSession({
+          address: address as `0x${string}`,
+          chainId: walletClient.chain?.id,
+          signMessage: ({ message }) =>
+            walletClient.signMessage({ account: address as `0x${string}`, message }),
+          statement: "Sign in to DustSwap to view your partner dashboard.",
+        }).catch(() => null);
+      }
+
       const [dashboardResponse, historyResponse, settingsResponse, submissionsResponse] =
         await Promise.all([
         fetchPartnerDashboard(address),
@@ -179,7 +193,7 @@ export function PartnerMemberPage() {
     } finally {
       setIsLoading(false);
     }
-  }, [address]);
+  }, [address, walletClient]);
 
   useEffect(() => {
     if (!isConnected) {

@@ -5,6 +5,7 @@ import {
   type PfpUploadUrlInput,
   type SaveProfileSettingsInput,
 } from "../services/profileSettings";
+import { getAuthAddress, isSameAddress } from "../middleware/requireWalletAuth";
 
 const profileSettingsRoutes = new Hono();
 
@@ -22,6 +23,13 @@ function getRequestIp(c: Context) {
     c.req.header("x-real-ip") ||
     "unknown"
   );
+}
+
+function isProfileSettingsAdmin(c: Context) {
+  const adminToken =
+    process.env.PARTNER_ADMIN_TOKEN || process.env.QUEST_ADMIN_TOKEN || "";
+  const provided = c.req.header("x-admin-token");
+  return adminToken.length > 0 && !!provided && provided === adminToken;
 }
 
 type ProfileSettingsStatus = 400 | 401 | 409 | 429 | 500 | 503;
@@ -54,6 +62,46 @@ function getErrorPayload(error: unknown) {
   } as const;
 }
 
+// Strip identity-revealing fields (social handles, IDs, connection timestamps,
+// storage keys) from a profile-settings payload, keeping only the public display
+// info (name / username / avatar) plus connection booleans. Returned to anyone
+// who hasn't proven ownership, so a wallet's pseudonymity can't be scraped.
+function toPublicProfileSettings(data: unknown) {
+  const payload = data as { profile?: Record<string, unknown> } | null;
+  if (!payload || typeof payload !== "object" || !payload.profile) {
+    return data;
+  }
+
+  const p = payload.profile as Record<string, any>;
+  const discord = p.discordAccount as Record<string, any> | null | undefined;
+
+  return {
+    ...payload,
+    savedXUsername: null,
+    profile: {
+      ...p,
+      discordUsername: null,
+      pfpStorageKey: null,
+      xUsername: null,
+      xUserId: null,
+      xName: null,
+      xAvatar: null,
+      xConnectedAt: null,
+      xLegacyManual: false,
+      discordAccount: discord
+        ? {
+            connected: discord.connected ?? false,
+            joined: discord.joined ?? false,
+            pending: discord.pending ?? null,
+          }
+        : null,
+      custom: p.custom
+        ? { ...p.custom, discordUsername: null, pfpStorageKey: null }
+        : p.custom,
+    },
+  };
+}
+
 const handleGetProfileSettings = async (c: Context) => {
   try {
     const address = c.req.query("address");
@@ -62,7 +110,14 @@ const handleGetProfileSettings = async (c: Context) => {
     }
 
     const data = await profileSettingsService.getProfileSettings(address);
-    return c.json(data);
+
+    // The owner (verified session) or the partner-admin tool gets the full
+    // payload; everyone else gets only the public display subset.
+    const authAddress = getAuthAddress(c);
+    const canSeePrivate =
+      isProfileSettingsAdmin(c) || isSameAddress(authAddress, address);
+
+    return c.json(canSeePrivate ? data : toPublicProfileSettings(data));
   } catch (error) {
     const payload = getErrorPayload(error);
     return c.json(payload.body, payload.status);

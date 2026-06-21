@@ -1,5 +1,6 @@
 import { Hono, type Context } from "hono";
 import { walletLinkService, WalletLinkError } from "../services/walletLink";
+import { getAuthAddress, isSameAddress } from "../middleware/requireWalletAuth";
 
 const walletLinkRoutes = new Hono();
 
@@ -67,8 +68,26 @@ walletLinkRoutes.post("/unlink", async (c) => {
 walletLinkRoutes.get("/wallets", async (c) => {
   try {
     const address = c.req.query("address") || "";
-    const result = await walletLinkService.listWallets(address);
-    return c.json(result);
+    if (!address) {
+      return c.json({ success: false, error: "address is required" }, 400);
+    }
+
+    // Linked-wallet relationships deanonymize a person across wallets: require a
+    // verified session, and only ever return the caller's own account wallets.
+    const authAddress = getAuthAddress(c);
+    if (!authAddress) {
+      return c.json({ success: false, error: "Authentication required." }, 401);
+    }
+
+    const own = await walletLinkService.listWallets(authAddress);
+    const ownsTarget =
+      isSameAddress(authAddress, address) ||
+      own.wallets.some((wallet) => isSameAddress(wallet.wallet_address, address));
+    if (!ownsTarget) {
+      return c.json({ success: false, error: "Forbidden." }, 403);
+    }
+
+    return c.json(own);
   } catch (error) {
     return handleError(c, error);
   }

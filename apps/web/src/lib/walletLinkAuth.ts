@@ -1,5 +1,6 @@
 import { concat, parseEther, sha256, stringToBytes, type Hex } from "viem";
 import { buildPublicApiUrl, publicApiFetch } from "@/lib/apiBase";
+import { authedApiFetch } from "@/lib/siweAuth";
 import { DATA_SUFFIX } from "@/lib/builderCode";
 
 export type WalletLinkAction =
@@ -236,7 +237,7 @@ export async function unlinkWallet(input: {
 export async function fetchLinkedWallets(address: string) {
   const url = new URL(apiUrl("/wallets"));
   url.searchParams.set("address", address);
-  const response = await fetch(url.toString(), { cache: "no-store" });
+  const response = await authedApiFetch(url.toString(), { cache: "no-store" });
   const data = await parseJson<{
     success?: boolean;
     primaryAddress?: string;

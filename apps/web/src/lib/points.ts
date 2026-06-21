@@ -1,5 +1,6 @@
 import type { SpinRewardKey, SpinRewardKind } from "@/lib/spin";
 import { buildPublicApiUrl, publicApiFetch } from "@/lib/apiBase";
+import { authedApiFetch } from "@/lib/siweAuth";
 import { isTerminalReferralError } from "@/lib/referrals";
 
 async function parseJson<T>(response: Response): Promise<T> {
@@ -215,7 +216,7 @@ export function getPointsApiUrl(path = "") {
 }
 
 export async function fetchPointsBalance(address: string) {
-  const response = await publicApiFetch(getPointsApiUrl(`/${address}`), {
+  const response = await authedApiFetch(getPointsApiUrl(`/${address}`), {
     headers: {
       "Content-Type": "application/json",
     },
@@ -244,7 +245,7 @@ export async function fetchPointsSummary(
     }
   }
 
-  const request = publicApiFetch(getPointsApiUrl(`/${address}/summary`), {
+  const request = authedApiFetch(getPointsApiUrl(`/${address}/summary`), {
     headers: {
       "Content-Type": "application/json",
     },
@@ -270,7 +271,7 @@ export async function fetchPointsSummary(
 }
 
 export async function fetchUserStats(address: string) {
-  const response = await publicApiFetch(getPointsApiUrl(`/${address}/stats`), {
+  const response = await authedApiFetch(getPointsApiUrl(`/${address}/stats`), {
     headers: {
       "Content-Type": "application/json",
     },
@@ -281,7 +282,7 @@ export async function fetchUserStats(address: string) {
 }
 
 export async function fetchReferralStats(address: string) {
-  const response = await publicApiFetch(getPointsApiUrl(`/${address}/referrals`), {
+  const response = await authedApiFetch(getPointsApiUrl(`/${address}/referrals`), {
     headers: {
       "Content-Type": "application/json",
     },

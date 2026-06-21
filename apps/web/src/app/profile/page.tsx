@@ -66,6 +66,7 @@ import {
   resolveProfileDisplay,
   type ProfileSettingsResponse,
 } from "@/lib/profileSettings";
+import { ensureSiweSession } from "@/lib/siweAuth";
 
 type NeynarProfile = {
   fid: number;
@@ -350,6 +351,27 @@ function ProfilePageContent() {
     setStats(summary.stats);
     setReferral(summary.referral);
   }, []);
+
+  // Establish a SIWE bearer session (one signature) so the API will return this
+  // wallet's own private data. Best-effort: if the user rejects, protected
+  // sections stay empty but the page does not break.
+  const ensureProfileSession = useCallback(async () => {
+    if (!address) {
+      return false;
+    }
+
+    try {
+      await ensureSiweSession({
+        address,
+        chainId: BASE_CHAIN_ID,
+        signMessage: ({ message }) => signMessageAsync({ message }) as Promise<Hex>,
+        statement: "Sign in to DustSwap to view your profile.",
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  }, [address, signMessageAsync]);
 
   const fetchProfileData = useCallback(
     async (options?: { force?: boolean; silent?: boolean }) => {
@@ -647,6 +669,27 @@ function ProfilePageContent() {
     profileSettings,
     profileSettingsError,
   ]);
+
+  // Opening the settings modal is where private social details are managed, so
+  // sign in on demand (one signature, cached) and reload the full owner payload.
+  // The profile page itself loads with no prompt (it only needs public display).
+  useEffect(() => {
+    if (!isSettingsOpen || !address) {
+      return;
+    }
+
+    let cancelled = false;
+    void (async () => {
+      const signedIn = await ensureProfileSession();
+      if (signedIn && !cancelled) {
+        await fetchProfileSettingsData();
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isSettingsOpen, address, ensureProfileSession, fetchProfileSettingsData]);
 
   useEffect(() => {
     silentRefreshPromiseRef.current = null;
