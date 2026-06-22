@@ -193,7 +193,9 @@ const TOKENPOCKET_BATCH_FAILURE_MESSAGE =
 const OKX_BATCH_STATUS_UNCLEAR_MESSAGE =
   "OKX batch status was unclear. No fallback prompts were sent. Check OKX activity or retry once.";
 const OKX_COMBINED_BATCH_NOTICE =
-  "OKX approves your selected tokens in one batch, then sweeps them — two quick prompts.";
+  "OKX bundles all your token approvals and the sweep into one transaction. If the batch is too large, DustSweep automatically retries in smaller batches.";
+const OKX_CHUNKED_BATCH_NOTICE =
+  "OKX couldn't take all tokens in one batch — sweeping in smaller combined approve+sweep batches.";
 const OKX_BATCH_FALLBACK_NOTICE =
   "OKX couldn't combine approvals and the sweep into one transaction; approving each token, then sweeping.";
 const TOKENPOCKET_EXECUTE_FAILURES_TOPIC =
@@ -204,6 +206,15 @@ const TOKENPOCKET_BATCH_APPROVALS_ENABLED =
 // rejects the single full bundle as "batch too large". This is NOT a cap on the
 // first attempt — the full up-to-50-token bundle is always tried first.
 const CHUNK_APPROVALS_PER_BATCH = 10;
+// OKX: tokens per SMALLER combined approve+sweep batch used as the fallback when
+// the single combined batch over all selected tokens is too large for OKX to
+// decode/simulate. Each chunk still carries its OWN approvals + sweep as ONE
+// atomic wallet_sendCalls, so this is never a one-by-one approval flow — it is
+// "batch again, smaller". Override with NEXT_PUBLIC_DUST_SWEEP_OKX_CHUNK_SIZE.
+const OKX_COMBINED_CHUNK_SIZE = (() => {
+  const parsed = Number(process.env.NEXT_PUBLIC_DUST_SWEEP_OKX_CHUNK_SIZE);
+  return Number.isFinite(parsed) && parsed >= 1 ? Math.floor(parsed) : 10;
+})();
 
 function isSameAddress(a?: string | null, b?: string | null) {
   return Boolean(a && b && a.toLowerCase() === b.toLowerCase());
@@ -1981,9 +1992,11 @@ export function useDustSweep(): UseDustSweepReturn {
         walletProfile.walletKey === "okx" && routeKind === "batch";
       // Guaranteed fallback: once the OKX one-click combined batch has been
       // abandoned this session (OKX left Confirm disabled and the user rejected,
-      // or it errored), skip the combined batch and run the proven approve+sweep
-      // path so the sweep completes. Reset on account change / on success.
-      const okxUseStandardPath =
+      // or it errored), skip the SINGLE full combined batch and instead retry as
+      // multiple SMALLER combined approve+sweep batches (OKX_COMBINED_CHUNK_SIZE
+      // tokens each) — "batch again, smaller", never one-by-one. Reset on account
+      // change / on success.
+      const okxRetryWithChunks =
         canTryOkxRawSendCalls && okxOneClickAbandonedRef.current;
       // (C) OKX must receive CLEAN exact ERC20 approve calldata (no builder-code
       // suffix) so it decodes the bundle and shows a normal approval+sweep prompt.
@@ -2054,8 +2067,9 @@ export function useDustSweep(): UseDustSweepReturn {
         // it as a normal swap. Calldata is kept 100% clean (no builder suffix on any
         // call — see canTryOkxRawSendCalls below) so OKX can decode + simulate it.
         // After the OKX one-click batch is abandoned this session, fall through to
-        // the per-token approvals + standalone sweep path instead of re-attempting it.
-        !okxUseStandardPath;
+        // the SMALLER combined approve+sweep batches instead of re-attempting the
+        // full bundle.
+        !okxRetryWithChunks;
       // Approvals-only batch (no sweep) — NEVER for OKX. OKX hard-blocks a bare
       // approval/7702 batch as a "risky signature type" (confirmed live), so OKX
       // must always use the combined bundle above, or (on abandonment) the
@@ -2235,6 +2249,118 @@ export function useDustSweep(): UseDustSweepReturn {
         currentStep = "pending";
         setSweepStep(currentStep);
         return sendSweepTransaction(sweepCalldata);
+      };
+
+      // OKX: when the single combined approve+sweep batch over ALL selected tokens
+      // is too large for OKX to decode/simulate (the "Unknown transaction" /
+      // "Unable to submit" failure on 13/50-token sweeps), retry as multiple
+      // SMALLER combined approve+sweep batches of OKX_COMBINED_CHUNK_SIZE tokens.
+      // Each chunk rebuilds its OWN sweep calldata for just that subset of routes
+      // and sends [approvals…, sweep] as ONE atomic, 100%-clean wallet_sendCalls —
+      // so OKX still gets one clean approve+sweep transaction per chunk and NEVER a
+      // one-by-one approval flow. Only used on the allowance lane (the mode OKX
+      // runs on); a Permit2-signature lane would need per-chunk signing, so it
+      // throws and the caller degrades to the standard path.
+      const fetchChunkBuildTx = async (
+        chunkRoutes: DustSweepQuoteResponse["routes"],
+      ) => {
+        const chunkResponse = await fetch("/api/dustsweep/build-tx", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            routes: chunkRoutes,
+            tokenOut: tokenOut.address,
+            receiver: address,
+            deadline: quote.deadline,
+            permit2Nonce: quote.permit2Nonce,
+            userAddress: address,
+          }),
+        });
+        const chunkPayload = await chunkResponse.json().catch(() => null);
+        if (!chunkResponse.ok) {
+          const message =
+            chunkPayload && typeof chunkPayload === "object" && "error" in chunkPayload
+              ? String((chunkPayload as { error?: unknown }).error)
+              : "Failed to build chunked sweep transaction";
+          throw new Error(message);
+        }
+        return chunkPayload as DustSweepBuildTxResponse;
+      };
+
+      const sendOkxChunkedCombinedBatches = async (notice?: string) => {
+        if (requiresPermitSignature) {
+          // Per-chunk Permit2 signing isn't supported here; let the caller fall
+          // back to the standard approvals + sweep path.
+          throw new Error("OKX chunked combined batch requires the allowance lane");
+        }
+        if (notice) {
+          setExecutionNotice(notice);
+        }
+
+        const routeChunks = chunkWalletCalls(quote.routes, OKX_COMBINED_CHUNK_SIZE);
+        let lastHash: Hex | null = null;
+
+        for (let index = 0; index < routeChunks.length; index += 1) {
+          const chunkRoutes = routeChunks[index];
+          setExecutionNotice(
+            `OKX couldn't take all tokens in one batch — sweeping in batches of up to ${OKX_COMBINED_CHUNK_SIZE} (batch ${index + 1} of ${routeChunks.length}).`,
+          );
+
+          // Rebuild the sweep calldata for ONLY this subset of routes.
+          const chunkBuild = await fetchChunkBuildTx(chunkRoutes);
+          if (
+            chunkBuild.requiresSignature ||
+            chunkBuild.signatureMode === "permit2_witness"
+          ) {
+            throw new Error("OKX chunked combined batch requires the allowance lane");
+          }
+          const chunkSpender = (chunkBuild.approvalSpender || approvalSpender) as Address;
+          const chunkApprovals = await getTokenApprovalRequirements(
+            chunkRoutes,
+            chunkSpender,
+          );
+          // OKX: clean exact ERC20 approve calldata (no builder suffix) so OKX can
+          // decode the chunk; builder attribution is dropped on OKX chunk sweeps.
+          const chunkApprovalCalls = buildApprovalCalls(chunkApprovals, chunkSpender, false);
+          const chunkSweepTarget = (chunkBuild.routerAddress ||
+            chunkBuild.contractAddress) as Address;
+          const chunkValue = chunkBuild.value ? BigInt(chunkBuild.value) : 0n;
+
+          const chunkCalls: WalletSendCall[] = [
+            ...chunkApprovalCalls,
+            {
+              to: chunkSweepTarget,
+              data: chunkBuild.calldata,
+              value: chunkValue,
+              // No dataSuffix — OKX needs 100% clean ABI calldata in the batch.
+            },
+          ];
+
+          currentStep = "pending";
+          setSweepStep(currentStep);
+          console.info("DustSweep OKX chunked combined batch attempt", {
+            walletKey: walletProfile.walletKey,
+            chunkIndex: index,
+            chunkCount: routeChunks.length,
+            chunkTokenCount: chunkRoutes.length,
+            chunkCallCount: chunkCalls.length,
+          });
+          const chunkHash = await sendAtomicWalletCalls({
+            account: address,
+            calls: chunkCalls,
+            usePaymasterCapabilities,
+            walletKey: walletProfile.walletKey,
+            requireAtomic: true,
+            appendDataSuffixes: true,
+          });
+          await waitForSuccessfulTransaction(chunkHash);
+          lastHash = chunkHash;
+        }
+
+        if (!lastHash) {
+          throw new Error("No tokens to sweep");
+        }
+        return lastHash;
       };
 
       // TokenPocket: approvals + sweep in ONE wallet_sendCalls. Mirrors the proven
@@ -2428,12 +2554,33 @@ export function useDustSweep(): UseDustSweepReturn {
               });
               throw new Error(OKX_BATCH_STATUS_UNCLEAR_MESSAGE);
             }
-            // The combined batch failed before submission (e.g. unsupported method
-            // / invalid params). Fall back to standard per-token approvals + a
-            // single sweep tx so the sweep still completes.
-            console.info("DustSweep OKX combined batch failed before submission; falling back to standard approvals + sweep.");
-            setExecutionNotice(OKX_BATCH_FALLBACK_NOTICE);
-            hash = await sendStandardSweepWithApprovals();
+            // The combined batch failed before submission (e.g. OKX couldn't
+            // decode/simulate the full up-to-50-token bundle). Don't drop to
+            // one-by-one approvals — retry as multiple SMALLER combined
+            // approve+sweep batches (OKX_COMBINED_CHUNK_SIZE tokens each), which
+            // OKX can decode. Only if the chunked combined path also fails do we
+            // degrade to standard per-token approvals + a single sweep.
+            console.info(
+              "DustSweep OKX combined batch failed before submission; retrying as chunked combined approve+sweep batches.",
+            );
+            try {
+              hash = await sendOkxChunkedCombinedBatches(OKX_CHUNKED_BATCH_NOTICE);
+            } catch (okxChunkError) {
+              if (isRejectedByUser(okxChunkError) || isWalletLockedError(okxChunkError)) {
+                throw okxChunkError;
+              }
+              console.warn(
+                "DustSweep OKX chunked combined batches failed; falling back to standard approvals + sweep.",
+                {
+                  walletKey: walletProfile.walletKey,
+                  chunkSize: OKX_COMBINED_CHUNK_SIZE,
+                  code: getErrorCode(okxChunkError),
+                  message: getDebugErrorMessage(okxChunkError),
+                },
+              );
+              setExecutionNotice(OKX_BATCH_FALLBACK_NOTICE);
+              hash = await sendStandardSweepWithApprovals();
+            }
           } else if (usesTokenPocketExisting) {
             console.info("DustSweep TokenPocket strict batch failed; retrying compatible mode.", {
               walletKey: walletProfile.walletKey,
@@ -2525,22 +2672,37 @@ export function useDustSweep(): UseDustSweepReturn {
             }
           }
         }
+      } else if (okxRetryWithChunks) {
+        // OKX abandoned the SINGLE full combined batch this session (Confirm left
+        // disabled → rejected). Retry as multiple SMALLER combined approve+sweep
+        // batches — never one-by-one. Degrade to standard only if chunking fails.
+        try {
+          hash = await sendOkxChunkedCombinedBatches(OKX_CHUNKED_BATCH_NOTICE);
+        } catch (okxChunkError) {
+          if (isRejectedByUser(okxChunkError) || isWalletLockedError(okxChunkError)) {
+            throw okxChunkError;
+          }
+          console.warn(
+            "DustSweep OKX chunked combined batches failed; falling back to standard approvals + sweep.",
+            {
+              walletKey: walletProfile.walletKey,
+              chunkSize: OKX_COMBINED_CHUNK_SIZE,
+              code: getErrorCode(okxChunkError),
+              message: getDebugErrorMessage(okxChunkError),
+            },
+          );
+          setExecutionNotice(OKX_BATCH_FALLBACK_NOTICE);
+          hash = await sendStandardSweepWithApprovals();
+        }
       } else if (canBundleApprovalsOnly) {
         hash = await sendBundledApprovalsThenSweep(
-          canTryOkxRawSendCalls
-            ? "OKX approves your tokens in one batch, then sweeps — two quick prompts."
-            : shouldSplitOkxBatch
+          shouldSplitOkxBatch
             ? OKX_SPLIT_BATCH_NOTICE
             : shouldSplitTokenPocketBatch
             ? TOKENPOCKET_SPLIT_BATCH_NOTICE
             : `Approval+sweep needs ${bundledCallCount} wallet calls, so DustSweep will batch approvals first and then send the sweep.`,
         );
       } else {
-        if (okxUseStandardPath) {
-          setExecutionNotice(
-            "OKX couldn't confirm the one-click batch, so DustSweep is approving your tokens and sweeping them step by step.",
-          );
-        }
         hash = await sendStandardSweepWithApprovals();
       }
 
@@ -2623,7 +2785,7 @@ export function useDustSweep(): UseDustSweepReturn {
       ) {
         okxOneClickAbandonedRef.current = true;
         setError(
-          "OKX couldn't confirm the one-click approve+sweep. Tap Sweep again — DustSweep will approve your tokens and sweep them step by step instead.",
+          "OKX couldn't confirm the one-click approve+sweep. Tap Sweep again — DustSweep will sweep your tokens in smaller combined approve+sweep batches instead.",
         );
         setSweepStep("error");
         logSweepTelemetry("cancelled");
