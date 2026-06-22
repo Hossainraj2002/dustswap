@@ -409,3 +409,37 @@ export function isTokenPocketEthereumProvider(provider: EthereumProviderCandidat
 export function hasInjectedTokenPocketWallet() {
   return getEthereumProviderCandidates().some(isTokenPocketEthereumProvider);
 }
+
+// True when ANY injected EVM provider is present (window.ethereum, window.okxwallet,
+// an EIP-6963 announcer, etc.). On mobile this is the reliable "are we inside a
+// wallet's in-app browser?" signal: a plain Chrome/Safari injects nothing, while
+// OKX/Bitget/Coinbase/MetaMask in-app browsers all inject a provider.
+export function hasAnyInjectedEthereumProvider() {
+  return getEthereumProviderCandidates().length > 0;
+}
+
+// Wait briefly for an injected EVM provider to appear. In-app wallet browsers —
+// OKX especially — inject window.okxwallet and announce via EIP-6963 a few hundred
+// ms AFTER the page loads, so reading providers synchronously at modal-open time
+// misses them. Each poll re-dispatches eip6963:requestProvider (via
+// getEthereumProviderCandidates → getEip6963Store), so a late announcer is still
+// captured. Resolves true as soon as a provider exists, or false on timeout.
+export async function waitForInjectedProvider(
+  timeoutMs = 1200,
+  stepMs = 100,
+): Promise<boolean> {
+  if (typeof window === "undefined") {
+    return false;
+  }
+  if (hasAnyInjectedEthereumProvider()) {
+    return true;
+  }
+  const deadline = Date.now() + Math.max(0, timeoutMs);
+  while (Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, stepMs));
+    if (hasAnyInjectedEthereumProvider()) {
+      return true;
+    }
+  }
+  return hasAnyInjectedEthereumProvider();
+}
