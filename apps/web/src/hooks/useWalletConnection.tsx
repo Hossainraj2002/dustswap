@@ -21,6 +21,7 @@ import {
 import { useSetActiveWallet } from "@privy-io/wagmi";
 import { useAccount, useDisconnect } from "wagmi";
 import {
+  ensureOkxEip6963Shim,
   hasAnyInjectedEthereumProvider,
   hasInjectedOkxWallet,
   hasInjectedTokenPocketWallet,
@@ -366,6 +367,10 @@ function PrivyWalletConnectionProvider({ children }: { children: ReactNode }) {
       // extension or an already-injected in-app browser sees no delay — only a
       // plain browser (which never injects) waits out the window. We allow a
       // generous window so a slightly-late OKX injection is still caught.
+      // Make sure OKX's injected provider is announced via EIP-6963 before we
+      // build the list, so Privy detects it as a native wallet instead of
+      // routing OKX through the stalling WalletConnect relay.
+      ensureOkxEip6963Shim();
       if (isMobileRuntime()) {
         await waitForInjectedProvider(WALLET_INJECTION_WAIT_MS);
       }

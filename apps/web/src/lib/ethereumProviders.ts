@@ -443,3 +443,78 @@ export async function waitForInjectedProvider(
   }
   return hasAnyInjectedEthereumProvider();
 }
+
+let okxEip6963ShimInstalled = false;
+let okxEip6963Uuid: string | null = null;
+
+function getOkxEip6963Uuid() {
+  if (!okxEip6963Uuid) {
+    okxEip6963Uuid =
+      typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+        ? crypto.randomUUID()
+        : `okx-${Math.random().toString(16).slice(2)}`;
+  }
+  return okxEip6963Uuid;
+}
+
+// OKX's mobile in-app browser injects `window.okxwallet` but does NOT announce
+// itself via EIP-6963. Privy (and most modern wallet UIs) discover external
+// wallets ONLY through EIP-6963, so Privy never surfaces the injected OKX and
+// instead routes "OKX" through the WalletConnect relay — which stalls on
+// "Waiting for OKX Wallet…" (the reported failure, worse behind a VPN). We
+// announce the injected provider on EIP-6963's behalf so Privy detects it and
+// connects to it natively (EIP-1193, no relay). Mobile-only (desktop OKX
+// extension announces itself, so shimming there would just duplicate it); the
+// uuid is stable so repeated announcements de-duplicate; a no-op when OKX isn't
+// present. Call it early (once) and again right before opening the picker.
+export function ensureOkxEip6963Shim() {
+  if (
+    typeof window === "undefined" ||
+    okxEip6963ShimInstalled ||
+    !isMobileUserAgent()
+  ) {
+    return;
+  }
+  okxEip6963ShimInstalled = true;
+
+  const okxIcon = `data:image/svg+xml,${encodeURIComponent(
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 90 90"><rect width="90" height="90" rx="20" fill="#000"/><g fill="#fff"><rect x="18" y="18" width="18" height="18"/><rect x="54" y="18" width="18" height="18"/><rect x="36" y="36" width="18" height="18"/><rect x="18" y="54" width="18" height="18"/><rect x="54" y="54" width="18" height="18"/></g></svg>',
+  )}`;
+
+  const announce = () => {
+    const browserWindow = window as Window & {
+      okxwallet?: EthereumProviderCandidate;
+      ethereum?: EthereumProviderCandidate;
+    };
+    const okxProvider =
+      browserWindow.okxwallet ||
+      (browserWindow.ethereum && isOkxEthereumProvider(browserWindow.ethereum)
+        ? browserWindow.ethereum
+        : undefined);
+    if (!okxProvider || typeof okxProvider !== "object") {
+      return;
+    }
+    try {
+      window.dispatchEvent(
+        new CustomEvent("eip6963:announceProvider", {
+          detail: Object.freeze({
+            info: {
+              uuid: getOkxEip6963Uuid(),
+              name: "OKX Wallet",
+              icon: okxIcon,
+              rdns: "com.okex.wallet",
+            },
+            provider: okxProvider,
+          }),
+        }),
+      );
+    } catch {
+      // ignore — best effort
+    }
+  };
+
+  // Answer any consumer (Privy) that requests providers, and announce now in
+  // case a request already fired before this listener was installed.
+  window.addEventListener("eip6963:requestProvider", announce);
+  announce();
+}

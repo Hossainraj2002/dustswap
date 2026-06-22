@@ -12,6 +12,7 @@ import {
   WalletConnectionProvider,
 } from "@/hooks/useWalletConnection";
 import { INITIAL_WAGMI_CHAINS } from "@/config/web3";
+import { ensureOkxEip6963Shim } from "@/lib/ethereumProviders";
 import { useSwapCapture } from "@/hooks/useSwapCapture";
 import { fallbackWagmiConfig, wagmiConfig } from "@/wagmi";
 
@@ -66,6 +67,10 @@ function AppProviders({ children }: ProvidersProps) {
     console.info(
       `[DustSwap] WalletConnect projectId resolved (length=${walletConnectCloudProjectId.length}, source=${walletConnectProjectIdSource})`
     );
+    // OKX's mobile in-app browser injects window.okxwallet but doesn't announce
+    // via EIP-6963, so Privy can't detect it and falls back to the stalling
+    // WalletConnect relay. Announce it on its behalf so Privy connects natively.
+    ensureOkxEip6963Shim();
   }, []);
 
   const [queryClient] = useState(
