@@ -29,6 +29,13 @@ import {
   waitForInjectedProvider,
 } from "@/lib/ethereumProviders";
 
+// How long to wait on mobile for an in-app wallet browser to inject its provider
+// before building the wallet list. OKX's in-app browser injects a bit after load;
+// too short a window keeps the WalletConnect okx_wallet entry that stalls on
+// "Waiting for OKX Wallet…". Resolves instantly once a provider appears, so only
+// a plain browser (no wallet) ever waits the whole window.
+const WALLET_INJECTION_WAIT_MS = 2500;
+
 export const PRIVY_WALLET_LIST: WalletListEntry[] = [
   "detected_ethereum_wallets",
   "okx_wallet",
@@ -350,22 +357,33 @@ function PrivyWalletConnectionProvider({ children }: { children: ReactNode }) {
           await new Promise((resolve) => setTimeout(resolve, 50));
         }
       }
-      // On mobile, give an in-app wallet browser a moment to inject its provider
+      // On mobile, give an in-app wallet browser time to inject its provider
       // before we decide the wallet list. OKX's in-app browser announces via
-      // EIP-6963 / window.okxwallet a few hundred ms after load; without this
-      // wait getRuntimeWalletList() runs too early, misses OKX, and keeps the
-      // WalletConnect okx_wallet entry that stalls on "Waiting for OKX Wallet…".
-      // Returns immediately once a provider is present (desktop extension users
-      // and already-injected mobile in-app browsers see no added delay).
+      // EIP-6963 / window.okxwallet after load; if we read too early,
+      // getRuntimeWalletList() misses OKX and keeps the WalletConnect okx_wallet
+      // entry that strands the user on "Waiting for OKX Wallet…" (the reported
+      // failure). The wait returns the instant a provider appears, so a desktop
+      // extension or an already-injected in-app browser sees no delay — only a
+      // plain browser (which never injects) waits out the window. We allow a
+      // generous window so a slightly-late OKX injection is still caught.
       if (isMobileRuntime()) {
-        await waitForInjectedProvider();
+        await waitForInjectedProvider(WALLET_INJECTION_WAIT_MS);
       }
       const nextWalletList = getRuntimeWalletList(walletList ?? PRIVY_WALLET_LIST);
       // Lightweight, PII-free trace so an OKX-in-app-browser connect can be
-      // diagnosed from a remote-inspected phone if it still misbehaves.
-      console.info(
-        `[DustSwap] wallet modal: mobile=${isMobileRuntime()} injected=${hasAnyInjectedEthereumProvider()} okxApp=${isOkxAppBrowser()} list=${nextWalletList.join(",")}`
-      );
+      // diagnosed if it still misbehaves. Visible in the console for remote
+      // inspection, and — only when the page is opened with ?wldebug=1 — shown
+      // on-screen via alert() so it can be screenshotted from a phone where the
+      // console is not reachable. The query flag is opt-in; normal users never
+      // see it.
+      const walletModalTrace = `[DustSwap] wallet modal: mobile=${isMobileRuntime()} injected=${hasAnyInjectedEthereumProvider()} okxApp=${isOkxAppBrowser()} list=${nextWalletList.join(",")}`;
+      console.info(walletModalTrace);
+      if (
+        typeof window !== "undefined" &&
+        window.location.search.includes("wldebug=1")
+      ) {
+        window.alert(walletModalTrace);
+      }
       connectWallet({
         description,
         walletList: nextWalletList,

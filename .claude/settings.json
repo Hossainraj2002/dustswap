@@ -10,7 +10,8 @@
       "mcp__chrome-devtools__take_snapshot",
       "mcp__chrome-devtools__navigate_page",
       "Bash(npx -y tsc --noEmit -p tsconfig.json)",
-      "Bash(echo \"EXIT=$?\")"
+      "Bash(echo \"EXIT=$?\")",
+      "Read(//c/Users/akbar/.claude/projects/c--dustswap/memory/**)"
     ]
   }
 }
