@@ -367,12 +367,24 @@ function PrivyWalletConnectionProvider({ children }: { children: ReactNode }) {
       // extension or an already-injected in-app browser sees no delay — only a
       // plain browser (which never injects) waits out the window. We allow a
       // generous window so a slightly-late OKX injection is still caught.
-      // Make sure OKX's injected provider is announced via EIP-6963 before we
-      // build the list, so Privy detects it as a native wallet instead of
-      // routing OKX through the stalling WalletConnect relay.
+      // Install the EIP-6963 responder early (idempotent; usually a no-op now
+      // because OKX injects a beat after load).
       ensureOkxEip6963Shim();
+      let okxAnnounced = false;
       if (isMobileRuntime()) {
+        // Wait for OKX's in-app browser to inject its provider…
         await waitForInjectedProvider(WALLET_INJECTION_WAIT_MS);
+        // …then PROACTIVELY announce it to Privy's EIP-6963 (mipd) store. mipd
+        // only auto-requests providers once at startup (before OKX exists), so
+        // this post-injection announcement is the one that actually lands OKX in
+        // Privy — making the picker offer the NATIVE injected OKX instead of the
+        // WalletConnect relay that stalls on "Waiting for OKX Wallet…".
+        okxAnnounced = ensureOkxEip6963Shim();
+        // Give Privy's reactive mipd subscription a beat to fold OKX into its
+        // connector list before we open the picker.
+        if (okxAnnounced) {
+          await new Promise((resolve) => setTimeout(resolve, 150));
+        }
       }
       const nextWalletList = getRuntimeWalletList(walletList ?? PRIVY_WALLET_LIST);
       // Lightweight, PII-free trace so an OKX-in-app-browser connect can be
@@ -381,7 +393,10 @@ function PrivyWalletConnectionProvider({ children }: { children: ReactNode }) {
       // on-screen via alert() so it can be screenshotted from a phone where the
       // console is not reachable. The query flag is opt-in; normal users never
       // see it.
-      const walletModalTrace = `[DustSwap] wallet modal: mobile=${isMobileRuntime()} injected=${hasAnyInjectedEthereumProvider()} okxApp=${isOkxAppBrowser()} list=${nextWalletList.join(",")}`;
+      const okxInjected =
+        typeof window !== "undefined" &&
+        !!(window as { okxwallet?: unknown }).okxwallet;
+      const walletModalTrace = `[DustSwap] wallet modal: mobile=${isMobileRuntime()} injected=${hasAnyInjectedEthereumProvider()} okxApp=${isOkxAppBrowser()} okxwallet=${okxInjected} okxAnnounced=${okxAnnounced} list=${nextWalletList.join(",")}`;
       console.info(walletModalTrace);
       if (
         typeof window !== "undefined" &&

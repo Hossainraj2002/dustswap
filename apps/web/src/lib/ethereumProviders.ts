@@ -467,54 +467,80 @@ function getOkxEip6963Uuid() {
 // extension announces itself, so shimming there would just duplicate it); the
 // uuid is stable so repeated announcements de-duplicate; a no-op when OKX isn't
 // present. Call it early (once) and again right before opening the picker.
-export function ensureOkxEip6963Shim() {
-  if (
-    typeof window === "undefined" ||
-    okxEip6963ShimInstalled ||
-    !isMobileUserAgent()
-  ) {
-    return;
+const OKX_EIP6963_ICON = `data:image/svg+xml,${encodeURIComponent(
+  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 90 90"><rect width="90" height="90" rx="20" fill="#000"/><g fill="#fff"><rect x="18" y="18" width="18" height="18"/><rect x="54" y="18" width="18" height="18"/><rect x="36" y="36" width="18" height="18"/><rect x="18" y="54" width="18" height="18"/><rect x="54" y="54" width="18" height="18"/></g></svg>',
+)}`;
+
+// Dispatch a single EIP-6963 announcement for the injected OKX provider. Returns
+// true if OKX was present and announced, false if OKX isn't injected (yet).
+// mipd (Privy's EIP-6963 store) keeps a PERSISTENT announceProvider listener and
+// dedupes by uuid, so re-announcing the same stable uuid is safe and idempotent.
+function announceOkxProvider(): boolean {
+  if (typeof window === "undefined") {
+    return false;
   }
-  okxEip6963ShimInstalled = true;
-
-  const okxIcon = `data:image/svg+xml,${encodeURIComponent(
-    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 90 90"><rect width="90" height="90" rx="20" fill="#000"/><g fill="#fff"><rect x="18" y="18" width="18" height="18"/><rect x="54" y="18" width="18" height="18"/><rect x="36" y="36" width="18" height="18"/><rect x="18" y="54" width="18" height="18"/><rect x="54" y="54" width="18" height="18"/></g></svg>',
-  )}`;
-
-  const announce = () => {
-    const browserWindow = window as Window & {
-      okxwallet?: EthereumProviderCandidate;
-      ethereum?: EthereumProviderCandidate;
-    };
-    const okxProvider =
-      browserWindow.okxwallet ||
-      (browserWindow.ethereum && isOkxEthereumProvider(browserWindow.ethereum)
-        ? browserWindow.ethereum
-        : undefined);
-    if (!okxProvider || typeof okxProvider !== "object") {
-      return;
-    }
-    try {
-      window.dispatchEvent(
-        new CustomEvent("eip6963:announceProvider", {
-          detail: Object.freeze({
-            info: {
-              uuid: getOkxEip6963Uuid(),
-              name: "OKX Wallet",
-              icon: okxIcon,
-              rdns: "com.okex.wallet",
-            },
-            provider: okxProvider,
-          }),
-        }),
-      );
-    } catch {
-      // ignore — best effort
-    }
+  const browserWindow = window as Window & {
+    okxwallet?: EthereumProviderCandidate;
+    ethereum?: EthereumProviderCandidate;
   };
+  const okxProvider =
+    browserWindow.okxwallet ||
+    (browserWindow.ethereum && isOkxEthereumProvider(browserWindow.ethereum)
+      ? browserWindow.ethereum
+      : undefined);
+  if (!okxProvider || typeof okxProvider !== "object") {
+    return false;
+  }
+  try {
+    window.dispatchEvent(
+      new CustomEvent("eip6963:announceProvider", {
+        detail: Object.freeze({
+          info: {
+            uuid: getOkxEip6963Uuid(),
+            name: "OKX Wallet",
+            icon: OKX_EIP6963_ICON,
+            rdns: "com.okex.wallet",
+          },
+          provider: okxProvider,
+        }),
+      }),
+    );
+    return true;
+  } catch {
+    // ignore — best effort
+    return false;
+  }
+}
 
-  // Answer any consumer (Privy) that requests providers, and announce now in
-  // case a request already fired before this listener was installed.
-  window.addEventListener("eip6963:requestProvider", announce);
-  announce();
+// Make Privy detect the injected OKX provider inside OKX's mobile in-app browser.
+// OKX injects `window.okxwallet` but, unlike its desktop extension, does NOT
+// announce itself over EIP-6963 — and Privy discovers external wallets ONLY via
+// EIP-6963 (the `mipd` store). Without an announcement Privy never surfaces the
+// native OKX and routes "OKX" through the WalletConnect relay, which stalls on
+// "Waiting for OKX Wallet…" (worse behind a VPN). We announce on OKX's behalf.
+//
+// CRITICAL timing: `mipd` dispatches `eip6963:requestProvider` only ONCE at store
+// creation (before OKX injects), but keeps its `announceProvider` listener alive
+// forever. So the announcement that actually lands is a PROACTIVE one made AFTER
+// OKX has injected. That's why this MUST be called again right before opening the
+// picker (post-injection) — not just once at mount, when OKX isn't there yet.
+//
+// Mobile-only (the desktop extension announces itself); a no-op until OKX exists.
+export function ensureOkxEip6963Shim(): boolean {
+  if (typeof window === "undefined" || !isMobileUserAgent()) {
+    return false;
+  }
+
+  // Install the requestProvider responder exactly once, so that if mipd ever
+  // resets (re-dispatching requestProvider) we re-announce OKX automatically.
+  if (!okxEip6963ShimInstalled) {
+    okxEip6963ShimInstalled = true;
+    window.addEventListener("eip6963:requestProvider", () => {
+      announceOkxProvider();
+    });
+  }
+
+  // ALWAYS announce on every call — this is the proactive announcement mipd's
+  // persistent listener captures. Idempotent via the stable uuid.
+  return announceOkxProvider();
 }
