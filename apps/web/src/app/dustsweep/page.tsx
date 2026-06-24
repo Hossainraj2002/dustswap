@@ -395,7 +395,12 @@ export default function DustSweepPage() {
     !isDustSweepApprovalBatchingEnabled(sweep.walletProfile.walletKey);
 
   return (
-    <div className="theme-page min-h-screen bg-gradient-to-b from-blue-50 via-white to-slate-50 px-3 py-5 sm:px-6 sm:py-8">
+    <div className="theme-page relative flex min-h-screen flex-col bg-gradient-to-b from-blue-50 via-white to-slate-50 px-3 py-5 sm:px-6 sm:py-8">
+      {/* Ambient brand glow — subtle depth behind the centered widget */}
+      <div aria-hidden="true" className="pointer-events-none fixed inset-0 z-0 overflow-hidden">
+        <div className="absolute left-1/2 top-[16%] h-[480px] w-[480px] -translate-x-1/2 rounded-full bg-[#0052ff]/[0.07] blur-[130px] dark:bg-[#3b82f6]/[0.10]" />
+      </div>
+
       <SweepGuideModal />
 
       <TokenSelectModal
@@ -436,7 +441,7 @@ export default function DustSweepPage() {
         onClose={sweep.dismissCompletionSummary}
       />
 
-      <div className="mx-auto max-w-[600px] pb-[calc(69px+var(--safe-area-bottom))] sm:pb-8">
+      <div className="relative z-10 mx-auto flex w-full max-w-[600px] flex-1 flex-col pb-[calc(69px+var(--safe-area-bottom))] sm:pb-8">
         {/* ── Header ── */}
         <div className="mb-5 flex items-center justify-between gap-3">
           <div className="flex items-center gap-3">
@@ -461,7 +466,7 @@ export default function DustSweepPage() {
         </div>
 
         {/* ── Main card ── */}
-        <div className="space-y-3">
+        <div className="my-auto w-full space-y-3">
           {/* Delegation-aware route status — decided at connect, shown early. */}
           {hasConnectedWallet ? (
             isTrulyBlocked ? (

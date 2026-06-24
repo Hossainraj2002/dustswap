@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { TokenLogo } from "@/components/sweep/TokenLogo";
 import {
   type SelectedToken,
@@ -183,75 +183,20 @@ function AssetRow({
   );
 }
 
-// Compact card used in the 3-up swappable token grid.
-function TokenGridCard({
-  token,
-  selected,
-  disabled,
-  mutedReason,
-  onClick,
-}: {
-  token: Token & Partial<Pick<SwappableToken, "balanceFormatted" | "valueUSD">>;
-  selected?: boolean;
-  disabled?: boolean;
-  mutedReason?: string;
-  onClick?: () => void;
-}) {
-  const balance = fmtBalance(token.balanceFormatted);
-  const usd = fmtUSD(token.valueUSD);
-  const dot = confidenceDot(token, mutedReason);
-
+function SkeletonRow() {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      title={mutedReason ?? token.name}
-      className={cx(
-        "group relative flex min-h-[112px] flex-col items-center justify-center gap-1.5 rounded-[14px] border px-1.5 py-3 text-center transition",
-        selected
-          ? "border-[#0052ff] bg-blue-50 dark:border-blue-400/60 dark:bg-blue-400/10"
-          : "sweep-chip hover:border-blue-300 hover:bg-slate-50 dark:hover:border-blue-400/40 dark:hover:bg-white/[0.05]",
-        disabled && "cursor-not-allowed opacity-50",
-      )}
-    >
-      {!disabled ? (
-        <span
-          className={cx(
-            "absolute right-1.5 top-1.5 flex h-[18px] w-[18px] items-center justify-center rounded-full border transition",
-            selected
-              ? "border-[#0052ff] bg-[#0052ff] text-white"
-              : "border-slate-300 text-transparent group-hover:border-slate-400 dark:border-white/25",
-          )}
-          aria-hidden="true"
-        >
-          <svg viewBox="0 0 24 24" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M5 13l4 4L19 7" />
-          </svg>
-        </span>
-      ) : null}
-
-      <TokenLogo token={token} size="md" muted={disabled} />
-
-      <span className="flex max-w-full items-center gap-1">
-        {dot ? <span className={cx("h-1.5 w-1.5 shrink-0 rounded-full", dot)} /> : null}
-        <span className="max-w-[84px] truncate text-[13px] font-bold text-slate-900 dark:text-white">{token.symbol}</span>
-      </span>
-
-      <span className="leading-tight">
-        <span className="block font-mono text-[12px] font-semibold tabular-nums text-slate-900 dark:text-white">{balance || "—"}</span>
-        <span className="block text-[11px] text-slate-400 dark:text-slate-500">{usd || "—"}</span>
-      </span>
-    </button>
-  );
-}
-
-function SkeletonCard() {
-  return (
-    <div className="flex min-h-[112px] flex-col items-center justify-center gap-2 rounded-[14px] border border-slate-100 px-1.5 py-3 dark:border-white/5">
-      <span className="sweep-skel h-9 w-9 rounded-full" />
-      <span className="sweep-skel h-3 w-12 rounded" />
-      <span className="sweep-skel h-2.5 w-10 rounded" />
+    <div className="flex items-center justify-between gap-3 px-2.5 py-2.5">
+      <div className="flex min-w-0 flex-1 items-center gap-3">
+        <span className="sweep-skel h-9 w-9 shrink-0 rounded-full" />
+        <div className="min-w-0 flex-1">
+          <span className="sweep-skel block h-3 w-1/3 rounded" />
+          <span className="sweep-skel mt-2 block h-2.5 w-1/2 rounded" />
+        </div>
+      </div>
+      <div className="text-right">
+        <span className="sweep-skel ml-auto block h-3 w-12 rounded" />
+        <span className="sweep-skel ml-auto mt-2 block h-2.5 w-8 rounded" />
+      </div>
     </div>
   );
 }
@@ -290,13 +235,6 @@ export function TokenSelectModal({
   onClose: () => void;
 }) {
   const [query, setQuery] = useState("");
-  const [expanded, setExpanded] = useState(false);
-
-  // Re-collapse the token grid each time the selector is closed.
-  useEffect(() => {
-    if (!isOpen) setExpanded(false);
-  }, [isOpen]);
-
   const selectedSet = useMemo(
     () => new Set(selectedTokens.map((token) => token.address.toLowerCase())),
     [selectedTokens],
@@ -343,15 +281,6 @@ export function TokenSelectModal({
       ? `scanning ${walletBalanceCount} balances`
       : "scanning balances"
     : `${walletBalanceCount} balances scanned`;
-
-  // Collapsed grid shows 5 tokens + a "+N more" tile (a 2x3 grid). Searching or
-  // tapping "+N more" reveals the full list, always 3 per row.
-  const COLLAPSED_LIMIT = 5;
-  const isSearching = query.trim().length > 0;
-  const canCollapse = mode === "multi" && !isSearching && visibleSwappable.length > 6;
-  const showMoreTile = canCollapse && !expanded;
-  const gridTokens = showMoreTile ? visibleSwappable.slice(0, COLLAPSED_LIMIT) : visibleSwappable;
-  const moreCount = visibleSwappable.length - COLLAPSED_LIMIT;
 
   if (!isOpen) return null;
 
@@ -435,116 +364,77 @@ export function TokenSelectModal({
               ) : null}
             </div>
 
-            {mode === "single" ? (
-              <div className="space-y-0.5">
-                {visibleOutputTokens.map((token) => (
+            <div className="space-y-0.5">
+              {disabledOutputToken ? (
+                <AssetRow token={disabledOutputToken} disabled mutedReason="Selected output token" />
+              ) : null}
+
+              {(mode === "single" ? visibleOutputTokens : visibleSwappable).map((token) => {
+                const selected =
+                  mode === "single"
+                    ? selectedOutputToken?.address.toLowerCase() === token.address.toLowerCase()
+                    : selectedSet.has(token.address.toLowerCase());
+
+                return (
                   <AssetRow
                     key={token.address}
                     token={token}
-                    selected={selectedOutputToken?.address.toLowerCase() === token.address.toLowerCase()}
+                    selected={selected}
+                    multi={mode === "multi"}
                     onClick={() => {
-                      onSelectOutputToken(token);
-                      onClose();
+                      if (mode === "single") {
+                        onSelectOutputToken(token);
+                        onClose();
+                      } else {
+                        if (selected) {
+                          onRemoveToken(token.address);
+                        } else {
+                          onSelectToken(token as SwappableToken);
+                        }
+                      }
                     }}
                   />
-                ))}
-                {visibleOutputTokens.length === 0 ? (
+                );
+              })}
+
+              {mode === "multi" && visibleUnavailable.length > 0 ? (
+                <div className="pt-3">
+                  <div className="mb-2">
+                    <p className="text-[13px] font-semibold text-slate-500 dark:text-slate-400">
+                      Hidden / unavailable
+                      <span className="ml-2 text-xs font-normal text-slate-400 dark:text-slate-500">{visibleUnavailable.length} tokens</span>
+                    </p>
+                    <p className="text-xs text-slate-400 dark:text-slate-500">
+                      Below $0.01, no price, output assets, native ETH, or risk-filtered.
+                    </p>
+                  </div>
+                  <div className="space-y-0.5">
+                    {visibleUnavailable.map((token) => (
+                      <AssetRow
+                        key={token.address}
+                        token={token}
+                        disabled
+                        mutedReason={reasonText(token.reason)}
+                      />
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+
+              {visibleSwappable.length === 0 && visibleUnavailable.length === 0 && mode === "multi" ? (
+                isScanning && !query.trim() ? (
+                  <div className="space-y-0.5">
+                    {Array.from({ length: 6 }).map((_, index) => (
+                      <SkeletonRow key={index} />
+                    ))}
+                  </div>
+                ) : (
                   <div className="rounded-[14px] border border-dashed border-slate-200 px-4 py-8 text-center text-sm text-slate-500 dark:border-white/10 dark:text-slate-400">
                     No tokens found
                   </div>
-                ) : null}
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {disabledOutputToken ? (
-                  <AssetRow token={disabledOutputToken} disabled mutedReason="Selected output token" />
-                ) : null}
-
-                {visibleSwappable.length > 0 ? (
-                  <div className="space-y-2">
-                    <div className="grid grid-cols-3 gap-2">
-                      {gridTokens.map((token) => {
-                        const selected = selectedSet.has(token.address.toLowerCase());
-                        return (
-                          <TokenGridCard
-                            key={token.address}
-                            token={token}
-                            selected={selected}
-                            onClick={() => {
-                              if (selected) {
-                                onRemoveToken(token.address);
-                              } else {
-                                onSelectToken(token);
-                              }
-                            }}
-                          />
-                        );
-                      })}
-                      {showMoreTile ? (
-                        <button
-                          type="button"
-                          onClick={() => setExpanded(true)}
-                          aria-label={`Show ${moreCount} more tokens`}
-                          className="flex min-h-[112px] flex-col items-center justify-center gap-1 rounded-[14px] border border-dashed border-blue-300 bg-blue-50/40 text-[#0052ff] transition hover:border-blue-400 hover:bg-blue-50 dark:border-blue-400/35 dark:bg-blue-400/[0.06] dark:text-blue-300 dark:hover:bg-blue-400/10"
-                        >
-                          <span className="text-[20px] font-extrabold leading-none tabular-nums">+{moreCount}</span>
-                          <span className="text-[11px] font-bold uppercase tracking-[0.08em]">more</span>
-                        </button>
-                      ) : null}
-                    </div>
-                    {expanded && canCollapse ? (
-                      <div className="flex justify-center pt-0.5">
-                        <button
-                          type="button"
-                          onClick={() => setExpanded(false)}
-                          className="rounded-[9px] px-3 py-1 text-xs font-semibold text-slate-500 transition hover:bg-slate-100 hover:text-slate-700 dark:text-slate-400 dark:hover:bg-white/10 dark:hover:text-white"
-                        >
-                          Show less
-                        </button>
-                      </div>
-                    ) : null}
-                  </div>
-                ) : null}
-
-                {visibleUnavailable.length > 0 ? (
-                  <div>
-                    <div className="mb-2">
-                      <p className="text-[13px] font-semibold text-slate-500 dark:text-slate-400">
-                        Hidden / unavailable
-                        <span className="ml-2 text-xs font-normal text-slate-400 dark:text-slate-500">{visibleUnavailable.length} tokens</span>
-                      </p>
-                      <p className="text-xs text-slate-400 dark:text-slate-500">
-                        Below $0.01, no price, output assets, native ETH, or risk-filtered.
-                      </p>
-                    </div>
-                    <div className="space-y-0.5">
-                      {visibleUnavailable.map((token) => (
-                        <AssetRow
-                          key={token.address}
-                          token={token}
-                          disabled
-                          mutedReason={reasonText(token.reason)}
-                        />
-                      ))}
-                    </div>
-                  </div>
-                ) : null}
-
-                {visibleSwappable.length === 0 && visibleUnavailable.length === 0 ? (
-                  isScanning && !query.trim() ? (
-                    <div className="grid grid-cols-3 gap-2">
-                      {Array.from({ length: 6 }).map((_, index) => (
-                        <SkeletonCard key={index} />
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="rounded-[14px] border border-dashed border-slate-200 px-4 py-8 text-center text-sm text-slate-500 dark:border-white/10 dark:text-slate-400">
-                      No tokens found
-                    </div>
-                  )
-                ) : null}
-              </div>
-            )}
+                )
+              ) : null}
+            </div>
           </div>
         </div>
       </div>
