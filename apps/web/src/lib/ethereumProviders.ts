@@ -499,7 +499,14 @@ function announceOkxProvider(): boolean {
             uuid: getOkxEip6963Uuid(),
             name: "OKX Wallet",
             icon: OKX_EIP6963_ICON,
-            rdns: "com.okex.wallet",
+            // Deliberately NOT the canonical "com.okex.wallet" rdns. Privy matches
+            // that rdns to its built-in OKX *WalletConnect* connector, so even a
+            // detected (injected) OKX got routed through the WC relay that stalls
+            // ("Waiting for OKX Wallet…"). With a non-canonical rdns Privy treats
+            // this as a generic detected wallet and connects via the announced
+            // EIP-1193 provider directly (no relay) — the path that already works
+            // in OKX's in-app browser. It still displays as "OKX Wallet".
+            rdns: "wtf.dustswap.okx-injected",
           },
           provider: okxProvider,
         }),
