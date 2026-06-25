@@ -192,6 +192,24 @@ const QUOTE_TOKEN_TIMEOUT_MS = boundedEnvNumber("DUST_SWEEP_QUOTE_TOKEN_TIMEOUT_
 // the wallet prompt could even open. Reading them in parallel collapses that to
 // roughly one round-trip's worth of latency.
 const PREFLIGHT_READ_CONCURRENCY = boundedEnvNumber("DUST_SWEEP_PREFLIGHT_READ_CONCURRENCY", 25, 1, 50);
+// Before quoting/building a sweep, simulate each token's transfer to the router
+// and drop the ones whose pull would revert (transfer tax / max-tx / blacklist /
+// honeypot). One such dust token reverts the WHOLE atomic sweep in the wallet's
+// gas estimation AND breaks the batch preview on OKX/Coinbase, which is why 25-50
+// token baskets fail while 10 clean tokens succeed. Default ON; set to "false" to
+// disable the probe.
+const PREFLIGHT_TRANSFER_PROBE_ENABLED =
+  process.env.DUST_SWEEP_PREFLIGHT_TRANSFER_PROBE !== "false";
+// The probe runs on every quote (debounced, frequent), so cache definite results
+// briefly. Keyed by user+token+amount+recipient, so a balance change (new amount)
+// naturally re-probes. Fail-open results (transient RPC) are NOT cached.
+const TRANSFER_PROBE_CACHE_TTL_MS = boundedEnvNumber(
+  "DUST_SWEEP_TRANSFER_PROBE_CACHE_TTL_MS",
+  60_000,
+  5_000,
+  10 * 60_000,
+);
+const transferProbeCache = new Map<string, { pullable: boolean; expires: number }>();
 const ERC20_METADATA_CACHE_TTL_MS = boundedEnvNumber("DUST_SWEEP_METADATA_CACHE_TTL_MS", 24 * 60 * 60_000, 60_000, 7 * 24 * 60 * 60_000);
 const WHITELIST_CACHE_TTL_MS = boundedEnvNumber("DUST_SWEEP_WHITELIST_CACHE_TTL_MS", 5 * 60_000, 30_000, 30 * 60_000);
 const DISCOVERY_MAX_ERC20_BALANCES = optionalBoundedEnvNumber(
@@ -1087,7 +1105,7 @@ type QuoteCandidate = Omit<DustSweepRoute, "priceImpactBps"> & {
 
 type QuoteSkippedToken = {
   token: Address;
-  reason: "NO_LIQUIDITY" | "NOT_WHITELISTED" | "BELOW_THRESHOLD" | "BALANCE_CHANGED" | "QUOTE_FAILED" | "NATIVE_WRAP_REQUIRED";
+  reason: "NO_LIQUIDITY" | "NOT_WHITELISTED" | "BELOW_THRESHOLD" | "BALANCE_CHANGED" | "QUOTE_FAILED" | "NATIVE_WRAP_REQUIRED" | "CANT_TRANSFER";
   message?: string;
 };
 
@@ -3839,6 +3857,81 @@ async function findStaleRouteBalances(userAddress: Address, routes: DustSweepRou
   return stale;
 }
 
+// Simulate transfer(recipient, amountIn) FROM the user for each input token and
+// return the tokens whose transfer deterministically reverts. The V3 router's
+// allowance-mode pull runs transferFrom(user -> router, amountIn), which executes
+// the same internal _transfer(user, router, amountIn) path. A transfer-restricted
+// dust token — transfer tax to a non-whitelisted router, max-tx cap,
+// blacklist/paused, or an outright honeypot — reverts here exactly as the on-chain
+// pull would. Because the router pulls ALL inputs atomically (the best-effort
+// guard only protects the swap legs, NOT the pull), one such token reverts the
+// ENTIRE sweep during the wallet's gas estimation ("execution reverted" on
+// Coinbase/Base, "not enough funds" in the Base App). Dropping these up front lets
+// the rest of a 25-50 token basket sweep.
+//
+// Fails OPEN: a token is reported untransferable ONLY on a deterministic execution
+// revert (RpcDeterministicError). Transient/transport RPC errors never drop a good
+// token (and are not cached). Definite results are cached briefly.
+async function isRoutePullable(
+  user: Address,
+  token: Address,
+  amountIn: string,
+  recipient: Address,
+): Promise<boolean> {
+  if (BigInt(amountIn || "0") <= 0n) return true;
+
+  const key = `${user.toLowerCase()}:${token.toLowerCase()}:${amountIn}:${recipient.toLowerCase()}`;
+  const now = Date.now();
+  const cached = transferProbeCache.get(key);
+  if (cached && cached.expires > now) return cached.pullable;
+
+  const data = encodeFunctionData({
+    abi: erc20Abi,
+    functionName: "transfer",
+    args: [recipient, BigInt(amountIn)],
+  });
+
+  let pullable = true;
+  let definite = true;
+  try {
+    await baseRpcRequest<Hex>(
+      "eth_call",
+      [{ from: user, to: token, data }, "latest"],
+      { timeoutMs: 5_000 },
+    );
+  } catch (error) {
+    if (error instanceof RpcDeterministicError) {
+      pullable = false; // genuine revert — the on-chain pull would revert too
+    } else {
+      definite = false; // transport/timeout — fail open, do not cache
+    }
+  }
+
+  if (definite) {
+    transferProbeCache.set(key, { pullable, expires: now + TRANSFER_PROBE_CACHE_TTL_MS });
+  }
+  return pullable;
+}
+
+// Probe a batch of routes and return the input tokens whose transferFrom pull would
+// revert the atomic sweep. Shared by /quote (pre-screen → unavailable list) and
+// /build-tx (last-second safety net).
+async function findUntransferableRoutes(
+  userAddress: Address,
+  routes: Array<{ tokenIn: Address; amountIn: string }>,
+  recipient: Address,
+): Promise<Address[]> {
+  const items = routes.filter((route) => BigInt(route.amountIn || "0") > 0n);
+  const probes = await pLimit(
+    items.map((route) => async (): Promise<Address | null> => {
+      const pullable = await isRoutePullable(userAddress, route.tokenIn, route.amountIn, recipient);
+      return pullable ? null : route.tokenIn;
+    }),
+    PREFLIGHT_READ_CONCURRENCY,
+  );
+  return probes.filter((token): token is Address => token !== null);
+}
+
 async function findMissingPermit2Approvals(userAddress: Address, routes: DustSweepRoute[]) {
   return findMissingTokenApprovals(userAddress, routes, PERMIT2_ADDRESS);
 }
@@ -5391,7 +5484,7 @@ dustsweepRoutes.post("/quote", async (c) => {
   const actualTokenOut = tokenOut.toLowerCase() === NATIVE_TOKEN_SENTINEL.toLowerCase() ? WETH_ADDRESS : tokenOut;
   const isNativeOutput = isNativeTokenAddress(tokenOut);
   const slippageBps = Math.max(1, Math.min(3000, Number(body.slippageBps || 50)));
-  const routes: DustSweepRoute[] = [];
+  let routes: DustSweepRoute[] = [];
   const skippedTokens: QuoteSkippedToken[] = [];
   const whitelist = await loadWhitelist();
   const userAddress = normalizeAddress(body.userAddress);
@@ -5593,6 +5686,36 @@ dustsweepRoutes.post("/quote", async (c) => {
     });
   }
 
+  // ── Step 4: transfer-pull pre-screen ───────────────────────────────────────
+  // A token can have liquidity (quotes fine) and sufficient balance, yet still
+  // revert transferFrom to the sweep router (transfer tax to a non-whitelisted
+  // recipient, max-tx cap, blacklist/paused, honeypot). The router pulls ALL
+  // inputs atomically, so ONE such token reverts the WHOLE sweep — and breaks the
+  // batch preview on OKX/Coinbase. Surface these on the unavailable list now, at
+  // quote time, so the basket the user opens in their wallet is already clean.
+  if (PREFLIGHT_TRANSFER_PROBE_ENABLED && routes.length > 0) {
+    const sweepRouter = getRouterAddressForLane(executionLane);
+    if (isAddress(sweepRouter) && sweepRouter !== "0x0000000000000000000000000000000000000000") {
+      const untransferable = await findUntransferableRoutes(
+        userAddress,
+        routes.map((route) => ({ tokenIn: route.tokenIn, amountIn: route.amountIn })),
+        sweepRouter,
+      );
+      if (untransferable.length > 0) {
+        const dropSet = new Set(untransferable.map((token) => token.toLowerCase()));
+        for (const token of untransferable) {
+          skippedTokens.push({
+            token,
+            reason: "CANT_TRANSFER",
+            message:
+              "This token can't be transferred to the sweep router (transfer tax, max-tx limit, or blocked transfers).",
+          });
+        }
+        routes = routes.filter((route) => !dropSet.has(route.tokenIn.toLowerCase()));
+      }
+    }
+  }
+
   if (routes.length === 0) {
     return c.json(
       errorJson("No swappable route found for the selected tokens", {
@@ -5754,6 +5877,40 @@ dustsweepRoutes.post("/build-tx", async (c) => {
     );
   }
 
+  // Pre-flight transfer probe (V3 allowance lane only): drop tokens whose pull
+  // would revert the atomic sweep so one restricted dust token can't fail the
+  // whole 25-50 token batch. Scoped to the allowance lane — permit2 binds amounts
+  // in a signature (can't drop post-sign) and owned_v1 is legacy.
+  const skippedUntransferable: { token: Address; reason: "CANT_TRANSFER"; message?: string }[] = [];
+  if (
+    PREFLIGHT_TRANSFER_PROBE_ENABLED &&
+    executionLane === "owned_v2" &&
+    v2AuthMode !== "permit2"
+  ) {
+    const untransferable = await findUntransferableRoutes(userAddress, routes, routerAddress);
+    if (untransferable.length > 0) {
+      const dropSet = new Set(untransferable.map((token) => token.toLowerCase()));
+      for (const token of untransferable) {
+        skippedUntransferable.push({
+          token,
+          reason: "CANT_TRANSFER",
+          message:
+            "This token can't be transferred to the sweep router (transfer tax, max-tx limit, or blocked transfers).",
+        });
+      }
+      routes = routes.filter((route) => !dropSet.has(route.tokenIn.toLowerCase()));
+      if (routes.length === 0) {
+        return c.json(
+          errorJson(
+            "None of the selected tokens can be swept — their transfers are restricted (tax, max-tx limit, or blocked).",
+            { code: "ALL_ROUTES_UNTRANSFERABLE", skippedTokens: skippedUntransferable },
+          ),
+          422,
+        );
+      }
+    }
+  }
+
   if (executionLane === "owned_v1") {
     const routerApprovals = await findMissingTokenApprovals(userAddress, routes, routerAddress);
     if (routerApprovals.length > 0) {
@@ -5840,6 +5997,7 @@ dustsweepRoutes.post("/build-tx", async (c) => {
         value: route.value.toString(),
         data: route.data,
       })),
+      skippedTokens: skippedUntransferable,
       minAmountOut: minAmountOut.toString(),
       calldata,
       // V3's sweep() is non-payable (ERC-20 inputs only); V2 summed route.value (always 0 here).

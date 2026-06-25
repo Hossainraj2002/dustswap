@@ -1917,9 +1917,42 @@ export function useDustSweep(): UseDustSweepReturn {
       const buildTx = payload as DustSweepBuildTxResponse;
       let canonicalCalldata = buildTx.calldata;
 
+      // Tokens the backend pre-flight dropped because their transferFrom would
+      // revert the atomic pull (transfer tax / max-tx / blacklist / honeypot).
+      // The build-tx calldata already excludes them; here we surface them in the
+      // unavailable list and exclude them from approvals so the rest of the basket
+      // still sweeps instead of the whole sweep reverting on one bad token.
+      const droppedAddresses = new Set(
+        (buildTx.skippedTokens ?? []).map((entry) => entry.token.toLowerCase()),
+      );
+      if (droppedAddresses.size > 0) {
+        const droppedTokens = selectedTokens
+          .filter((token) => droppedAddresses.has(token.address.toLowerCase()))
+          .map((token) => ({ ...token, reason: "CANT_TRANSFER" as UnavailableReason }));
+        if (droppedTokens.length > 0) {
+          setUnavailableTokens((current) => mergeUnavailableTokens(current, droppedTokens));
+          setQuoteFailedTokenAddresses((current) =>
+            Array.from(
+              new Set([...current, ...droppedTokens.map((token) => token.address.toLowerCase())]),
+            ),
+          );
+        }
+        setExecutionNotice(
+          `${droppedAddresses.size} token${droppedAddresses.size === 1 ? "" : "s"} couldn't be transferred to the sweep router and ${droppedAddresses.size === 1 ? "was" : "were"} skipped. Sweeping the rest.`,
+        );
+      }
+      // Routes that survived the pre-flight drop. Approvals are computed against
+      // this set so it always matches the build-tx sweep calldata.
+      const effectiveRoutes =
+        droppedAddresses.size > 0
+          ? quote.routes.filter(
+              (route) => !droppedAddresses.has(route.tokenIn.toLowerCase()),
+            )
+          : quote.routes;
+
       if (isOwnedModernLane(lane)) {
         approvalSpender = (buildTx.approvalSpender || DUST_SWEEP_ROUTER_V2_ADDRESS) as Address;
-        approvalRequirements = await getTokenApprovalRequirements(quote.routes, approvalSpender);
+        approvalRequirements = await getTokenApprovalRequirements(effectiveRoutes, approvalSpender);
       }
 
       const requiresPermitSignature =
@@ -2203,7 +2236,7 @@ export function useDustSweep(): UseDustSweepReturn {
           return sendStandardSweepWithApprovals();
         }
 
-        const remainingApprovals = await getTokenApprovalRequirements(quote.routes, approvalSpender);
+        const remainingApprovals = await getTokenApprovalRequirements(effectiveRoutes, approvalSpender);
         if (remainingApprovals.length > 0) {
           console.warn("DustSweep approval batch left missing allowances; completing standard approvals.", {
             walletKey: walletProfile.walletKey,
@@ -2250,7 +2283,7 @@ export function useDustSweep(): UseDustSweepReturn {
 
         // Approvals re-checked so any chunk that didn't land is completed one-by-one
         // before the sweep (prevents a sweep that reverts on a missing allowance).
-        const remaining = await getTokenApprovalRequirements(quote.routes, approvalSpender);
+        const remaining = await getTokenApprovalRequirements(effectiveRoutes, approvalSpender);
         if (remaining.length > 0) {
           await sendTokenApprovals(remaining, approvalSpender);
         }
@@ -2722,7 +2755,7 @@ export function useDustSweep(): UseDustSweepReturn {
       okxOneClickAbandonedRef.current = false;
 
       const completedInputs: DustSweepCompletionSummary["inputs"] = [];
-      for (const route of quote.routes) {
+      for (const route of effectiveRoutes) {
         const token = selectedTokens.find((item) =>
           isSameAddress(item.address, route.tokenIn),
         );
@@ -2748,7 +2781,7 @@ export function useDustSweep(): UseDustSweepReturn {
         inputValueUSD: completedInputs.reduce((sum, token) => sum + (token.valueUSD || 0), 0),
         feeAmountUSD: quote.feeAmountUSD,
         gasEstimateUSD: quote.gasEstimateUSD,
-        routeCount: quote.routes.length,
+        routeCount: effectiveRoutes.length,
         walletName: walletProfile.walletName,
         routeKind,
         completedAt: Date.now(),
@@ -2763,7 +2796,7 @@ export function useDustSweep(): UseDustSweepReturn {
         body: JSON.stringify({
           txHash: hash,
           userAddress: address,
-          tokensSwapped: quote.routes.length,
+          tokensSwapped: effectiveRoutes.length,
           valueUSD: quote.totalEstimatedOutUSD,
           walletKey: walletProfile.walletKey,
           delegateAddress: delegation.address,

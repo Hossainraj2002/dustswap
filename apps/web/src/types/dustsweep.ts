@@ -17,6 +17,7 @@ export type UnavailableReason =
   | "UNKNOWN_PRICE"
   | "SPAM_OR_DENYLISTED"
   | "NATIVE_WRAP_REQUIRED"
+  | "CANT_TRANSFER"
   | "OUTPUT_ASSET";
 
 export type TokenDiscoveryStatus =
@@ -293,6 +294,14 @@ export type DustSweepBuildTxResponse = {
   witness?: Permit2TypedData["message"]["witness"];
   witnessHash?: Hex;
   routes?: DustSweepV2Route[];
+  // Tokens the backend pre-flight dropped because their transferFrom would revert
+  // the atomic pull (transfer tax / max-tx / blacklist / honeypot). The returned
+  // `routes` and `calldata` already exclude these.
+  skippedTokens?: {
+    token: Address;
+    reason: UnavailableReason;
+    message?: string;
+  }[];
   minAmountOut?: string;
   value?: string;
   contractAddress: Address;

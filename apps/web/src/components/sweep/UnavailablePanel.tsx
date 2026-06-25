@@ -12,6 +12,7 @@ function reasonBadge(reason: UnavailableToken["reason"]) {
   if (reason === "OUTPUT_ASSET") return "Output asset";
   if (reason === "UNKNOWN_PRICE") return "No price";
   if (reason === "SPAM_OR_DENYLISTED") return "Blocked";
+  if (reason === "CANT_TRANSFER") return "Can't transfer";
   return "Too small";
 }
 
