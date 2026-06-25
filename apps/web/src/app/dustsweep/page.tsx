@@ -284,6 +284,19 @@ export default function DustSweepPage() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [routeBContinued, setRouteBContinued] = useState(false);
 
+  // Internal diagnostics (the wallet route-status card + batch notice) are hidden
+  // from the public. Append ?dev (or ?=dev) to the URL to reveal them. Resolved
+  // after mount so the default production render never includes these blocks.
+  const [isDevView, setIsDevView] = useState(false);
+  useEffect(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      setIsDevView(params.has("dev") || Array.from(params.values()).includes("dev"));
+    } catch {
+      setIsDevView(false);
+    }
+  }, []);
+
   // Persist the user's "continue with current wallet" choice per address for the
   // session so Route B never nags on every quote refresh (2.4).
   useEffect(() => {
@@ -360,7 +373,9 @@ export default function DustSweepPage() {
   });
   const walletModeNotice =
     sweep.executionNotice ||
-    (sweep.batchMode && sweep.selectedTokens.length > 0 ? sweep.walletProfile.batchNotice : null);
+    (isDevView && sweep.batchMode && sweep.selectedTokens.length > 0
+      ? sweep.walletProfile.batchNotice
+      : null);
 
   // Truly-blocked = the wallet can't sign typed data at all (no Permit2, no
   // batch). This is the only remaining hard-stop; everything else has a route.
@@ -475,7 +490,7 @@ export default function DustSweepPage() {
                 reason={sweep.walletStatus.reason}
                 onSwitchWallet={() => void handleSwitchWallet()}
               />
-            ) : (
+            ) : isDevView ? (
               <WalletRouteStatus
                 routeKind={chipRouteKind}
                 isDetecting={sweep.isDetectingRoute}
@@ -488,7 +503,7 @@ export default function DustSweepPage() {
                 delegation={sweep.delegation.info}
                 supportedWalletLabels={getOneClickSweepWalletLabels()}
               />
-            )
+            ) : null
           ) : null}
 
           <BalanceScanStatus
@@ -585,7 +600,11 @@ export default function DustSweepPage() {
           {/* Slippage / Fee / Price Impact */}
           {sweep.quote ? (
             <div className="rounded-[16px] border border-slate-200/70 bg-white px-4 py-3.5 shadow-[0_1px_2px_rgba(16,24,40,0.04)] dark:border-white/10 dark:bg-white/[0.04]">
-              <SweepDetails quote={sweep.quote} slippageBps={sweep.slippageBps} />
+              <SweepDetails
+                quote={sweep.quote}
+                slippageBps={sweep.slippageBps}
+                tokenOut={sweep.tokenOut}
+              />
             </div>
           ) : null}
 

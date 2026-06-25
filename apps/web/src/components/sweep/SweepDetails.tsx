@@ -1,18 +1,37 @@
 "use client";
 
-import { type DustSweepQuoteResponse } from "@/types/dustsweep";
+import { formatUnits } from "viem";
+import { type DustSweepQuoteResponse, type Token } from "@/types/dustsweep";
 
 function formatUsd(value: number) {
   if (value > 0 && value < 0.01) return "<$0.01";
   return `$${value.toFixed(2)}`;
 }
 
+// Format a raw on-chain amount into a human token amount, mirroring the
+// RouteDisplay output formatting so the numbers line up across the card.
+function formatTokenAmount(raw: string | undefined, tokenOut: Token | null) {
+  if (!raw || !tokenOut) return null;
+  try {
+    const value = formatUnits(BigInt(raw), tokenOut.decimals);
+    const num = Number(value);
+    const display = Number.isFinite(num)
+      ? num.toLocaleString(undefined, { maximumFractionDigits: 6 })
+      : value;
+    return `${display} ${tokenOut.symbol}`;
+  } catch {
+    return null;
+  }
+}
+
 export function SweepDetails({
   quote,
   slippageBps,
+  tokenOut,
 }: {
   quote: DustSweepQuoteResponse | null;
   slippageBps: number;
+  tokenOut: Token | null;
 }) {
   if (!quote) return null;
 
@@ -22,14 +41,19 @@ export function SweepDetails({
   );
   const impactUsd = ((quote.netEstimatedOutUSD ?? quote.totalEstimatedOutUSD) * maxImpact) / 10_000;
 
+  const minimumReceive = formatTokenAmount(quote.minAmountOut, tokenOut);
+
   const rows = [
     { label: "Slippage:", value: `${(slippageBps / 100).toFixed(1)}%`, warn: false },
-    { label: "Fee:", value: `~${formatUsd(quote.feeAmountUSD)}`, warn: false },
+    { label: "Estimated gas fees:", value: `~${formatUsd(quote.gasEstimateUSD)}`, warn: false },
     {
       label: "Price impact:",
       value: `~${formatUsd(impactUsd)} (${(maxImpact / 100).toFixed(2)}%)`,
       warn: maxImpact > 500,
     },
+    ...(minimumReceive
+      ? [{ label: "Minimum receive:", value: minimumReceive, warn: false }]
+      : []),
   ];
 
   return (

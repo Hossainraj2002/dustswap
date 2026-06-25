@@ -16,6 +16,7 @@ import {
   parseEip7702AuthorizedAddress,
 } from "@/lib/eip7702";
 import {
+  DUST_SWEEP_AUTO_SELECT_LIMIT,
   DUST_SWEEP_EXECUTION_LANE,
   DUST_SWEEP_ROUTER_ADDRESS,
   DUST_SWEEP_ROUTER_V2_ADDRESS,
@@ -676,6 +677,12 @@ export function useDustSweep(): UseDustSweepReturn {
 
   const configuredRouteCap = getCapForLane(DUST_SWEEP_EXECUTION_LANE);
   const routeMaxCap = quote?.routeMaxCap ?? configuredRouteCap;
+  // How many tokens the "Auto" button picks in one click. Env-overridable, but
+  // never above the lane execution cap. Manual selection is unaffected.
+  const autoSelectCap =
+    DUST_SWEEP_AUTO_SELECT_LIMIT != null
+      ? Math.min(DUST_SWEEP_AUTO_SELECT_LIMIT, configuredRouteCap)
+      : configuredRouteCap;
   const walletProfileBase = useMemo(
     () =>
       getDustSweepWalletProfileBase({
@@ -773,9 +780,9 @@ export function useDustSweep(): UseDustSweepReturn {
     setSelectedTokens(
       swappableTokens
         .filter((token) => (token.valueUSD ?? 0) <= autoSelectionUsd)
-        .slice(0, configuredRouteCap),
+        .slice(0, autoSelectCap),
     );
-  }, [autoMode, autoSelectionUsd, configuredRouteCap, swappableTokens]);
+  }, [autoMode, autoSelectionUsd, autoSelectCap, swappableTokens]);
 
   useEffect(() => {
     if (!address || !walletClient) {

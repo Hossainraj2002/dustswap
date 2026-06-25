@@ -18,6 +18,21 @@ export const V1_MAX_BATCH_SIZE = 10;
 export const V2_MAX_BATCH_SIZE = 50;
 
 /**
+ * Max number of tokens the "Auto" button selects in a single click. Defaults to
+ * `null`, meaning fall back to the lane's execution cap (current behavior — up to
+ * 50 on the V2/V3 lane). Set NEXT_PUBLIC_DUST_SWEEP_AUTO_SELECT_LIMIT=10 (or any
+ * positive integer) to make Auto pick at most that many. This only affects the
+ * Auto button's default selection — users can still manually select more, up to
+ * the lane execution cap.
+ */
+export const DUST_SWEEP_AUTO_SELECT_LIMIT: number | null = (() => {
+  const raw = process.env.NEXT_PUBLIC_DUST_SWEEP_AUTO_SELECT_LIMIT;
+  if (!raw) return null;
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+})();
+
+/**
  * The modern owned lane that approves the router and then has it pull tokens with
  * transferFrom. `owned_v2` is the original name; `owned_v3` is a clean alias for
  * the same lane now that it routes through the DustSwapSweepRouter (V3) whenever
