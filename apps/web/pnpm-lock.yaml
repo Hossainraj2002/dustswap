@@ -21,8 +21,8 @@ importers:
         specifier: ^0.9.1
         version: 0.9.1(@babel/runtime@7.29.2)(@react-native-async-storage/async-storage@1.24.0(react-native@0.84.1(@babel/core@7.29.7)(@types/react@19.2.14)(bufferutil@4.1.0)(react@19.2.4)(utf-8-validate@6.0.6)))(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6)
       '@openocean.finance/widget':
-        specifier: ^1.0.60
-        version: 1.0.60(gvaz6k6wch6kwjf45477phwhlm)
+        specifier: ^1.0.66
+        version: 1.0.66(gvaz6k6wch6kwjf45477phwhlm)
       '@privy-io/chains':
         specifier: ^0.1.4
         version: 0.1.4
@@ -2201,8 +2201,8 @@ packages:
   '@openocean.finance/widget-types@1.0.15':
     resolution: {integrity: sha512-wV5G3N9Wvt6vdw3qqX6kuHCimyWLsOxhQQ/bMggLHPzcDUqJJoQ0UZKSfWIYOSsg6RWGXfW1iBfDKKmf2OOhJw==}
 
-  '@openocean.finance/widget@1.0.60':
-    resolution: {integrity: sha512-THuBfhimXKiaPXFvxPF6dap70a6Y5RWiRTgzUllH42KveF9Zg6Z9rjWMmgRPFj2HetnFAScoZgkpqNsxBoUo5Q==}
+  '@openocean.finance/widget@1.0.66':
+    resolution: {integrity: sha512-ov4lhuaeB0612dF6+Hy3/tV0yT3MRchdRVo09BT5aS+wENtN2eqOa21T1vuKYoGf+RrNxWEGeWR8TNUR1jaWqA==}
     peerDependencies:
       '@bigmi/react': '>=0.1.0'
       '@solana/wallet-adapter-react': ^0.15.35
@@ -11406,7 +11406,7 @@ snapshots:
       - utf-8-validate
       - zod
 
-  '@openocean.finance/widget@1.0.60(gvaz6k6wch6kwjf45477phwhlm)':
+  '@openocean.finance/widget@1.0.66(gvaz6k6wch6kwjf45477phwhlm)':
     dependencies:
       '@across-protocol/app-sdk': 0.2.3(viem@2.52.0(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6)(zod@3.25.76))
       '@bigmi/client': 0.1.1(@tanstack/query-core@5.95.2)(@types/react@19.2.14)(bs58@6.0.0)(bufferutil@4.1.0)(immer@9.0.21)(react@19.2.4)(typescript@5.9.3)(use-sync-external-store@1.4.0(react@19.2.4))(utf-8-validate@6.0.6)(wagmi@3.6.0)(zod@3.25.76)
