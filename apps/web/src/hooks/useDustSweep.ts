@@ -1137,8 +1137,11 @@ export function useDustSweep(): UseDustSweepReturn {
 
   const selectAllTokens = useCallback(() => {
     setAutoMode(false);
-    setSelectedTokens(swappableTokens.slice(0, configuredRouteCap));
-  }, [configuredRouteCap, swappableTokens]);
+    // "Select all" honors the same cap as the Auto button
+    // (NEXT_PUBLIC_DUST_SWEEP_AUTO_SELECT_LIMIT); manual one-by-one adds may still
+    // go higher, up to the lane execution cap.
+    setSelectedTokens(swappableTokens.slice(0, autoSelectCap));
+  }, [autoSelectCap, swappableTokens]);
 
   const removeToken = useCallback((tokenAddress: string) => {
     setAutoMode(false);

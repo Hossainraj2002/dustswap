@@ -15,8 +15,12 @@ function formatTokenAmount(raw: string | undefined, tokenOut: Token | null) {
   try {
     const value = formatUnits(BigInt(raw), tokenOut.decimals);
     const num = Number(value);
+    // Match the "Receive" panel precision so the two amounts line up: 6-decimal
+    // tokens (USDC) show 6 places, everything else (e.g. ETH) shows 8.
     const display = Number.isFinite(num)
-      ? num.toLocaleString(undefined, { maximumFractionDigits: 6 })
+      ? num.toLocaleString(undefined, {
+          maximumFractionDigits: tokenOut.decimals === 6 ? 6 : 8,
+        })
       : value;
     return `${display} ${tokenOut.symbol}`;
   } catch {
