@@ -8,9 +8,32 @@ function formatUsd(value: number) {
   return `$${value.toFixed(2)}`;
 }
 
+// The `minAmountOut` the API returns is the router's per-batch revert floor — for
+// the V3 best-effort lane that's the single SMALLEST leg, so one refunded dust
+// route can't revert the whole sweep. That floor is a tiny fraction of what the
+// user actually receives, so surfacing it as "Minimum receive" is misleading
+// (e.g. 0.0002 ETH against a 0.0089 ETH output). Instead, sum every route's own
+// per-leg slippage floor and net out the protocol fee, mirroring the (net)
+// "Receive" amount's basis so the two numbers are consistent.
+function getMinimumReceiveRaw(quote: DustSweepQuoteResponse): string | null {
+  if (quote.routes.length === 0) return null;
+  try {
+    const grossMin = quote.routes.reduce(
+      (sum, route) => sum + BigInt(route.amountOutMin),
+      0n,
+    );
+    if (grossMin <= 0n) return null;
+    const feeBps = BigInt(Math.max(0, Math.round(quote.feeBps ?? 0)));
+    const netMin = grossMin - (grossMin * feeBps) / 10_000n;
+    return netMin.toString();
+  } catch {
+    return null;
+  }
+}
+
 // Format a raw on-chain amount into a human token amount, mirroring the
 // RouteDisplay output formatting so the numbers line up across the card.
-function formatTokenAmount(raw: string | undefined, tokenOut: Token | null) {
+function formatTokenAmount(raw: string | undefined | null, tokenOut: Token | null) {
   if (!raw || !tokenOut) return null;
   try {
     const value = formatUnits(BigInt(raw), tokenOut.decimals);
@@ -45,7 +68,7 @@ export function SweepDetails({
   );
   const impactUsd = ((quote.netEstimatedOutUSD ?? quote.totalEstimatedOutUSD) * maxImpact) / 10_000;
 
-  const minimumReceive = formatTokenAmount(quote.minAmountOut, tokenOut);
+  const minimumReceive = formatTokenAmount(getMinimumReceiveRaw(quote), tokenOut);
 
   const rows = [
     { label: "Slippage:", value: `${(slippageBps / 100).toFixed(1)}%`, warn: false },
