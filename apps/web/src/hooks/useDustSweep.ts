@@ -53,6 +53,7 @@ import {
   type DustSweepWalletKey,
   type DustSweepWalletProfile,
   type DustSweepQuoteResponse,
+  type DustSweepRoute,
   type RecommendedWallet,
   type SelectedToken,
   type SweepDelegation,
@@ -248,6 +249,74 @@ function normalizeQuotePayload(payload: unknown): DustSweepQuoteResponse {
   }
 
   return data as DustSweepQuoteResponse;
+}
+
+// Skip reasons that are DEFINITIVE for the current balance — a token flagged with one of
+// these must never be carried forward from an earlier quote (it would re-introduce a token
+// the server/preflight just decided to drop, e.g. a transfer-restricted token). Everything
+// else (NO_LIQUIDITY / QUOTE_FAILED / a plain timeout with no skip entry) is treated as
+// transient and is eligible for carry-forward.
+const DEFINITIVE_SKIP_REASONS = new Set<UnavailableReason>([
+  "CANT_TRANSFER",
+  "BELOW_THRESHOLD",
+  "NOT_WHITELISTED",
+  "NATIVE_WRAP_REQUIRED",
+  "OUTPUT_ASSET",
+  "SPAM_OR_DENYLISTED",
+]);
+
+function safeBigInt(value: string | undefined | null): bigint {
+  try {
+    return value ? BigInt(value) : 0n;
+  } catch {
+    return 0n;
+  }
+}
+
+function sumRouteField(routes: DustSweepRoute[], field: "estimatedOut" | "amountOutMin"): bigint {
+  return routes.reduce((total, route) => total + safeBigInt(route[field]), 0n);
+}
+
+// Re-derive the basket aggregates after the route set was changed by a carry-forward
+// merge (see refreshQuote). Output amounts are summed EXACTLY in base units; the
+// USD/fee figures are scaled proportionally from a trusted reference quote. Because the
+// whole basket pays out the SAME output token, USD is exactly proportional to the summed
+// output amount, so the scale is precise (the 6-digit BigInt ratio avoids Number(bigint)
+// overflow for 18-decimal output tokens). Meta fields (deadline, permit2Nonce, feeBps,
+// gas, lane) are inherited from `base` untouched.
+function recomputeQuoteForRoutes(
+  base: DustSweepQuoteResponse,
+  routes: DustSweepRoute[],
+  reference: Pick<DustSweepQuoteResponse, "totalEstimatedOut" | "totalEstimatedOutUSD"> | null,
+): DustSweepQuoteResponse {
+  const totalOut = sumRouteField(routes, "estimatedOut");
+  const minOut = sumRouteField(routes, "amountOutMin");
+  const feeBps = Math.max(0, Math.min(10_000, base.feeBps ?? 0));
+  const feeAmount = (totalOut * BigInt(feeBps)) / 10_000n;
+  const netOut = totalOut - feeAmount;
+
+  const refOut = reference ? safeBigInt(reference.totalEstimatedOut) : 0n;
+  const canScale = Boolean(reference) && refOut > 0n && (reference?.totalEstimatedOutUSD ?? 0) > 0;
+  const scaleUsd = (amount: bigint) =>
+    canScale
+      ? (Number((amount * 1_000_000n) / refOut) / 1_000_000) * (reference as DustSweepQuoteResponse).totalEstimatedOutUSD
+      : 0;
+
+  const totalUsd = canScale ? scaleUsd(totalOut) : base.totalEstimatedOutUSD;
+  const netUsd = canScale ? scaleUsd(netOut) : base.netEstimatedOutUSD;
+  const feeUsd = canScale ? Math.max(0, totalUsd - (netUsd ?? totalUsd)) : base.feeAmountUSD;
+
+  return {
+    ...base,
+    routes,
+    totalEstimatedOut: totalOut.toString(),
+    minAmountOut: minOut.toString(),
+    protocolFeeAmount: feeAmount.toString(),
+    netEstimatedOut: netOut.toString(),
+    totalEstimatedOutUSD: totalUsd,
+    netEstimatedOutUSD: netUsd,
+    feeAmountUSD: feeUsd,
+  };
 }
 
 function isRejectedByUser(error: unknown) {
@@ -675,6 +744,20 @@ export function useDustSweep(): UseDustSweepReturn {
   // after a successful sweep.
   const okxOneClickAbandonedRef = useRef(false);
 
+  // Quote stability (fixes routes/quote vanishing when tokens are added/removed):
+  //  - quoteRequestSeqRef: monotonic id so a slow, stale re-quote can never overwrite
+  //    a newer one (race guard).
+  //  - carriedRoutesRef: last KNOWN-GOOD route per input token (keyed by address). On a
+  //    re-quote, any still-selected token whose fresh quote transiently missed (server
+  //    per-token timeout under load) keeps its carried route instead of disappearing —
+  //    but only while its input amount (balance) is unchanged.
+  //  - lastQuoteMetaRef: the last full successful quote, used as the trusted reference
+  //    for USD scaling + meta fields when rebuilding from carried routes.
+  // All three are cleared when the output token / slippage / account changes.
+  const quoteRequestSeqRef = useRef(0);
+  const carriedRoutesRef = useRef<Map<string, DustSweepRoute>>(new Map());
+  const lastQuoteMetaRef = useRef<DustSweepQuoteResponse | null>(null);
+
   const configuredRouteCap = getCapForLane(DUST_SWEEP_EXECUTION_LANE);
   const routeMaxCap = quote?.routeMaxCap ?? configuredRouteCap;
   // How many tokens the "Auto" button picks in one click. Env-overridable, but
@@ -766,6 +849,14 @@ export function useDustSweep(): UseDustSweepReturn {
       setExecutionNotice(null);
     }
   }, [address, isConnected]);
+
+  // Carried routes are only valid for a fixed (account, output token, slippage). When any
+  // of those change, every cached route is stale — drop them so nothing is carried across.
+  // Deliberately NOT keyed on selectedTokens: surviving add/remove is the entire purpose.
+  useEffect(() => {
+    carriedRoutesRef.current.clear();
+    lastQuoteMetaRef.current = null;
+  }, [address, tokenOut, slippageBps]);
 
   useEffect(() => {
     if (tokenOut) {
@@ -1020,18 +1111,89 @@ export function useDustSweep(): UseDustSweepReturn {
       return;
     }
 
+    // Race guard: a re-quote fires on every add/remove. Stamp this request so a slow,
+    // earlier response can never overwrite a newer one's result.
+    const requestSeq = ++quoteRequestSeqRef.current;
+    const isStale = () => requestSeq !== quoteRequestSeqRef.current;
+    // Snapshot the selection this request is for (it can change while we await).
+    const requestTokens = selectedTokens;
+
+    // Pull last-known-good routes for the given tokens, keeping only those whose input
+    // amount is unchanged and that the server hasn't DEFINITIVELY skipped this round.
+    const collectCarried = (
+      tokens: SelectedToken[],
+      skips?: Map<string, UnavailableReason>,
+    ) => {
+      const routes: DustSweepRoute[] = [];
+      const missing: SelectedToken[] = [];
+      for (const token of tokens) {
+        const key = token.address.toLowerCase();
+        const skipReason = skips?.get(key);
+        const definitive = skipReason ? DEFINITIVE_SKIP_REASONS.has(skipReason) : false;
+        const carried = carriedRoutesRef.current.get(key);
+        if (carried && carried.amountIn === token.balance && !definitive) {
+          routes.push(carried);
+        } else {
+          if (definitive) carriedRoutesRef.current.delete(key);
+          missing.push(token);
+        }
+      }
+      return { routes, missing };
+    };
+
     setIsQuoting(true);
     setQuoteError(null);
     setQuoteFailedTokenAddresses([]);
     setUnavailableTokens([]);
+
+    // Non-destructive failure: rather than wipe a good quote when a transient re-quote
+    // fails, rebuild from carried routes so the user keeps every route still valid for the
+    // current selection. Only surfaces the hard error when nothing can be carried.
+    const handleFailure = (message: string, skips: Map<string, UnavailableReason>) => {
+      const meta = lastQuoteMetaRef.current;
+      const { routes: carriedRoutes, missing } = collectCarried(requestTokens, skips);
+      if (meta && carriedRoutes.length > 0) {
+        setQuote(recomputeQuoteForRoutes(meta, carriedRoutes, meta));
+        if (missing.length > 0) {
+          const missingUnavailable = missing.map((token) => ({
+            ...token,
+            reason: skips.get(token.address.toLowerCase()) || ("QUOTE_FAILED" as UnavailableReason),
+          }));
+          setUnavailableTokens((current) => mergeUnavailableTokens(current, missingUnavailable));
+          setQuoteFailedTokenAddresses(missingUnavailable.map((token) => token.address.toLowerCase()));
+        }
+        setQuoteError(null); // routes preserved — nothing was lost, so no scary banner
+        return;
+      }
+      // Nothing to carry — surface the real failure (original behavior).
+      if (skips.size > 0) {
+        const failedTokens = requestTokens
+          .filter((token) => skips.has(token.address.toLowerCase()))
+          .map((token) => ({
+            ...token,
+            reason: skips.get(token.address.toLowerCase()) || ("NO_LIQUIDITY" as UnavailableReason),
+          }));
+        if (failedTokens.length > 0) {
+          setUnavailableTokens((current) => mergeUnavailableTokens(current, failedTokens));
+          setQuoteFailedTokenAddresses(failedTokens.map((token) => token.address.toLowerCase()));
+          if (removeFailedTokens) {
+            setSelectedTokens((current) =>
+              current.filter((token) => !skips.has(token.address.toLowerCase())),
+            );
+          }
+        }
+      }
+      setQuote(null);
+      setQuoteError(message);
+    };
 
     try {
       const response = await fetch("/api/dustsweep/quote", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          tokenIns: selectedTokens.map((token) => token.address),
-          amounts: selectedTokens.map((token) => token.balance),
+          tokenIns: requestTokens.map((token) => token.address),
+          amounts: requestTokens.map((token) => token.balance),
           tokenOut: tokenOut.address,
           slippageBps,
           userAddress: address,
@@ -1039,76 +1201,99 @@ export function useDustSweep(): UseDustSweepReturn {
       });
       const payload = await response.json().catch(() => null);
 
+      if (isStale()) return; // a newer re-quote already superseded this one
+
       if (!response.ok) {
         const skippedTokens =
           payload && typeof payload === "object" && Array.isArray((payload as { skippedTokens?: unknown }).skippedTokens)
             ? ((payload as { skippedTokens: Array<{ token?: string; reason?: UnavailableReason }> }).skippedTokens)
             : [];
-        const skippedByAddress = new Map(
+        const skippedByAddress = new Map<string, UnavailableReason>(
           skippedTokens
             .filter((item) => item.token)
-            .map((item) => [String(item.token).toLowerCase(), item.reason || "NO_LIQUIDITY" as UnavailableReason]),
+            .map((item) => [String(item.token).toLowerCase(), (item.reason || "NO_LIQUIDITY") as UnavailableReason]),
         );
-        const failedTokens = selectedTokens
-          .filter((token) => skippedByAddress.has(token.address.toLowerCase()))
-          .map((token) => ({
-            ...token,
-            reason: skippedByAddress.get(token.address.toLowerCase()) || "NO_LIQUIDITY" as UnavailableReason,
-          }));
-        if (failedTokens.length > 0) {
-          const failedAddresses = failedTokens.map((token) => token.address.toLowerCase());
-          setUnavailableTokens((current) => mergeUnavailableTokens(current, failedTokens));
-          setQuoteFailedTokenAddresses(failedAddresses);
-          if (removeFailedTokens) {
-            setSelectedTokens((current) =>
-              current.filter((token) => !skippedByAddress.has(token.address.toLowerCase())),
-            );
-          }
-        }
-
         const message =
           payload && typeof payload === "object" && "error" in payload
             ? String((payload as { error?: unknown }).error)
             : "Couldn't get quote";
-        throw new Error(message);
+        handleFailure(message, skippedByAddress);
+        return;
       }
 
-      const nextQuote = normalizeQuotePayload(payload);
-      const routedAddresses = new Set(nextQuote.routes.map((route) => route.tokenIn.toLowerCase()));
-      const skippedByAddress = new Map(
-        (nextQuote.skippedTokens || []).map((item) => [
-          item.token.toLowerCase(),
-          item.reason,
-        ]),
+      const serverQuote = normalizeQuotePayload(payload);
+      const serverByToken = new Map(
+        serverQuote.routes.map((route) => [route.tokenIn.toLowerCase(), route]),
       );
-      const failedTokens = selectedTokens
-        .filter((token) => !routedAddresses.has(token.address.toLowerCase()))
-        .map((token) => ({
-          ...token,
-          reason: skippedByAddress.get(token.address.toLowerCase()) || "NO_LIQUIDITY" as UnavailableReason,
-        }));
+      const skippedByAddress = new Map<string, UnavailableReason>(
+        (serverQuote.skippedTokens || []).map((item) => [item.token.toLowerCase(), item.reason]),
+      );
 
-      if (failedTokens.length > 0) {
-        const failedAddresses = failedTokens.map((token) => token.address.toLowerCase());
+      // Merge: prefer the fresh server route; otherwise carry a recent good route for any
+      // still-selected token the server transiently missed (unchanged balance, not a
+      // definitive skip). This is what stops routes from vanishing on add/remove.
+      const mergedRoutes: DustSweepRoute[] = [];
+      const missingTokens: SelectedToken[] = [];
+      let carriedCount = 0;
+      for (const token of requestTokens) {
+        const key = token.address.toLowerCase();
+        const fresh = serverByToken.get(key);
+        if (fresh) {
+          mergedRoutes.push(fresh);
+          continue;
+        }
+        const skipReason = skippedByAddress.get(key);
+        const definitive = skipReason ? DEFINITIVE_SKIP_REASONS.has(skipReason) : false;
+        const carried = carriedRoutesRef.current.get(key);
+        if (carried && carried.amountIn === token.balance && !definitive) {
+          mergedRoutes.push(carried);
+          carriedCount += 1;
+        } else {
+          if (definitive) carriedRoutesRef.current.delete(key);
+          missingTokens.push(token);
+        }
+      }
+
+      // USD/meta reference: the fresh server quote when it actually routed something, else
+      // the last good full quote (so USD stays right even if every token was carried).
+      const reference =
+        safeBigInt(serverQuote.totalEstimatedOut) > 0n && serverQuote.totalEstimatedOutUSD > 0
+          ? serverQuote
+          : lastQuoteMetaRef.current;
+      const finalQuote =
+        carriedCount > 0
+          ? recomputeQuoteForRoutes(serverQuote, mergedRoutes, reference)
+          : serverQuote;
+
+      // Refresh the carry-forward store from the winning routes + the resulting quote.
+      for (const route of mergedRoutes) {
+        carriedRoutesRef.current.set(route.tokenIn.toLowerCase(), route);
+      }
+      if (finalQuote.routes.length > 0) lastQuoteMetaRef.current = finalQuote;
+
+      if (missingTokens.length > 0) {
+        const failedTokens = missingTokens.map((token) => ({
+          ...token,
+          reason: skippedByAddress.get(token.address.toLowerCase()) || ("NO_LIQUIDITY" as UnavailableReason),
+        }));
         setUnavailableTokens((current) => mergeUnavailableTokens(current, failedTokens));
-        setQuoteFailedTokenAddresses(failedAddresses);
+        setQuoteFailedTokenAddresses(failedTokens.map((token) => token.address.toLowerCase()));
         if (removeFailedTokens) {
+          const missingSet = new Set(missingTokens.map((token) => token.address.toLowerCase()));
           setSelectedTokens((current) =>
-            current.filter((token) => routedAddresses.has(token.address.toLowerCase())),
+            current.filter((token) => !missingSet.has(token.address.toLowerCase())),
           );
         }
       }
 
-      setQuote(nextQuote);
+      setQuote(finalQuote);
     } catch (quoteFetchError) {
+      if (isStale()) return;
       const message =
-        quoteFetchError instanceof Error
-          ? quoteFetchError.message
-          : "Couldn't get quote";
-      setQuote(null);
-      setQuoteError(message);
+        quoteFetchError instanceof Error ? quoteFetchError.message : "Couldn't get quote";
+      handleFailure(message, new Map());
     } finally {
-      setIsQuoting(false);
+      if (!isStale()) setIsQuoting(false);
     }
   }, [address, removeFailedTokens, selectedTokens, slippageBps, tokenOut]);
 
