@@ -2277,6 +2277,212 @@ async function getLifiQuoteCandidate(
   }
 }
 
+function openOceanEnabled() {
+  return (
+    process.env.DUST_SWEEP_ENABLE_AGGREGATORS !== "false" &&
+    process.env.DUST_SWEEP_ENABLE_OPENOCEAN === "true" &&
+    getAllowedAggregatorAddresses().size > 0
+  );
+}
+
+// OpenOcean gas price (gwei) fed to the v4 swap endpoint purely so it can weight gas cost when
+// picking a route; the actual on-chain gas price is set by the outer sweep tx, not this calldata.
+const OPENOCEAN_GAS_PRICE_GWEI = process.env.DUST_SWEEP_OPENOCEAN_GAS_PRICE_GWEI || "0.05";
+
+// OpenOcean is a same-chain Base aggregator fallback (consulted after 0x and LI.FI, only when no
+// native DEX route exists). The v4 GET /swap endpoint returns ready-to-call calldata; we pin
+// account = the sweep router so the swapped output is sent to the router, pass amountDecimals (raw
+// base units, NEVER human units) and slippage as a percent (1 = 1%), reject any route that requires
+// native value, and gate the returned router (target == spender == the OpenOcean exchange proxy)
+// against the aggregator allowlist (DUST_SWEEP_ALLOWED_AGGREGATOR_TARGETS) exactly like 0x / LI.FI.
+async function getOpenOceanQuoteCandidate(
+  tokenIn: Address,
+  tokenOut: Address,
+  amountIn: bigint,
+  slippageBps: number,
+): Promise<QuoteCandidate | null> {
+  const taker = getRouterAddressForLane(getExecutionLane());
+  if (!openOceanEnabled() || !isAddress(taker)) return null;
+
+  try {
+    const url = new URL("https://open-api.openocean.finance/v4/base/swap");
+    url.searchParams.set("inTokenAddress", tokenIn);
+    url.searchParams.set("outTokenAddress", tokenOut);
+    url.searchParams.set("amountDecimals", amountIn.toString());
+    url.searchParams.set("gasPrice", OPENOCEAN_GAS_PRICE_GWEI);
+    url.searchParams.set("slippage", String(Math.min(50, Math.max(0.05, slippageBps / 100))));
+    url.searchParams.set("account", taker);
+
+    const headers: Record<string, string> = { Accept: "application/json" };
+    const apiKey = process.env.OPENOCEAN_API_KEY;
+    if (apiKey) headers.apikey = apiKey.trim();
+
+    const response = await fetch(url, { headers, signal: AbortSignal.timeout(8_000) });
+    if (!response.ok) return null;
+
+    const quote = (await response.json()) as {
+      code?: number;
+      data?: {
+        to?: string;
+        data?: string;
+        value?: string;
+        outAmount?: string;
+        chainId?: number;
+      };
+    };
+
+    if (Number(quote.code) !== 200 || !quote.data) return null;
+    const swap = quote.data;
+    if (swap.chainId && Number(swap.chainId) !== BASE_CHAIN_ID) return null;
+    if (!swap.to || !swap.data || !swap.outAmount) return null;
+    if (!isAddress(swap.to) || !isHex(swap.data)) return null;
+    if (swap.value && BigInt(swap.value) > 0n) return null;
+
+    // OpenOcean: the router contract IS the spender — approve + call the same address.
+    const target = normalizeAddress(swap.to);
+    const spender = target;
+    const allowedAggregatorAddresses = getAllowedAggregatorAddresses();
+    if (
+      !allowedAggregatorAddresses.has(target.toLowerCase()) ||
+      !allowedAggregatorAddresses.has(spender.toLowerCase())
+    ) {
+      return null;
+    }
+
+    const amountOut = BigInt(swap.outAmount);
+    if (amountOut <= 0n) return null;
+
+    return {
+      tokenIn,
+      amountIn: amountIn.toString(),
+      amountOutMin: "0",
+      estimatedOut: amountOut.toString(),
+      dex: DEX.GENERIC,
+      dexName: "OpenOcean Aggregator",
+      dexData: encodeAbiParameters(GENERIC_DEX_DATA_PARAMETERS, [
+        {
+          target,
+          spender,
+          data: swap.data as Hex,
+        },
+      ]),
+      amountOut,
+      priceImpactBps: 0,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function odosEnabled() {
+  return (
+    process.env.DUST_SWEEP_ENABLE_AGGREGATORS !== "false" &&
+    process.env.DUST_SWEEP_ENABLE_ODOS === "true" &&
+    getAllowedAggregatorAddresses().size > 0
+  );
+}
+
+// Odos is a same-chain Base aggregator fallback (consulted last, only when no native / 0x / LI.FI
+// route exists). It is a TWO-step API: POST /sor/quote/v2 returns a pathId + outAmounts, then POST
+// /sor/assemble turns that pathId into executable calldata. We pin userAddr = the sweep router so
+// the input is pulled from msg.sender (== the router, which holds the approval) and the output is
+// sent to userAddr (== the router); reject any route needing native value; and gate the assembled
+// router (target == spender == the Odos router) against the aggregator allowlist exactly like 0x /
+// LI.FI. A public IP is aggressively rate-limited — set ODOS_API_KEY for reliable server-side use.
+async function getOdosQuoteCandidate(
+  tokenIn: Address,
+  tokenOut: Address,
+  amountIn: bigint,
+  slippageBps: number,
+): Promise<QuoteCandidate | null> {
+  const taker = getRouterAddressForLane(getExecutionLane());
+  if (!odosEnabled() || !isAddress(taker)) return null;
+
+  try {
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    };
+    const apiKey = process.env.ODOS_API_KEY;
+    if (apiKey) headers["x-api-key"] = apiKey.trim();
+
+    // Step 1 — quote. amount is in raw base units; slippageLimitPercent is a percent (1 = 1%).
+    const quoteResponse = await fetch("https://api.odos.xyz/sor/quote/v2", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        chainId: BASE_CHAIN_ID,
+        inputTokens: [{ tokenAddress: tokenIn, amount: amountIn.toString() }],
+        outputTokens: [{ tokenAddress: tokenOut, proportion: 1 }],
+        userAddr: taker,
+        slippageLimitPercent: Math.min(50, Math.max(0.05, slippageBps / 100)),
+        disableRFQs: true,
+        compact: true,
+      }),
+      signal: AbortSignal.timeout(8_000),
+    });
+    if (!quoteResponse.ok) return null;
+
+    const quote = (await quoteResponse.json()) as {
+      pathId?: string;
+      outAmounts?: string[];
+    };
+    if (!quote.pathId || !Array.isArray(quote.outAmounts) || !quote.outAmounts[0]) return null;
+
+    // Step 2 — assemble the pathId into executable calldata (output goes to userAddr == router).
+    const assembleResponse = await fetch("https://api.odos.xyz/sor/assemble", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ userAddr: taker, pathId: quote.pathId, simulate: false }),
+      signal: AbortSignal.timeout(8_000),
+    });
+    if (!assembleResponse.ok) return null;
+
+    const assembled = (await assembleResponse.json()) as {
+      transaction?: { to?: string; data?: string; value?: string; chainId?: number };
+    };
+    const tx = assembled.transaction;
+    if (!tx?.to || !tx?.data) return null;
+    if (!isAddress(tx.to) || !isHex(tx.data)) return null;
+    if (tx.chainId && Number(tx.chainId) !== BASE_CHAIN_ID) return null;
+    if (tx.value && BigInt(tx.value) > 0n) return null;
+
+    // Odos: the router contract IS the spender — approve + call the same address.
+    const target = normalizeAddress(tx.to);
+    const spender = target;
+    const allowedAggregatorAddresses = getAllowedAggregatorAddresses();
+    if (
+      !allowedAggregatorAddresses.has(target.toLowerCase()) ||
+      !allowedAggregatorAddresses.has(spender.toLowerCase())
+    ) {
+      return null;
+    }
+
+    const amountOut = BigInt(quote.outAmounts[0]);
+    if (amountOut <= 0n) return null;
+
+    return {
+      tokenIn,
+      amountIn: amountIn.toString(),
+      amountOutMin: "0",
+      estimatedOut: amountOut.toString(),
+      dex: DEX.GENERIC,
+      dexName: "Odos Aggregator",
+      dexData: encodeAbiParameters(GENERIC_DEX_DATA_PARAMETERS, [
+        {
+          target,
+          spender,
+          data: tx.data as Hex,
+        },
+      ]),
+      amountOut,
+      priceImpactBps: 0,
+    };
+  } catch {
+    return null;
+  }
+}
+
 // ── Uniswap V4 Quoting ──────────────────────────────────────────────────────
 const UNISWAP_V4_QUOTER_ADDRESS = (process.env.UNISWAP_V4_QUOTER_ADDRESS ||
   "0x0d5e0f971ed27fbff6c2837bf31316121532048d") as Address;
@@ -2653,12 +2859,21 @@ async function getBestQuote(
   const bestNative = pickBestCandidate(nativeCandidates);
   if (bestNative) return bestNative;
 
-  // 2) Aggregator FALLBACK — only for tokens with no native quote. 0x first, then LI.FI.
+  // 2) Aggregator FALLBACK — only for tokens with no native quote. First executable quote wins, in
+  //    order: 0x → LI.FI → OpenOcean → Odos. Each is env-gated and additive: OpenOcean and Odos are
+  //    only consulted when every earlier source returns nothing, so they strictly widen coverage of
+  //    sweepable dust without changing how any currently-routable token is handled.
   const zeroX = await get0xQuoteCandidate(tokenIn, tokenOut, amountIn, slippageBps);
   if (zeroX && isCandidateExecutableInLane(zeroX, executionLane)) return zeroX;
 
   const lifi = await getLifiQuoteCandidate(tokenIn, tokenOut, amountIn, slippageBps);
   if (lifi && isCandidateExecutableInLane(lifi, executionLane)) return lifi;
+
+  const openOcean = await getOpenOceanQuoteCandidate(tokenIn, tokenOut, amountIn, slippageBps);
+  if (openOcean && isCandidateExecutableInLane(openOcean, executionLane)) return openOcean;
+
+  const odos = await getOdosQuoteCandidate(tokenIn, tokenOut, amountIn, slippageBps);
+  if (odos && isCandidateExecutableInLane(odos, executionLane)) return odos;
 
   return null;
 }

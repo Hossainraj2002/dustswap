@@ -50,6 +50,8 @@ function getDexIcon(dexName: string) {
   if (name.includes("ALIEN")) return "/dex/alienbase.png";
   if (name.includes("DACKIE")) return "/dex/dackieswap.png";
   if (name.includes("LI.FI") || name.includes("LIFI")) return "/dex/lifi.png";
+  if (name.includes("OPENOCEAN")) return "/dex/openocean.png";
+  if (name.includes("ODOS")) return "/dex/odos.png";
   if (name.startsWith("0X")) return "/dex/zerox.png";
   return GENERIC_DEX_ICON;
 }
@@ -70,6 +72,8 @@ function formatDexName(dexName: string) {
   if (name.includes("ALIEN")) return "AlienBase";
   if (name.includes("DACKIE")) return "DackieSwap";
   if (name.includes("LI.FI") || name.includes("LIFI")) return "LI.FI";
+  if (name.includes("OPENOCEAN")) return "OpenOcean";
+  if (name.includes("ODOS")) return "Odos";
   if (name.startsWith("0X")) return "0x";
   return dexName.replace(/_/g, " ");
 }
