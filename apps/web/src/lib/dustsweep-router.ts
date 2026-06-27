@@ -18,15 +18,32 @@ export const V1_MAX_BATCH_SIZE = 10;
 export const V2_MAX_BATCH_SIZE = 50;
 
 /**
- * Max number of tokens the "Auto" button selects in a single click. Defaults to
- * `null`, meaning fall back to the lane's execution cap (current behavior — up to
- * 50 on the V2/V3 lane). Set NEXT_PUBLIC_DUST_SWEEP_AUTO_SELECT_LIMIT=10 (or any
- * positive integer) to make Auto pick at most that many. This only affects the
- * Auto button's default selection — users can still manually select more, up to
- * the lane execution cap.
+ * The regular per-sweep token selection limit. Defaults to `null`, meaning fall back
+ * to the lane's execution cap (current behavior — up to 50 on the V2/V3 lane). Set
+ * NEXT_PUBLIC_DUST_SWEEP_AUTO_SELECT_LIMIT=10 (or any positive integer) to make this a
+ * HARD ceiling: it caps the "Auto" button, "Select all", AND manual one-by-one adds, so
+ * users can never select more than this many tokens. The only exception is Base Wallet
+ * (`base_account`) and Coinbase Wallet (`coinbase`), which use
+ * DUST_SWEEP_AUTO_SELECT_LIMIT_BASE_COINBASE when it is set (see below).
  */
 export const DUST_SWEEP_AUTO_SELECT_LIMIT: number | null = (() => {
   const raw = process.env.NEXT_PUBLIC_DUST_SWEEP_AUTO_SELECT_LIMIT;
+  if (!raw) return null;
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+})();
+
+/**
+ * Separate selection limit for Base Wallet (`base_account`) and Coinbase Wallet
+ * (`coinbase`) only. Defaults to `null`, meaning those wallets use the regular
+ * DUST_SWEEP_AUTO_SELECT_LIMIT (i.e. behave like every other wallet). Set
+ * NEXT_PUBLIC_DUST_SWEEP_AUTO_SELECT_LIMIT_BASE_COINBASE to a value >= the regular limit
+ * to let Base/Coinbase users select MORE tokens than the regular cap (Auto + Select all +
+ * manual). Both limits are still bounded by the lane execution cap (50 on V2/V3) — going
+ * above that requires raising the on-chain batch cap and is intentionally not supported here.
+ */
+export const DUST_SWEEP_AUTO_SELECT_LIMIT_BASE_COINBASE: number | null = (() => {
+  const raw = process.env.NEXT_PUBLIC_DUST_SWEEP_AUTO_SELECT_LIMIT_BASE_COINBASE;
   if (!raw) return null;
   const parsed = Number.parseInt(raw, 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;

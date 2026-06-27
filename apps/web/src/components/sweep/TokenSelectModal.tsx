@@ -217,6 +217,7 @@ export function TokenSelectModal({
   onSelectOutputToken,
   onSelectAll,
   onClose,
+  routeMaxCap,
 }: {
   isOpen: boolean;
   mode: "multi" | "single";
@@ -233,12 +234,17 @@ export function TokenSelectModal({
   onSelectOutputToken: (token: Token) => void;
   onSelectAll: () => void;
   onClose: () => void;
+  routeMaxCap: number;
 }) {
   const [query, setQuery] = useState("");
   const selectedSet = useMemo(
     () => new Set(selectedTokens.map((token) => token.address.toLowerCase())),
     [selectedTokens],
   );
+  // At the per-wallet selection ceiling: block selecting NEW tokens (already-selected rows
+  // stay clickable so the user can still deselect). routeMaxCap already reflects the
+  // wallet-specific limit from the hook.
+  const atSelectionCap = mode === "multi" && selectedTokens.length >= routeMaxCap;
 
   const disabledOutputToken =
     mode === "multi" &&
@@ -353,7 +359,11 @@ export function TokenSelectModal({
                   </span>
                 ) : null}
               </p>
-              {mode === "multi" && visibleSwappable.length > 0 ? (
+              {mode === "multi" && atSelectionCap ? (
+                <span className="rounded-[9px] bg-amber-50 px-2 py-1 text-xs font-semibold text-amber-600 dark:bg-amber-400/10 dark:text-amber-300">
+                  Max {routeMaxCap} reached
+                </span>
+              ) : mode === "multi" && visibleSwappable.length > 0 ? (
                 <button
                   type="button"
                   onClick={onSelectAll}
@@ -374,6 +384,9 @@ export function TokenSelectModal({
                   mode === "single"
                     ? selectedOutputToken?.address.toLowerCase() === token.address.toLowerCase()
                     : selectedSet.has(token.address.toLowerCase());
+                // At the cap, only NEW (unselected) tokens are blocked — selected rows stay
+                // tappable so the user can still deselect to make room.
+                const rowDisabled = !selected && atSelectionCap;
 
                 return (
                   <AssetRow
@@ -381,6 +394,7 @@ export function TokenSelectModal({
                     token={token}
                     selected={selected}
                     multi={mode === "multi"}
+                    disabled={rowDisabled}
                     onClick={() => {
                       if (mode === "single") {
                         onSelectOutputToken(token);
@@ -389,6 +403,7 @@ export function TokenSelectModal({
                         if (selected) {
                           onRemoveToken(token.address);
                         } else {
+                          if (rowDisabled) return;
                           onSelectToken(token as SwappableToken);
                         }
                       }

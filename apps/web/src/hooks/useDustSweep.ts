@@ -17,6 +17,7 @@ import {
 } from "@/lib/eip7702";
 import {
   DUST_SWEEP_AUTO_SELECT_LIMIT,
+  DUST_SWEEP_AUTO_SELECT_LIMIT_BASE_COINBASE,
   DUST_SWEEP_EXECUTION_LANE,
   DUST_SWEEP_ROUTER_ADDRESS,
   DUST_SWEEP_ROUTER_V2_ADDRESS,
@@ -759,13 +760,6 @@ export function useDustSweep(): UseDustSweepReturn {
   const lastQuoteMetaRef = useRef<DustSweepQuoteResponse | null>(null);
 
   const configuredRouteCap = getCapForLane(DUST_SWEEP_EXECUTION_LANE);
-  const routeMaxCap = quote?.routeMaxCap ?? configuredRouteCap;
-  // How many tokens the "Auto" button picks in one click. Env-overridable, but
-  // never above the lane execution cap. Manual selection is unaffected.
-  const autoSelectCap =
-    DUST_SWEEP_AUTO_SELECT_LIMIT != null
-      ? Math.min(DUST_SWEEP_AUTO_SELECT_LIMIT, configuredRouteCap)
-      : configuredRouteCap;
   const walletProfileBase = useMemo(
     () =>
       getDustSweepWalletProfileBase({
@@ -784,6 +778,39 @@ export function useDustSweep(): UseDustSweepReturn {
       walletStatus.walletName,
     ],
   );
+
+  // Per-wallet token selection ceiling. The regular limit
+  // (NEXT_PUBLIC_DUST_SWEEP_AUTO_SELECT_LIMIT) is a HARD cap on Auto + Select all + manual
+  // adds for every wallet. Base Wallet (base_account) and Coinbase Wallet (coinbase) instead
+  // use DUST_SWEEP_AUTO_SELECT_LIMIT_BASE_COINBASE when it is set, falling back to the regular
+  // limit otherwise. Both are bounded by the lane execution cap so selection can never exceed
+  // the on-chain batch max (50 on V2/V3). Unset regular limit ⇒ lane cap (current behavior).
+  const regularSelectCap =
+    DUST_SWEEP_AUTO_SELECT_LIMIT != null
+      ? Math.min(DUST_SWEEP_AUTO_SELECT_LIMIT, configuredRouteCap)
+      : configuredRouteCap;
+  const isBaseOrCoinbaseWallet =
+    walletProfileBase.walletKey === "base_account" ||
+    walletProfileBase.walletKey === "coinbase";
+  const baseCoinbaseSelectCap =
+    DUST_SWEEP_AUTO_SELECT_LIMIT_BASE_COINBASE != null
+      ? Math.min(DUST_SWEEP_AUTO_SELECT_LIMIT_BASE_COINBASE, configuredRouteCap)
+      : regularSelectCap;
+  const selectionCap = isBaseOrCoinbaseWallet ? baseCoinbaseSelectCap : regularSelectCap;
+  // Effective max tokens the user can put in one sweep on the CURRENT wallet — drives the
+  // Auto/Select-all picks, the manual add cap, the "Add more" gate, and token-picker disabling.
+  // Never above the server/lane cap (selectionCap is already <= configuredRouteCap).
+  const routeMaxCap = Math.min(selectionCap, quote?.routeMaxCap ?? configuredRouteCap);
+
+  // Keep the invariant "never more than the limit selected": if the cap shrinks (e.g. the
+  // user switches from a Base/Coinbase wallet with a higher limit to a more-restricted one),
+  // trim the current selection down to the new ceiling.
+  useEffect(() => {
+    setSelectedTokens((current) =>
+      current.length > selectionCap ? current.slice(0, selectionCap) : current,
+    );
+  }, [selectionCap]);
+
   const walletProfile = useMemo<DustSweepWalletProfile>(() => {
     // OKX targets one combined approve+sweep wallet_sendCalls (atomicRequired:false),
     // so show the combined-batch notice.
@@ -871,9 +898,9 @@ export function useDustSweep(): UseDustSweepReturn {
     setSelectedTokens(
       swappableTokens
         .filter((token) => (token.valueUSD ?? 0) <= autoSelectionUsd)
-        .slice(0, autoSelectCap),
+        .slice(0, selectionCap),
     );
-  }, [autoMode, autoSelectionUsd, autoSelectCap, swappableTokens]);
+  }, [autoMode, autoSelectionUsd, selectionCap, swappableTokens]);
 
   useEffect(() => {
     if (!address || !walletClient) {
@@ -1316,17 +1343,18 @@ export function useDustSweep(): UseDustSweepReturn {
       if (current.some((item) => isSameAddress(item.address, token.address))) {
         return current;
       }
-      return [...current, token].slice(0, configuredRouteCap);
+      // Manual adds are capped at the SAME per-wallet selection ceiling as Auto/Select all,
+      // so a user can never manually exceed the configured limit (Base/Coinbase get their
+      // own, possibly higher, ceiling via selectionCap).
+      return [...current, token].slice(0, selectionCap);
     });
-  }, [configuredRouteCap, tokenOut]);
+  }, [selectionCap, tokenOut]);
 
   const selectAllTokens = useCallback(() => {
     setAutoMode(false);
-    // "Select all" honors the same cap as the Auto button
-    // (NEXT_PUBLIC_DUST_SWEEP_AUTO_SELECT_LIMIT); manual one-by-one adds may still
-    // go higher, up to the lane execution cap.
-    setSelectedTokens(swappableTokens.slice(0, autoSelectCap));
-  }, [autoSelectCap, swappableTokens]);
+    // "Select all" honors the same per-wallet selection ceiling as Auto and manual adds.
+    setSelectedTokens(swappableTokens.slice(0, selectionCap));
+  }, [selectionCap, swappableTokens]);
 
   const removeToken = useCallback((tokenAddress: string) => {
     setAutoMode(false);

@@ -214,6 +214,10 @@ export function TokenFromPanel({
                 <PlusIcon />
                 Add more
               </button>
+            ) : selectedTokens.length > 0 ? (
+              <div className="flex h-11 w-full items-center justify-center rounded-[11px] border border-dashed border-amber-200 bg-amber-50/40 text-xs font-semibold text-amber-600 dark:border-amber-400/25 dark:bg-amber-400/[0.06] dark:text-amber-300">
+                Max {routeMaxCap} tokens reached
+              </div>
             ) : null}
           </div>
 

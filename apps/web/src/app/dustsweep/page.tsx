@@ -434,6 +434,7 @@ export default function DustSweepPage() {
         onSelectOutputToken={sweep.setTokenOut}
         onSelectAll={sweep.selectAllTokens}
         onClose={() => setTokenModalMode(null)}
+        routeMaxCap={sweep.routeMaxCap}
       />
 
       <SlippageSettings
