@@ -1,6 +1,6 @@
 {
   "$schema": "https://mintlify.com/docs.json",
-  "theme": "maple",
+  "theme": "mint",
   "name": "Dustswap Documentation",
   "description": "Official documentation for Dustswap, DustSweep, rewards, quests, referrals, security, and ecosystem features.",
   "favicon": {
@@ -194,11 +194,17 @@
   "background": {
     "color": {
       "light": "#f6f6f6",
-      "dark": "#434856"
+      "dark": "#272a30"
     }
   },
   "logo": {
     "light": "/docs/images/longlogo.png",
     "dark": "/docs/images/longlogowhite.png"
+  },
+  "fonts": {
+    "family": "Inter"
+  },
+  "appearance": {
+    "default": "light"
   }
 }
