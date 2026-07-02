@@ -18,15 +18,13 @@ Invite friends to DustSwap and you both win: each successful referral pays 500 P
 | **500 PP signup bonus** | **Both** — referrer and the new user | When the code is applied |
 | **20% commission** | Referrer | Continuously, on the invitee's future PP earnings |
 
-![Referral card on the Profile showing the code, share link, and referral stats.](../assets/screenshots/dustswap-referrals-01-dashboard-desktop.png)
-
 ## The lifetime commission
 
 Every time someone you referred earns PP from activity — check-ins, swaps, sweeps, burns, quests, spins — you automatically receive **20% of that amount as bonus PP**. Their earnings are never reduced; your commission is minted on top.
 
 Example: your invitee has a strong week — 400 PP of boosted check-ins, 3,000 PP from sweeps, 1,500 PP from quests = 4,900 PP. You receive **980 PP** without doing anything.
 
-What does *not* pay commission: referral bonuses themselves (your invitee inviting others earns *them* commission, not you — no multi-level cascading), and one-time drops like the Footprint Drop. To be confirmed before publication: the precise excluded list shown in-app.
+What does *not* pay commission: referral bonuses themselves (your invitee inviting others earns *them* commission, not you — no multi-level cascading), and one-time drops like the Footprint Drop.
 
 ```mermaid
 flowchart LR

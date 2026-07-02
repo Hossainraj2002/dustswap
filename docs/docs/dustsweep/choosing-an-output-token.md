@@ -15,8 +15,6 @@ Every sweep converts your selected tokens into one output token. DustSweep offer
 | **WETH** | DeFi users who need the ERC-20 form of ETH | Wrapped Ether (`0x4200…0006`). |
 | **USDT** | Stable value, Tether preference | Tether USD on Base. |
 
-![Output token selector with ETH/USDC/WETH/USDT options.](../assets/screenshots/dustsweep-output-01-selector-desktop.png)
-
 ## Things that happen automatically
 
 - **Your output token is removed from the input list.** You cannot sweep USDC into USDC; if you had USDC selected and switch the output to USDC, it is deselected automatically.
@@ -31,7 +29,7 @@ A short, fixed list of major assets:
 - guarantees deep liquidity so quotes stay accurate, and
 - keeps fee and value calculations dependable.
 
-Custom output tokens are not currently planned for the user interface. To be confirmed before publication if this changes.
+Custom output tokens are not currently planned for the user interface.
 
 ## FAQ
 

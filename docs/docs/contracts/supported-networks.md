@@ -12,7 +12,7 @@ All contracts listed in [DustSweep Router](dustsweep-router.md) and [Related Con
 | Chain ID | **8453** |
 | Block explorer | [https://basescan.org](https://basescan.org) |
 
-Other networks: to be confirmed before publication — nothing beyond Base is currently committed (see [Supported Network & Tokens](../dustsweep/supported-network-and-tokens.md) and [Swap & Bridge: Supported Networks](../swap-and-bridge/supported-networks.md)).
+Other networks are not currently committed — nothing beyond Base is deployed today (see [Supported Network & Tokens](../dustsweep/supported-network-and-tokens.md) and [Swap & Bridge: Supported Networks](../swap-and-bridge/supported-networks.md)).
 
 ## Related pages
 

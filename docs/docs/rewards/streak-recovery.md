@@ -30,14 +30,12 @@ The boost compounds across everything you earn. Losing a 30-day streak means dro
 3. Confirm the small ETH transaction in your wallet (the app converts $1 to ETH at the live rate and shows the exact amount before you confirm).
 4. Once it confirms, your streak and boost are back. Check in for today if you haven't.
 
-![Broken-streak card showing the recoverable streak and the Restore button with the ETH fee displayed.](../assets/screenshots/dustswap-recovery-01-restore-flow-desktop.png)
-
 > **User Safety Note**
 > The restore fee is a normal, small ETH transfer initiated inside the app — about $1 at the displayed rate. It never requires a token approval or a signature beyond the payment transaction itself. Reject anything that asks for more.
 
 ## The fine print
 
-- Restore is offered for **recently broken** streaks (you missed yesterday). Once a break ages past the recovery window, the streak can no longer be restored. Exact window: it is shown in the app when applicable; to be confirmed before publication for the docs.
+- Restore is offered for **recently broken** streaks (you missed yesterday). Once a break ages past the recovery window, the streak can no longer be restored. Exact window: it is shown in the app when applicable.
 - The fee amount in ETH varies with the ETH price; the USD value is fixed at $1.
 - Restoring brings back the streak **count and boost** — it does not retroactively re-award PP for the missed day's check-in.
 

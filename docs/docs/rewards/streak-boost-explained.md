@@ -43,8 +43,6 @@ flowchart LR
     E -- start over --> A
 ```
 
-![Profile streak card showing current streak, boost percentage, and time left to check in.](../assets/screenshots/dustswap-streak-01-boost-table-desktop.png)
-
 ## Strategy notes
 
 - The boost multiplies **base** awards before daily caps are checked — a high boost helps you reach caps faster, it does not raise the caps.
@@ -66,4 +64,4 @@ You can restore a recently broken streak for a small fee. See [Streak Recovery](
 
 - [Daily Check-In & Streaks](daily-check-in.md)
 - [Streak Recovery](streak-recovery.md)
-- [Earning PP: Every Action & Cap](earning-pp.md)
+- [PP Rewards](pp-rewards.md)

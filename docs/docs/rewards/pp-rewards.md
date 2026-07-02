@@ -19,7 +19,7 @@ Particle Points (PP) are DustSwap's progression points. Almost everything you do
 
 ## How you earn PP
 
-Every earning action, with exact amounts and daily caps, is listed on [Earning PP: Every Action & Cap](earning-pp.md). In short:
+Every earning action, with its amount and daily cap, is summarized below:
 
 - **Daily check-in** — 100 PP base, multiplied by your streak boost, plus 3 spin tickets. See [Daily Check-In & Streaks](daily-check-in.md).
 - **Activity** — swaps, dust sweeps, and burns each pay PP per action or per token, with daily caps.
@@ -36,18 +36,16 @@ Your daily check-in streak adds **+10% per consecutive day, up to +300% at day 3
 
 Your Profile shows total PP, rank, earning history, streak status, and referral progress. The PP leaderboard ranks all users by total points.
 
-![Profile hub with total PP, rank, and streak boost visible.](../assets/screenshots/dustswap-pp-01-profile-hub-desktop.png)
-
 ## FAQ
 
 **Can I lose PP?**
 PP is not deducted by normal usage. Fraudulent activity (fake transactions, multi-account abuse) can lead to removal of wrongly earned points.
 
 **Does PP expire?**
-No expiry exists today. To be confirmed before publication if seasons change this.
+No expiry exists today.
 
 **Will PP convert into a token or reward?**
 Leaderboard rewards are planned at a future TGE, but no structure, amounts, or dates are finalized — nothing specific is guaranteed. See [Leaderboards](../leaderboards/leaderboard-overview.md).
 
 **Is PP the same as spin tickets?**
-No. Tickets are a separate balance used only to spin the wheel; spins th
+No. Tickets are a separate balance used only to spin the wheel; spins themselves award PP (50–500 per spin). See [Spin Rewards](spin-rewards.md).

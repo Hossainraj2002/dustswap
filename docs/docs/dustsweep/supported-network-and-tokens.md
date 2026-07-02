@@ -60,16 +60,22 @@ Only routers on DustSweep's allowlist can ever be called by the sweep contract. 
 ## Limits
 
 - **Up to 50 tokens per sweep** (smart-contract limit). Larger wallets simply sweep more than once.
-- **One network (Base)** — other chains: to be confirmed before publication; nothing is currently committed.
+- **One network (Base)** — no other chains are currently committed.
 - **WETH → native ETH** is not currently supported as a direct sweep (the contract does not allow input = output; an unwrap-only step is not implemented yet).
 
 ## FAQ
 
 **Will other networks be added?**
-To be confirmed before publication. The current system is built specifically for Base.
+The current system is built specifically for Base.
 
 **Can I sweep NFTs?**
 No. DustSweep handles ERC-20 tokens only.
 
 **Can I choose a custom output token?**
-Not currently — outputs are limited to ETH, USDC, WETH, and USDT for
+Not currently — outputs are limited to ETH, USDC, WETH, and USDT. See [Choosing an Output Token](choosing-an-output-token.md).
+
+## Related pages
+
+- [What is DustSweep?](what-is-dustsweep.md)
+- [Choosing an Output Token](choosing-an-output-token.md)
+- [Supported Networks (Contracts)](../contracts/supported-networks.md)

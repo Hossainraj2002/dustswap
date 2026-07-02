@@ -9,8 +9,13 @@ import { getStoredSiweToken } from "@/lib/siweAuth";
 const PROMO_DISMISS_KEY = "dustswap:wl-promo-dismissed:v1";
 const MAX_WALLETS = 2;
 
+// The auto-popup is disabled: wallet linking stays fully available via Profile
+// Settings, but we no longer interrupt users with the modal on load. Flip this
+// back to `true` to re-enable the popup — the code below is intentionally kept.
+const PROMO_AUTO_SHOW = false;
+
 const BENEFITS = [
-  { icon: "🎁", text: "Instant 10,000 PP airdrop (one-time)" },
+  { icon: "🎁", text: "Instant 1,000 PP airdrop (one-time)" },
   { icon: "➕", text: "Both wallets' PP combine into one account" },
   { icon: "✅", text: "Check in from either wallet, spin tickets in both" },
   { icon: "⚡", text: "Earn onchain quest PP from both wallets" },
@@ -35,7 +40,7 @@ function markPromoDismissed() {
 // Promotes wallet linking on the profile page with a one-time premium popup
 // that routes into the profile settings → wallet-linking section. Self-gates:
 // only shows when linking is enabled, a wallet is connected, and the account has
-// not linked a second wallet yet (so the 10k PP reward is still claimable).
+// not linked a second wallet yet (so the 1k PP reward is still claimable).
 export function WalletLinkPromo({
   address,
   onOpenLinking,
@@ -69,7 +74,7 @@ export function WalletLinkPromo({
         if (cancelled) return;
         const canLink = (wallets?.length ?? 0) < MAX_WALLETS;
         setEligible(canLink);
-        if (canLink && !hasDismissedPromo()) {
+        if (PROMO_AUTO_SHOW && canLink && !hasDismissedPromo()) {
           setShowModal(true);
         }
       } catch {
@@ -122,7 +127,7 @@ export function WalletLinkPromo({
                   Live
                 </span>
                 <h2 className="mt-1.5 text-base font-black leading-tight tracking-tight text-emerald-950 dark:text-emerald-50">
-                  Link your Base App wallet, get 10,000 PP
+                  Link your Base App wallet, get 1,000 PP
                 </h2>
               </div>
               <button
@@ -140,7 +145,7 @@ export function WalletLinkPromo({
             <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-1 pt-1.5">
               <p className="text-[11px] leading-4 text-emerald-800/80 dark:text-emerald-200/70">
                 Connect your Base App wallet to your DustSwap account and claim{" "}
-                <span className="font-black text-emerald-700 dark:text-emerald-300">10,000 PP</span>{" "}
+                <span className="font-black text-emerald-700 dark:text-emerald-300">1,000 PP</span>{" "}
                 instantly.
               </p>
 
@@ -165,7 +170,7 @@ export function WalletLinkPromo({
                 onClick={claimFromModal}
                 className="w-full rounded-full bg-[linear-gradient(135deg,#059669,#22c55e)] px-4 py-2.5 text-sm font-black text-white shadow-[0_12px_26px_rgba(16,185,129,0.3)] transition hover:-translate-y-0.5"
               >
-                Link wallet &amp; claim 10,000 PP
+                Link wallet &amp; claim 1,000 PP
               </button>
               <button
                 type="button"

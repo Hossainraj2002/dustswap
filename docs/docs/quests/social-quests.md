@@ -22,8 +22,6 @@ Linking uses each platform's official sign-in flow (OAuth): you authorize on **x
 2. Authorize on discord.com's official page.
 3. For "Join our Discord" quests, DustSwap checks that your linked account is a member of the official server — join first, then verify.
 
-![X authorization consent screen, and the linked-accounts section on the Profile.](../assets/screenshots/dustswap-linking-01-accounts-desktop.png)
-
 ## The rules
 
 - **One social account per DustSwap account.** An X or Discord account already linked to a different wallet cannot be linked again — this prevents one account farming quests across many wallets.

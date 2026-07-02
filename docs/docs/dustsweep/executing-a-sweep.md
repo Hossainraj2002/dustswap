@@ -18,8 +18,6 @@ DustSweep resolved your path when you connected (see [Connecting Your Wallet](co
 
 Details: [One-Click Sweeps (EIP-5792)](one-click-sweeps.md) · [Sign & Sweep (Permit2)](sign-and-sweep.md).
 
-![The route-aware stepper above the Sweep button during execution.](../assets/screenshots/dustsweep-execute-01-stepper-desktop.png)
-
 ## What happens at execution
 
 1. **Final safety checks.** The quote deadline is verified (quotes expire after 30 minutes), live balances are re-checked, and routes are validated against the contract's DEX allowlist — on the server *and* on-chain. High price impact (>5%) asks for confirmation.

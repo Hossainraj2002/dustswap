@@ -16,8 +16,6 @@ Three rankings track how you compare across the DustSwap community: total Partic
 
 Open the **Leaderboard** page and switch between the three tabs. Each board shows ranked users with their display names and avatars (set yours on your Profile), and — when your wallet is connected — **your own row and rank**, even if you're outside the visible page.
 
-![Leaderboard page with the three tabs and the viewer's own rank row highlighted.](../assets/screenshots/dustswap-leaderboards-01-tabs-desktop.png)
-
 ## How ranking works
 
 - All rankings are computed server-side from verified activity — the same verified transactions and actions that award PP. Display names and avatars are cosmetic and cannot affect rank.

@@ -13,8 +13,6 @@ DustSweep works with virtually any wallet that can sign standard typed messages.
 3. Approve the connection in your wallet.
 4. If your wallet is on another network, approve the switch to **Base**.
 
-![Wallet connection dialog with common wallet options.](../assets/screenshots/dustsweep-connect-01-wallet-dialog-desktop.png)
-
 ## What happens behind the scenes
 
 The moment you connect, DustSweep runs two quick checks in parallel — both read-only, neither costs gas:

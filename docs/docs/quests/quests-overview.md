@@ -34,8 +34,6 @@ flowchart LR
 3. **Do the task**, then hit **Verify** — DustSwap checks the result through the linked account or your recorded activity, never screenshots.
 4. **Claim.** Verified quests credit their PP once. Completed quests stay visible as done.
 
-![Quest board with social and on-chain quest cards in mixed states (available, verify, claimed).](../assets/screenshots/dustswap-quests-01-board-desktop.png)
-
 ## Reward rules
 
 - Each quest pays its listed PP amount **once per account**.
@@ -63,4 +61,4 @@ Only for quests on that platform. On-chain quests need no links at all.
 
 - [Linking X & Discord](social-quests.md)
 - [Quest Verification & Claiming](verification.md)
-- [Earning PP: Every Action & Cap](../rewards/earning-pp.md)
+- [PP Rewards](../rewards/pp-rewards.md)

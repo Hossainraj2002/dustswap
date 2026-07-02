@@ -134,7 +134,6 @@
         "group": "Leaderboards",
         "pages": [
           "docs/leaderboards/leaderboard-overview",
-          "docs/leaderboards/weekly-leaderboard",
           "docs/leaderboards/all-time-leaderboard",
           "docs/leaderboards/ranking-system"
         ]

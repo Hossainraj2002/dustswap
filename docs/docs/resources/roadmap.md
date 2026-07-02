@@ -14,5 +14,4 @@ The following are publicly signaled as planned but **not live**. No dates are co
 
 ## Related pages
 
-- [Current Limitations](current-limitations.md)
 - [Leaderboard Overview](../leaderboards/leaderboard-overview.md)

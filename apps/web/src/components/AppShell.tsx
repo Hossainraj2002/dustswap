@@ -1,5 +1,6 @@
 'use client';
 
+import Image from 'next/image';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import {
@@ -14,6 +15,7 @@ import {
 } from 'react';
 import { useAccount } from 'wagmi';
 import {
+  DustSweepIcon,
   LeaderboardIcon,
   ProfileIcon,
   QuestsIcon,
@@ -38,13 +40,17 @@ interface NavItem {
   icon: ComponentType<SVGProps<SVGSVGElement>>;
   label: string;
   route: string;
+  // Core-product tab: rendered as a branded gradient tile with the DustSweep
+  // mark instead of the standard outline icon, so it stands out in the nav.
+  brand?: boolean;
 }
 
 const NAV_ITEMS = [
   { icon: ProfileIcon, label: 'Profile', route: '/profile' },
   { icon: SpinIcon, label: 'Spin', route: '/spin' },
-  { icon: QuestsIcon, label: 'Quests', route: '/quests' },
+  { icon: DustSweepIcon, label: 'Dust Sweep', route: '/dustsweep', brand: true },
   { icon: SwapIcon, label: 'Swap', route: '/swap' },
+  { icon: QuestsIcon, label: 'Quests', route: '/quests' },
   { icon: LeaderboardIcon, label: 'Leaderboard', route: '/leaderboard' },
 ] satisfies NavItem[];
 
@@ -52,28 +58,50 @@ function isActiveRoute(pathname: string, route: string) {
   return pathname === route || pathname.startsWith(`${route}/`);
 }
 
+// Active tab gets a crisp 1px blue outline + soft blue outer glow. Applied via
+// inline style (not a `shadow-[...]` class) because a global dark-mode rule in
+// globals.css force-normalizes any shadow-[ utility to the standard card
+// shadow, which would otherwise swallow this glow.
+const ACTIVE_TAB_GLOW = '0 0 0 1px #0052ff, 0 0 8px rgba(0, 82, 255, 0.5)';
+
 function AppShellIcon({
   Icon,
   active,
   light,
+  brand,
 }: {
   Icon: ComponentType<SVGProps<SVGSVGElement>>;
   active: boolean;
   light: boolean;
+  brand?: boolean;
 }) {
+  const glowStyle = active ? { boxShadow: ACTIVE_TAB_GLOW } : undefined;
+  // Shared tile styling so the brand (Dust Sweep) tab matches every other tab's
+  // background + border; only the icon inside differs.
+  const tileClassName = `flex h-9 w-9 items-center justify-center rounded-[14px] border transition-all duration-200 md:h-10 md:w-10 ${
+    light
+      ? active
+        ? 'border-sky-200 bg-white text-[#2563eb]'
+        : 'border-slate-200/80 bg-white/85 text-slate-500 shadow-[0_8px_20px_rgba(148,163,184,0.08)] group-hover:border-slate-300 group-hover:text-slate-700'
+      : active
+        ? 'border-white/15 bg-white/10 text-white'
+        : 'border-white/8 bg-white/[0.04] text-slate-400 group-hover:border-white/14 group-hover:text-white'
+  }`;
+
   return (
-    <span
-      className={`flex h-9 w-9 items-center justify-center rounded-[14px] border transition-all duration-200 md:h-10 md:w-10 ${
-        light
-          ? active
-            ? 'border-sky-200 bg-white text-[#2563eb] shadow-[0_10px_24px_rgba(59,130,246,0.16)]'
-            : 'border-slate-200/80 bg-white/85 text-slate-500 shadow-[0_8px_20px_rgba(148,163,184,0.08)] group-hover:border-slate-300 group-hover:text-slate-700'
-          : active
-            ? 'border-white/15 bg-white/10 text-white shadow-[0_12px_24px_rgba(59,130,246,0.18)]'
-            : 'border-white/8 bg-white/[0.04] text-slate-400 group-hover:border-white/14 group-hover:text-white'
-      }`}
-    >
-      <Icon className="h-4 w-4 md:h-[18px] md:w-[18px]" />
+    <span style={glowStyle} className={tileClassName}>
+      {brand ? (
+        <Image
+          src="/dustsweep-mark-blue.png"
+          alt=""
+          width={24}
+          height={24}
+          priority
+          className="h-[18px] w-[18px] md:h-5 md:w-5"
+        />
+      ) : (
+        <Icon className="h-4 w-4 md:h-[18px] md:w-[18px]" />
+      )}
     </span>
   );
 }
@@ -95,9 +123,9 @@ function MobileShellNav({
   }`;
   const navStyle: CSSProperties = { paddingBottom: 'var(--safe-area-bottom)' };
   const navRowClassName =
-    'grid h-[69px] w-full grid-cols-5 items-start gap-1 px-2 pt-[7px]';
+    'grid h-[69px] w-full grid-cols-6 items-start gap-0.5 px-1 pt-[7px]';
   const navLinkClassName =
-    'group flex min-w-0 flex-col items-center justify-start gap-2 transition-transform active:scale-95';
+    'group flex min-w-0 flex-col items-center justify-start gap-1 transition-transform active:scale-95';
 
   return (
     <nav className={navClassName} style={navStyle} aria-label="Primary navigation">
@@ -112,9 +140,14 @@ function MobileShellNav({
               href={item.route}
               className={navLinkClassName}
             >
-              <AppShellIcon Icon={Icon} active={active} light={isLightShell} />
+              <AppShellIcon
+                Icon={Icon}
+                active={active}
+                light={isLightShell}
+                brand={item.brand}
+              />
               <span
-                className={`min-w-0 text-center text-[10px] font-medium leading-none tracking-[-0.01em] sm:text-xs ${
+                className={`min-w-0 text-center text-[9px] font-medium leading-[1.1] tracking-[-0.02em] sm:text-[11px] ${
                   isLightShell
                     ? active
                       ? 'text-slate-950'
@@ -301,7 +334,12 @@ export function AppShell({ children }: AppShellProps) {
                         : 'text-slate-400 hover:bg-white/[0.04] hover:text-white'
                   }`}
                 >
-                  <AppShellIcon Icon={Icon} active={active} light={isLightShell} />
+                  <AppShellIcon
+                    Icon={Icon}
+                    active={active}
+                    light={isLightShell}
+                    brand={item.brand}
+                  />
                   <span
                     className="font-medium tracking-[-0.02em]"
                     style={{ fontFamily: 'DM Sans, sans-serif' }}

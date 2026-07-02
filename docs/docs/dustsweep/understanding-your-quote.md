@@ -33,8 +33,6 @@ flowchart LR
 
 ## Reading the quote panel
 
-![Annotated quote panel — per-token routes, totals, fee, gas, deadline.](../assets/screenshots/dustsweep-quote-01-annotated-desktop.png)
-
 | Field | Meaning |
 |---|---|
 | **Route per token** | Which DEX this token will trade through, and its estimated output. |

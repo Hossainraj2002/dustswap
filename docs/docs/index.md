@@ -19,7 +19,7 @@ Dustswap is a Base-network app combining a token swap experience (in partnership
 
 - Dustswap currently runs on **Base mainnet** only.
 - Particle Points (PP) have **no monetary value today** — see [Risk Disclosures](security/risk-disclosures.md).
-- The user-facing swap and (upcoming) bridge experience is provided **in partnership with OpenOcean**.
+- The user-facing swap and bridge experience is provided **in partnership with OpenOcean**.
 
 > **User Safety Note**
 > Dustswap only operates through `app.dustswap.wtf` and the official Discord. See [User Safety](security/user-safety.md) and [Official Links](introduction/official-links.md).

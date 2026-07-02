@@ -10,7 +10,6 @@ Beyond the DustSweep router itself, DustSwap's on-chain footprint on Base mainne
 |---|---|---|
 | Permit2 (canonical Uniswap deployment) | `0x000000000022D473030F116dDEE9F6B43aC78BA3` | Sign-and-sweep approvals (see [Sign & Sweep](../dustsweep/sign-and-sweep.md)) |
 | WETH (Base) | `0x4200000000000000000000000000000000000006` | Wrapping/unwrapping ETH during sweeps and swaps |
-| DustSwapAggregatorRouter (swap) | `0x359e05633a5aF619919f81E280135bD39011fBec` | Applies DustSwap fee/referrals on swaps, in partnership with OpenOcean — see [Swaps](../swap-and-bridge/swaps.md) |
 | DustSpinTrigger | `0xCf10Edbc886C60086e49061c807a14E7009F9A22` | On-chain trigger for [Spin Rewards](../rewards/spin-rewards.md) |
 
 ## Allowlisted DEX routers (DustSweep)

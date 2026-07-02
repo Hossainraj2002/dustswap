@@ -62,7 +62,7 @@ export function isWalletLinkingEnabled() {
 
 function getLinkBonusPp() {
   const parsed = Number.parseInt(process.env.WALLET_LINK_BONUS_PP || "", 10);
-  return Number.isFinite(parsed) && parsed >= 0 ? parsed : 10000;
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : 1000;
 }
 
 // Authoritative confirm-link payment params, surfaced to the client so the tx it

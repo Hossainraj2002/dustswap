@@ -26,5 +26,4 @@ Routing may reach additional networks beyond this list, but rewards are credited
 ## Related pages
 
 - [Swap & Bridge](overview.md)
-- [Swaps](swaps.md)
 - [DustSweep: Supported Network & Tokens](../dustsweep/supported-network-and-tokens.md)

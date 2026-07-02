@@ -51,8 +51,6 @@ You can independently verify all of this:
 2. After a sweep, you will find **no outstanding approval to the DustSweep router** beyond amounts already consumed; in the Sign & Sweep flow you may see allowances to **Permit2** — the shared mechanism also used by Uniswap and other major apps.
 3. You may revoke anything at any time; DustSweep will simply re-request the exact amounts next sweep.
 
-![A token-approval viewer showing the post-sweep state (no dangling router approvals).](../assets/screenshots/dustsweep-noncustodial-01-approvals-view-desktop.png)
-
 > **User Safety Note**
 > These guarantees apply to the real DustSweep at **app.dustswap.wtf**. A phishing clone can imitate the interface but cannot imitate the contract's rules — which is why checking the prompt contents (exact amounts, known spender) protects you even on a perfect-looking fake. When in doubt: reject, verify the URL, retry.
 

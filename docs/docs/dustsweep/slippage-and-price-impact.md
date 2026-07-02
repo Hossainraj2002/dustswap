@@ -25,8 +25,6 @@ So the worst case for any single token is: it does not get swapped and comes bac
 
 **DustSweep's guard:** if any route's price impact exceeds **5%**, the app stops and asks you to explicitly confirm before sweeping.
 
-![High price impact confirmation dialog.](../assets/screenshots/dustsweep-slippage-01-setting-desktop.png)
-
 When you see this warning, consider:
 
 - Sweeping a smaller amount of that token.

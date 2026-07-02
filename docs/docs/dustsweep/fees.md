@@ -25,7 +25,7 @@ On the signature-based flow ([Sign & Sweep](sign-and-sweep.md)), the **exact fee
 
 Gas is paid to the Base network, not to DustSweep. Sweeps are heavily batched, so even a 30-token sweep typically costs only a few cents on Base. The quote panel shows an estimate.
 
-Some smart wallets (e.g. Coinbase Smart Wallet) may have gas sponsored via a paymaster when available — in that case you may see no gas charge at all. Availability depends on configuration; to be confirmed before publication.
+Some smart wallets (e.g. Coinbase Smart Wallet) may have gas sponsored via a paymaster when available — in that case you may see no gas charge at all. Availability depends on configuration.
 
 ## Example
 
@@ -49,7 +49,7 @@ No output, no fee. Reverted transactions still cost gas (a network property, not
 The rate is adjustable by the contract owner but can never exceed the 3% on-chain cap. The rate shown in your quote — and signed in the Permit2 flow — is the rate applied to your sweep.
 
 **Where does the fee go?**
-To the protocol fee collector contract. Address listing: to be confirmed before publication.
+To the protocol fee collector contract.
 
 ## Related pages
 

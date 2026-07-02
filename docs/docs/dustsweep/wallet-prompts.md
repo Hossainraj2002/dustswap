@@ -22,8 +22,6 @@ What a legitimate DustSweep approval looks like:
 - **Spender:** the DustSweep router or the canonical Permit2 contract (`0x000000000022D473030F116dDEE9F6B43aC78BA3`).
 - Some tokens (e.g. USDT-style) require a reset-to-zero approval first — you may see two prompts for one token. That is normal.
 
-![A correct exact-amount approval prompt, with amount and spender annotated.](../assets/screenshots/dustsweep-prompts-01-approval-annotated-desktop.png)
-
 ### 3. Signature request (gas-free)
 
 *"Sign typed data: PermitBatchWitnessTransferFrom"*

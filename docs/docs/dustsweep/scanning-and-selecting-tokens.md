@@ -15,8 +15,6 @@ When you connect, DustSweep scans your whole wallet on Base — every token you 
 
 The scan usually takes a few seconds; results are briefly cached, so repeated scans are fast. If a scan takes longer than 45 seconds it times out and you can refresh.
 
-![Token list after a scan — swappable tokens with values, plus the hidden/suspicious group collapsed below.](../assets/screenshots/dustsweep-select-01-token-list-desktop.png)
-
 ## The buckets
 
 | Bucket | Meaning |
@@ -41,8 +39,6 @@ Rules applied automatically:
 - Maximum **50 tokens** per sweep.
 - Tokens matching your chosen **output token** are excluded (you cannot swap USDC into USDC).
 - Changing your selection, output token, or slippage refreshes the quote.
-
-![Auto-mode control with the USD threshold slider.](../assets/screenshots/dustsweep-select-02-auto-mode-desktop.png)
 
 > **User Safety Note**
 > The scan shows what you hold; it never moves anything. Be deliberate with tokens in the **suspicious** group — they are hidden because they match known spam/scam patterns. You do not need to interact with a scam token to "get rid of it"; simply leaving it untouched is safe.

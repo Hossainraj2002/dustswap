@@ -73,7 +73,7 @@ Yes — sweeps count toward DustSwap points and quests (first sweep, 10+ tokens,
 ## Security
 
 **Is the contract audited?**
-An internal AI-assisted security review has been completed (0 critical, 0 high findings); a further audit pass is planned and the published audit file will be updated. To be confirmed before publication: final audit artifacts. See [Security Model](security-model.md).
+An internal AI-assisted security review has been completed (0 critical, 0 high findings); a further audit pass is planned and the published audit file will be updated. See [Security Model](security-model.md).
 
 **Can DustSweep drain my wallet?**
 No mechanism for it exists: approvals are exact-amount and reset to zero, signatures are single-use and expiring, and only allowlisted DEXes can ever be called.

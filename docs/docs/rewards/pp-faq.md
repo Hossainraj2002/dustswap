@@ -23,7 +23,7 @@ Your Profile shows total PP, rank, full earning history, and streak status. The 
 Keep a daily streak (the boost multiplies everything, up to 4×), check in every UTC day, sweep dust regularly (highest practical daily cap at 5,000 PP), and complete quests. Referrals compound on top — see [How Referrals Work](../referrals/how-referrals-work.md).
 
 **Why did I get fewer points than expected?**
-Most common reasons, in order: a daily cap was reached (see [Earning PP](earning-pp.md)), your streak broke (boost dropped to 0%), or the action isn't boost-eligible (referral bonuses never are).
+Most common reasons, in order: a daily cap was reached (see [PP Rewards](pp-rewards.md)), your streak broke (boost dropped to 0%), or the action isn't boost-eligible (referral bonuses never are).
 
 **Do daily caps include the streak boost?**
 Caps apply to the final awarded amount. A high boost reaches the cap faster; it doesn't raise it.
@@ -37,7 +37,7 @@ Caps apply to the final awarded amount. A high boost reaches the cap faster; it 
 Points are credited after server-side verification of the transaction. Allow a moment and refresh. If it persists, the action may have hit its daily cap, or the transaction wasn't made through the app flow.
 
 **Can I submit old transactions for PP?**
-To be confirmed before publication — credit is designed for activity recorded through the app at the time of the action.
+No. Credit is designed for activity recorded through the app at the time of the action.
 
 **Can I earn on multiple wallets?**
 Each wallet is a separate account with its own PP. Abusing multi-accounting against referral or quest rules can lead to removal of wrongly earned points.

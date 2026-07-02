@@ -25,7 +25,7 @@ So an invitee on a +300% streak earning 4,000 PP from a sweep pays you 800 PP �
 | Spin prizes | ✓ |
 | Quest rewards | ✓ |
 | Their referral bonuses & commissions | ✗ — referral actions never cascade |
-| One-time drops (e.g. Footprint Drop) | To be confirmed before publication |
+| One-time drops (e.g. Footprint Drop) | ✗ — one-time drops are excluded |
 
 The exclusion of referral-type actions is deliberate: it prevents multi-level pyramid mechanics. You earn from people **you** directly invited — one level, forever.
 
@@ -64,4 +64,4 @@ Earned commission stays, except in abuse cases (fake/self-referrals), where wron
 
 - [How Referrals Work](how-referrals-work.md)
 - [Referral FAQ](referral-faq.md)
-- [Earning PP: Every Action & Cap](../rewards/earning-pp.md)
+- [PP Rewards](../rewards/pp-rewards.md)

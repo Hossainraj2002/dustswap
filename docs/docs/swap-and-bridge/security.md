@@ -12,5 +12,4 @@ title: "Swap & Bridge Security"
 ## Related pages
 
 - [Swap & Bridge](overview.md)
-- [Fees](fees.md)
 - [Security Overview](../security/security-overview.md)

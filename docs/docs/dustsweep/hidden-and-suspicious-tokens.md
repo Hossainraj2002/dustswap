@@ -24,8 +24,6 @@ Every discovered token passes through risk checks that combine several signals:
 
 Tokens that trip these checks are grouped as **suspicious** and are not selectable for sweeping.
 
-![The hidden/suspicious section expanded, showing reason labels next to tokens.](../assets/screenshots/dustsweep-suspicious-01-group-expanded-desktop.png)
-
 ## How token scams usually work
 
 Scam tokens are airdropped to thousands of wallets to make you act:

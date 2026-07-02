@@ -26,7 +26,7 @@ The on-chain trigger transaction proves you spent a real ticket and prevents spi
 ## FAQ
 
 **Do spin tickets expire?**
-To be confirmed before publication.
+Tickets stay in your balance until you spend them on a spin.
 
 **Are spin prizes affected by my streak boost?**
 No — spin prizes are paid as listed; the streak boost applies to your check-in and activity PP, not to spin prizes.

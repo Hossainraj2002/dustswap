@@ -14,8 +14,6 @@ DustSweep has been through three on-chain router versions. The current productio
 | DustSweepPermit2RouterV2 (V2) | `0x6d3C31E4a2b8e1Fe9De0d260D142183E82cbE1E3` | env (`DUST_SWEEP_ROUTER_V2_ADDRESS`) |
 | DustSwapSweepRouter (V3, current) | `0x06e6BAa61A5Da1E4469FCa5dEa3EB68324255E20` | env (`DUST_SWEEP_ROUTER_V3_ADDRESS`) |
 
-To be confirmed before publication: BaseScan verification status for each contract above.
-
 ## Version notes
 
 - **V1** (`DustSweepRouter`) — legacy, Uniswap V3 only, max 10 tokens per sweep, plain approvals.
@@ -26,4 +24,3 @@ To be confirmed before publication: BaseScan verification status for each contra
 
 - [DustSweep Security Model](../dustsweep/security-model.md)
 - [Related Contracts](related-contracts.md)
-- [DustSweep Technical Specification (Full)](../resources/dustsweep-technical-specification.md)

@@ -23,8 +23,6 @@ flowchart LR
 2. **Sign.** Your wallet shows a structured, readable message (EIP-712, titled `PermitBatchWitnessTransferFrom`) listing every token and exact amount, the sweep contract as the only spender, a single-use nonce, a **30-minute expiry**, and a "witness" that locks in the routes, output token, recipient, minimum output, and the exact fee. Signing costs no gas.
 3. **Sweep.** One transaction submits everything. On-chain, Permit2 verifies your signature and transfers the exact amounts to the sweep contract, which executes the swaps, refunds any failures, takes the fee you signed, and delivers the output.
 
-![The EIP-712 signature prompt as rendered by a common wallet, with the token list and expiry visible.](../assets/screenshots/dustsweep-permit2-01-setup-approval-desktop.png)
-
 ## Why this design is safe
 
 - **Exact amounts only.** Both the setup approvals and the signed permission cover exactly what you selected — no unlimited allowance to DustSweep ever exists.

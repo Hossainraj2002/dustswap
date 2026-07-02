@@ -42,8 +42,6 @@ A real DustSweep signature request always has **all** of these:
 - ✅ A deadline about 30 minutes ahead.
 - ✅ Triggered on **app.dustswap.wtf**, at the "Sign" step of the stepper.
 
-![Side-by-side — a legitimate signature prompt vs. red flags annotated (unlimited amount, unknown spender, no deadline).](../assets/screenshots/dustsweep-whatyousign-01-signature-desktop.png)
-
 > **User Safety Note**
 > Signature phishing — not contract failures — is how most users lose funds in DeFi. Apply the checklist above to **every** typed-data request on every site. Reject `eth_sign`/raw-hex requests outright (DustSweep never uses them), and treat "sign to verify your wallet / claim / unlock" messages anywhere as hostile by default.
 

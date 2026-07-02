@@ -45,12 +45,12 @@ Honesty requires naming these:
 
 ## Audit status
 
-The current sweep contract has completed an **internal AI-assisted security review** (smart-contract audit methodology, including static analysis and symbolic execution): **0 critical and 0 high severity findings**; the mediums and lows are trust/operational items consistent with the design (owner-allowlist trust concentration; per-token slippage floors enforced via swap instructions rather than separate on-chain checks). A further audit pass is planned, and the published audit file will be updated when it completes. **To be confirmed before publication: final audit artifact and any external audit engagement.**
+The current sweep contract has completed an **internal AI-assisted security review** (smart-contract audit methodology, including static analysis and symbolic execution): **0 critical and 0 high severity findings**; the mediums and lows are trust/operational items consistent with the design (owner-allowlist trust concentration; per-token slippage floors enforced via swap instructions rather than separate on-chain checks). A further audit pass is planned, and the published audit file will be updated when it completes.
 
 ## Known limitations, stated plainly
 
 - Per-token minimum outputs live in the swap instructions built off-chain; the contract enforces them per leg via the DEXes plus an aggregate floor at settlement — quote freshness matters, which is why quotes expire in 30 minutes.
-- The owner role is powerful (allowlist, fee within cap, pause). Owner governance hardening (multisig/timelock): to be confirmed before publication.
+- The owner role is powerful (allowlist, fee within cap, pause). Owner governance hardening (multisig/timelock) is not yet in place.
 - Fee-on-transfer tokens as *inputs* are detected and refunded rather than mis-swapped; exotic tokens as *outputs* are avoided by restricting outputs to ETH/USDC/WETH/USDT.
 
 > **User Safety Note**

@@ -32,8 +32,6 @@ Behavior reflects the current implementation; wallet capabilities change frequen
 | **Phantom, Zerion, imToken, Crypto.com, Safe** | Sign & Sweep. |
 | **WalletConnect (any wallet via QR)** | Sign & Sweep, subject to the connected wallet's capabilities. |
 
-![The in-app wallet route notice (e.g. "X can batch token approvals and the sweep in one atomic request").](../assets/screenshots/dustsweep-wallets-01-fallback-notice-desktop.png)
-
 ## Why MetaMask batching is off by default
 
 MetaMask can batch via its Smart Account upgrade, but DustSweep currently ships with MetaMask approval batching disabled as a deliberate safety choice, showing: *"MetaMask approval batching is disabled for safety. Approve tokens one by one, then DustSweep will send one sweep transaction."* MetaMask users get the same end result through Sign & Sweep.
@@ -54,7 +52,7 @@ Currently the smoothest flows are Coinbase Wallet / Base Account and OKX (one co
 Most often your account is delegated to a different wallet (see [EIP-7702 Explained](eip-7702-explained.md)), or your wallet's batching is gated off for reliability.
 
 **Do hardware wallets work?**
-Through a software wallet interface that supports EIP-712 signing (e.g. MetaMask + Ledger), yes — via Sign & Sweep. Specific hardware combinations: to be confirmed before publication.
+Through a software wallet interface that supports EIP-712 signing (e.g. MetaMask + Ledger), yes — via Sign & Sweep.
 
 ## Related pages
 

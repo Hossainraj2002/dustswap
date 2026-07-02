@@ -15,8 +15,6 @@ After the transaction is confirmed and verified on-chain, DustSweep shows:
 - The protocol fee taken (2% of output).
 - A **BaseScan link** to the transaction.
 
-![Success modal with the completion summary.](../assets/screenshots/dustsweep-after-01-refund-summary-desktop.png)
-
 Your balances rescan automatically afterwards, so the swept tokens disappear from the list and your output token balance updates.
 
 ## Refunds: when a token doesn't make it

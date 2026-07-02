@@ -21,8 +21,6 @@ One tap per day: earn 100+ PP, grow a streak that multiplies all your earnings u
 3. Press **Check in**. No transaction or fee — the check-in is free and instant.
 4. Your PP, streak counter, boost percentage, and ticket balance update immediately.
 
-![Check-in button in its "ready" state, then the post-check-in state with streak +1 and tickets +3.](../assets/screenshots/dustswap-checkin-01-flow-desktop.png)
-
 ## The rules
 
 - **One check-in per UTC day.** Days run 00:00–23:59 **UTC**, not your local time. The app shows when the current day ends.
@@ -61,7 +59,7 @@ At 00:00 UTC. The app shows a countdown — don't rely on your local midnight.
 The boost shown applies to *future* earnings; the check-in you just made used the streak as of that moment.
 
 **Do spin tickets expire?**
-No expiry exists today. To be confirmed before publication if this changes.
+No expiry exists today.
 
 **Can I check in from two devices?**
 Yes — the check-in is per wallet, not per device. The second device will simply show "checked in".
@@ -70,4 +68,4 @@ Yes — the check-in is per wallet, not per device. The second device will simpl
 
 - [Streak Boost Explained](streak-boost-explained.md)
 - [Streak Recovery](streak-recovery.md)
-- [Earning PP: Every Action & Cap](earning-pp.md)
+- [PP Rewards](pp-rewards.md)

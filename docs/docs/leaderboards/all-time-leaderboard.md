@@ -19,5 +19,4 @@ For full details — how ranking works, climbing tips, and the planned TGE-based
 ## Related pages
 
 - [Leaderboard Overview](leaderboard-overview.md)
-- [Weekly Leaderboard](weekly-leaderboard.md)
 - [Ranking System](ranking-system.md)

@@ -8,7 +8,7 @@ DustSwap is a Base-network (chain ID 8453) app that combines a token swap experi
 
 ## What you can do on DustSwap
 
-- **Swap** tokens on Base, powered in partnership with **OpenOcean** aggregated routing. See [Swaps](../swap-and-bridge/swaps.md).
+- **Swap** tokens on Base, powered in partnership with **OpenOcean** aggregated routing. See [Swap & Bridge](../swap-and-bridge/overview.md).
 - **DustSweep** — clean up small "dust" token balances into ETH, USDC, WETH, or USDT in one transaction. See [What is DustSweep?](../dustsweep/what-is-dustsweep.md).
 - **Earn Particle Points (PP)** for swapping, sweeping, checking in daily, completing quests, and referring friends. See [PP Rewards](../rewards/pp-rewards.md).
 - **Build a daily streak** that boosts your PP earnings up to 4×. See [Daily Check-In](../rewards/daily-check-in.md).

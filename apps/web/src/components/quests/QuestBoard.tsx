@@ -841,11 +841,36 @@ export function QuestBoard() {
     return activeVisibleQuests.filter((quest) => quest.category === "onchain");
   }, [activeVisibleQuests]);
 
-  const onchainSections = useMemo(() => {
-    return ONCHAIN_WINDOWS.map((section) => ({
-      ...section,
-      quests: onchainQuests.filter((quest) => quest.progressWindow === section.key),
-    })).filter((section) => section.quests.length > 0);
+  // Split onchain quests by their source app first — DustSweep (/dustsweep)
+  // quests on top, Swap (/swap) quests below — then group each source by
+  // window (once/daily/weekly). The Swap group matches "everything that is not
+  // a sweep" so no onchain quest can ever be dropped from the board, even if a
+  // new swap-style action type is added later.
+  const onchainSourceSections = useMemo(() => {
+    const sources = [
+      {
+        key: "sweep",
+        label: "DustSweep",
+        quests: onchainQuests.filter((quest) => isSweepQuest(quest)),
+      },
+      {
+        key: "swap",
+        label: "Swap",
+        quests: onchainQuests.filter((quest) => !isSweepQuest(quest)),
+      },
+    ];
+
+    return sources
+      .map((source) => ({
+        ...source,
+        windows: ONCHAIN_WINDOWS.map((section) => ({
+          ...section,
+          quests: source.quests.filter(
+            (quest) => quest.progressWindow === section.key
+          ),
+        })).filter((section) => section.quests.length > 0),
+      }))
+      .filter((source) => source.quests.length > 0);
   }, [onchainQuests]);
 
   const primaryQuests = categoryFilter === "social" ? socialQuests : onchainQuests;
@@ -1643,12 +1668,23 @@ export function QuestBoard() {
 
   function renderOnchainQuestSections() {
     return (
-      <div className="space-y-4">
-        {onchainSections.map((section) => (
-          <section key={section.key} className="space-y-2.5">
-            <SectionBadge label={section.label} count={section.quests.length} />
-            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
-              {section.quests.map((quest) => renderQuestCard(quest))}
+      <div className="space-y-6">
+        {onchainSourceSections.map((source) => (
+          <section key={source.key} className="space-y-3">
+            <CategorySectionIntro
+              title={`${source.label} quests`}
+              badgeLabel={source.label}
+              count={source.quests.length}
+            />
+            <div className="space-y-4">
+              {source.windows.map((section) => (
+                <section key={section.key} className="space-y-2.5">
+                  <SectionBadge label={section.label} count={section.quests.length} />
+                  <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+                    {section.quests.map((quest) => renderQuestCard(quest))}
+                  </div>
+                </section>
+              ))}
             </div>
           </section>
         ))}

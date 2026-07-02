@@ -25,4 +25,3 @@ title: "Glossary"
 ## Related pages
 
 - [Troubleshooting](troubleshooting.md)
-- [Current Limitations](current-limitations.md)
