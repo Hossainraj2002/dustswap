@@ -3,11 +3,14 @@
   "theme": "mint",
   "name": "Dustswap Documentation",
   "description": "Official documentation for Dustswap, DustSweep, rewards, quests, referrals, security, and ecosystem features.",
-  "favicon": "/favicon.svg",
+  "favicon": {
+    "light": "/docs/images/dustsweep-mark-blue.png",
+    "dark": "/docs/images/logo.png"
+  },
   "colors": {
-    "primary": "#6366F1",
-    "light": "#818CF8",
-    "dark": "#4F46E5"
+    "primary": "#3538fd",
+    "light": "#a5d8f5",
+    "dark": "#0b01c5"
   },
   "navigation": {
     "groups": [
@@ -171,11 +174,36 @@
     "links": [
       {
         "label": "Dustswap App",
-        "href": "https://dustswap.wtf"
+        "href": "https://app.dustswap.wtf"
       }
     ]
   },
   "footer": {
-    "socials": {}
+    "socials": {
+      "x": "https://x.com/DustswapOnBase",
+      "discord": "https://t.co/uvrRD2GS4o"
+    }
+  },
+  "icons": {
+    "library": "lucide"
+  },
+  "interaction": {
+    "drilldown": true
+  },
+  "background": {
+    "color": {
+      "light": "#f6f6f6",
+      "dark": "#272a30"
+    }
+  },
+  "logo": {
+    "light": "/docs/images/longlogo.png",
+    "dark": "/docs/images/longlogowhite.png"
+  },
+  "fonts": {
+    "family": "Inter"
+  },
+  "appearance": {
+    "default": "light"
   }
 }
