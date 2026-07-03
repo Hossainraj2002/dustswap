@@ -194,6 +194,12 @@ const MIN_WL_LIQUIDITY_USD = Number(process.env.DUST_SWEEP_WHITELIST_MIN_LIQUIDI
 const ALCHEMY_TOKEN_BALANCE_PAGE_SIZE = 100;
 const DISCOVERY_RUNTIME_CACHE_TTL_MS = boundedEnvNumber("DUST_SWEEP_RUNTIME_CACHE_TTL_MS", 30_000, 5_000, 300_000);
 const DISCOVERY_DB_CACHE_TTL_MS = boundedEnvNumber("DUST_SWEEP_DB_CACHE_TTL_MS", 90_000, 30_000, 600_000);
+const DISCOVERY_STALE_DB_CACHE_TTL_MS = boundedEnvNumber(
+  "DUST_SWEEP_STALE_DB_CACHE_TTL_MS",
+  24 * 60 * 60_000,
+  5 * 60_000,
+  7 * 24 * 60 * 60_000,
+);
 const DISCOVERY_MARKET_HINT_CONCURRENCY = boundedEnvNumber("DUST_SWEEP_MARKET_HINT_CONCURRENCY", 4, 1, 8);
 const DISCOVERY_MARKET_HINT_TIMEOUT_MS = boundedEnvNumber("DUST_SWEEP_MARKET_HINT_TIMEOUT_MS", 3_500, 1_000, 8_000);
 const DISCOVERY_METADATA_CONCURRENCY = boundedEnvNumber("DUST_SWEEP_METADATA_CONCURRENCY", 10, 1, 24);
@@ -245,6 +251,37 @@ const DISCOVERY_ALCHEMY_MAX_PAGES = optionalBoundedEnvNumber(
   250,
 );
 const DISCOVERY_ALCHEMY_TIMEOUT_MS = boundedEnvNumber("DUST_SWEEP_ALCHEMY_TIMEOUT_MS", 4_000, 1_000, 15_000);
+const DISCOVERY_ALCHEMY_MAX_ENDPOINT_ATTEMPTS = boundedEnvNumber(
+  "DUST_SWEEP_ALCHEMY_MAX_ENDPOINT_ATTEMPTS",
+  3,
+  1,
+  50,
+);
+const DISCOVERY_BLOCKSCOUT_BALANCE_FALLBACK_ENABLED =
+  process.env.DUST_SWEEP_BLOCKSCOUT_BALANCE_FALLBACK !== "false";
+const DISCOVERY_BLOCKSCOUT_BALANCE_TIMEOUT_MS = boundedEnvNumber(
+  "DUST_SWEEP_BLOCKSCOUT_BALANCE_TIMEOUT_MS",
+  20_000,
+  2_000,
+  30_000,
+);
+const DISCOVERY_BLOCKSCOUT_BALANCE_MAX_RETRIES = boundedEnvNumber(
+  "DUST_SWEEP_BLOCKSCOUT_BALANCE_MAX_RETRIES",
+  2,
+  0,
+  5,
+);
+const DISCOVERY_BLOCKSCOUT_BALANCE_RETRY_MS = boundedEnvNumber(
+  "DUST_SWEEP_BLOCKSCOUT_BALANCE_RETRY_MS",
+  1_500,
+  250,
+  10_000,
+);
+const DISCOVERY_BLOCKSCOUT_BALANCE_MAX_PAGES = optionalBoundedEnvNumber(
+  "DUST_SWEEP_BLOCKSCOUT_BALANCE_MAX_PAGES",
+  1,
+  250,
+);
 const DEX = {
   UNISWAP_V3: 0,
   UNISWAP_V4: 1,
@@ -1050,9 +1087,17 @@ const GENERIC_DEX_DATA_PARAMETERS = [
   },
 ] as const;
 
+type TokenBalanceMetadataHint = {
+  symbol?: string;
+  name?: string;
+  decimals?: number;
+  logoURI?: string;
+};
+
 type AlchemyBalance = {
   contractAddress: string;
   tokenBalance: string;
+  metadata?: TokenBalanceMetadataHint;
 };
 
 type AlchemyTokenBalancesResponse = {
@@ -1065,6 +1110,8 @@ type AlchemyTokenBalanceDiscovery = {
   pageCount: number;
   scannedBalanceCount: number;
   truncated: boolean;
+  source: "alchemy" | "blockscout";
+  providerError?: string;
 };
 
 type TokenWhitelistRow = {
@@ -1198,6 +1245,7 @@ type Erc20Metadata = {
   symbol: string;
   name: string;
   decimals: number;
+  logoURI?: string;
 };
 
 const erc20MetadataCache = new Map<string, { value: Erc20Metadata; expiresAt: number }>();
@@ -1225,6 +1273,17 @@ function getAggregatorRescueImpactBps() {
   const parsed = Number(process.env.DUST_SWEEP_AGGREGATOR_RESCUE_IMPACT_BPS || "300");
   if (!Number.isFinite(parsed) || parsed <= 0) return 0;
   return Math.min(10_000, Math.round(parsed));
+}
+
+class BalanceDiscoveryUnavailableError extends Error {
+  readonly status = 503;
+  readonly code = "BALANCE_DISCOVERY_UNAVAILABLE";
+  readonly retryAfterSeconds = 30;
+
+  constructor(message = "Balance discovery is temporarily unavailable. Please try again shortly.") {
+    super(message);
+    this.name = "BalanceDiscoveryUnavailableError";
+  }
 }
 
 function errorJson(message: string, extra?: Record<string, unknown>) {
@@ -1255,7 +1314,14 @@ function bestDexFromSource(source?: string | null) {
 }
 
 async function alchemyRpc<T>(method: string, params: unknown[]): Promise<T> {
-  return alchemyRpcRequest<T>(method, params, { timeoutMs: DISCOVERY_ALCHEMY_TIMEOUT_MS });
+  return alchemyRpcRequest<T>(method, params, {
+    timeoutMs: DISCOVERY_ALCHEMY_TIMEOUT_MS,
+    maxEndpointAttempts: DISCOVERY_ALCHEMY_MAX_ENDPOINT_ATTEMPTS,
+  });
+}
+
+function discoveryErrorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error || "Unknown discovery error");
 }
 
 function reachedDiscoveryLimit(count: number, limit: number | null) {
@@ -1323,20 +1389,218 @@ async function fetchAlchemyTokenBalances(holder: Address): Promise<AlchemyTokenB
         ? response.pageKey.trim()
         : undefined;
     if (!nextPageKey || nextPageKey === pageKey) {
-      return { tokenBalances, pageCount, scannedBalanceCount, truncated: false };
+      return { tokenBalances, pageCount, scannedBalanceCount, truncated: false, source: "alchemy" };
     }
 
     if (
       reachedDiscoveryLimit(tokenBalances.length, targetNonZeroBalances) ||
       reachedDiscoveryLimit(pageCount, DISCOVERY_ALCHEMY_MAX_PAGES)
     ) {
-      return { tokenBalances, pageCount, scannedBalanceCount, truncated: true };
+      return { tokenBalances, pageCount, scannedBalanceCount, truncated: true, source: "alchemy" };
     }
 
     pageKey = nextPageKey;
   }
 
-  return { tokenBalances, pageCount, scannedBalanceCount, truncated: Boolean(pageKey) };
+  return { tokenBalances, pageCount, scannedBalanceCount, truncated: Boolean(pageKey), source: "alchemy" };
+}
+
+function normalizeTokenMetadataHint(
+  tokenAddress: Address,
+  metadata?: TokenBalanceMetadataHint,
+): Erc20Metadata | null {
+  if (!metadata) return null;
+
+  const fallbackSymbol = `${tokenAddress.slice(0, 6)}...${tokenAddress.slice(-4)}`;
+  const decimals = Number(metadata.decimals ?? 18);
+  return {
+    symbol: sanitizeDbText(String(metadata.symbol || fallbackSymbol), fallbackSymbol, 32),
+    name: sanitizeDbText(String(metadata.name || metadata.symbol || fallbackSymbol), fallbackSymbol, 120),
+    decimals: Number.isFinite(decimals) ? decimals : 18,
+    logoURI: metadata.logoURI,
+  };
+}
+
+type BlockscoutWalletTokenItem = {
+  token?: {
+    address_hash?: string;
+    address?: string;
+    name?: string | null;
+    symbol?: string | null;
+    decimals?: string | number | null;
+    icon_url?: string | null;
+    type?: string;
+    reputation?: string | null;
+  };
+  value?: string | number | null;
+};
+
+function shouldRetryBlockscoutBalanceStatus(status: number) {
+  return status === 429 || status >= 500;
+}
+
+async function sleepForBlockscoutBalanceRetry(response: Response | null, attempt: number) {
+  const retryAfterSeconds = Number(response?.headers.get("retry-after") || 0);
+  const waitMs =
+    retryAfterSeconds > 0
+      ? retryAfterSeconds * 1000
+      : DISCOVERY_BLOCKSCOUT_BALANCE_RETRY_MS * Math.max(1, attempt + 1);
+  await sleep(Math.min(waitMs, 30_000));
+}
+
+async function fetchBlockscoutWalletTokenPage(
+  holder: Address,
+  nextPageParams?: Record<string, unknown>,
+) {
+  const url = new URL(`${getBlockscoutApiV2BaseUrl()}/addresses/${holder}/tokens`);
+  url.searchParams.set("type", "ERC-20");
+
+  for (const [key, value] of Object.entries(nextPageParams || {})) {
+    if (value !== undefined && value !== null) {
+      url.searchParams.set(key, String(value));
+    }
+  }
+
+  const apiKey = getBlockscoutApiKey();
+  if (apiKey) url.searchParams.set("apikey", apiKey);
+
+  let lastError: Error | null = null;
+
+  for (let attempt = 0; attempt <= DISCOVERY_BLOCKSCOUT_BALANCE_MAX_RETRIES; attempt += 1) {
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        headers: {
+          Accept: "application/json",
+          "User-Agent": "DustSwap/1.0 (+https://app.dustswap.wtf)",
+        },
+        signal: AbortSignal.timeout(DISCOVERY_BLOCKSCOUT_BALANCE_TIMEOUT_MS),
+      });
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+      if (attempt < DISCOVERY_BLOCKSCOUT_BALANCE_MAX_RETRIES) {
+        await sleepForBlockscoutBalanceRetry(null, attempt);
+        continue;
+      }
+      throw new Error(`Blockscout wallet token discovery failed: ${lastError.message}`);
+    }
+
+    if (response.ok) {
+      return (await response.json()) as {
+        items?: BlockscoutWalletTokenItem[];
+        next_page_params?: Record<string, unknown> | null;
+      };
+    }
+
+    if (
+      shouldRetryBlockscoutBalanceStatus(response.status) &&
+      attempt < DISCOVERY_BLOCKSCOUT_BALANCE_MAX_RETRIES
+    ) {
+      await sleepForBlockscoutBalanceRetry(response, attempt);
+      continue;
+    }
+
+    throw new Error(`Blockscout wallet token discovery failed with ${response.status}`);
+  }
+
+  throw lastError ?? new Error("Blockscout wallet token discovery failed");
+}
+
+async function fetchBlockscoutWalletTokenBalances(holder: Address): Promise<AlchemyTokenBalanceDiscovery> {
+  const tokenBalances: AlchemyBalance[] = [];
+  const seen = new Set<string>();
+  const seenCursors = new Set<string>();
+  let nextPageParams: Record<string, unknown> | null | undefined;
+  let pageCount = 0;
+  let scannedBalanceCount = 0;
+  let truncated = false;
+
+  while (!reachedDiscoveryLimit(pageCount, DISCOVERY_BLOCKSCOUT_BALANCE_MAX_PAGES)) {
+    const page = await fetchBlockscoutWalletTokenPage(holder, nextPageParams || undefined);
+    pageCount += 1;
+
+    for (const item of page.items || []) {
+      scannedBalanceCount += 1;
+      const token = item.token;
+      const rawAddress = token?.address_hash || token?.address;
+      if (!rawAddress || !isAddress(rawAddress)) continue;
+      if (String(token?.type || "").toUpperCase() !== "ERC-20") continue;
+
+      const tokenAddress = normalizeAddress(rawAddress);
+      const key = tokenAddress.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+
+      let tokenBalance: string;
+      try {
+        tokenBalance = BigInt(String(item.value ?? "0")).toString();
+      } catch {
+        continue;
+      }
+      if (BigInt(tokenBalance) <= 0n) continue;
+
+      const decimals = Number(token?.decimals ?? 18);
+      tokenBalances.push({
+        contractAddress: tokenAddress,
+        tokenBalance,
+        metadata: {
+          symbol: token?.symbol || undefined,
+          name: token?.name || undefined,
+          decimals: Number.isFinite(decimals) ? decimals : 18,
+          logoURI: token?.icon_url || undefined,
+        },
+      });
+    }
+
+    nextPageParams = page.next_page_params;
+    if (!nextPageParams) break;
+
+    const cursorKey = JSON.stringify(nextPageParams);
+    if (seenCursors.has(cursorKey)) {
+      truncated = true;
+      break;
+    }
+    seenCursors.add(cursorKey);
+  }
+
+  if (nextPageParams && reachedDiscoveryLimit(pageCount, DISCOVERY_BLOCKSCOUT_BALANCE_MAX_PAGES)) {
+    truncated = true;
+  }
+
+  return {
+    tokenBalances,
+    pageCount,
+    scannedBalanceCount,
+    truncated,
+    source: "blockscout",
+  };
+}
+
+async function fetchWalletTokenBalances(holder: Address): Promise<AlchemyTokenBalanceDiscovery> {
+  try {
+    return await fetchAlchemyTokenBalances(holder);
+  } catch (alchemyError) {
+    const alchemyMessage = discoveryErrorMessage(alchemyError);
+    console.warn("[dustsweep/tokens] Alchemy balance discovery failed", {
+      message: alchemyMessage,
+    });
+
+    if (DISCOVERY_BLOCKSCOUT_BALANCE_FALLBACK_ENABLED) {
+      try {
+        const fallback = await fetchBlockscoutWalletTokenBalances(holder);
+        return {
+          ...fallback,
+          providerError: `alchemy: ${alchemyMessage}`,
+        };
+      } catch (blockscoutError) {
+        console.warn("[dustsweep/tokens] Blockscout balance discovery failed", {
+          message: discoveryErrorMessage(blockscoutError),
+        });
+      }
+    }
+
+    throw new BalanceDiscoveryUnavailableError();
+  }
 }
 
 async function loadWhitelist() {
@@ -1750,9 +2014,9 @@ async function fetchTokenMarketHints(addresses: Address[]): Promise<Record<strin
   return hints;
 }
 
-async function getCachedTokenResult(address: Address) {
+async function getCachedTokenResult(address: Address, maxAgeMs = DISCOVERY_DB_CACHE_TTL_MS) {
   try {
-    const cutoff = new Date(Date.now() - DISCOVERY_DB_CACHE_TTL_MS).toISOString();
+    const cutoff = new Date(Date.now() - maxAgeMs).toISOString();
     const { data, error } = await postgresDb
       .from("dustsweep_token_cache")
       .select("payload,updated_at")
@@ -1768,6 +2032,25 @@ async function getCachedTokenResult(address: Address) {
   }
 
   return null;
+}
+
+function markTokenResultAsStale(payload: unknown, reason: string) {
+  if (!payload || typeof payload !== "object") return payload;
+
+  const typed = payload as Record<string, unknown>;
+  const discovery =
+    typed.discovery && typeof typed.discovery === "object"
+      ? { ...(typed.discovery as Record<string, unknown>) }
+      : {};
+
+  return {
+    ...typed,
+    discovery: {
+      ...discovery,
+      stale: true,
+      staleReason: reason,
+    },
+  };
 }
 
 async function setCachedTokenResult(address: Address, payload: unknown) {
@@ -5746,6 +6029,12 @@ async function loadDiscoveryMetadata(
     if (seen.has(key) || whitelist.has(key)) continue;
     seen.add(key);
 
+    const metadataHint = normalizeTokenMetadataHint(tokenAddress, balance.metadata);
+    if (metadataHint) {
+      metadataByAddress.set(key, metadataHint);
+      continue;
+    }
+
     const market = marketHints[key];
     if (
       !market ||
@@ -5797,20 +6086,25 @@ async function handleDustSweepTokensRequest(c: Context, rawAddress?: string) {
 
       // ── Wallet-first discovery: fetch ALL balances, not just whitelisted ──
       // Whitelist is used as metadata/liquidity HINTS, not a visibility gate.
-      const [whitelist, erc20Discovery] = await Promise.all([
-        loadWhitelist(),
-        fetchAlchemyTokenBalances(userAddress).catch((error) => {
-          console.warn("[dustsweep/tokens] Alchemy balance discovery failed", {
-            message: error instanceof Error ? error.message : String(error),
+      let whitelist: Map<string, TokenWhitelistRow>;
+      let erc20Discovery: AlchemyTokenBalanceDiscovery;
+
+      try {
+        [whitelist, erc20Discovery] = await Promise.all([
+          loadWhitelist(),
+          fetchWalletTokenBalances(userAddress),
+        ]);
+      } catch (error) {
+        const stale = await getCachedTokenResult(userAddress, DISCOVERY_STALE_DB_CACHE_TTL_MS);
+        if (stale) {
+          console.warn("[dustsweep/tokens] Serving stale token discovery cache", {
+            address: userAddress,
+            message: discoveryErrorMessage(error),
           });
-          return {
-            tokenBalances: [],
-            pageCount: 0,
-            scannedBalanceCount: 0,
-            truncated: false,
-          } satisfies AlchemyTokenBalanceDiscovery;
-        }),
-      ]);
+          return markTokenResultAsStale(stale, "live-discovery-unavailable");
+        }
+        throw error;
+      }
 
       const nonZero = erc20Discovery.tokenBalances.filter((balance) => {
         try {
@@ -5864,6 +6158,7 @@ async function handleDustSweepTokensRequest(c: Context, rawAddress?: string) {
             decimals = meta.decimals;
             symbol = meta.symbol;
             name = meta.name;
+            logoURI = meta.logoURI;
             hasMetadata = true;
           }
         }
@@ -5969,9 +6264,12 @@ async function handleDustSweepTokensRequest(c: Context, rawAddress?: string) {
           alchemyScannedBalanceCount: erc20Discovery.scannedBalanceCount,
           alchemyPageCount: erc20Discovery.pageCount,
           truncated: erc20Discovery.truncated,
+          source: erc20Discovery.source,
+          providerError: erc20Discovery.providerError,
           maxErc20Balances: DISCOVERY_MAX_ERC20_BALANCES,
           targetNonZeroBalances: DISCOVERY_TARGET_NONZERO_BALANCES,
           maxAlchemyPages: DISCOVERY_ALCHEMY_MAX_PAGES,
+          maxBlockscoutPages: DISCOVERY_BLOCKSCOUT_BALANCE_MAX_PAGES,
           marketHintCount: Object.keys(marketHints).length,
           metadataReadCount: metadataByAddress.size,
           elapsedMs: Date.now() - startedAt,
@@ -5990,6 +6288,16 @@ async function handleDustSweepTokensRequest(c: Context, rawAddress?: string) {
     return c.json(result);
   } catch (error) {
     console.error("[dustsweep/tokens] Error:", error);
+    if (error instanceof BalanceDiscoveryUnavailableError) {
+      c.header("Retry-After", String(error.retryAfterSeconds));
+      return c.json(
+        errorJson(error.message, {
+          code: error.code,
+          retryAfterSeconds: error.retryAfterSeconds,
+        }),
+        error.status,
+      );
+    }
     return c.json(errorJson((error as Error).message || "Failed to load tokens"), 500);
   }
 }

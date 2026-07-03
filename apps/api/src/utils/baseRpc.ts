@@ -53,6 +53,7 @@ export type RpcRequestOptions = {
   timeoutMs?: number;
   retryDeterministic?: false;
   providerLabel?: string;
+  maxEndpointAttempts?: number;
 };
 
 type RpcParams = ReadonlyArray<unknown> | Record<string, unknown>;
@@ -315,9 +316,16 @@ export async function alchemyRpcRequest<T>(
   params: RpcParams = [],
   opts: RpcRequestOptions = {},
 ): Promise<T> {
-  const endpoints = getOrderedAlchemyRpcEndpoints();
+  let endpoints = getOrderedAlchemyRpcEndpoints();
   if (endpoints.length === 0) {
     return baseRpcRequest<T>(method, params, opts);
+  }
+
+  if (Number.isFinite(opts.maxEndpointAttempts) && Number(opts.maxEndpointAttempts) > 0) {
+    endpoints = endpoints.slice(
+      0,
+      Math.max(1, Math.min(endpoints.length, Math.floor(Number(opts.maxEndpointAttempts)))),
+    );
   }
 
   let lastTransport: Error | null = null;

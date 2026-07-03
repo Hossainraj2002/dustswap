@@ -147,9 +147,14 @@ export type DustSweepTokensResponse = {
     alchemyScannedBalanceCount?: number;
     alchemyPageCount?: number;
     truncated?: boolean;
+    source?: "alchemy" | "blockscout";
+    providerError?: string;
+    stale?: boolean;
+    staleReason?: string;
     maxErc20Balances?: number | null;
     targetNonZeroBalances?: number | null;
     maxAlchemyPages?: number | null;
+    maxBlockscoutPages?: number | null;
     marketHintCount?: number;
     metadataReadCount?: number;
     elapsedMs?: number;

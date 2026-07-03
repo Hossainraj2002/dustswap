@@ -26,6 +26,8 @@ type TokenBalanceState = {
   refetch: () => Promise<void>;
 };
 
+const BALANCE_SCAN_TIMEOUT_MS = 180_000;
+
 function normalizeTokenPayload(payload: unknown): DustSweepTokensResponse {
   const data =
     payload &&
@@ -147,7 +149,7 @@ export function useTokenBalances(address?: Address): TokenBalanceState {
 
     const timeout = window.setTimeout(() => {
       controller.abort();
-    }, 45_000);
+    }, BALANCE_SCAN_TIMEOUT_MS);
 
     try {
       const params = new URLSearchParams({
@@ -179,7 +181,7 @@ export function useTokenBalances(address?: Address): TokenBalanceState {
       setUnavailableTokens(normalized.unavailable);
       setScan({
         phase: "ready",
-        message: "Balances ready.",
+        message: normalized.discovery?.stale ? "Showing last scanned balances." : "Balances ready.",
         discoveredCount,
         refreshedAt: normalized.refreshedAt,
         elapsedMs: normalized.discovery?.elapsedMs ?? Date.now() - startedAt,
@@ -189,8 +191,10 @@ export function useTokenBalances(address?: Address): TokenBalanceState {
       if (!isCurrentSequence()) {
         return;
       }
-      setSwappableTokens([]);
-      setUnavailableTokens([]);
+      if (isNewAddress || lastDiscoveredCountRef.current === 0) {
+        setSwappableTokens([]);
+        setUnavailableTokens([]);
+      }
       const message =
         controller.signal.aborted
           ? "Balance scan timed out. Try refreshing."
@@ -201,7 +205,7 @@ export function useTokenBalances(address?: Address): TokenBalanceState {
       setScan({
         phase: "error",
         message,
-        discoveredCount: 0,
+        discoveredCount: isNewAddress ? 0 : lastDiscoveredCountRef.current,
         walletAddress: address,
       });
     } finally {
