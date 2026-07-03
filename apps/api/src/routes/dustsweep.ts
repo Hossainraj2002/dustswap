@@ -6077,12 +6077,21 @@ async function handleDustSweepTokensRequest(c: Context, rawAddress?: string) {
 
   const userAddress = normalizeAddress(rawAddress);
   const runtimeKey = `dustsweep:tokens:${BASE_CHAIN_ID}:${userAddress.toLowerCase()}`;
+  const forceRefresh =
+    ["1", "true", "yes"].includes(String(c.req.query("refresh") || "").toLowerCase()) ||
+    ["1", "true", "yes"].includes(String(c.req.query("force") || "").toLowerCase());
 
   try {
-    const result = await runtimeCache.getOrSet(runtimeKey, DISCOVERY_RUNTIME_CACHE_TTL_MS, async () => {
+    if (forceRefresh) {
+      runtimeCache.invalidate(runtimeKey);
+    }
+
+    const loadTokenResult = async () => {
       const startedAt = Date.now();
-      const cached = await getCachedTokenResult(userAddress);
-      if (cached) return cached;
+      if (!forceRefresh) {
+        const cached = await getCachedTokenResult(userAddress);
+        if (cached) return cached;
+      }
 
       // ── Wallet-first discovery: fetch ALL balances, not just whitelisted ──
       // Whitelist is used as metadata/liquidity HINTS, not a visibility gate.
@@ -6283,7 +6292,15 @@ async function handleDustSweepTokensRequest(c: Context, rawAddress?: string) {
 
       await setCachedTokenResult(userAddress, payload);
       return payload;
-    });
+    };
+
+    const result = forceRefresh
+      ? await loadTokenResult()
+      : await runtimeCache.getOrSet(runtimeKey, DISCOVERY_RUNTIME_CACHE_TTL_MS, loadTokenResult);
+
+    if (forceRefresh) {
+      runtimeCache.set(runtimeKey, result, DISCOVERY_RUNTIME_CACHE_TTL_MS);
+    }
 
     return c.json(result);
   } catch (error) {

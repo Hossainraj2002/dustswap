@@ -5,7 +5,11 @@ import { useAccount, useConnection, usePublicClient, useWalletClient } from "wag
 import { base } from "viem/chains";
 import { useBaseChainSwitch } from "@/hooks/useBaseChainSwitch";
 import { concatHex, encodeFunctionData, erc20Abi, type Address, type Hex } from "viem";
-import { useTokenBalances, type TokenBalanceScanState } from "@/hooks/useTokenBalances";
+import {
+  useTokenBalances,
+  type TokenBalanceRefetchOptions,
+  type TokenBalanceScanState,
+} from "@/hooks/useTokenBalances";
 import { useWalletConnection } from "@/hooks/useWalletConnection";
 import { useWalletWhitelist } from "@/hooks/useWalletWhitelist";
 import { getPermit2SignatureErrorMessage, PERMIT2_ADDRESS } from "@/lib/permit2";
@@ -174,7 +178,7 @@ export type UseDustSweepReturn = {
   clearSelectedTokens: () => void;
   clearUnavailableTokens: () => void;
   removeUnavailableToken: (address: string) => void;
-  refreshTokens: () => Promise<void>;
+  refreshTokens: (options?: TokenBalanceRefetchOptions) => Promise<void>;
   refreshQuote: () => Promise<void>;
   previewSweep: () => Promise<void>;
   executeSweep: () => Promise<ExecuteSweepResult | null>;
@@ -1128,8 +1132,8 @@ export function useDustSweep(): UseDustSweepReturn {
     );
   }, [selectedTokens]);
 
-  const refreshTokens = useCallback(async () => {
-    await refetchBalances();
+  const refreshTokens = useCallback(async (options?: TokenBalanceRefetchOptions) => {
+    await refetchBalances(options);
   }, [refetchBalances]);
 
   const refreshQuote = useCallback(async () => {
@@ -2175,7 +2179,7 @@ export function useDustSweep(): UseDustSweepReturn {
           setSelectedTokens([]);
           setQuote(null);
           setExecutionNotice(null);
-          void refreshTokens();
+          void refreshTokens({ force: true });
           return { txHash: unwrapHash };
         }
 
@@ -3141,7 +3145,7 @@ export function useDustSweep(): UseDustSweepReturn {
       setSelectedTokens([]);
       setQuote(null);
       setExecutionNotice(null);
-      void refreshTokens();
+      void refreshTokens({ force: true });
 
       return { txHash: hash };
     } catch (sweepError) {

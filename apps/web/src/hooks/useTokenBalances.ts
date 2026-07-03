@@ -17,13 +17,17 @@ export type TokenBalanceScanState = {
   walletAddress?: Address;
 };
 
+export type TokenBalanceRefetchOptions = {
+  force?: boolean;
+};
+
 type TokenBalanceState = {
   swappableTokens: SwappableToken[];
   unavailableTokens: UnavailableToken[];
   isLoading: boolean;
   error: string | null;
   scan: TokenBalanceScanState;
-  refetch: () => Promise<void>;
+  refetch: (options?: TokenBalanceRefetchOptions) => Promise<void>;
 };
 
 const BALANCE_SCAN_TIMEOUT_MS = 180_000;
@@ -81,7 +85,7 @@ export function useTokenBalances(address?: Address): TokenBalanceState {
   const activeAddressRef = useRef<string | null>(null);
   const lastDiscoveredCountRef = useRef(0);
 
-  const refetch = useCallback(async () => {
+  const refetch = useCallback(async (options?: TokenBalanceRefetchOptions) => {
     if (!address) {
       requestSeqRef.current += 1;
       activeControllerRef.current?.abort();
@@ -156,6 +160,9 @@ export function useTokenBalances(address?: Address): TokenBalanceState {
         address,
         chainId: "8453",
       });
+      if (options?.force) {
+        params.set("refresh", "1");
+      }
       const response = await fetch(`/api/dustsweep/tokens?${params.toString()}`, {
         cache: "no-store",
         signal: controller.signal,
