@@ -28,6 +28,11 @@ import { baseRpcRequest, alchemyRpcRequest, RpcDeterministicError, RpcTransportE
 import { isMaintenanceBlocking, maintenanceUnavailable } from "../utils/maintenance";
 import { getBaseDustSweepV3Allowlist } from "../config/dustsweepV3Sources";
 import { getProxiedClientIp } from "../utils/clientIp";
+import {
+  governAggregatorCall,
+  reportAggregatorHttpStatus,
+  type AggregatorProviderId,
+} from "../lib/aggregatorGovernor";
 
 const dustsweepRoutes = new Hono();
 
@@ -129,6 +134,18 @@ const ALGEBRA_SWAP_ROUTER_ADDRESS = (process.env.ALGEBRA_SWAP_ROUTER_ADDRESS ||
   "0xe6c9bb24ddB4aE5c6632dbE0DE14e3E474c6Cb04") as Address;
 const ALGEBRA_QUOTER_ADDRESS = (process.env.ALGEBRA_QUOTER_ADDRESS ||
   "0x23E0583a3a000d567bB3848115065c1890D87fb5") as Address;
+// ── Hydrex (Algebra Integral fork — Base-native ve(3,3) MetaDEX) ──
+// Verified live on Base 2026-07-03: router.factory()=0x3607…A29E, router.poolDeployer()=
+// 0x1595…Ab94, router.WNativeToken()=WETH, and the QuoterV2 answers the SAME Integral QuoterV2
+// struct (selector 0xe94764c4) used by QuickSwap above — confirmed with live CHECK/WETH and
+// WETH/USDC quotes. Addresses come from Hydrex's own app config (www.hydrex.fi bundle) and the
+// router is cross-checked against the BaseScan "Hydrex: Router" label. App-side gated by
+// DUST_SWEEP_ENABLE_HYDREX (default off) and requires the SwapRouter to be allowlisted on the
+// V3 router before enabling.
+const HYDREX_SWAP_ROUTER_ADDRESS = (process.env.HYDREX_SWAP_ROUTER_ADDRESS ||
+  "0x6f4bE24d7dC93b6ffcBAb3Fd0747c5817Cea3F9e") as Address;
+const HYDREX_QUOTER_ADDRESS = (process.env.HYDREX_QUOTER_ADDRESS ||
+  "0x08b46265643a5389529D6f6616FA4a0d66F13Fdb") as Address;
 // ── AlienBase UniV2 router ── The AlienBase SmartRouter (0xB20C…9411) does NOT expose
 // getAmountsOut, so we quote/execute through AlienBase's UniV2 router instead. Verified live
 // 2026-06-15. App-side gated by DUST_SWEEP_ENABLE_ALIENBASE (default off).
@@ -238,6 +255,7 @@ const DEX = {
   AERODROME_SLIPSTREAM: 6,
   ALGEBRA: 7,
   ALIENBASE: 8,
+  HYDREX: 9,
 } as const;
 
 type DustSweepExecutionLane = "owned_v1" | "owned_v2" | "basket_aggregator";
@@ -1078,6 +1096,9 @@ type DustSweepRoute = {
   dexName: string;
   dexData: Hex;
   priceImpactBps: number;
+  // True when priceImpactBps was computed from the token's market value vs the quoted output —
+  // false means no reliable input price existed and priceImpactBps is NOT meaningful.
+  priceImpactKnown?: boolean;
   poolFee?: number;
 };
 
@@ -1186,6 +1207,24 @@ let ethUsdCache: { price: number; expiresAt: number } | null = null;
 function getFeeBps() {
   const parsed = Number(process.env.DUST_SWEEP_FEE_BPS || "200");
   return Number.isFinite(parsed) ? parsed : 200;
+}
+
+// Above this computed (market-value vs quote) impact the quote response asks the UI to require an
+// explicit user confirmation before sweeping. 0 disables the gate.
+function getMaxImpactBps() {
+  const parsed = Number(process.env.DUST_SWEEP_MAX_IMPACT_BPS || "1500");
+  if (!Number.isFinite(parsed) || parsed <= 0) return 0;
+  return Math.min(10_000, Math.round(parsed));
+}
+
+// When the best NATIVE route loses more than this much of the token's market value, aggregators
+// are also consulted ("rescue") and the global best amountOut wins. 0 disables rescue, restoring
+// the strict fallback-only behavior. Healthy tokens never trigger it, so aggregator API load stays
+// bounded to the tokens that are currently being misquoted.
+function getAggregatorRescueImpactBps() {
+  const parsed = Number(process.env.DUST_SWEEP_AGGREGATOR_RESCUE_IMPACT_BPS || "300");
+  if (!Number.isFinite(parsed) || parsed <= 0) return 0;
+  return Math.min(10_000, Math.round(parsed));
 }
 
 function errorJson(message: string, extra?: Record<string, unknown>) {
@@ -2121,6 +2160,7 @@ async function get0xQuoteCandidate(
         Accept: "application/json",
       },
     });
+    reportAggregatorHttpStatus("zerox", response.status);
     if (!response.ok) return null;
 
     const quote = (await response.json()) as {
@@ -2168,7 +2208,6 @@ async function get0xQuoteCandidate(
         },
       ]),
       amountOut,
-      priceImpactBps: 0,
     };
   } catch {
     return null;
@@ -2212,6 +2251,7 @@ async function getLifiQuoteCandidate(
     if (apiKey) headers["x-lifi-api-key"] = apiKey.split(",")[0]!.trim();
 
     const response = await fetch(url, { headers, signal: AbortSignal.timeout(8_000) });
+    reportAggregatorHttpStatus("lifi", response.status);
     if (!response.ok) return null;
 
     const quote = (await response.json()) as {
@@ -2270,7 +2310,6 @@ async function getLifiQuoteCandidate(
         },
       ]),
       amountOut,
-      priceImpactBps: 0,
     };
   } catch {
     return null;
@@ -2318,6 +2357,7 @@ async function getOpenOceanQuoteCandidate(
     if (apiKey) headers.apikey = apiKey.trim();
 
     const response = await fetch(url, { headers, signal: AbortSignal.timeout(8_000) });
+    reportAggregatorHttpStatus("openocean", response.status);
     if (!response.ok) return null;
 
     const quote = (await response.json()) as {
@@ -2367,7 +2407,6 @@ async function getOpenOceanQuoteCandidate(
         },
       ]),
       amountOut,
-      priceImpactBps: 0,
     };
   } catch {
     return null;
@@ -2421,6 +2460,7 @@ async function getOdosQuoteCandidate(
       }),
       signal: AbortSignal.timeout(8_000),
     });
+    reportAggregatorHttpStatus("odos", quoteResponse.status);
     if (!quoteResponse.ok) return null;
 
     const quote = (await quoteResponse.json()) as {
@@ -2436,6 +2476,7 @@ async function getOdosQuoteCandidate(
       body: JSON.stringify({ userAddr: taker, pathId: quote.pathId, simulate: false }),
       signal: AbortSignal.timeout(8_000),
     });
+    reportAggregatorHttpStatus("odos", assembleResponse.status);
     if (!assembleResponse.ok) return null;
 
     const assembled = (await assembleResponse.json()) as {
@@ -2476,7 +2517,126 @@ async function getOdosQuoteCandidate(
         },
       ]),
       amountOut,
-      priceImpactBps: 0,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function kyberEnabled() {
+  return (
+    process.env.DUST_SWEEP_ENABLE_AGGREGATORS !== "false" &&
+    process.env.DUST_SWEEP_ENABLE_KYBER === "true" &&
+    getAllowedAggregatorAddresses().size > 0
+  );
+}
+
+const KYBER_CLIENT_ID = process.env.DUST_SWEEP_KYBER_CLIENT_ID || "dustswap";
+
+// KyberSwap is a keyless same-chain Base aggregator (public API, no API key required) with the
+// widest long-tail pool coverage we've verified — it indexes secondary/clone CL factories that
+// native routing can't reach. TWO-step API: GET /routes returns a routeSummary + routerAddress,
+// then POST /route/build turns the summary into executable calldata. We pin sender = recipient =
+// the sweep router, reject any route needing native value, and gate the returned router
+// (target == spender == Kyber MetaAggregationRouterV2) against the aggregator allowlist exactly
+// like 0x / LI.FI / OpenOcean / Odos.
+async function getKyberQuoteCandidate(
+  tokenIn: Address,
+  tokenOut: Address,
+  amountIn: bigint,
+  slippageBps: number,
+): Promise<QuoteCandidate | null> {
+  const taker = getRouterAddressForLane(getExecutionLane());
+  if (!kyberEnabled() || !isAddress(taker)) return null;
+
+  try {
+    const headers: Record<string, string> = {
+      Accept: "application/json",
+      "x-client-id": KYBER_CLIENT_ID,
+    };
+
+    // Step 1 — route summary.
+    const url = new URL("https://aggregator-api.kyberswap.com/base/api/v1/routes");
+    url.searchParams.set("tokenIn", tokenIn);
+    url.searchParams.set("tokenOut", tokenOut);
+    url.searchParams.set("amountIn", amountIn.toString());
+    const routeResponse = await fetch(url, { headers, signal: AbortSignal.timeout(8_000) });
+    reportAggregatorHttpStatus("kyber", routeResponse.status);
+    if (!routeResponse.ok) return null;
+
+    const routeJson = (await routeResponse.json()) as {
+      code?: number;
+      data?: {
+        routeSummary?: { amountOut?: string } & Record<string, unknown>;
+        routerAddress?: string;
+      };
+    };
+    const routeSummary = routeJson.data?.routeSummary;
+    const routerAddressRaw = routeJson.data?.routerAddress;
+    if (Number(routeJson.code) !== 0 || !routeSummary || !routerAddressRaw) return null;
+    if (!isAddress(routerAddressRaw)) return null;
+
+    // Step 2 — build executable calldata from the summary.
+    const buildResponse = await fetch(
+      "https://aggregator-api.kyberswap.com/base/api/v1/route/build",
+      {
+        method: "POST",
+        headers: { ...headers, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          routeSummary,
+          sender: taker,
+          recipient: taker,
+          slippageTolerance: Math.max(1, Math.min(2_000, Math.round(slippageBps))),
+          source: KYBER_CLIENT_ID,
+        }),
+        signal: AbortSignal.timeout(8_000),
+      },
+    );
+    reportAggregatorHttpStatus("kyber", buildResponse.status);
+    if (!buildResponse.ok) return null;
+
+    const buildJson = (await buildResponse.json()) as {
+      code?: number;
+      data?: {
+        data?: string;
+        routerAddress?: string;
+        amountOut?: string;
+        transactionValue?: string;
+      };
+    };
+    if (Number(buildJson.code) !== 0 || !buildJson.data?.data) return null;
+    if (!isHex(buildJson.data.data)) return null;
+    if (buildJson.data.transactionValue && BigInt(buildJson.data.transactionValue) > 0n) return null;
+
+    // Kyber: the MetaAggregationRouterV2 pulls the input via allowance — it IS the spender.
+    const target = normalizeAddress(buildJson.data.routerAddress || routerAddressRaw);
+    const spender = target;
+    const allowedAggregatorAddresses = getAllowedAggregatorAddresses();
+    if (
+      !allowedAggregatorAddresses.has(target.toLowerCase()) ||
+      !allowedAggregatorAddresses.has(spender.toLowerCase())
+    ) {
+      return null;
+    }
+
+    const amountOut = BigInt(buildJson.data.amountOut || routeSummary.amountOut || "0");
+    if (amountOut <= 0n) return null;
+
+    return {
+      tokenIn,
+      amountIn: amountIn.toString(),
+      amountOutMin: "0",
+      estimatedOut: amountOut.toString(),
+      dex: DEX.GENERIC,
+      dexName: "KyberSwap Aggregator",
+      dexData: encodeAbiParameters(GENERIC_DEX_DATA_PARAMETERS, [
+        {
+          target,
+          spender,
+          data: buildJson.data.data as Hex,
+        },
+      ]),
+      amountOut,
     };
   } catch {
     return null;
@@ -2669,18 +2829,23 @@ function alienBaseEnabled() {
   return process.env.DUST_SWEEP_ENABLE_ALIENBASE === "true";
 }
 
+function hydrexEnabled() {
+  return process.env.DUST_SWEEP_ENABLE_HYDREX === "true";
+}
+
 async function tryQuoteAlgebraSingle(
   tokenIn: Address,
   tokenOut: Address,
   amountIn: bigint,
   deployer: Address,
+  quoter: Address = ALGEBRA_QUOTER_ADDRESS,
 ) {
   const data = encodeFunctionData({
     abi: ALGEBRA_QUOTER_ABI,
     functionName: "quoteExactInputSingle",
     args: [{ tokenIn, tokenOut, deployer, amountIn, limitSqrtPrice: 0n }],
   });
-  const result = await callContract(ALGEBRA_QUOTER_ADDRESS, data);
+  const result = await callContract(quoter, data);
   if (!result || result.length < 66) return null;
   // amountOut is the first 32-byte return word across Algebra quoter versions.
   const amountOut = BigInt(result.slice(0, 66) as Hex);
@@ -2704,6 +2869,40 @@ async function getAlgebraQuoteCandidates(
         estimatedOut: amountOut.toString(),
         dex: DEX.ALGEBRA,
         dexName: "QuickSwap (Algebra)",
+        dexData: encodeAbiParameters(ALGEBRA_DEX_DATA_PARAMETERS, [ZERO_ADDRESS]),
+        amountOut,
+      },
+    ];
+  } catch {
+    return [];
+  }
+}
+
+// Hydrex is an Algebra Integral fork, so it reuses the exact QuickSwap quoting path with its own
+// quoter/router. Single-hop only (deepest pool, default deployer) — multi-hop stays with the
+// aggregator rescue/fallback.
+async function getHydrexQuoteCandidates(
+  tokenIn: Address,
+  tokenOut: Address,
+  amountIn: bigint,
+): Promise<QuoteCandidate[]> {
+  try {
+    const amountOut = await tryQuoteAlgebraSingle(
+      tokenIn,
+      tokenOut,
+      amountIn,
+      ZERO_ADDRESS,
+      HYDREX_QUOTER_ADDRESS,
+    );
+    if (!amountOut) return [];
+    return [
+      {
+        tokenIn,
+        amountIn: amountIn.toString(),
+        amountOutMin: "0",
+        estimatedOut: amountOut.toString(),
+        dex: DEX.HYDREX,
+        dexName: "Hydrex",
         dexData: encodeAbiParameters(ALGEBRA_DEX_DATA_PARAMETERS, [ZERO_ADDRESS]),
         amountOut,
       },
@@ -2833,6 +3032,7 @@ async function getNativeQuoteCandidates(
   // New native adapters — env-gated (default off) until allowlisted on the V3 router + fork-tested.
   if (algebraEnabled()) tasks.push(getAlgebraQuoteCandidates(tokenIn, tokenOut, amountIn));
   if (alienBaseEnabled()) tasks.push(getAlienBaseQuoteCandidates(tokenIn, tokenOut, amountIn));
+  if (hydrexEnabled()) tasks.push(getHydrexQuoteCandidates(tokenIn, tokenOut, amountIn));
 
   return (await Promise.all(tasks)).flat();
 }
@@ -2845,35 +3045,166 @@ function pickBestCandidate(candidates: QuoteCandidate[]) {
   );
 }
 
+// Market reference for a single quote: what the input amount is worth at the token's market price
+// (DexScreener/CoinGecko — the same price the user sees on the token list) and how to value the
+// quoted output. Used to compute REAL price impact and to decide when aggregator rescue fires.
+type QuoteMarketContext = {
+  expectedInUSD: number;
+  outTokenPriceUSD: number;
+  outDecimals: number;
+};
+
+// Real price impact of a quote vs the token's market value, in bps (0..10000), or null when no
+// reliable reference price exists. Uses the GROSS quote output (platform fee is reported
+// separately) so the fee is never double-counted as "impact".
+function computeMarketImpactBps(amountOut: bigint, market?: QuoteMarketContext | null): number | null {
+  if (!market) return null;
+  if (!(market.expectedInUSD > 0.01) || !(market.outTokenPriceUSD > 0)) return null;
+  const grossOutUSD = Number(formatUnits(amountOut, market.outDecimals)) * market.outTokenPriceUSD;
+  if (!Number.isFinite(grossOutUSD)) return null;
+  const impact = 1 - grossOutUSD / market.expectedInUSD;
+  return Math.max(0, Math.min(10_000, Math.round(impact * 10_000)));
+}
+
+// Governed aggregator ladder — keyless/cheapest first. `enabled` is checked BEFORE the governor
+// so disabled providers cost zero pacing latency; each candidate fn re-checks it internally too.
+// Calls are paced + circuit-broken by the governor and cached by exact (in, out, amount).
+const AGGREGATOR_LADDER: Array<{
+  provider: AggregatorProviderId;
+  enabled: () => boolean;
+  fetch: (
+    tokenIn: Address,
+    tokenOut: Address,
+    amountIn: bigint,
+    slippageBps: number,
+  ) => Promise<QuoteCandidate | null>;
+}> = [
+  { provider: "kyber", enabled: kyberEnabled, fetch: getKyberQuoteCandidate },
+  { provider: "zerox", enabled: aggregatorsEnabled, fetch: get0xQuoteCandidate },
+  { provider: "lifi", enabled: lifiEnabled, fetch: getLifiQuoteCandidate },
+  { provider: "openocean", enabled: openOceanEnabled, fetch: getOpenOceanQuoteCandidate },
+  { provider: "odos", enabled: odosEnabled, fetch: getOdosQuoteCandidate },
+];
+
+// Hard time budget for the rescue phase. The per-token quote task has a 12s hard timeout that
+// would SKIP the token entirely — a rescue that overruns must degrade to the native route, never
+// cost the user their quote.
+const AGGREGATOR_RESCUE_BUDGET_MS = boundedEnvNumber(
+  "DUST_SWEEP_AGGREGATOR_RESCUE_BUDGET_MS",
+  6_000,
+  1_000,
+  20_000,
+);
+
+async function getGovernedAggregatorCandidate(
+  provider: AggregatorProviderId,
+  fetchCandidate: (
+    tokenIn: Address,
+    tokenOut: Address,
+    amountIn: bigint,
+    slippageBps: number,
+  ) => Promise<QuoteCandidate | null>,
+  tokenIn: Address,
+  tokenOut: Address,
+  amountIn: bigint,
+  slippageBps: number,
+) {
+  const cacheKey = `${tokenIn.toLowerCase()}:${tokenOut.toLowerCase()}:${amountIn.toString()}:${slippageBps}`;
+  return governAggregatorCall(provider, cacheKey, () =>
+    fetchCandidate(tokenIn, tokenOut, amountIn, slippageBps),
+  );
+}
+
 async function getBestQuote(
   tokenIn: Address,
   tokenOut: Address,
   amountIn: bigint,
   slippageBps: number,
   executionLane: DustSweepExecutionLane,
+  market?: QuoteMarketContext | null,
 ) {
-  // 1) Native DEX routers first. Aggregators are NEVER consulted when a native route exists.
+  // 1) Native DEX routers first.
   const nativeCandidates = (await getNativeQuoteCandidates(tokenIn, tokenOut, amountIn)).filter(
     (candidate) => isCandidateExecutableInLane(candidate, executionLane),
   );
   const bestNative = pickBestCandidate(nativeCandidates);
-  if (bestNative) return bestNative;
 
-  // 2) Aggregator FALLBACK — only for tokens with no native quote. First executable quote wins, in
-  //    order: 0x → LI.FI → OpenOcean → Odos. Each is env-gated and additive: OpenOcean and Odos are
-  //    only consulted when every earlier source returns nothing, so they strictly widen coverage of
-  //    sweepable dust without changing how any currently-routable token is handled.
-  const zeroX = await get0xQuoteCandidate(tokenIn, tokenOut, amountIn, slippageBps);
-  if (zeroX && isCandidateExecutableInLane(zeroX, executionLane)) return zeroX;
+  if (bestNative) {
+    // Real (market-value based) price impact for the winning native route. Replaces the old
+    // hardcoded 43 bps display fallback with an honest number whenever a reference price exists.
+    const nativeImpactBps = computeMarketImpactBps(bestNative.amountOut, market);
+    if (nativeImpactBps !== null) bestNative.priceImpactBps = nativeImpactBps;
 
-  const lifi = await getLifiQuoteCandidate(tokenIn, tokenOut, amountIn, slippageBps);
-  if (lifi && isCandidateExecutableInLane(lifi, executionLane)) return lifi;
+    // Aggregator RESCUE — only when the native route measurably underpays vs market value
+    // (e.g. the sole native pool is a micro-pool while real liquidity sits on venues only
+    // aggregators index). Healthy tokens return here without any aggregator API call.
+    const rescueBps = getAggregatorRescueImpactBps();
+    if (nativeImpactBps === null || rescueBps <= 0 || nativeImpactBps <= rescueBps) {
+      return bestNative;
+    }
+    // GENERIC aggregator routes can never execute in the legacy owned_v1 lane — skip the
+    // ladder entirely instead of burning provider rate limits on unusable quotes.
+    if (executionLane === "owned_v1") return bestNative;
 
-  const openOcean = await getOpenOceanQuoteCandidate(tokenIn, tokenOut, amountIn, slippageBps);
-  if (openOcean && isCandidateExecutableInLane(openOcean, executionLane)) return openOcean;
+    let bestRescue: QuoteCandidate | null = null;
+    const rescueDeadline = Date.now() + AGGREGATOR_RESCUE_BUDGET_MS;
+    for (const { provider, enabled, fetch: fetchCandidate } of AGGREGATOR_LADDER) {
+      if (!enabled()) continue;
+      const remainingMs = rescueDeadline - Date.now();
+      if (remainingMs <= 0) break; // over budget — the native route stands, token is never lost
+      const candidate = await Promise.race([
+        getGovernedAggregatorCandidate(
+          provider,
+          fetchCandidate,
+          tokenIn,
+          tokenOut,
+          amountIn,
+          slippageBps,
+        ),
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), remainingMs)),
+      ]);
+      if (!candidate || !isCandidateExecutableInLane(candidate, executionLane)) continue;
+      if (!bestRescue || candidate.amountOut > bestRescue.amountOut) bestRescue = candidate;
+      // Early exit once a rescue quote is back inside the acceptable-impact band — no need to
+      // burn further providers' rate limits chasing marginal improvements.
+      const rescueImpactBps = computeMarketImpactBps(candidate.amountOut, market);
+      if (rescueImpactBps !== null && rescueImpactBps <= rescueBps) break;
+    }
 
-  const odos = await getOdosQuoteCandidate(tokenIn, tokenOut, amountIn, slippageBps);
-  if (odos && isCandidateExecutableInLane(odos, executionLane)) return odos;
+    if (bestRescue && bestRescue.amountOut > bestNative.amountOut) {
+      const rescueImpactBps = computeMarketImpactBps(bestRescue.amountOut, market);
+      if (rescueImpactBps !== null) bestRescue.priceImpactBps = rescueImpactBps;
+      console.info("[dustsweep/quote] aggregator rescue improved a poor native route", {
+        tokenIn,
+        dexName: bestRescue.dexName,
+        nativeImpactBps,
+        rescueImpactBps,
+      });
+      return bestRescue;
+    }
+    return bestNative;
+  }
+
+  // 2) Aggregator FALLBACK — only for tokens with no native quote. First executable quote wins,
+  //    in ladder order (KyberSwap → 0x → LI.FI → OpenOcean → Odos). Each is env-gated and
+  //    additive: later providers are only consulted when every earlier source returns nothing, so
+  //    they strictly widen coverage of sweepable dust.
+  for (const { provider, enabled, fetch: fetchCandidate } of AGGREGATOR_LADDER) {
+    if (!enabled()) continue;
+    const candidate = await getGovernedAggregatorCandidate(
+      provider,
+      fetchCandidate,
+      tokenIn,
+      tokenOut,
+      amountIn,
+      slippageBps,
+    );
+    if (candidate && isCandidateExecutableInLane(candidate, executionLane)) {
+      const impactBps = computeMarketImpactBps(candidate.amountOut, market);
+      if (impactBps !== null) candidate.priceImpactBps = impactBps;
+      return candidate;
+    }
+  }
 
   return null;
 }
@@ -3457,7 +3788,10 @@ function buildV2Route(route: DustSweepRoute, tokenOut: Address, receiver: Addres
     };
   }
 
-  if (route.dex === DEX.ALGEBRA) {
+  if (route.dex === DEX.ALGEBRA || route.dex === DEX.HYDREX) {
+    // Hydrex is an Algebra Integral fork — identical exactInputSingle struct, own router.
+    const routerAddress =
+      route.dex === DEX.HYDREX ? HYDREX_SWAP_ROUTER_ADDRESS : ALGEBRA_SWAP_ROUTER_ADDRESS;
     const [deployer] = decodeAbiParameters(ALGEBRA_DEX_DATA_PARAMETERS, route.dexData as Hex);
     const data = encodeFunctionData({
       abi: ALGEBRA_SWAP_ROUTER_ABI,
@@ -3479,8 +3813,8 @@ function buildV2Route(route: DustSweepRoute, tokenOut: Address, receiver: Addres
     return {
       tokenIn: route.tokenIn,
       amountIn,
-      target: ALGEBRA_SWAP_ROUTER_ADDRESS,
-      spender: ALGEBRA_SWAP_ROUTER_ADDRESS,
+      target: routerAddress,
+      spender: routerAddress,
       value: 0n,
       data,
     };
@@ -5713,7 +6047,16 @@ dustsweepRoutes.post("/quote", async (c) => {
       : 18;
 
   // ── Step 1: validate and parse all inputs (no whitelist gating) ─────────────
-  type PendingToken = { tokenIn: Address; amountIn: bigint; index: number; bestDex?: string };
+  type PendingToken = {
+    tokenIn: Address;
+    amountIn: bigint;
+    index: number;
+    bestDex?: string;
+    // WETH selected with native-ETH output: a 1:1 WETH.withdraw() the user's wallet performs
+    // directly. Never routed through the sweep router (the V3 contract reverts on
+    // tokenIn == actualOutput) and never charged a protocol fee.
+    unwrapToNative?: boolean;
+  };
   const pending: PendingToken[] = [];
 
   for (let i = 0; i < body.tokenIns.length; i++) {
@@ -5732,14 +6075,8 @@ dustsweepRoutes.post("/quote", async (c) => {
       continue;
     }
 
-    if (isNativeOutput && tokenIn.toLowerCase() === WETH_ADDRESS.toLowerCase()) {
-      skippedTokens.push({
-        token: tokenIn,
-        reason: "QUOTE_FAILED",
-        message: "Direct WETH-to-ETH sweep requires router support for a no-op unwrap leg.",
-      });
-      continue;
-    }
+    const unwrapToNative =
+      isNativeOutput && tokenIn.toLowerCase() === WETH_ADDRESS.toLowerCase();
 
     let amountIn: bigint;
     try {
@@ -5756,7 +6093,7 @@ dustsweepRoutes.post("/quote", async (c) => {
     const whitelistRow = whitelist.get(tokenIn.toLowerCase());
     const bestDex = whitelistRow ? bestDexFromSource(whitelistRow.source) : "GENERIC";
 
-    pending.push({ tokenIn, amountIn, index: i, bestDex });
+    pending.push({ tokenIn, amountIn, index: i, bestDex, unwrapToNative });
   }
 
   // ── Step 2: check live balances in parallel ─────────────────────────────────
@@ -5769,6 +6106,8 @@ dustsweepRoutes.post("/quote", async (c) => {
   );
 
   const readyToQuote: PendingToken[] = [];
+  // WETH → native ETH: direct 1:1 wallet-side unwrap, kept OUT of the router routes entirely.
+  let wethUnwrapAmount = 0n;
   for (let i = 0; i < pending.length; i++) {
     const item = pending[i]!;
     const check = balanceChecks[i]!;
@@ -5778,10 +6117,51 @@ dustsweepRoutes.post("/quote", async (c) => {
         reason: "BALANCE_CHANGED",
         message: "Token balance changed. Refresh balances before sweeping this token.",
       });
+    } else if (item.unwrapToNative) {
+      wethUnwrapAmount += item.amountIn;
     } else {
       readyToQuote.push(item);
     }
   }
+
+  // ── Step 2.5: market reference prices (real price impact + aggregator rescue) ──
+  // One cached batch fetch (DexScreener → CoinGecko market hints — the same prices the token
+  // list shows the user). Advisory only: when a token has no reliable price, its impact is
+  // reported as unknown and rescue never fires; quoting itself proceeds unchanged.
+  let marketPrices: Record<string, number> = {};
+  try {
+    marketPrices = await fetchTokenPrices([
+      ...readyToQuote.map((item) => item.tokenIn),
+      tokenOut,
+    ]);
+  } catch {
+    // Quoting works without market prices — impact just stays unknown.
+  }
+  const outTokenPriceUSD =
+    marketPrices[tokenOut.toLowerCase()] ||
+    (tokenOut.toLowerCase() === USDC_ADDRESS.toLowerCase() ? 1 : 0);
+  const marketContexts = new Map<string, QuoteMarketContext>();
+  await Promise.all(
+    readyToQuote.map(async ({ tokenIn, amountIn }) => {
+      const price = marketPrices[tokenIn.toLowerCase()] || 0;
+      if (!(price > 0) || !(outTokenPriceUSD > 0)) return;
+      let decimals: number | undefined = whitelist.get(tokenIn.toLowerCase())?.decimals;
+      if (!Number.isFinite(Number(decimals))) {
+        try {
+          decimals = (await readErc20Metadata(tokenIn)).decimals;
+        } catch {
+          return;
+        }
+      }
+      const expectedInUSD = Number(formatUnits(amountIn, Number(decimals))) * price;
+      if (!Number.isFinite(expectedInUSD) || expectedInUSD <= 0) return;
+      marketContexts.set(tokenIn.toLowerCase(), {
+        expectedInUSD,
+        outTokenPriceUSD,
+        outDecimals: outputDecimals,
+      });
+    }),
+  );
 
   // ── Step 3: routeability pre-screen with cache ─────────────────────────────
   const ROUTEABILITY_OK_TTL = 60_000;
@@ -5823,6 +6203,7 @@ dustsweepRoutes.post("/quote", async (c) => {
           amountIn,
           slippageBps,
           executionLane,
+          marketContexts.get(tokenIn.toLowerCase()) ?? null,
         )
           .then(async (best) => {
             if (best) {
@@ -5888,6 +6269,10 @@ dustsweepRoutes.post("/quote", async (c) => {
 
     const best = result.best;
     const amountOutMin = (best.amountOut * BigInt(10_000 - slippageBps)) / 10_000n;
+    // priceImpactBps is now the REAL market-value impact computed in getBestQuote (the old
+    // hardcoded 43 bps fallback is gone). priceImpactKnown=false marks routes where no reliable
+    // reference price existed — the UI must show "unknown", not 0%.
+    const priceImpactKnown = typeof best.priceImpactBps === "number";
     routes.push({
       tokenIn: result.tokenIn,
       amountIn: result.amountIn.toString(),
@@ -5896,7 +6281,8 @@ dustsweepRoutes.post("/quote", async (c) => {
       dex: best.dex,
       dexName: best.dexName,
       dexData: best.dexData,
-      priceImpactBps: best.priceImpactBps ?? 43,
+      priceImpactBps: best.priceImpactBps ?? 0,
+      priceImpactKnown,
       poolFee: best.poolFee,
     });
   }
@@ -5931,7 +6317,7 @@ dustsweepRoutes.post("/quote", async (c) => {
     }
   }
 
-  if (routes.length === 0) {
+  if (routes.length === 0 && wethUnwrapAmount === 0n) {
     return c.json(
       errorJson("No swappable route found for the selected tokens", {
         code: "NO_SWAPPABLE_ROUTES",
@@ -5961,8 +6347,30 @@ dustsweepRoutes.post("/quote", async (c) => {
   const deadline = Math.floor(Date.now() / 1000) + 1800;
   const permit2Nonce = BigInt(`0x${randomBytes(16).toString("hex")}`).toString();
 
+  // Worst KNOWN route impact — routes without a reference price don't count toward the gate
+  // (they are surfaced as "unknown" instead).
+  const maxPriceImpactBps = cappedRoutes.reduce(
+    (max, route) => (route.priceImpactKnown ? Math.max(max, route.priceImpactBps) : max),
+    0,
+  );
+  const impactGateBps = getMaxImpactBps();
+  const requiresImpactConfirmation = impactGateBps > 0 && maxPriceImpactBps >= impactGateBps;
+
+  // WETH → ETH unwrap summary. Deliberately NOT folded into the router totals: the totals feed
+  // fee math and sweep-volume recording, and a 1:1 unwrap is neither swap volume nor fee-bearing.
+  // The UI adds it to the displayed receive amounts and executes it as a direct WETH.withdraw().
+  const wethUnwrap =
+    wethUnwrapAmount > 0n
+      ? {
+          amount: wethUnwrapAmount.toString(),
+          valueUSD:
+            Math.round(Number(formatUnits(wethUnwrapAmount, 18)) * outputPrice * 100) / 100,
+        }
+      : undefined;
+
   return c.json({
     routes: cappedRoutes,
+    ...(wethUnwrap ? { wethUnwrap } : {}),
     skippedTokens,
     totalEstimatedOut: totalEstimatedOut.toString(),
     minAmountOut: minAmountOut.toString(),
@@ -5971,6 +6379,8 @@ dustsweepRoutes.post("/quote", async (c) => {
     totalEstimatedOutUSD: Math.round(totalEstimatedOutUSD * 100) / 100,
     feeAmountUSD: Math.round(feeAmountUSD * 10000) / 10000,
     netEstimatedOutUSD: Math.round(netEstimatedOutUSD * 100) / 100,
+    maxPriceImpactBps,
+    requiresImpactConfirmation,
     feeBps,
     gasEstimateETH: (0.0000015 + cappedRoutes.length * 0.0000007).toFixed(8),
     gasEstimateUSD: Math.round((0.004 + cappedRoutes.length * 0.0015) * 100) / 100,

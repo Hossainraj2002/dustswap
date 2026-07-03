@@ -146,6 +146,21 @@ export const BASE_DUSTSWEEP_V3_TARGETS: DustSweepV3Target[] = [
       "WETH/USDC quote (pool 0x5a9A…be1a). App-side gated by DUST_SWEEP_ENABLE_ALGEBRA.",
   },
   {
+    id: "hydrex-algebra-swaprouter",
+    name: "Hydrex SwapRouter (Algebra Integral)",
+    target: "0x6f4bE24d7dC93b6ffcBAb3Fd0747c5817Cea3F9e",
+    spender: "0x6f4bE24d7dC93b6ffcBAb3Fd0747c5817Cea3F9e",
+    spenderModel: "self",
+    calldataStyle: "algebra_swaprouter",
+    enabled: true,
+    source:
+      "Hydrex (Algebra Integral fork) — verified live 2026-07-03: router.factory()=0x3607…A29E, " +
+      "poolDeployer()=0x1595…Ab94, WNativeToken()=WETH; QuoterV2 0x08b4…3Fdb answers the Integral " +
+      "QuoterV2 struct (0xe94764c4) with live CHECK/WETH + WETH/USDC quotes. Addresses from " +
+      "Hydrex's own app config, router cross-checked against the BaseScan 'Hydrex: Router' label. " +
+      "App-side gated by DUST_SWEEP_ENABLE_HYDREX.",
+  },
+  {
     // AlienBase's SmartRouter (0xB20C…9411) is NOT on-chain quotable (no getAmountsOut), so the
     // app routes AlienBase through its UniV2-style router instead. Verified live 2026-06-15:
     // getAmountsOut(1 WETH→USDC) succeeds and factory()=0x3E84…FdE7 resolves.

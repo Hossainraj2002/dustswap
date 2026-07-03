@@ -283,6 +283,11 @@ export default function DustSweepPage() {
   const [tokenModalMode, setTokenModalMode] = useState<"multi" | "single" | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [routeBContinued, setRouteBContinued] = useState(false);
+  // High price-impact confirm gate — must be re-acknowledged for every fresh quote.
+  const [impactAcknowledged, setImpactAcknowledged] = useState(false);
+  useEffect(() => {
+    setImpactAcknowledged(false);
+  }, [sweep.quote]);
 
   // Internal diagnostics (the wallet route-status card + batch notice) are hidden
   // from the public. Append ?dev (or ?=dev) to the URL to reveal them. Resolved
@@ -361,16 +366,29 @@ export default function DustSweepPage() {
     return token?.valueUSD ?? 0;
   }, [sweep.outputTokens, sweep.swappableTokens, sweep.tokenOut]);
 
-  const buttonState = getSweepButtonState({
+  const baseButtonState = getSweepButtonState({
     selectedCount: sweep.selectedTokens.length,
     hasTokenOut: Boolean(sweep.tokenOut),
-    quoteReady: Boolean(sweep.quote && sweep.quote.routes.length > 0),
+    // A WETH→ETH unwrap-only quote has zero router routes but is still sweepable.
+    quoteReady: Boolean(
+      sweep.quote && (sweep.quote.routes.length > 0 || sweep.quote.wethUnwrap),
+    ),
     isLoading: sweep.isLoading,
     isQuoting: sweep.isQuoting,
     hasQuoteError: Boolean(sweep.quoteError),
     sweepStep: sweep.sweepStep,
     routeKind: sweep.routeKind,
   });
+
+  // High price-impact gate: when the quote loses more than the API's confirmation threshold vs
+  // market value, the sweep button stays disabled until the user explicitly acknowledges it.
+  const needsImpactConfirmation =
+    Boolean(sweep.quote?.requiresImpactConfirmation) && !impactAcknowledged;
+  const buttonState: SweepButtonVisualState =
+    needsImpactConfirmation &&
+    (baseButtonState.state === "ready" || baseButtonState.state === "preview")
+      ? { state: "disabled", label: "Confirm high price impact" }
+      : baseButtonState;
   const walletModeNotice =
     sweep.executionNotice ||
     (isDevView && sweep.batchMode && sweep.selectedTokens.length > 0
@@ -618,8 +636,37 @@ export default function DustSweepPage() {
             />
           ) : null}
 
-          {/* High price impact warning */}
-          {sweep.quote?.routes.some((route) => route.priceImpactBps > 500) ? (
+          {/* High price impact — confirmation gate above the API threshold, plain warning below it */}
+          {sweep.quote?.requiresImpactConfirmation ? (
+            <div className="space-y-2.5 rounded-[14px] border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+              <div className="flex items-start gap-2.5">
+                <BlueAlertIcon />
+                <span>
+                  <strong>
+                    Very high price impact
+                    {typeof sweep.quote.maxPriceImpactBps === "number"
+                      ? ` (~${(sweep.quote.maxPriceImpactBps / 100).toFixed(1)}%)`
+                      : ""}
+                    .
+                  </strong>{" "}
+                  At least one selected token has very little sell-side liquidity, so this sweep
+                  returns much less than the token&apos;s market value. Consider deselecting the
+                  affected token.
+                </span>
+              </div>
+              <label className="flex cursor-pointer items-center gap-2 font-medium">
+                <input
+                  type="checkbox"
+                  checked={impactAcknowledged}
+                  onChange={(event) => setImpactAcknowledged(event.target.checked)}
+                  className="h-4 w-4 rounded border-red-300 accent-red-600"
+                />
+                I understand and want to sweep anyway
+              </label>
+            </div>
+          ) : sweep.quote?.routes.some(
+              (route) => route.priceImpactKnown !== false && route.priceImpactBps > 500,
+            ) ? (
             <div className="flex items-start gap-2.5 rounded-[14px] border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800">
               <BlueAlertIcon />
               <span>High price impact detected. Review the route carefully before sweeping.</span>
@@ -656,6 +703,7 @@ export default function DustSweepPage() {
           <SweepButton
             visualState={buttonState}
             onClick={() => {
+              if (needsImpactConfirmation) return;
               void sweep.executeSweep();
             }}
             txHash={sweep.txHash}

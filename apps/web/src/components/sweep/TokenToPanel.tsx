@@ -7,7 +7,11 @@ import { type DustSweepQuoteResponse, type Token } from "@/types/dustsweep";
 function formatOutput(quote: DustSweepQuoteResponse | null, token: Token | null) {
   if (!quote || !token) return "";
   try {
-    const formatted = formatUnits(BigInt(quote.netEstimatedOut || quote.totalEstimatedOut || "0"), token.decimals);
+    // Router totals deliberately exclude the WETH→ETH unwrap (1:1, fee-free) — add it back
+    // for the receive amount the user reads.
+    const routerOut = BigInt(quote.netEstimatedOut || quote.totalEstimatedOut || "0");
+    const unwrapOut = quote.wethUnwrap ? BigInt(quote.wethUnwrap.amount) : 0n;
+    const formatted = formatUnits(routerOut + unwrapOut, token.decimals);
     const num = Number(formatted);
     if (!Number.isFinite(num)) return formatted;
     return num.toLocaleString(undefined, {
@@ -38,7 +42,9 @@ export function TokenToPanel({
   onOpenSelect: () => void;
 }) {
   const output = formatOutput(quote, tokenOut);
-  const estimatedUsd = quote ? quote.netEstimatedOutUSD ?? quote.totalEstimatedOutUSD : null;
+  const estimatedUsd = quote
+    ? (quote.netEstimatedOutUSD ?? quote.totalEstimatedOutUSD) + (quote.wethUnwrap?.valueUSD ?? 0)
+    : null;
 
   return (
     <section className="sweep-well p-3">

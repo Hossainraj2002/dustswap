@@ -16,16 +16,20 @@ function formatUsd(value: number) {
 // per-leg slippage floor and net out the protocol fee, mirroring the (net)
 // "Receive" amount's basis so the two numbers are consistent.
 function getMinimumReceiveRaw(quote: DustSweepQuoteResponse): string | null {
-  if (quote.routes.length === 0) return null;
   try {
+    // WETH→ETH unwrap is exact 1:1 with no fee or slippage — it adds directly to the floor.
+    const unwrapMin = quote.wethUnwrap ? BigInt(quote.wethUnwrap.amount) : 0n;
+    if (quote.routes.length === 0) {
+      return unwrapMin > 0n ? unwrapMin.toString() : null;
+    }
     const grossMin = quote.routes.reduce(
       (sum, route) => sum + BigInt(route.amountOutMin),
       0n,
     );
-    if (grossMin <= 0n) return null;
+    if (grossMin <= 0n && unwrapMin <= 0n) return null;
     const feeBps = BigInt(Math.max(0, Math.round(quote.feeBps ?? 0)));
     const netMin = grossMin - (grossMin * feeBps) / 10_000n;
-    return netMin.toString();
+    return (netMin + unwrapMin).toString();
   } catch {
     return null;
   }
@@ -62,11 +66,20 @@ export function SweepDetails({
 }) {
   if (!quote) return null;
 
-  const maxImpact = quote.routes.reduce(
-    (max, route) => Math.max(max, route.priceImpactBps),
-    0,
-  );
-  const impactUsd = ((quote.netEstimatedOutUSD ?? quote.totalEstimatedOutUSD) * maxImpact) / 10_000;
+  // Worst route impact, counting only routes whose impact was actually computed against a
+  // market reference price. When none was, say "Unknown" instead of pretending it's ~0%.
+  const maxImpact =
+    quote.maxPriceImpactBps ??
+    quote.routes.reduce(
+      (max, route) => (route.priceImpactKnown === false ? max : Math.max(max, route.priceImpactBps)),
+      0,
+    );
+  const impactUnknown =
+    quote.routes.length > 0 &&
+    quote.routes.every((route) => route.priceImpactKnown === false);
+  // Dollar loss vs market value: out = expected × (1 - impact) → loss = out × impact / (1 - impact).
+  const outUsd = quote.netEstimatedOutUSD ?? quote.totalEstimatedOutUSD;
+  const impactUsd = maxImpact < 10_000 ? (outUsd * maxImpact) / (10_000 - maxImpact) : outUsd;
 
   const minimumReceive = formatTokenAmount(getMinimumReceiveRaw(quote), tokenOut);
 
@@ -75,8 +88,10 @@ export function SweepDetails({
     { label: "Estimated gas fees:", value: `~${formatUsd(quote.gasEstimateUSD)}`, warn: false },
     {
       label: "Price impact:",
-      value: `~${formatUsd(impactUsd)} (${(maxImpact / 100).toFixed(2)}%)`,
-      warn: maxImpact > 500,
+      value: impactUnknown
+        ? "Unknown"
+        : `~${formatUsd(impactUsd)} (${(maxImpact / 100).toFixed(2)}%)`,
+      warn: !impactUnknown && maxImpact > 500,
     },
     ...(minimumReceive
       ? [{ label: "Minimum receive:", value: minimumReceive, warn: false }]

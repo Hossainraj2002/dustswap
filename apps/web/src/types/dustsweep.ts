@@ -172,6 +172,9 @@ export type DustSweepRoute = {
   dexName: string;
   dexData: Hex;
   priceImpactBps: number;
+  // True when priceImpactBps was computed from the token's market value vs the quoted output;
+  // false means no reliable reference price existed and the number is NOT meaningful.
+  priceImpactKnown?: boolean;
   poolFee?: number;
 };
 
@@ -185,6 +188,10 @@ export type DustSweepQuoteRequest = {
 
 export type DustSweepQuoteResponse = {
   routes: DustSweepRoute[];
+  // WETH selected with native-ETH output: a 1:1 WETH.withdraw() the user's wallet performs as a
+  // separate plain transaction (never part of the router sweep, no protocol fee). Deliberately
+  // kept OUT of the router totals below; the UI adds it to the displayed receive amounts.
+  wethUnwrap?: { amount: string; valueUSD: number };
   skippedTokens?: {
     token: Address;
     reason: UnavailableReason;
@@ -197,6 +204,10 @@ export type DustSweepQuoteResponse = {
   totalEstimatedOutUSD: number;
   feeAmountUSD: number;
   netEstimatedOutUSD?: number;
+  // Worst known route impact (bps) and whether the API asks for an explicit user
+  // confirmation before sweeping at this impact level.
+  maxPriceImpactBps?: number;
+  requiresImpactConfirmation?: boolean;
   feeBps: number;
   gasEstimateETH: string;
   gasEstimateUSD: number;
@@ -349,6 +360,7 @@ export type SweepButtonVisualState =
   | { state: "disabled"; label: "Select tokens" }
   | { state: "disabled"; label: "Select output token" }
   | { state: "disabled"; label: "No route available" }
+  | { state: "disabled"; label: "Confirm high price impact" }
   | { state: "preview"; label: "Preview Sweep" }
   | { state: "ready"; label: "Sweep" }
   | { state: "loading"; label: "Finding balances..." }

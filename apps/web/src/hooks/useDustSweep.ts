@@ -1180,7 +1180,13 @@ export function useDustSweep(): UseDustSweepReturn {
       const meta = lastQuoteMetaRef.current;
       const { routes: carriedRoutes, missing } = collectCarried(requestTokens, skips);
       if (meta && carriedRoutes.length > 0) {
-        setQuote(recomputeQuoteForRoutes(meta, carriedRoutes, meta));
+        // A carried quote is rebuilt from an OLDER quote — its wethUnwrap may not match the
+        // current selection. Keep it only when WETH is actually still selected.
+        const rebuilt = recomputeQuoteForRoutes(meta, carriedRoutes, meta);
+        const wethStillSelected = requestTokens.some(
+          (token) => token.address.toLowerCase() === WETH_ADDRESS.toLowerCase(),
+        );
+        setQuote(wethStillSelected ? rebuilt : { ...rebuilt, wethUnwrap: undefined });
         if (missing.length > 0) {
           const missingUnavailable = missing.map((token) => ({
             ...token,
@@ -1264,6 +1270,9 @@ export function useDustSweep(): UseDustSweepReturn {
       let carriedCount = 0;
       for (const token of requestTokens) {
         const key = token.address.toLowerCase();
+        // WETH with native-ETH output is served by quote.wethUnwrap (1:1 wallet-side
+        // unwrap), not by a router route — never treat it as missing/unroutable.
+        if (serverQuote.wethUnwrap && key === WETH_ADDRESS.toLowerCase()) continue;
         const fresh = serverByToken.get(key);
         if (fresh) {
           mergedRoutes.push(fresh);
@@ -2050,12 +2059,9 @@ export function useDustSweep(): UseDustSweepReturn {
       return null;
     }
 
-    if (quote.routes.some((route) => route.priceImpactBps > 500)) {
-      const confirmed = window.confirm("High price impact. Proceed with this sweep?");
-      if (!confirmed) {
-        return null;
-      }
-    }
+    // High price impact is gated by the explicit confirmation checkbox in the sweep page
+    // (quote.requiresImpactConfirmation) — impact values are real now, so the old blind
+    // window.confirm here would double-prompt users who already acknowledged the banner.
 
     if (sweepInFlightRef.current) {
       setExecutionNotice("A sweep request is already waiting in your wallet.");
@@ -2095,6 +2101,88 @@ export function useDustSweep(): UseDustSweepReturn {
 
     try {
       await switchToBase();
+
+      // WETH → native ETH: a direct 1:1 WETH.withdraw() from the user's own wallet, sent as a
+      // plain standalone transaction BEFORE the sweep flow. It is deliberately NEVER added to
+      // the wallet_sendCalls batch (per-wallet batch heuristics — especially OKX's security
+      // engine — must stay byte-identical) and never routed through the sweep router (the V3
+      // contract reverts on tokenIn == actualOutput). No protocol fee applies.
+      let unwrapHash: Hex | null = null;
+      // Guard against a stale carried quote: only unwrap when WETH is actually still selected.
+      const wethStillSelected = selectedTokens.some((item) =>
+        isSameAddress(item.address, WETH_ADDRESS),
+      );
+      if (quote.wethUnwrap && wethStillSelected && BigInt(quote.wethUnwrap.amount) > 0n) {
+        currentStep = "pending";
+        setSweepStep(currentStep);
+        unwrapHash = (await walletClient.sendTransaction({
+          account: address,
+          chain: base,
+          to: WETH_ADDRESS,
+          data: encodeFunctionData({
+            abi: [
+              {
+                type: "function",
+                name: "withdraw",
+                stateMutability: "nonpayable",
+                inputs: [{ name: "amount", type: "uint256" }],
+                outputs: [],
+              },
+            ] as const,
+            functionName: "withdraw",
+            args: [BigInt(quote.wethUnwrap.amount)],
+          }),
+          value: 0n,
+        } as never)) as Hex;
+
+        // Unwrap-only selection: no router sweep to send — settle and finish here.
+        if (quote.routes.length === 0) {
+          setTxHash(unwrapHash);
+          await waitForSuccessfulTransaction(unwrapHash);
+          const wethToken = selectedTokens.find((item) =>
+            isSameAddress(item.address, WETH_ADDRESS),
+          );
+          setCompletionSummary({
+            txHash: unwrapHash,
+            tokenOut,
+            tokenOutAmount: quote.wethUnwrap.amount,
+            tokenOutValueUSD: quote.wethUnwrap.valueUSD,
+            inputValueUSD: wethToken?.valueUSD || quote.wethUnwrap.valueUSD,
+            feeAmountUSD: 0,
+            gasEstimateUSD: quote.gasEstimateUSD,
+            routeCount: 0,
+            walletName: walletProfile.walletName,
+            routeKind,
+            completedAt: Date.now(),
+            inputs: wethToken
+              ? [
+                  {
+                    address: wethToken.address,
+                    symbol: wethToken.symbol,
+                    name: wethToken.name,
+                    decimals: wethToken.decimals,
+                    logoURI: wethToken.logoURI,
+                    balanceFormatted: wethToken.balanceFormatted,
+                    valueUSD: wethToken.valueUSD,
+                    estimatedOut: quote.wethUnwrap.amount,
+                    dexName: "Unwrap",
+                  },
+                ]
+              : [],
+          });
+          setSweepStep("success");
+          logSweepTelemetry("success");
+          setSelectedTokens([]);
+          setQuote(null);
+          setExecutionNotice(null);
+          void refreshTokens();
+          return { txHash: unwrapHash };
+        }
+
+        // Mixed basket: unwrap submitted; hand off to the untouched sweep flow.
+        currentStep = "approving";
+        setSweepStep(currentStep);
+      }
 
       const lane = quote.executionLane || DUST_SWEEP_EXECUTION_LANE;
       let approvalSpender = isOwnedModernLane(lane) ? DUST_SWEEP_ROUTER_V2_ADDRESS : DUST_SWEEP_ROUTER_ADDRESS;
@@ -2986,15 +3074,44 @@ export function useDustSweep(): UseDustSweepReturn {
         });
       }
 
+      // Mixed basket with a WETH→ETH unwrap: the unwrap tx already went out before the sweep —
+      // include it in the success summary the user sees (record-sweep below stays router-only,
+      // a 1:1 unwrap is not swap volume).
+      if (unwrapHash && quote.wethUnwrap) {
+        const wethToken = selectedTokens.find((item) =>
+          isSameAddress(item.address, WETH_ADDRESS),
+        );
+        if (wethToken) {
+          completedInputs.push({
+            address: wethToken.address,
+            symbol: wethToken.symbol,
+            name: wethToken.name,
+            decimals: wethToken.decimals,
+            logoURI: wethToken.logoURI,
+            balanceFormatted: wethToken.balanceFormatted,
+            valueUSD: wethToken.valueUSD,
+            estimatedOut: quote.wethUnwrap.amount,
+            dexName: "Unwrap",
+          });
+        }
+      }
+
+      const unwrapOutAmount =
+        unwrapHash && quote.wethUnwrap ? BigInt(quote.wethUnwrap.amount) : 0n;
+      const unwrapOutUSD = unwrapHash && quote.wethUnwrap ? quote.wethUnwrap.valueUSD : 0;
+
       setCompletionSummary({
         txHash: hash,
         tokenOut,
-        tokenOutAmount: quote.netEstimatedOut || quote.totalEstimatedOut,
-        tokenOutValueUSD: quote.netEstimatedOutUSD ?? quote.totalEstimatedOutUSD,
+        tokenOutAmount: (
+          BigInt(quote.netEstimatedOut || quote.totalEstimatedOut || "0") + unwrapOutAmount
+        ).toString(),
+        tokenOutValueUSD:
+          (quote.netEstimatedOutUSD ?? quote.totalEstimatedOutUSD) + unwrapOutUSD,
         inputValueUSD: completedInputs.reduce((sum, token) => sum + (token.valueUSD || 0), 0),
         feeAmountUSD: quote.feeAmountUSD,
         gasEstimateUSD: quote.gasEstimateUSD,
-        routeCount: effectiveRoutes.length,
+        routeCount: effectiveRoutes.length + (unwrapHash ? 1 : 0),
         walletName: walletProfile.walletName,
         routeKind,
         completedAt: Date.now(),

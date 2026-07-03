@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { formatUnits } from "viem";
+import { WETH_ADDRESS } from "@/lib/tokens";
 import {
   type DustSweepQuoteResponse,
   type DustSweepRoute,
@@ -15,10 +16,21 @@ function cx(...parts: Array<string | false | null | undefined>) {
   return parts.filter(Boolean).join(" ");
 }
 
+// The router totals deliberately EXCLUDE the WETH→ETH unwrap (1:1, fee-free, wallet-side) —
+// add it back for everything the user reads as "what I receive".
+function getUnwrapAmountRaw(quote: DustSweepQuoteResponse): bigint {
+  try {
+    return quote.wethUnwrap ? BigInt(quote.wethUnwrap.amount) : 0n;
+  } catch {
+    return 0n;
+  }
+}
+
 function formatOutput(quote: DustSweepQuoteResponse, tokenOut: Token | null) {
   if (!tokenOut) return "0";
   try {
-    const value = formatUnits(BigInt(quote.netEstimatedOut || quote.totalEstimatedOut), tokenOut.decimals);
+    const routerOut = BigInt(quote.netEstimatedOut || quote.totalEstimatedOut || "0");
+    const value = formatUnits(routerOut + getUnwrapAmountRaw(quote), tokenOut.decimals);
     const num = Number(value);
     return Number.isFinite(num)
       ? num.toLocaleString(undefined, { maximumFractionDigits: 6 })
@@ -52,6 +64,8 @@ function getDexIcon(dexName: string) {
   if (name.includes("LI.FI") || name.includes("LIFI")) return "/dex/lifi.png";
   if (name.includes("OPENOCEAN")) return "/dex/openocean.png";
   if (name.includes("ODOS")) return "/dex/odos.png";
+  if (name.includes("KYBER")) return "/dex/kyberswap.png";
+  if (name.includes("HYDREX")) return "/dex/hydrex.png";
   if (name.startsWith("0X")) return "/dex/zerox.png";
   return GENERIC_DEX_ICON;
 }
@@ -74,6 +88,8 @@ function formatDexName(dexName: string) {
   if (name.includes("LI.FI") || name.includes("LIFI")) return "LI.FI";
   if (name.includes("OPENOCEAN")) return "OpenOcean";
   if (name.includes("ODOS")) return "Odos";
+  if (name.includes("KYBER")) return "KyberSwap";
+  if (name.includes("HYDREX")) return "Hydrex";
   if (name.startsWith("0X")) return "0x";
   return dexName.replace(/_/g, " ");
 }
@@ -191,6 +207,28 @@ export function RouteDisplay({
       token: selectedTokens.find((item) => item.address.toLowerCase() === route.tokenIn.toLowerCase()),
     }))
     .filter((item): item is { route: DustSweepRoute; token: SelectedToken } => Boolean(item.token));
+
+  // WETH → ETH unwrap: shown as its own pill (1:1, fee-free, executed as a direct
+  // WETH.withdraw from the user's wallet — not a router route).
+  const unwrapToken = quote.wethUnwrap
+    ? selectedTokens.find((item) => item.address.toLowerCase() === WETH_ADDRESS.toLowerCase())
+    : undefined;
+  if (unwrapToken && quote.wethUnwrap) {
+    routeItems.push({
+      token: unwrapToken,
+      route: {
+        tokenIn: unwrapToken.address,
+        amountIn: quote.wethUnwrap.amount,
+        amountOutMin: quote.wethUnwrap.amount,
+        estimatedOut: quote.wethUnwrap.amount,
+        dex: -1,
+        dexName: "Unwrap",
+        dexData: "0x",
+        priceImpactBps: 0,
+        priceImpactKnown: true,
+      },
+    });
+  }
   const visibleItems = expanded ? routeItems : routeItems.slice(0, MAX_VISIBLE_ROUTES);
   const remainder = routeItems.length - visibleItems.length;
 
@@ -202,6 +240,8 @@ export function RouteDisplay({
     const brand = formatDexName(route.dexName);
     dexCounts.set(brand, (dexCounts.get(brand) || 0) + 1);
   }
+  if (unwrapToken) dexCounts.set("Unwrap", 1);
+  const routedCount = quote.routes.length + (unwrapToken ? 1 : 0);
   const rankedDexes = [...dexCounts.entries()].sort((a, b) => b[1] - a[1]);
   const providerCount = rankedDexes.length || 1;
   const namedDexes = rankedDexes.slice(0, 2);
@@ -222,7 +262,7 @@ export function RouteDisplay({
             <p className="text-sm font-bold text-slate-900 dark:text-white">Smart routing</p>
             <div className="mt-0.5 flex flex-wrap items-center gap-x-2.5 gap-y-0.5 text-[11px] font-medium text-slate-500 dark:text-slate-400">
               <span>
-                {quote.routes.length}/{selectedTokens.length} tokens
+                {routedCount}/{selectedTokens.length} tokens
               </span>
               <span className="text-slate-300 dark:text-slate-600">|</span>
               <span>
@@ -246,7 +286,11 @@ export function RouteDisplay({
             {formatOutput(quote, tokenOut)} {tokenOut.symbol}
           </p>
           <p className="text-[11px] font-medium text-slate-500 dark:text-slate-400">
-            ~${(quote.netEstimatedOutUSD ?? quote.totalEstimatedOutUSD).toFixed(2)}
+            ~$
+            {(
+              (quote.netEstimatedOutUSD ?? quote.totalEstimatedOutUSD) +
+              (quote.wethUnwrap?.valueUSD ?? 0)
+            ).toFixed(2)}
           </p>
         </div>
       </div>
