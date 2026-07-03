@@ -202,6 +202,14 @@ const DISCOVERY_STALE_DB_CACHE_TTL_MS = boundedEnvNumber(
 );
 const DISCOVERY_MARKET_HINT_CONCURRENCY = boundedEnvNumber("DUST_SWEEP_MARKET_HINT_CONCURRENCY", 4, 1, 8);
 const DISCOVERY_MARKET_HINT_TIMEOUT_MS = boundedEnvNumber("DUST_SWEEP_MARKET_HINT_TIMEOUT_MS", 3_500, 1_000, 8_000);
+const DISCOVERY_BLOCKSCOUT_FAST_PRICING =
+  process.env.DUST_SWEEP_BLOCKSCOUT_FAST_PRICING !== "false";
+const DISCOVERY_BLOCKSCOUT_PRICELESS_MARKET_HINT_LIMIT = boundedEnvNumber(
+  "DUST_SWEEP_BLOCKSCOUT_PRICELESS_MARKET_HINT_LIMIT",
+  180,
+  0,
+  1_000,
+);
 const DISCOVERY_METADATA_CONCURRENCY = boundedEnvNumber("DUST_SWEEP_METADATA_CONCURRENCY", 10, 1, 24);
 // Per-token quote parallelism + hard deadline. Quoting a large dust basket used
 // to run at concurrency 4 with no per-token cap, so a handful of dead tokens
@@ -1087,11 +1095,19 @@ const GENERIC_DEX_DATA_PARAMETERS = [
   },
 ] as const;
 
+type PriceConfidence = "HIGH" | "MEDIUM" | "LOW" | "NONE";
+type TokenMarketHintSource = "canonical" | "coingecko" | "dexscreener" | "blockscout" | "none";
+
 type TokenBalanceMetadataHint = {
   symbol?: string;
   name?: string;
   decimals?: number;
   logoURI?: string;
+  priceUSD?: number;
+  liquidityUSD?: number;
+  bestDex?: string;
+  priceSource?: TokenMarketHintSource;
+  priceConfidence?: PriceConfidence;
 };
 
 type AlchemyBalance = {
@@ -1200,13 +1216,11 @@ type DiscoveryUnavailableReason =
   | "NATIVE_WRAP_REQUIRED"
   | "OUTPUT_ASSET";
 
-type PriceConfidence = "HIGH" | "MEDIUM" | "LOW" | "NONE";
-
 type TokenMarketHint = {
   priceUSD: number;
   liquidityUSD: number;
   bestDex: string;
-  source: "canonical" | "coingecko" | "dexscreener" | "none";
+  source: TokenMarketHintSource;
   confidence: PriceConfidence;
   logoURI?: string;
 };
@@ -1431,8 +1445,18 @@ type BlockscoutWalletTokenItem = {
     icon_url?: string | null;
     type?: string;
     reputation?: string | null;
+    exchange_rate?: string | number | null;
   };
   value?: string | number | null;
+};
+
+type BlockscoutTokenListItem = {
+  balance?: string | number | null;
+  contractAddress?: string;
+  decimals?: string | number | null;
+  name?: string | null;
+  symbol?: string | null;
+  type?: string | null;
 };
 
 function shouldRetryBlockscoutBalanceStatus(status: number) {
@@ -1506,6 +1530,185 @@ async function fetchBlockscoutWalletTokenPage(
   throw lastError ?? new Error("Blockscout wallet token discovery failed");
 }
 
+async function fetchBlockscoutWalletTokenSnapshot(holder: Address) {
+  const url = new URL(`${getBlockscoutApiV2BaseUrl()}/addresses/${holder}/token-balances`);
+  const apiKey = getBlockscoutApiKey();
+  if (apiKey) url.searchParams.set("apikey", apiKey);
+
+  let lastError: Error | null = null;
+
+  for (let attempt = 0; attempt <= DISCOVERY_BLOCKSCOUT_BALANCE_MAX_RETRIES; attempt += 1) {
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        headers: {
+          Accept: "application/json",
+          "User-Agent": "DustSwap/1.0 (+https://app.dustswap.wtf)",
+        },
+        signal: AbortSignal.timeout(DISCOVERY_BLOCKSCOUT_BALANCE_TIMEOUT_MS),
+      });
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+      if (attempt < DISCOVERY_BLOCKSCOUT_BALANCE_MAX_RETRIES) {
+        await sleepForBlockscoutBalanceRetry(null, attempt);
+        continue;
+      }
+      throw new Error(`Blockscout wallet token snapshot failed: ${lastError.message}`);
+    }
+
+    if (response.ok) {
+      const payload = (await response.json()) as BlockscoutWalletTokenItem[] | {
+        items?: BlockscoutWalletTokenItem[];
+      };
+      return Array.isArray(payload) ? payload : payload.items || [];
+    }
+
+    if (
+      shouldRetryBlockscoutBalanceStatus(response.status) &&
+      attempt < DISCOVERY_BLOCKSCOUT_BALANCE_MAX_RETRIES
+    ) {
+      await sleepForBlockscoutBalanceRetry(response, attempt);
+      continue;
+    }
+
+    throw new Error(`Blockscout wallet token snapshot failed with ${response.status}`);
+  }
+
+  throw lastError ?? new Error("Blockscout wallet token snapshot failed");
+}
+
+async function fetchBlockscoutTokenListSnapshot(holder: Address) {
+  const url = new URL(getBlockscoutApiV2BaseUrl().replace(/\/api\/v2\/?$/, "/api"));
+  url.searchParams.set("module", "account");
+  url.searchParams.set("action", "tokenlist");
+  url.searchParams.set("address", holder);
+  const apiKey = getBlockscoutApiKey();
+  if (apiKey) url.searchParams.set("apikey", apiKey);
+
+  let lastError: Error | null = null;
+
+  for (let attempt = 0; attempt <= DISCOVERY_BLOCKSCOUT_BALANCE_MAX_RETRIES; attempt += 1) {
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        headers: {
+          Accept: "application/json",
+          "User-Agent": "DustSwap/1.0 (+https://app.dustswap.wtf)",
+        },
+        signal: AbortSignal.timeout(DISCOVERY_BLOCKSCOUT_BALANCE_TIMEOUT_MS),
+      });
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+      if (attempt < DISCOVERY_BLOCKSCOUT_BALANCE_MAX_RETRIES) {
+        await sleepForBlockscoutBalanceRetry(null, attempt);
+        continue;
+      }
+      throw new Error(`Blockscout token list snapshot failed: ${lastError.message}`);
+    }
+
+    if (response.ok) {
+      const payload = (await response.json()) as {
+        message?: string;
+        result?: BlockscoutTokenListItem[] | string;
+        status?: string;
+      };
+      if (Array.isArray(payload.result)) return payload.result;
+      if (payload.status === "0" && typeof payload.result === "string") {
+        throw new Error(payload.result);
+      }
+      return [];
+    }
+
+    if (
+      shouldRetryBlockscoutBalanceStatus(response.status) &&
+      attempt < DISCOVERY_BLOCKSCOUT_BALANCE_MAX_RETRIES
+    ) {
+      await sleepForBlockscoutBalanceRetry(response, attempt);
+      continue;
+    }
+
+    throw new Error(`Blockscout token list snapshot failed with ${response.status}`);
+  }
+
+  throw lastError ?? new Error("Blockscout token list snapshot failed");
+}
+
+function addBlockscoutWalletTokenItem(
+  item: BlockscoutWalletTokenItem,
+  tokenBalances: AlchemyBalance[],
+  seen: Set<string>,
+) {
+  const token = item.token;
+  const rawAddress = token?.address_hash || token?.address;
+  if (!rawAddress || !isAddress(rawAddress)) return;
+  if (String(token?.type || "").toUpperCase() !== "ERC-20") return;
+
+  const tokenAddress = normalizeAddress(rawAddress);
+  const key = tokenAddress.toLowerCase();
+  if (seen.has(key)) return;
+  seen.add(key);
+
+  let tokenBalance: string;
+  try {
+    tokenBalance = BigInt(String(item.value ?? "0")).toString();
+  } catch {
+    return;
+  }
+  if (BigInt(tokenBalance) <= 0n) return;
+
+  const decimals = Number(token?.decimals ?? 18);
+  const priceUSD = Number(token?.exchange_rate ?? 0);
+  tokenBalances.push({
+    contractAddress: tokenAddress,
+    tokenBalance,
+    metadata: {
+      symbol: token?.symbol || undefined,
+      name: token?.name || undefined,
+      decimals: Number.isFinite(decimals) ? decimals : 18,
+      logoURI: token?.icon_url || undefined,
+      priceUSD: Number.isFinite(priceUSD) && priceUSD > 0 ? priceUSD : undefined,
+      liquidityUSD: 0,
+      bestDex: "GENERIC",
+      priceSource: "blockscout",
+      priceConfidence: "MEDIUM",
+    },
+  });
+}
+
+function addBlockscoutTokenListItem(
+  item: BlockscoutTokenListItem,
+  tokenBalances: AlchemyBalance[],
+  seen: Set<string>,
+) {
+  const rawAddress = item.contractAddress;
+  if (!rawAddress || !isAddress(rawAddress)) return;
+  if (String(item.type || "").toUpperCase() !== "ERC-20") return;
+
+  const tokenAddress = normalizeAddress(rawAddress);
+  const key = tokenAddress.toLowerCase();
+  if (seen.has(key)) return;
+  seen.add(key);
+
+  let tokenBalance: string;
+  try {
+    tokenBalance = BigInt(String(item.balance ?? "0")).toString();
+  } catch {
+    return;
+  }
+  if (BigInt(tokenBalance) <= 0n) return;
+
+  const decimals = Number(item.decimals ?? 18);
+  tokenBalances.push({
+    contractAddress: tokenAddress,
+    tokenBalance,
+    metadata: {
+      symbol: item.symbol || undefined,
+      name: item.name || undefined,
+      decimals: Number.isFinite(decimals) ? decimals : 18,
+    },
+  });
+}
+
 async function fetchBlockscoutWalletTokenBalances(holder: Address): Promise<AlchemyTokenBalanceDiscovery> {
   const tokenBalances: AlchemyBalance[] = [];
   const seen = new Set<string>();
@@ -1515,41 +1718,47 @@ async function fetchBlockscoutWalletTokenBalances(holder: Address): Promise<Alch
   let scannedBalanceCount = 0;
   let truncated = false;
 
+  try {
+    const snapshot = await Promise.any([
+      fetchBlockscoutWalletTokenSnapshot(holder).then((items) => ({
+        kind: "token-balances" as const,
+        items,
+      })),
+      fetchBlockscoutTokenListSnapshot(holder).then((items) => ({
+        kind: "tokenlist" as const,
+        items,
+      })),
+    ]);
+
+    for (const item of snapshot.items) {
+      scannedBalanceCount += 1;
+      if (snapshot.kind === "token-balances") {
+        addBlockscoutWalletTokenItem(item as BlockscoutWalletTokenItem, tokenBalances, seen);
+      } else {
+        addBlockscoutTokenListItem(item as BlockscoutTokenListItem, tokenBalances, seen);
+      }
+    }
+
+    return {
+      tokenBalances,
+      pageCount: snapshot.items.length > 0 ? 1 : 0,
+      scannedBalanceCount,
+      truncated: false,
+      source: "blockscout",
+    };
+  } catch (snapshotError) {
+    console.warn("[dustsweep/tokens] Blockscout token snapshot failed; falling back to paginated tokens", {
+      message: discoveryErrorMessage(snapshotError),
+    });
+  }
+
   while (!reachedDiscoveryLimit(pageCount, DISCOVERY_BLOCKSCOUT_BALANCE_MAX_PAGES)) {
     const page = await fetchBlockscoutWalletTokenPage(holder, nextPageParams || undefined);
     pageCount += 1;
 
     for (const item of page.items || []) {
       scannedBalanceCount += 1;
-      const token = item.token;
-      const rawAddress = token?.address_hash || token?.address;
-      if (!rawAddress || !isAddress(rawAddress)) continue;
-      if (String(token?.type || "").toUpperCase() !== "ERC-20") continue;
-
-      const tokenAddress = normalizeAddress(rawAddress);
-      const key = tokenAddress.toLowerCase();
-      if (seen.has(key)) continue;
-      seen.add(key);
-
-      let tokenBalance: string;
-      try {
-        tokenBalance = BigInt(String(item.value ?? "0")).toString();
-      } catch {
-        continue;
-      }
-      if (BigInt(tokenBalance) <= 0n) continue;
-
-      const decimals = Number(token?.decimals ?? 18);
-      tokenBalances.push({
-        contractAddress: tokenAddress,
-        tokenBalance,
-        metadata: {
-          symbol: token?.symbol || undefined,
-          name: token?.name || undefined,
-          decimals: Number.isFinite(decimals) ? decimals : 18,
-          logoURI: token?.icon_url || undefined,
-        },
-      });
+      addBlockscoutWalletTokenItem(item, tokenBalances, seen);
     }
 
     nextPageParams = page.next_page_params;
@@ -1817,6 +2026,28 @@ function setBestMarketHint(
   }
 }
 
+function getBalanceProviderMarketHints(balances: AlchemyBalance[]) {
+  const hints: Record<string, TokenMarketHint> = {};
+
+  for (const balance of balances) {
+    if (!isAddress(balance.contractAddress)) continue;
+    const metadata = balance.metadata;
+    const priceUSD = Number(metadata?.priceUSD || 0);
+    if (!Number.isFinite(priceUSD) || priceUSD <= 0) continue;
+
+    setBestMarketHint(hints, balance.contractAddress, {
+      priceUSD,
+      liquidityUSD: Math.max(0, Number(metadata?.liquidityUSD || 0)),
+      bestDex: metadata?.bestDex || "GENERIC",
+      source: metadata?.priceSource || "blockscout",
+      confidence: metadata?.priceConfidence || "MEDIUM",
+      logoURI: metadata?.logoURI,
+    });
+  }
+
+  return hints;
+}
+
 function isNativeTokenAddress(address: string) {
   return address.toLowerCase() === NATIVE_TOKEN_SENTINEL.toLowerCase();
 }
@@ -1953,7 +2184,11 @@ async function fetchCoinGeckoTokenPrices(addresses: Address[]): Promise<Record<s
   return prices;
 }
 
-async function fetchTokenMarketHints(addresses: Address[]): Promise<Record<string, TokenMarketHint>> {
+async function fetchTokenMarketHints(
+  addresses: Address[],
+  providerHints: Record<string, TokenMarketHint> = {},
+  maxExternalAddresses: number | null = null,
+): Promise<Record<string, TokenMarketHint>> {
   const hints: Record<string, TokenMarketHint> = {};
   const uniqueAddresses = Array.from(new Set(addresses.map((address) => address.toLowerCase())))
     .filter((address): address is Address => isAddress(address));
@@ -1989,9 +2224,17 @@ async function fetchTokenMarketHints(addresses: Address[]): Promise<Record<strin
     hints[NATIVE_TOKEN_SENTINEL.toLowerCase()] = ethHint;
   }
 
-  const externalNeeded = uniqueAddresses.filter(
+  for (const [address, hint] of Object.entries(providerHints)) {
+    setBestMarketHint(hints, address, hint);
+  }
+
+  let externalNeeded = uniqueAddresses.filter(
     (address) => !isNativeTokenAddress(address) && (hints[address.toLowerCase()]?.priceUSD || 0) === 0,
   );
+
+  if (maxExternalAddresses !== null) {
+    externalNeeded = externalNeeded.slice(0, Math.max(0, maxExternalAddresses));
+  }
 
   const [dexHints, coingeckoPrices] = await Promise.all([
     fetchTokenMarketHintsDexScreener(externalNeeded),
@@ -6127,7 +6370,19 @@ async function handleDustSweepTokensRequest(c: Context, rawAddress?: string) {
       const allAddresses = nonZero
         .map((b) => b.contractAddress)
         .filter((a): a is Address => isAddress(a));
-      const marketHints = await fetchTokenMarketHints(allAddresses);
+      const providerMarketHints = getBalanceProviderMarketHints(nonZero);
+      const providerMarketHintCount = Object.keys(providerMarketHints).length;
+      const maxExternalMarketHints =
+        erc20Discovery.source === "blockscout" && DISCOVERY_BLOCKSCOUT_FAST_PRICING
+          ? providerMarketHintCount > 0
+            ? 0
+            : DISCOVERY_BLOCKSCOUT_PRICELESS_MARKET_HINT_LIMIT
+          : null;
+      const marketHints = await fetchTokenMarketHints(
+        allAddresses,
+        providerMarketHints,
+        maxExternalMarketHints,
+      );
       const metadataByAddress = await loadDiscoveryMetadata(nonZero, whitelist, marketHints);
 
       const swappable: DiscoveryTokenResult[] = [];
@@ -6279,6 +6534,8 @@ async function handleDustSweepTokensRequest(c: Context, rawAddress?: string) {
           targetNonZeroBalances: DISCOVERY_TARGET_NONZERO_BALANCES,
           maxAlchemyPages: DISCOVERY_ALCHEMY_MAX_PAGES,
           maxBlockscoutPages: DISCOVERY_BLOCKSCOUT_BALANCE_MAX_PAGES,
+          providerMarketHintCount,
+          maxExternalMarketHints,
           marketHintCount: Object.keys(marketHints).length,
           metadataReadCount: metadataByAddress.size,
           elapsedMs: Date.now() - startedAt,

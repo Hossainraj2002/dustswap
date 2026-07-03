@@ -111,7 +111,7 @@ export type Token = {
   status?: TokenDiscoveryStatus;
   sourceType?: "native" | "wallet" | "protocol";
   priceUSD?: number;
-  priceSource?: "canonical" | "coingecko" | "dexscreener" | "none";
+  priceSource?: "canonical" | "coingecko" | "dexscreener" | "blockscout" | "none";
   priceConfidence?: TokenPriceConfidence;
   liquidityUSD?: number;
   riskScore?: number;
