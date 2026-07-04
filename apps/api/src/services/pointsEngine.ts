@@ -199,13 +199,33 @@ function isSameBaseRpcEndpoint(a: BaseRpcEndpoint, b: BaseRpcEndpoint) {
   );
 }
 
+// Spin / check-in / wallet-link verification reads (tx, receipt, block) are LOW-VOLUME
+// (1-3 rps even at 20-40k spins/day) and latency-tolerant, so free endpoints serve them and
+// the paid Alchemy key drops to the END of the chain as a pure reliability backstop. At ~70k
+// reads/day this keeps ~6M CU/month off the paid key.
+// SCOPED HERE ONLY — the DustSweep quote firehose keeps its Alchemy-first shared pool. Moving
+// HIGH-volume traffic off the paid key is what caused the 2026-07-04 outage; never widen this.
+// Kill switch: POINTS_TX_READS_PREFER_FREE=false restores the shared-pool order.
+function preferFreeEndpointsForTxReads() {
+  return process.env.POINTS_TX_READS_PREFER_FREE !== "false";
+}
+
+function isAlchemyEndpoint(endpoint: BaseRpcEndpoint) {
+  return endpoint.url.includes("alchemy");
+}
+
 function getOrderedBaseRpcEndpoints() {
   const firstEndpoint = getRotatingBaseRpcEndpoint();
-  return [
+  const ordered = [
     firstEndpoint,
     ...getBaseRpcEndpoints().filter(
       (endpoint) => !isSameBaseRpcEndpoint(endpoint, firstEndpoint)
     ),
+  ];
+  if (!preferFreeEndpointsForTxReads()) return ordered;
+  return [
+    ...ordered.filter((endpoint) => !isAlchemyEndpoint(endpoint)),
+    ...ordered.filter((endpoint) => isAlchemyEndpoint(endpoint)),
   ];
 }
 
