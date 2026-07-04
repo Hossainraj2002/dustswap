@@ -384,6 +384,27 @@ export default function DustSweepPage() {
   // market value, the sweep button stays disabled until the user explicitly acknowledges it.
   const needsImpactConfirmation =
     Boolean(sweep.quote?.requiresImpactConfirmation) && !impactAcknowledged;
+
+  // Name the culprit token(s) in the gate banner: the worst per-token impacts, NOT the basket
+  // figure the impact row shows — otherwise "~100%" next to a 9.9% basket row reads as a bug.
+  const highImpactTokens = useMemo(() => {
+    const routes = sweep.quote?.routes ?? [];
+    const known = routes.filter((route) => route.priceImpactKnown !== false);
+    if (known.length === 0) return [];
+    const worstBps = Math.max(...known.map((route) => route.priceImpactBps));
+    const threshold = Math.min(2000, worstBps);
+    return known
+      .filter((route) => route.priceImpactBps >= threshold)
+      .sort((a, b) => b.priceImpactBps - a.priceImpactBps)
+      .slice(0, 3)
+      .map((route) => ({
+        symbol:
+          sweep.selectedTokens.find(
+            (token) => token.address.toLowerCase() === route.tokenIn.toLowerCase(),
+          )?.symbol ?? `${route.tokenIn.slice(0, 6)}…`,
+        pct: (route.priceImpactBps / 100).toFixed(1),
+      }));
+  }, [sweep.quote, sweep.selectedTokens]);
   const buttonState: SweepButtonVisualState =
     needsImpactConfirmation &&
     (baseButtonState.state === "ready" || baseButtonState.state === "preview")
@@ -643,15 +664,22 @@ export default function DustSweepPage() {
                 <BlueAlertIcon />
                 <span>
                   <strong>
-                    Very high price impact
-                    {typeof sweep.quote.maxPriceImpactBps === "number"
-                      ? ` (~${(sweep.quote.maxPriceImpactBps / 100).toFixed(1)}%)`
-                      : ""}
+                    Very high price impact on{" "}
+                    {highImpactTokens.length > 0
+                      ? highImpactTokens
+                          .map((token) => `${token.symbol} (~${token.pct}%)`)
+                          .join(", ")
+                      : typeof sweep.quote.maxPriceImpactBps === "number"
+                        ? `one token (~${(sweep.quote.maxPriceImpactBps / 100).toFixed(1)}%)`
+                        : "one token"}
                     .
                   </strong>{" "}
-                  At least one selected token has very little sell-side liquidity, so this sweep
-                  returns much less than the token&apos;s market value. Consider deselecting the
-                  affected token.
+                  {highImpactTokens.length > 1 ? "These tokens have" : "This token has"} very
+                  little sell-side liquidity, so selling{" "}
+                  {highImpactTokens.length > 1 ? "them" : "it"} returns far less than the market
+                  value. Deselect {highImpactTokens.length > 1 ? "them" : "it"} — or sweep
+                  anyway: any token that can&apos;t meet its minimum is automatically skipped and
+                  refunded, never sold below its floor.
                 </span>
               </div>
               <label className="flex cursor-pointer items-center gap-2 font-medium">
