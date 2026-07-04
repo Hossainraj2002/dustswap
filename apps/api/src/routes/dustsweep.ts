@@ -6536,7 +6536,23 @@ async function handleDustSweepTokensRequest(c: Context, rawAddress?: string) {
         };
 
         // ── Classification logic ──
-        // USDC, WETH, USDT can be swept
+        // USDC, USDT can be swept
+
+        // WETH is temporarily NOT selectable as a sweep input (the in-bundle unwrap flow works
+        // and stays in code, but is parked to avoid flow complications). It surfaces in the
+        // excluded-output-assets bucket instead of vanishing. Re-enable without a deploy via
+        // DUST_SWEEP_EXCLUDE_WETH_INPUT=false.
+        if (
+          tokenAddress.toLowerCase() === WETH_ADDRESS.toLowerCase() &&
+          process.env.DUST_SWEEP_EXCLUDE_WETH_INPUT !== "false"
+        ) {
+          excludedOutputAssets.push({
+            ...baseToken,
+            status: "EXCLUDED_OUTPUT_ASSET",
+            reason: "OUTPUT_ASSET",
+          });
+          continue;
+        }
 
         // Token discovery only exposes assets that can be selected.
         // Sub-cent known-price balances stay hidden.

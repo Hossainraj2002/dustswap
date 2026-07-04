@@ -73,7 +73,15 @@ import {
 const NATIVE_TOKEN_SENTINEL = "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE" as Address;
 const USDT_ADDRESS = "0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2" as Address;
 
+// USDC first = the DEFAULT output token (tokenOut initializes to DEFAULT_OUTPUT_TOKENS[0]).
 export const DEFAULT_OUTPUT_TOKENS: Token[] = [
+  {
+    address: USDC_ADDRESS,
+    symbol: "USDC",
+    name: "USD Coin",
+    decimals: 6,
+    logoURI: "https://basescan.org/token/images/centre-usdc_28.png",
+  },
   {
     address: NATIVE_TOKEN_SENTINEL,
     symbol: "ETH",
@@ -81,13 +89,6 @@ export const DEFAULT_OUTPUT_TOKENS: Token[] = [
     decimals: 18,
     logoURI: "https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/info/logo.png",
     isNative: true,
-  },
-  {
-    address: USDC_ADDRESS,
-    symbol: "USDC",
-    name: "USD Coin",
-    decimals: 6,
-    logoURI: "https://basescan.org/token/images/centre-usdc_28.png",
   },
   {
     address: WETH_ADDRESS,
