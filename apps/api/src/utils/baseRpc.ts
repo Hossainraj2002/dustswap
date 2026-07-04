@@ -174,19 +174,39 @@ function getPreferredBaseRpcUrls() {
   );
 }
 
+// How many Blockscout keyed entries join a SINGLE request's endpoint chain. Previously ALL
+// (~115) keys were in every chain, so when api.blockscout.com was slow, one failing request
+// could walk minutes of sequential retries before reaching a healthy endpoint — that stalls
+// every RPC-dependent route at once. Keys still rotate ACROSS requests so the whole pool
+// shares load; each individual request just sees a short, bounded chain.
+const BLOCKSCOUT_RPC_MAX_PER_REQUEST = (() => {
+  const parsed = Number.parseInt(process.env.BLOCKSCOUT_RPC_MAX_PER_REQUEST || "2", 10);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.min(parsed, 10) : 2;
+})();
+let blockscoutRpcKeyOffset = 0;
+
 function getBlockscoutRpcEndpoints(): BaseRpcEndpoint[] {
   const keys = unique([
     ...splitEnv(process.env.BLOCKSCOUT_API_KEYS),
     ...splitEnv(process.env.BLOCKSCOUT_API_KEY),
   ]);
+  if (keys.length === 0) return [];
 
-  return keys.map((key) => ({
-    url: `https://api.blockscout.com/${BASE_CHAIN_ID}/json-rpc`,
-    headers: {
-      Authorization: `Bearer ${key}`,
-    },
-    label: "blockscout",
-  }));
+  const take = Math.min(keys.length, BLOCKSCOUT_RPC_MAX_PER_REQUEST);
+  const endpoints: BaseRpcEndpoint[] = [];
+  for (let i = 0; i < take; i += 1) {
+    const key = keys[(blockscoutRpcKeyOffset + i) % keys.length];
+    endpoints.push({
+      url: `https://api.blockscout.com/${BASE_CHAIN_ID}/json-rpc`,
+      headers: {
+        Authorization: `Bearer ${key}`,
+      },
+      label: "blockscout",
+    });
+  }
+  blockscoutRpcKeyOffset = (blockscoutRpcKeyOffset + take) % keys.length;
+
+  return endpoints;
 }
 
 export function getAlchemyRpcEndpoints(): BaseRpcEndpoint[] {
