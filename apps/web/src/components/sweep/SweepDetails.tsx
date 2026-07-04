@@ -85,9 +85,25 @@ export function SweepDetails({
 
   const minimumReceive = formatTokenAmount(getMinimumReceiveRaw(quote), tokenOut);
 
-  const rows = [
-    { label: "Slippage:", value: `${(slippageBps / 100).toFixed(1)}%`, warn: false },
-    { label: "Estimated gas fees:", value: `~${formatUsd(quote.gasEstimateUSD)}`, warn: false },
+  // Color tiers key on the impact number the user actually SEES (basket-level when priced,
+  // else worst token): <10% normal gray, 10-20% light yellow, >20% red.
+  const displayedImpactBps = impactUnknown
+    ? null
+    : typeof basketBps === "number"
+      ? basketBps
+      : maxImpact;
+  const impactTone: "default" | "caution" | "danger" =
+    displayedImpactBps === null
+      ? "default"
+      : displayedImpactBps > 2_000
+        ? "danger"
+        : displayedImpactBps > 1_000
+          ? "caution"
+          : "default";
+
+  const rows: Array<{ label: string; value: string; tone?: "caution" | "danger" }> = [
+    { label: "Slippage:", value: `${(slippageBps / 100).toFixed(1)}%` },
+    { label: "Estimated gas fees:", value: `~${formatUsd(quote.gasEstimateUSD)}` },
     {
       label: "Price impact:",
       // No reliable reference price → show "~" rather than any number. A wrong percentage is
@@ -97,21 +113,23 @@ export function SweepDetails({
         : typeof basketUsd === "number" && typeof basketBps === "number"
           ? `~${formatUsd(basketUsd)} (${(basketBps / 100).toFixed(2)}%)`
           : "~",
-      warn: !impactUnknown && maxImpact > 500,
+      ...(impactTone !== "default" ? { tone: impactTone } : {}),
     },
-    ...(minimumReceive
-      ? [{ label: "Minimum receive:", value: minimumReceive, warn: false }]
-      : []),
+    ...(minimumReceive ? [{ label: "Minimum receive:", value: minimumReceive }] : []),
   ];
 
   return (
     <dl className="flex flex-col gap-2">
-      {rows.map(({ label, value, warn }) => (
+      {rows.map(({ label, value, tone }) => (
         <div key={label} className="flex items-center justify-between gap-3">
           <dt className="text-[13px] text-slate-500 dark:text-slate-400">{label}</dt>
           <dd
             className={`text-[13px] font-semibold tabular-nums ${
-              warn ? "text-red-600 dark:text-red-300" : "text-slate-900 dark:text-white"
+              tone === "danger"
+                ? "text-red-600 dark:text-red-300"
+                : tone === "caution"
+                  ? "text-amber-500 dark:text-amber-300"
+                  : "text-slate-900 dark:text-white"
             }`}
           >
             {value}

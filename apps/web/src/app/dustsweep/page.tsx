@@ -664,10 +664,10 @@ export default function DustSweepPage() {
                 I understand and want to sweep anyway
               </label>
             </div>
-          ) : sweep.quote?.routes.some(
-              (route) => route.priceImpactKnown !== false && route.priceImpactBps > 500,
-            ) ? (
-            <div className="flex items-start gap-2.5 rounded-[14px] border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800">
+          ) : (sweep.quote?.basketImpactBps ?? sweep.quote?.maxPriceImpactBps ?? 0) > 2000 ? (
+            // Warning banner only above 20% of the DISPLAYED (basket-level) impact — below
+            // that the impact row's own color tiers (gray <10%, yellow 10-20%) carry the signal.
+            <div className="flex items-start gap-2.5 rounded-[14px] border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
               <BlueAlertIcon />
               <span>High price impact detected. Review the route carefully before sweeping.</span>
             </div>
