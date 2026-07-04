@@ -133,9 +133,13 @@ const PRICE_SCALE = 100_000_000;
 const WEI_PER_ETH = 10n ** 18n;
 const USER_CREATE_MAX_ATTEMPTS = 5;
 const REFERRAL_LEDGER_UPDATE_MAX_ATTEMPTS = 5;
+// The userOp-log fallback resolves a payment made SECONDS ago — a ~2.8h window (5000 Base
+// blocks) is generous. The old 50000 default scanned 28 hours: ~6 heavy eth_getLogs calls
+// (~460 CU) per miss, and the resolver retries up to 8 times. Raise via env only if a flow
+// ever needs to resolve day-old user operations.
 const USER_OPERATION_LOG_LOOKBACK_BLOCKS = Math.min(
   Math.max(
-    Number.parseInt(process.env.USER_OPERATION_LOG_LOOKBACK_BLOCKS || "50000", 10) || 50_000,
+    Number.parseInt(process.env.USER_OPERATION_LOG_LOOKBACK_BLOCKS || "5000", 10) || 5_000,
     100
   ),
   100_000
@@ -379,9 +383,13 @@ async function resolveSubmittedBaseTransaction(
       lastError = error instanceof Error ? error : new Error(String(error));
     }
 
+    // The bundler receipt API (cheap, 1 call) is the primary resolver. The eth_getLogs scan is
+    // pointless while the userOp is still mining — if the receipt API says "not yet", the
+    // EntryPoint event doesn't exist yet either — so the expensive scan only runs as a last
+    // resort on the final attempts (covers exotic bundlers whose receipts Alchemy can't serve).
     const resolvedUserOperationHash =
       (await resolveUserOperationReceiptTxHash(submittedHash)) ||
-      (await resolveUserOperationLogTxHash(submittedHash));
+      (attempt >= attempts - 2 ? await resolveUserOperationLogTxHash(submittedHash) : null);
 
     if (resolvedUserOperationHash) {
       try {
