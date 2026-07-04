@@ -90,11 +90,13 @@ export function SweepDetails({
     { label: "Estimated gas fees:", value: `~${formatUsd(quote.gasEstimateUSD)}`, warn: false },
     {
       label: "Price impact:",
+      // No reliable reference price → show "~" rather than any number. A wrong percentage is
+      // worse than an honest "approximately unknown".
       value: impactUnknown
-        ? "Unknown"
+        ? "~"
         : typeof basketUsd === "number" && typeof basketBps === "number"
           ? `~${formatUsd(basketUsd)} (${(basketBps / 100).toFixed(2)}%)`
-          : `${(maxImpact / 100).toFixed(2)}% (worst token)`,
+          : "~",
       warn: !impactUnknown && maxImpact > 500,
     },
     ...(minimumReceive
