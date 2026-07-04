@@ -2106,86 +2106,99 @@ export function useDustSweep(): UseDustSweepReturn {
     try {
       await switchToBase();
 
-      // WETH → native ETH: a direct 1:1 WETH.withdraw() from the user's own wallet, sent as a
-      // plain standalone transaction BEFORE the sweep flow. It is deliberately NEVER added to
-      // the wallet_sendCalls batch (per-wallet batch heuristics — especially OKX's security
-      // engine — must stay byte-identical) and never routed through the sweep router (the V3
-      // contract reverts on tokenIn == actualOutput). No protocol fee applies.
+      // WETH → native ETH: a 1:1 WETH.withdraw() from the user's own wallet. For MIXED baskets
+      // the withdraw call rides INSIDE the wallet's atomic bundle (one prompt; state can never
+      // change between the withdraw and the sweep — a separate pre-transaction broke OKX's
+      // follow-up batch submission). Unwrap-only selections and non-batch fallback paths send
+      // it as a plain standalone transaction. Never routed through the sweep router (the V3
+      // contract reverts on tokenIn == actualOutput); no protocol fee applies.
       let unwrapHash: Hex | null = null;
+      let wethUnwrapDone = false;
       // Guard against a stale carried quote: only unwrap when WETH is actually still selected.
       const wethStillSelected = selectedTokens.some((item) =>
         isSameAddress(item.address, WETH_ADDRESS),
       );
-      if (quote.wethUnwrap && wethStillSelected && BigInt(quote.wethUnwrap.amount) > 0n) {
-        currentStep = "pending";
-        setSweepStep(currentStep);
+      const wethUnwrapAmount =
+        quote.wethUnwrap && wethStillSelected ? BigInt(quote.wethUnwrap.amount) : 0n;
+      const wethUnwrapCall: WalletSendCall | null =
+        wethUnwrapAmount > 0n
+          ? {
+              to: WETH_ADDRESS,
+              data: encodeFunctionData({
+                abi: [
+                  {
+                    type: "function",
+                    name: "withdraw",
+                    stateMutability: "nonpayable",
+                    inputs: [{ name: "amount", type: "uint256" }],
+                    outputs: [],
+                  },
+                ] as const,
+                functionName: "withdraw",
+                args: [wethUnwrapAmount],
+              }),
+              value: 0n,
+              // No dataSuffix: the call must stay clean ABI so OKX's batch decoder accepts it.
+            }
+          : null;
+      const sendStandaloneUnwrap = async () => {
+        if (!wethUnwrapCall || wethUnwrapDone) return;
         unwrapHash = (await walletClient.sendTransaction({
           account: address,
           chain: base,
           to: WETH_ADDRESS,
-          data: encodeFunctionData({
-            abi: [
-              {
-                type: "function",
-                name: "withdraw",
-                stateMutability: "nonpayable",
-                inputs: [{ name: "amount", type: "uint256" }],
-                outputs: [],
-              },
-            ] as const,
-            functionName: "withdraw",
-            args: [BigInt(quote.wethUnwrap.amount)],
-          }),
+          data: wethUnwrapCall.data,
           value: 0n,
         } as never)) as Hex;
+        wethUnwrapDone = true;
+      };
 
-        // Unwrap-only selection: no router sweep to send — settle and finish here.
-        if (quote.routes.length === 0) {
-          setTxHash(unwrapHash);
-          await waitForSuccessfulTransaction(unwrapHash);
-          const wethToken = selectedTokens.find((item) =>
-            isSameAddress(item.address, WETH_ADDRESS),
-          );
-          setCompletionSummary({
-            txHash: unwrapHash,
-            tokenOut,
-            tokenOutAmount: quote.wethUnwrap.amount,
-            tokenOutValueUSD: quote.wethUnwrap.valueUSD,
-            inputValueUSD: wethToken?.valueUSD || quote.wethUnwrap.valueUSD,
-            feeAmountUSD: 0,
-            gasEstimateUSD: quote.gasEstimateUSD,
-            routeCount: 0,
-            walletName: walletProfile.walletName,
-            routeKind,
-            completedAt: Date.now(),
-            inputs: wethToken
-              ? [
-                  {
-                    address: wethToken.address,
-                    symbol: wethToken.symbol,
-                    name: wethToken.name,
-                    decimals: wethToken.decimals,
-                    logoURI: wethToken.logoURI,
-                    balanceFormatted: wethToken.balanceFormatted,
-                    valueUSD: wethToken.valueUSD,
-                    estimatedOut: quote.wethUnwrap.amount,
-                    dexName: "Unwrap",
-                  },
-                ]
-              : [],
-          });
-          setSweepStep("success");
-          logSweepTelemetry("success");
-          setSelectedTokens([]);
-          setQuote(null);
-          setExecutionNotice(null);
-          void refreshTokens({ force: true });
-          return { txHash: unwrapHash };
-        }
-
-        // Mixed basket: unwrap submitted; hand off to the untouched sweep flow.
-        currentStep = "approving";
+      // Unwrap-only selection: no router sweep to send — one plain transaction, settle here.
+      if (wethUnwrapCall && quote.routes.length === 0 && quote.wethUnwrap) {
+        currentStep = "pending";
         setSweepStep(currentStep);
+        await sendStandaloneUnwrap();
+        if (!unwrapHash) throw new Error("Unwrap transaction was not sent");
+        setTxHash(unwrapHash);
+        await waitForSuccessfulTransaction(unwrapHash);
+        const wethToken = selectedTokens.find((item) =>
+          isSameAddress(item.address, WETH_ADDRESS),
+        );
+        setCompletionSummary({
+          txHash: unwrapHash,
+          tokenOut,
+          tokenOutAmount: quote.wethUnwrap.amount,
+          tokenOutValueUSD: quote.wethUnwrap.valueUSD,
+          inputValueUSD: wethToken?.valueUSD || quote.wethUnwrap.valueUSD,
+          feeAmountUSD: 0,
+          gasEstimateUSD: quote.gasEstimateUSD,
+          routeCount: 0,
+          walletName: walletProfile.walletName,
+          routeKind,
+          completedAt: Date.now(),
+          inputs: wethToken
+            ? [
+                {
+                  address: wethToken.address,
+                  symbol: wethToken.symbol,
+                  name: wethToken.name,
+                  decimals: wethToken.decimals,
+                  logoURI: wethToken.logoURI,
+                  balanceFormatted: wethToken.balanceFormatted,
+                  valueUSD: wethToken.valueUSD,
+                  estimatedOut: quote.wethUnwrap.amount,
+                  dexName: "Unwrap",
+                },
+              ]
+            : [],
+        });
+        setSweepStep("success");
+        logSweepTelemetry("success");
+        setSelectedTokens([]);
+        setQuote(null);
+        setExecutionNotice(null);
+        void refreshTokens({ force: true });
+        return { txHash: unwrapHash };
       }
 
       const lane = quote.executionLane || DUST_SWEEP_EXECUTION_LANE;
@@ -2482,6 +2495,9 @@ export function useDustSweep(): UseDustSweepReturn {
       };
 
       const sendStandardSweepWithApprovals = async () => {
+        // Non-batch path (plain sequential transactions): the WETH unwrap goes out as its own
+        // ordinary transaction first — normal multi-prompt territory for EOA wallets.
+        await sendStandaloneUnwrap();
         if (hasV2Approvals) {
           currentStep = "approving";
           setSweepStep(currentStep);
@@ -2509,17 +2525,24 @@ export function useDustSweep(): UseDustSweepReturn {
           if (tokenPocketApprovalBatch) {
             // TokenPocket: use raw wallet_sendCalls with gas per call so TP shows all
             // approvals at once and never needs to estimate gas internally.
+            await sendStandaloneUnwrap();
             await sendTokenPocketBatchApprovals(approvalRequirements, approvalSpender);
           } else {
+            // WETH→ETH unwrap rides inside the approvals batch (no extra prompt).
+            const approvalBatchIncludesUnwrap = Boolean(wethUnwrapCall && !wethUnwrapDone);
             const approvalHash = await sendAtomicWalletCalls({
               account: address,
-              calls: approvalCalls,
+              calls: [
+                ...(approvalBatchIncludesUnwrap && wethUnwrapCall ? [wethUnwrapCall] : []),
+                ...approvalCalls,
+              ],
               usePaymasterCapabilities,
               walletKey: walletProfile.walletKey,
               requireAtomic: true,
               appendDataSuffixes: true,
             });
             await waitForSuccessfulTransaction(approvalHash);
+            if (approvalBatchIncludesUnwrap) wethUnwrapDone = true;
           }
         } catch (approvalBatchError) {
           if (isRejectedByUser(approvalBatchError) || isWalletLockedError(approvalBatchError)) {
@@ -2575,15 +2598,21 @@ export function useDustSweep(): UseDustSweepReturn {
 
         const approvalChunks = chunkWalletCalls(approvalCalls, CHUNK_APPROVALS_PER_BATCH);
         for (let index = 0; index < approvalChunks.length; index += 1) {
+          // WETH→ETH unwrap joins the first approval chunk (no extra prompt).
+          const chunkHasUnwrap = index === 0 && Boolean(wethUnwrapCall && !wethUnwrapDone);
           const chunkHash = await sendAtomicWalletCalls({
             account: address,
-            calls: approvalChunks[index],
+            calls: [
+              ...(chunkHasUnwrap && wethUnwrapCall ? [wethUnwrapCall] : []),
+              ...approvalChunks[index],
+            ],
             usePaymasterCapabilities,
             walletKey: walletProfile.walletKey,
             requireAtomic: true,
             appendDataSuffixes: true,
           });
           await waitForSuccessfulTransaction(chunkHash);
+          if (chunkHasUnwrap) wethUnwrapDone = true;
         }
 
         // Approvals re-checked so any chunk that didn't land is completed one-by-one
@@ -2674,7 +2703,10 @@ export function useDustSweep(): UseDustSweepReturn {
             chunkBuild.contractAddress) as Address;
           const chunkValue = chunkBuild.value ? BigInt(chunkBuild.value) : 0n;
 
+          // WETH→ETH unwrap joins the FIRST chunk only (clean ABI call, sweep stays last).
+          const chunkIncludesUnwrap = index === 0 && Boolean(wethUnwrapCall && !wethUnwrapDone);
           const chunkCalls: WalletSendCall[] = [
+            ...(chunkIncludesUnwrap && wethUnwrapCall ? [wethUnwrapCall] : []),
             ...chunkApprovalCalls,
             {
               to: chunkSweepTarget,
@@ -2702,6 +2734,7 @@ export function useDustSweep(): UseDustSweepReturn {
             appendDataSuffixes: true,
           });
           await waitForSuccessfulTransaction(chunkHash);
+          if (chunkIncludesUnwrap) wethUnwrapDone = true;
           lastHash = chunkHash;
         }
 
@@ -2724,6 +2757,16 @@ export function useDustSweep(): UseDustSweepReturn {
         // No explicit gas — TokenPocket estimates the batch itself (it simulates
         // approvals→sweep in sequence, so the sweep estimates fine).
         const bundledCalls: Array<{ to: string; data: Hex; value: string }> = [];
+        const tpBundleIncludesUnwrap = Boolean(wethUnwrapCall && !wethUnwrapDone);
+        if (wethUnwrapCall && tpBundleIncludesUnwrap) {
+          // WETH→ETH unwrap rides first inside the same TP batch (suffix like its neighbors;
+          // WETH ignores extra calldata).
+          bundledCalls.push({
+            to: wethUnwrapCall.to,
+            data: appendDataSuffix(wethUnwrapCall.data, DATA_SUFFIX),
+            value: toRpcQuantity(0n),
+          });
+        }
         for (const requirement of approvalRequirements) {
           // USDT-style reset: approve(0) then approve(amount). Within one atomic
           // batch they run in sequence, so both can live in the same tx.
@@ -2759,7 +2802,9 @@ export function useDustSweep(): UseDustSweepReturn {
         // atomicRequired:true here, which is what forced the fall back to two calls.
         // For a 7702 smart account TP still bundles the whole wallet_sendCalls into
         // a single transaction, so approvals + sweep land in one tx.
-        return sendTokenPocketWalletSendCalls(bundledCalls, false);
+        const tpHash = await sendTokenPocketWalletSendCalls(bundledCalls, false);
+        if (tpBundleIncludesUnwrap) wethUnwrapDone = true;
+        return tpHash;
       };
 
       if (
@@ -2805,6 +2850,11 @@ export function useDustSweep(): UseDustSweepReturn {
       } else if (canBundleAllCalls) {
         const sweepCalldata = await getCanonicalCalldata();
         const fullBundleCalls: WalletSendCall[] = [
+          // WETH→ETH unwrap rides FIRST inside the same atomic bundle: one prompt, and the
+          // wallet state can't shift between the withdraw and the sweep (a separate pre-tx
+          // made OKX reject the follow-up batch). The sweep stays LAST — OKX requires the
+          // consuming call to close the bundle.
+          ...(wethUnwrapCall && !wethUnwrapDone ? [wethUnwrapCall] : []),
           ...approvalCalls,
           {
             to: sweepTarget,
@@ -2818,6 +2868,7 @@ export function useDustSweep(): UseDustSweepReturn {
             ...(canTryOkxRawSendCalls ? {} : { dataSuffix: DATA_SUFFIX }),
           },
         ];
+        const bundleIncludesUnwrap = Boolean(wethUnwrapCall && !wethUnwrapDone);
 
         // (G) Full telemetry for the OKX one-click bundle before the single prompt.
         if (canTryOkxRawSendCalls) {
@@ -2873,6 +2924,7 @@ export function useDustSweep(): UseDustSweepReturn {
             requireAtomic: true,
             appendDataSuffixes: !usesTokenPocketExisting,
           });
+          if (bundleIncludesUnwrap) wethUnwrapDone = true;
         } catch (strictBundleError) {
           if (isRejectedByUser(strictBundleError) || isWalletLockedError(strictBundleError)) {
             throw strictBundleError;
@@ -2945,6 +2997,7 @@ export function useDustSweep(): UseDustSweepReturn {
                 requireAtomic: false,
                 appendDataSuffixes: false,
               });
+              if (bundleIncludesUnwrap) wethUnwrapDone = true;
             } catch (compatibleBundleError) {
               if (isRejectedByUser(compatibleBundleError) || isWalletLockedError(compatibleBundleError)) {
                 throw compatibleBundleError;
@@ -3078,10 +3131,10 @@ export function useDustSweep(): UseDustSweepReturn {
         });
       }
 
-      // Mixed basket with a WETH→ETH unwrap: the unwrap tx already went out before the sweep —
-      // include it in the success summary the user sees (record-sweep below stays router-only,
-      // a 1:1 unwrap is not swap volume).
-      if (unwrapHash && quote.wethUnwrap) {
+      // Mixed basket with a WETH→ETH unwrap: the unwrap executed inside the wallet bundle (or
+      // as a standalone tx on non-batch paths) — include it in the success summary the user
+      // sees (record-sweep below stays router-only, a 1:1 unwrap is not swap volume).
+      if (wethUnwrapDone && quote.wethUnwrap) {
         const wethToken = selectedTokens.find((item) =>
           isSameAddress(item.address, WETH_ADDRESS),
         );
@@ -3101,8 +3154,8 @@ export function useDustSweep(): UseDustSweepReturn {
       }
 
       const unwrapOutAmount =
-        unwrapHash && quote.wethUnwrap ? BigInt(quote.wethUnwrap.amount) : 0n;
-      const unwrapOutUSD = unwrapHash && quote.wethUnwrap ? quote.wethUnwrap.valueUSD : 0;
+        wethUnwrapDone && quote.wethUnwrap ? BigInt(quote.wethUnwrap.amount) : 0n;
+      const unwrapOutUSD = wethUnwrapDone && quote.wethUnwrap ? quote.wethUnwrap.valueUSD : 0;
 
       setCompletionSummary({
         txHash: hash,
@@ -3115,7 +3168,7 @@ export function useDustSweep(): UseDustSweepReturn {
         inputValueUSD: completedInputs.reduce((sum, token) => sum + (token.valueUSD || 0), 0),
         feeAmountUSD: quote.feeAmountUSD,
         gasEstimateUSD: quote.gasEstimateUSD,
-        routeCount: effectiveRoutes.length + (unwrapHash ? 1 : 0),
+        routeCount: effectiveRoutes.length + (wethUnwrapDone ? 1 : 0),
         walletName: walletProfile.walletName,
         routeKind,
         completedAt: Date.now(),
