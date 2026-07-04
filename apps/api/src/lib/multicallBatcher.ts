@@ -54,6 +54,13 @@ const MULTICALL3_ABI = [
   },
 ] as const;
 
+// Gas-starvation canary: Multicall3.getBlockNumber() — a few hundred gas, can only fail if the
+// batch ran out of gas by the time it executed. Appended LAST to every batch: if the canary
+// reports failure, earlier "reverts" in this batch are NOT trustworthy (an expensive sub-call
+// may have starved the rest), so the whole batch is retried on the direct path instead of
+// silently reporting healthy pools as "no pool".
+const CANARY_CALLDATA = "0x42cbb15c" as Hex; // getBlockNumber()
+
 function boundedEnv(name: string, fallback: number, min: number, max: number) {
   const parsed = Number(process.env[name]);
   if (!Number.isFinite(parsed)) return fallback;
@@ -61,8 +68,9 @@ function boundedEnv(name: string, fallback: number, min: number, max: number) {
 }
 
 // Batch size bounds total gas of the aggregate call (each quoter sim can use ~0.1-1M gas).
-// 20 stays far below every provider's eth_call gas cap; the whole-batch fallback covers the rest.
-const MAX_BATCH = boundedEnv("DUST_SWEEP_MULTICALL_MAX_BATCH", 20, 2, 50);
+// 12 keeps worst-case batches far below every provider's eth_call gas cap while still cutting
+// request volume ~90%; the gas canary + whole-batch fallback cover anything beyond that.
+const MAX_BATCH = boundedEnv("DUST_SWEEP_MULTICALL_MAX_BATCH", 12, 2, 50);
 // Collection window: long enough to gather one probe per concurrently-quoting adapter/token,
 // short enough to be invisible next to network latency.
 const WINDOW_MS = boundedEnv("DUST_SWEEP_MULTICALL_WINDOW_MS", 8, 1, 100);
@@ -127,7 +135,13 @@ async function executeBatch(items: PendingCall[]) {
     const calldata = encodeFunctionData({
       abi: MULTICALL3_ABI,
       functionName: "aggregate3",
-      args: [items.map((item) => ({ target: item.to, allowFailure: true, callData: item.data }))],
+      args: [
+        [
+          ...items.map((item) => ({ target: item.to, allowFailure: true, callData: item.data })),
+          // Gas canary — MUST be last; see CANARY_CALLDATA.
+          { target: MULTICALL3_ADDRESS, allowFailure: true, callData: CANARY_CALLDATA },
+        ],
+      ],
     });
     const raw = await baseRpcRequest<Hex>(
       "eth_call",
@@ -140,10 +154,14 @@ async function executeBatch(items: PendingCall[]) {
       data: raw,
     }) as readonly { success: boolean; returnData: Hex }[];
 
-    if (!Array.isArray(results) || results.length !== items.length) {
+    if (!Array.isArray(results) || results.length !== items.length + 1) {
       throw new Error(
-        `Multicall result shape mismatch (${Array.isArray(results) ? results.length : "?"} of ${items.length})`,
+        `Multicall result shape mismatch (${Array.isArray(results) ? results.length : "?"} of ${items.length + 1})`,
       );
+    }
+    if (!results[items.length]!.success) {
+      // Canary failed → the batch ran out of gas; earlier failures are unreliable.
+      throw new Error("Multicall gas canary failed — batch may be gas-starved");
     }
 
     for (let i = 0; i < items.length; i += 1) {
