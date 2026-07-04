@@ -77,9 +77,11 @@ export function SweepDetails({
   const impactUnknown =
     quote.routes.length > 0 &&
     quote.routes.every((route) => route.priceImpactKnown === false);
-  // Dollar loss vs market value: out = expected × (1 - impact) → loss = out × impact / (1 - impact).
-  const outUsd = quote.netEstimatedOutUSD ?? quote.totalEstimatedOutUSD;
-  const impactUsd = maxImpact < 10_000 ? (outUsd * maxImpact) / (10_000 - maxImpact) : outUsd;
+  // Dollar figure comes ONLY from the server's basket-level sum (expected market value minus
+  // quoted output across priced routes). Deriving dollars from the WORST token's percentage
+  // times the WHOLE basket falsely turned one $0.50 illiquid token into "$17 lost".
+  const basketUsd = quote.basketImpactUSD;
+  const basketBps = quote.basketImpactBps;
 
   const minimumReceive = formatTokenAmount(getMinimumReceiveRaw(quote), tokenOut);
 
@@ -90,7 +92,9 @@ export function SweepDetails({
       label: "Price impact:",
       value: impactUnknown
         ? "Unknown"
-        : `~${formatUsd(impactUsd)} (${(maxImpact / 100).toFixed(2)}%)`,
+        : typeof basketUsd === "number" && typeof basketBps === "number"
+          ? `~${formatUsd(basketUsd)} (${(basketBps / 100).toFixed(2)}%)`
+          : `${(maxImpact / 100).toFixed(2)}% (worst token)`,
       warn: !impactUnknown && maxImpact > 500,
     },
     ...(minimumReceive

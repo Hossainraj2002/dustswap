@@ -6780,9 +6780,14 @@ dustsweepRoutes.post("/quote", async (c) => {
   // One cached batch fetch (DexScreener → CoinGecko market hints — the same prices the token
   // list shows the user). Advisory only: when a token has no reliable price, its impact is
   // reported as unknown and rescue never fires; quoting itself proceeds unchanged.
-  let marketPrices: Record<string, number> = {};
+  //
+  // CONFIDENCE GATE: only HIGH-confidence references may drive impact (canonical stables/ETH,
+  // or a DexScreener pair with real liquidity). Dust tokens often carry a PHANTOM price from a
+  // dead pool's last trade — comparing an honest quote against a phantom price produced false
+  // "77% impact" alarms. Unknown beats wrong.
+  let quoteMarketHints: Record<string, TokenMarketHint> = {};
   try {
-    marketPrices = await fetchTokenPrices([
+    quoteMarketHints = await fetchTokenMarketHints([
       ...readyToQuote.map((item) => item.tokenIn),
       tokenOut,
     ]);
@@ -6790,12 +6795,14 @@ dustsweepRoutes.post("/quote", async (c) => {
     // Quoting works without market prices — impact just stays unknown.
   }
   const outTokenPriceUSD =
-    marketPrices[tokenOut.toLowerCase()] ||
+    quoteMarketHints[tokenOut.toLowerCase()]?.priceUSD ||
     (tokenOut.toLowerCase() === USDC_ADDRESS.toLowerCase() ? 1 : 0);
   const marketContexts = new Map<string, QuoteMarketContext>();
   await Promise.all(
     readyToQuote.map(async ({ tokenIn, amountIn }) => {
-      const price = marketPrices[tokenIn.toLowerCase()] || 0;
+      const hint = quoteMarketHints[tokenIn.toLowerCase()];
+      if (!hint || hint.confidence !== "HIGH") return;
+      const price = hint.priceUSD || 0;
       if (!(price > 0) || !(outTokenPriceUSD > 0)) return;
       let decimals: number | undefined = whitelist.get(tokenIn.toLowerCase())?.decimals;
       if (!Number.isFinite(Number(decimals))) {
@@ -7008,6 +7015,29 @@ dustsweepRoutes.post("/quote", async (c) => {
   const impactGateBps = getMaxImpactBps();
   const requiresImpactConfirmation = impactGateBps > 0 && maxPriceImpactBps >= impactGateBps;
 
+  // BASKET-level impact — the honest dollar figure for the whole quote. Sums expected market
+  // value vs quoted output over the routes that HAVE a reliable reference price. (The UI used
+  // to derive dollars by applying the WORST single token's percentage to the WHOLE basket,
+  // which turned one $0.50 illiquid token into a fake "$17 lost" banner.)
+  let basketExpectedUSD = 0;
+  let basketActualUSD = 0;
+  for (const route of cappedRoutes) {
+    const ctx = marketContexts.get(route.tokenIn.toLowerCase());
+    if (!ctx) continue;
+    const actual = Number(formatUnits(BigInt(route.estimatedOut), outputDecimals)) * outputPrice;
+    if (!Number.isFinite(actual)) continue;
+    basketExpectedUSD += ctx.expectedInUSD;
+    basketActualUSD += actual;
+  }
+  const basketImpactUSD =
+    basketExpectedUSD > 0
+      ? Math.round(Math.max(0, basketExpectedUSD - basketActualUSD) * 100) / 100
+      : undefined;
+  const basketImpactBps =
+    basketExpectedUSD > 0
+      ? Math.max(0, Math.min(10_000, Math.round((1 - basketActualUSD / basketExpectedUSD) * 10_000)))
+      : undefined;
+
   // WETH → ETH unwrap summary. Deliberately NOT folded into the router totals: the totals feed
   // fee math and sweep-volume recording, and a 1:1 unwrap is neither swap volume nor fee-bearing.
   // The UI adds it to the displayed receive amounts and executes it as a direct WETH.withdraw().
@@ -7033,6 +7063,7 @@ dustsweepRoutes.post("/quote", async (c) => {
     netEstimatedOutUSD: Math.round(netEstimatedOutUSD * 100) / 100,
     maxPriceImpactBps,
     requiresImpactConfirmation,
+    ...(basketImpactUSD !== undefined ? { basketImpactUSD, basketImpactBps } : {}),
     feeBps,
     gasEstimateETH: (0.0000015 + cappedRoutes.length * 0.0000007).toFixed(8),
     gasEstimateUSD: Math.round((0.004 + cappedRoutes.length * 0.0015) * 100) / 100,

@@ -213,6 +213,11 @@ export type DustSweepQuoteResponse = {
   // confirmation before sweeping at this impact level.
   maxPriceImpactBps?: number;
   requiresImpactConfirmation?: boolean;
+  // BASKET-level impact across routes with a reliable reference price: total expected market
+  // value minus total quoted output. This is the honest dollar figure to display — never derive
+  // dollars from maxPriceImpactBps (worst single token) times the whole basket.
+  basketImpactUSD?: number;
+  basketImpactBps?: number;
   feeBps: number;
   gasEstimateETH: string;
   gasEstimateUSD: number;
