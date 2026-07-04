@@ -33,6 +33,7 @@ import {
   reportAggregatorHttpStatus,
   type AggregatorProviderId,
 } from "../lib/aggregatorGovernor";
+import { batchedEthCall, isMulticallBatchingEnabled } from "../lib/multicallBatcher";
 
 const dustsweepRoutes = new Hono();
 
@@ -2420,6 +2421,13 @@ function sortByValueDesc(a: DiscoveryTokenResult, b: DiscoveryTokenResult) {
 }
 
 async function callContract(to: Address, data: Hex, signal?: AbortSignal) {
+  // Concurrent probes are transparently packed into ONE Multicall3 eth_call (~90-95% fewer RPC
+  // requests / Alchemy CU for quoting). Abort-aware callers keep the direct path — a shared
+  // batch cannot honor per-call cancellation. On any batch failure the batcher itself re-runs
+  // items as direct calls, so behavior is never worse than this direct path.
+  if (!signal && isMulticallBatchingEnabled()) {
+    return batchedEthCall(to, data);
+  }
   // 5s timeout per RPC call so one slow node doesn't block the quote pipeline
   return baseRpcRequest<Hex>("eth_call", [{ to, data }, "latest"], {
     signal,
