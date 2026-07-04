@@ -204,11 +204,15 @@ const DISCOVERY_MARKET_HINT_CONCURRENCY = boundedEnvNumber("DUST_SWEEP_MARKET_HI
 const DISCOVERY_MARKET_HINT_TIMEOUT_MS = boundedEnvNumber("DUST_SWEEP_MARKET_HINT_TIMEOUT_MS", 3_500, 1_000, 8_000);
 const DISCOVERY_BLOCKSCOUT_FAST_PRICING =
   process.env.DUST_SWEEP_BLOCKSCOUT_FAST_PRICING !== "false";
+// Cap on EXTERNAL (DexScreener/CoinGecko) price lookups for tokens Blockscout didn't price.
+// Discovery must show every token and then filter by the normal rules — an unpriced token gets
+// hidden as UNKNOWN_PRICE, so this cap must comfortably cover a large dust wallet. DexScreener
+// batches 30 addresses/call at concurrency 4, so even 1000 lookups add only a few seconds.
 const DISCOVERY_BLOCKSCOUT_PRICELESS_MARKET_HINT_LIMIT = boundedEnvNumber(
   "DUST_SWEEP_BLOCKSCOUT_PRICELESS_MARKET_HINT_LIMIT",
-  180,
-  0,
   1_000,
+  0,
+  2_000,
 );
 const DISCOVERY_METADATA_CONCURRENCY = boundedEnvNumber("DUST_SWEEP_METADATA_CONCURRENCY", 10, 1, 24);
 // Per-token quote parallelism + hard deadline. Quoting a large dust basket used
@@ -265,6 +269,26 @@ const DISCOVERY_ALCHEMY_MAX_ENDPOINT_ATTEMPTS = boundedEnvNumber(
   1,
   50,
 );
+// Discovery calls (alchemy_getTokenBalances) are the most CU-expensive Alchemy method — hedging
+// fires every page at N keys simultaneously and MULTIPLIES burn on a capacity-limited key set
+// (this is what trips Alchemy's "unusually high global traffic" 429). Default 1 = no hedge for
+// discovery; other (cheap) Alchemy calls keep the global ALCHEMY_RPC_HEDGE_COUNT behavior.
+const DISCOVERY_ALCHEMY_HEDGE_COUNT = boundedEnvNumber(
+  "DUST_SWEEP_ALCHEMY_HEDGE_COUNT",
+  1,
+  1,
+  4,
+);
+// When a full Alchemy discovery pass fails (typically ALL keys 429 on the Token API), skip
+// Alchemy entirely for this cool-off window and go straight to Blockscout: faster first paint,
+// no wasted attempts, and no further feeding of Alchemy's abuse heuristics.
+const DISCOVERY_ALCHEMY_BREAKER_MS = boundedEnvNumber(
+  "DUST_SWEEP_ALCHEMY_BREAKER_MS",
+  120_000,
+  10_000,
+  1_800_000,
+);
+let alchemyDiscoveryBreakerUntil = 0;
 const DISCOVERY_BLOCKSCOUT_BALANCE_FALLBACK_ENABLED =
   process.env.DUST_SWEEP_BLOCKSCOUT_BALANCE_FALLBACK !== "false";
 const DISCOVERY_BLOCKSCOUT_BALANCE_TIMEOUT_MS = boundedEnvNumber(
@@ -1331,6 +1355,7 @@ async function alchemyRpc<T>(method: string, params: unknown[]): Promise<T> {
   return alchemyRpcRequest<T>(method, params, {
     timeoutMs: DISCOVERY_ALCHEMY_TIMEOUT_MS,
     maxEndpointAttempts: DISCOVERY_ALCHEMY_MAX_ENDPOINT_ATTEMPTS,
+    hedgeCount: DISCOVERY_ALCHEMY_HEDGE_COUNT,
   });
 }
 
@@ -1786,28 +1811,49 @@ async function fetchBlockscoutWalletTokenBalances(holder: Address): Promise<Alch
 }
 
 async function fetchWalletTokenBalances(holder: Address): Promise<AlchemyTokenBalanceDiscovery> {
-  try {
-    return await fetchAlchemyTokenBalances(holder);
-  } catch (alchemyError) {
-    const alchemyMessage = discoveryErrorMessage(alchemyError);
-    console.warn("[dustsweep/tokens] Alchemy balance discovery failed", {
-      message: alchemyMessage,
-    });
+  const alchemyBreakerOpen = Date.now() < alchemyDiscoveryBreakerUntil;
 
-    if (DISCOVERY_BLOCKSCOUT_BALANCE_FALLBACK_ENABLED) {
-      try {
-        const fallback = await fetchBlockscoutWalletTokenBalances(holder);
-        return {
-          ...fallback,
-          providerError: `alchemy: ${alchemyMessage}`,
-        };
-      } catch (blockscoutError) {
-        console.warn("[dustsweep/tokens] Blockscout balance discovery failed", {
-          message: discoveryErrorMessage(blockscoutError),
-        });
+  if (!alchemyBreakerOpen || !DISCOVERY_BLOCKSCOUT_BALANCE_FALLBACK_ENABLED) {
+    try {
+      const result = await fetchAlchemyTokenBalances(holder);
+      alchemyDiscoveryBreakerUntil = 0;
+      return result;
+    } catch (alchemyError) {
+      const alchemyMessage = discoveryErrorMessage(alchemyError);
+      // Full Alchemy failure (typically ALL keys 429 on the Token API) — cool off so the next
+      // scans go straight to Blockscout instead of re-burning the keys on every request.
+      alchemyDiscoveryBreakerUntil = Date.now() + DISCOVERY_ALCHEMY_BREAKER_MS;
+      console.warn("[dustsweep/tokens] Alchemy balance discovery failed — cooling off", {
+        message: alchemyMessage,
+        coolOffMs: DISCOVERY_ALCHEMY_BREAKER_MS,
+      });
+
+      if (DISCOVERY_BLOCKSCOUT_BALANCE_FALLBACK_ENABLED) {
+        try {
+          const fallback = await fetchBlockscoutWalletTokenBalances(holder);
+          return {
+            ...fallback,
+            providerError: `alchemy: ${alchemyMessage}`,
+          };
+        } catch (blockscoutError) {
+          console.warn("[dustsweep/tokens] Blockscout balance discovery failed", {
+            message: discoveryErrorMessage(blockscoutError),
+          });
+        }
       }
-    }
 
+      throw new BalanceDiscoveryUnavailableError();
+    }
+  }
+
+  // Alchemy is cooling off — Blockscout is the primary for this window.
+  try {
+    const fallback = await fetchBlockscoutWalletTokenBalances(holder);
+    return { ...fallback, providerError: "alchemy: cooling off after rate limit" };
+  } catch (blockscoutError) {
+    console.warn("[dustsweep/tokens] Blockscout balance discovery failed", {
+      message: discoveryErrorMessage(blockscoutError),
+    });
     throw new BalanceDiscoveryUnavailableError();
   }
 }
@@ -3634,10 +3680,14 @@ async function getGovernedAggregatorCandidate(
   tokenOut: Address,
   amountIn: bigint,
   slippageBps: number,
+  onSkipped?: () => void,
 ) {
   const cacheKey = `${tokenIn.toLowerCase()}:${tokenOut.toLowerCase()}:${amountIn.toString()}:${slippageBps}`;
-  return governAggregatorCall(provider, cacheKey, () =>
-    fetchCandidate(tokenIn, tokenOut, amountIn, slippageBps),
+  return governAggregatorCall(
+    provider,
+    cacheKey,
+    () => fetchCandidate(tokenIn, tokenOut, amountIn, slippageBps),
+    onSkipped,
   );
 }
 
@@ -3715,6 +3765,7 @@ async function getBestQuote(
   //    in ladder order (KyberSwap → 0x → LI.FI → OpenOcean → Odos). Each is env-gated and
   //    additive: later providers are only consulted when every earlier source returns nothing, so
   //    they strictly widen coverage of sweepable dust.
+  let anyProviderSkipped = false;
   for (const { provider, enabled, fetch: fetchCandidate } of AGGREGATOR_LADDER) {
     if (!enabled()) continue;
     const candidate = await getGovernedAggregatorCandidate(
@@ -3724,12 +3775,22 @@ async function getBestQuote(
       tokenOut,
       amountIn,
       slippageBps,
+      () => {
+        anyProviderSkipped = true;
+      },
     );
     if (candidate && isCandidateExecutableInLane(candidate, executionLane)) {
       const impactBps = computeMarketImpactBps(candidate.amountOut, market);
       if (impactBps !== null) candidate.priceImpactBps = impactBps;
       return candidate;
     }
+  }
+
+  // A provider that was load-shed / cooling off never actually answered — this token is NOT
+  // definitively unroutable. Throw a transient error so the caller records QUOTE_FAILED
+  // (retryable, carry-forward eligible) instead of caching NO_ROUTE for minutes.
+  if (anyProviderSkipped) {
+    throw new Error("Aggregator quotes are busy right now; retry shortly.");
   }
 
   return null;
@@ -6372,11 +6433,12 @@ async function handleDustSweepTokensRequest(c: Context, rawAddress?: string) {
         .filter((a): a is Address => isAddress(a));
       const providerMarketHints = getBalanceProviderMarketHints(nonZero);
       const providerMarketHintCount = Object.keys(providerMarketHints).length;
+      // Fast pricing on the Blockscout path CAPS how many still-priceless tokens get external
+      // (DexScreener/CoinGecko) lookups — it must never zero them out just because Blockscout
+      // priced SOME tokens, or every unpriced dust token gets hidden as UNKNOWN_PRICE.
       const maxExternalMarketHints =
         erc20Discovery.source === "blockscout" && DISCOVERY_BLOCKSCOUT_FAST_PRICING
-          ? providerMarketHintCount > 0
-            ? 0
-            : DISCOVERY_BLOCKSCOUT_PRICELESS_MARKET_HINT_LIMIT
+          ? DISCOVERY_BLOCKSCOUT_PRICELESS_MARKET_HINT_LIMIT
           : null;
       const marketHints = await fetchTokenMarketHints(
         allAddresses,

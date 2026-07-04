@@ -19,9 +19,9 @@
 export type AggregatorProviderId = "kyber" | "zerox" | "lifi" | "openocean" | "odos";
 
 const DEFAULT_MIN_INTERVAL_MS: Record<AggregatorProviderId, number> = {
-  kyber: 350, // keyless public tier is comparatively generous
-  zerox: 600,
-  lifi: 600,
+  kyber: 250, // keyless public tier is comparatively generous
+  zerox: 250, // keyed tier; the pre-governor code called it fully parallel without issues
+  lifi: 250,
   openocean: 1_100, // public tier is ~1 rps
   odos: 1_100, // public tier is aggressively limited without an API key
 };
@@ -93,8 +93,11 @@ class ProviderGovernor {
 const governors = new Map<AggregatorProviderId, ProviderGovernor>();
 
 type CacheEntry = { value: unknown; expiresAt: number };
+// `ran=false` means the call was skipped (breaker open / load shed) and NEVER queried the
+// provider — every caller sharing the deduped promise must see that, not just the first one.
+type GovernedOutcome = { value: unknown; ran: boolean };
 const resultCache = new Map<string, CacheEntry>();
-const inFlight = new Map<string, Promise<unknown>>();
+const inFlight = new Map<string, Promise<GovernedOutcome>>();
 let lastCacheSweepAt = 0;
 
 function getGovernor(provider: AggregatorProviderId) {
@@ -127,12 +130,15 @@ export function reportAggregatorHttpStatus(provider: AggregatorProviderId, statu
  * Governed call wrapper: cache → in-flight dedupe → breaker/pace → run → cache result.
  * Returns null when the provider is cooling off or the queue is too deep right now; those
  * nulls are NOT cached (a later attempt should retry), while a null from `fn` itself
- * ("no route") is cached briefly.
+ * ("no route") is cached briefly. `onSkipped` fires when the call NEVER RAN (breaker open /
+ * load shed) so callers can distinguish "throttled" from a definitive "no route" — a throttled
+ * token must never be cached as unroutable.
  */
 export async function governAggregatorCall<T>(
   provider: AggregatorProviderId,
   cacheKey: string,
   fn: () => Promise<T | null>,
+  onSkipped?: () => void,
 ): Promise<T | null> {
   sweepCacheIfDue();
   const key = `${provider}:${cacheKey}`;
@@ -140,29 +146,31 @@ export async function governAggregatorCall<T>(
   const cached = resultCache.get(key);
   if (cached && cached.expiresAt > Date.now()) return cached.value as T | null;
 
-  const pending = inFlight.get(key);
-  if (pending) return pending as Promise<T | null>;
+  let outcomePromise = inFlight.get(key);
+  if (!outcomePromise) {
+    outcomePromise = (async (): Promise<GovernedOutcome> => {
+      let ran = false;
+      let value: T | null = null;
+      try {
+        value = await getGovernor(provider).schedule(async () => {
+          ran = true;
+          return fn();
+        });
+      } finally {
+        inFlight.delete(key);
+      }
+      if (ran) {
+        resultCache.set(key, {
+          value,
+          expiresAt: Date.now() + (value === null ? NO_ROUTE_CACHE_TTL_MS : CACHE_TTL_MS),
+        });
+      }
+      return { value, ran };
+    })();
+    inFlight.set(key, outcomePromise);
+  }
 
-  let ran = false;
-  const tracked = (async () => {
-    let value: T | null = null;
-    try {
-      value = await getGovernor(provider).schedule(async () => {
-        ran = true;
-        return fn();
-      });
-    } finally {
-      inFlight.delete(key);
-    }
-    if (ran) {
-      resultCache.set(key, {
-        value,
-        expiresAt: Date.now() + (value === null ? NO_ROUTE_CACHE_TTL_MS : CACHE_TTL_MS),
-      });
-    }
-    return value;
-  })();
-
-  inFlight.set(key, tracked as Promise<unknown>);
-  return tracked;
+  const outcome = await outcomePromise;
+  if (!outcome.ran) onSkipped?.();
+  return outcome.value as T | null;
 }

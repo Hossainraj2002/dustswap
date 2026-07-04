@@ -54,6 +54,10 @@ export type RpcRequestOptions = {
   retryDeterministic?: false;
   providerLabel?: string;
   maxEndpointAttempts?: number;
+  // Per-call hedge override. Hedging fires the SAME request at N endpoints simultaneously —
+  // great for latency on cheap calls, but it MULTIPLIES key usage. Expensive methods
+  // (alchemy_getTokenBalances) should pass 1 so a capacity-limited key set isn't burned twice.
+  hedgeCount?: number;
 };
 
 type RpcParams = ReadonlyArray<unknown> | Record<string, unknown>;
@@ -330,7 +334,10 @@ export async function alchemyRpcRequest<T>(
 
   let lastTransport: Error | null = null;
   let endpointsToTry = endpoints;
-  const hedgeCount = getAlchemyHedgeCount(endpoints.length);
+  const hedgeCount =
+    Number.isFinite(opts.hedgeCount) && Number(opts.hedgeCount) >= 1
+      ? Math.min(endpoints.length, Math.floor(Number(opts.hedgeCount)))
+      : getAlchemyHedgeCount(endpoints.length);
 
   if (hedgeCount > 1) {
     const hedgedControllers: AbortController[] = [];
