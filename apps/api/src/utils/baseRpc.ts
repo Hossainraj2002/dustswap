@@ -131,12 +131,43 @@ function getPreferredAlchemyKeyUrls() {
   );
 }
 
-function getPreferredBaseRpcUrls() {
+// How Alchemy keyed endpoints participate in the GENERIC pool (cheap eth_call/receipt reads:
+// DEX quote probes, spin/check-in/wallet-link tx verification). The dedicated alchemyRpcRequest
+// lane (alchemy_getTokenBalances, alchemy_getAssetTransfers, 4337 userOp APIs) always keeps them.
+//   ALCHEMY_BASE_RPC_DEDICATED_ONLY unset/false → "first": legacy — Alchemy leads the pool and
+//     the failure-fallback order (burns paid CU on quoter probes).
+//   =last  → "last": RECOMMENDED with a paid key — Alchemy sits at the very END of the pool and
+//     never leads rotation, so it only pays CU when EVERY free endpoint has failed. Zero
+//     reliability compromise, near-zero burn.
+//   =true  → "off": Alchemy fully excluded from the generic pool.
+type AlchemyGenericPoolMode = "first" | "last" | "off";
+
+function getAlchemyGenericPoolMode(): AlchemyGenericPoolMode {
+  const raw = String(process.env.ALCHEMY_BASE_RPC_DEDICATED_ONLY || "").toLowerCase();
+  if (["1", "true", "yes"].includes(raw)) return "off";
+  if (raw === "last") return "last";
+  return "first";
+}
+
+const ALCHEMY_BACKSTOP_LABEL = "alchemy-backstop";
+
+function getAlchemyGenericPoolUrls() {
   return unique(
     [
       ...splitEnv(process.env.ALCHEMY_BASE_RPC_URLS),
       ...splitEnv(process.env.ALCHEMY_BASE_RPC),
       ...getPreferredAlchemyKeyUrls(),
+    ].filter(isHttpsUrl),
+  );
+}
+
+function getPreferredBaseRpcUrls() {
+  const alchemyPoolUrls =
+    getAlchemyGenericPoolMode() === "first" ? getAlchemyGenericPoolUrls() : [];
+
+  return unique(
+    [
+      ...alchemyPoolUrls,
       ...splitEnv(process.env.BASE_RPC_URLS),
       ...splitEnv(process.env.BASE_RPC_URL),
     ].filter(isHttpsUrl),
@@ -183,7 +214,22 @@ export function getBaseRpcEndpoints(): BaseRpcEndpoint[] {
     ? [...withBlockscout, { url: BASE_PUBLIC_RPC_URL, label: "public" }]
     : withBlockscout;
 
-  return withPublicFallback.length > 0 ? withPublicFallback : [{ url: BASE_PUBLIC_RPC_URL, label: "public" }];
+  // "last" mode: the paid Alchemy endpoints go AFTER even the public fallback — pure backstop.
+  // They are excluded from rotation leadership below, so they only serve a request when every
+  // free endpoint has already failed it.
+  const withAlchemyBackstop =
+    getAlchemyGenericPoolMode() === "last"
+      ? [
+          ...withPublicFallback,
+          ...getAlchemyGenericPoolUrls()
+            .filter((url) => !withPublicFallback.some((endpoint) => endpoint.url === url))
+            .map((url) => ({ url, label: ALCHEMY_BACKSTOP_LABEL })),
+        ]
+      : withPublicFallback;
+
+  return withAlchemyBackstop.length > 0
+    ? withAlchemyBackstop
+    : [{ url: BASE_PUBLIC_RPC_URL, label: "public" }];
 }
 
 export function getBaseRpcUrls() {
@@ -194,12 +240,20 @@ export function getRotatingBaseRpcEndpoint() {
   const endpoints = getBaseRpcEndpoints();
   if (endpoints.length === 1) return endpoints[0];
 
-  const endpoint = endpoints[activeIndex % endpoints.length];
+  // Backstop endpoints never LEAD a request — they only serve as the final failure fallback
+  // via getOrderedBaseRpcEndpoints. Rotation cycles over the free pool only.
+  const rotationPool = endpoints.filter(
+    (endpoint) => endpoint.label !== ALCHEMY_BACKSTOP_LABEL,
+  );
+  const pool = rotationPool.length > 0 ? rotationPool : endpoints;
+  if (pool.length === 1) return pool[0];
+
+  const endpoint = pool[activeIndex % pool.length];
   activeCalls += 1;
 
   if (activeCalls >= getBaseRotationCalls()) {
     activeCalls = 0;
-    activeIndex = (activeIndex + 1) % endpoints.length;
+    activeIndex = (activeIndex + 1) % pool.length;
   }
 
   return endpoint;
