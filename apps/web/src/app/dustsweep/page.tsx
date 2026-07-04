@@ -283,11 +283,8 @@ export default function DustSweepPage() {
   const [tokenModalMode, setTokenModalMode] = useState<"multi" | "single" | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [routeBContinued, setRouteBContinued] = useState(false);
-  // High price-impact confirm gate — must be re-acknowledged for every fresh quote.
-  const [impactAcknowledged, setImpactAcknowledged] = useState(false);
-  useEffect(() => {
-    setImpactAcknowledged(false);
-  }, [sweep.quote]);
+  // Price-impact UI (row, banners, confirm gate) is parked for now — the server still computes
+  // impact and uses it for aggregator rescue routing. Revisit later.
 
   // Internal diagnostics (the wallet route-status card + batch notice) are hidden
   // from the public. Append ?dev (or ?=dev) to the URL to reveal them. Resolved
@@ -380,36 +377,7 @@ export default function DustSweepPage() {
     routeKind: sweep.routeKind,
   });
 
-  // High price-impact gate: when the quote loses more than the API's confirmation threshold vs
-  // market value, the sweep button stays disabled until the user explicitly acknowledges it.
-  const needsImpactConfirmation =
-    Boolean(sweep.quote?.requiresImpactConfirmation) && !impactAcknowledged;
-
-  // Name the culprit token(s) in the gate banner: the worst per-token impacts, NOT the basket
-  // figure the impact row shows — otherwise "~100%" next to a 9.9% basket row reads as a bug.
-  const highImpactTokens = useMemo(() => {
-    const routes = sweep.quote?.routes ?? [];
-    const known = routes.filter((route) => route.priceImpactKnown !== false);
-    if (known.length === 0) return [];
-    const worstBps = Math.max(...known.map((route) => route.priceImpactBps));
-    const threshold = Math.min(2000, worstBps);
-    return known
-      .filter((route) => route.priceImpactBps >= threshold)
-      .sort((a, b) => b.priceImpactBps - a.priceImpactBps)
-      .slice(0, 3)
-      .map((route) => ({
-        symbol:
-          sweep.selectedTokens.find(
-            (token) => token.address.toLowerCase() === route.tokenIn.toLowerCase(),
-          )?.symbol ?? `${route.tokenIn.slice(0, 6)}…`,
-        pct: (route.priceImpactBps / 100).toFixed(1),
-      }));
-  }, [sweep.quote, sweep.selectedTokens]);
-  const buttonState: SweepButtonVisualState =
-    needsImpactConfirmation &&
-    (baseButtonState.state === "ready" || baseButtonState.state === "preview")
-      ? { state: "disabled", label: "Confirm high price impact" }
-      : baseButtonState;
+  const buttonState: SweepButtonVisualState = baseButtonState;
   const walletModeNotice =
     sweep.executionNotice ||
     (isDevView && sweep.batchMode && sweep.selectedTokens.length > 0
@@ -657,49 +625,8 @@ export default function DustSweepPage() {
             />
           ) : null}
 
-          {/* High price impact — confirmation gate above the API threshold, plain warning below it */}
-          {sweep.quote?.requiresImpactConfirmation ? (
-            <div className="space-y-2.5 rounded-[14px] border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
-              <div className="flex items-start gap-2.5">
-                <BlueAlertIcon />
-                <span>
-                  <strong>
-                    Very high price impact on{" "}
-                    {highImpactTokens.length > 0
-                      ? highImpactTokens
-                          .map((token) => `${token.symbol} (~${token.pct}%)`)
-                          .join(", ")
-                      : typeof sweep.quote.maxPriceImpactBps === "number"
-                        ? `one token (~${(sweep.quote.maxPriceImpactBps / 100).toFixed(1)}%)`
-                        : "one token"}
-                    .
-                  </strong>{" "}
-                  {highImpactTokens.length > 1 ? "These tokens have" : "This token has"} very
-                  little sell-side liquidity, so selling{" "}
-                  {highImpactTokens.length > 1 ? "them" : "it"} returns far less than the market
-                  value. Deselect {highImpactTokens.length > 1 ? "them" : "it"} — or sweep
-                  anyway: any token that can&apos;t meet its minimum is automatically skipped and
-                  refunded, never sold below its floor.
-                </span>
-              </div>
-              <label className="flex cursor-pointer items-center gap-2 font-medium">
-                <input
-                  type="checkbox"
-                  checked={impactAcknowledged}
-                  onChange={(event) => setImpactAcknowledged(event.target.checked)}
-                  className="h-4 w-4 rounded border-red-300 accent-red-600"
-                />
-                I understand and want to sweep anyway
-              </label>
-            </div>
-          ) : (sweep.quote?.basketImpactBps ?? sweep.quote?.maxPriceImpactBps ?? 0) > 2000 ? (
-            // Warning banner only above 20% of the DISPLAYED (basket-level) impact — below
-            // that the impact row's own color tiers (gray <10%, yellow 10-20%) carry the signal.
-            <div className="flex items-start gap-2.5 rounded-[14px] border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-              <BlueAlertIcon />
-              <span>High price impact detected. Review the route carefully before sweeping.</span>
-            </div>
-          ) : null}
+          {/* Price-impact banners/gate parked for now (server still computes impact for
+              aggregator rescue routing). Revisit later. */}
 
           {walletModeNotice ? (
             <div className="rounded-[14px] border border-blue-200 bg-blue-50 px-4 py-3 text-sm font-medium text-blue-700">
@@ -731,7 +658,6 @@ export default function DustSweepPage() {
           <SweepButton
             visualState={buttonState}
             onClick={() => {
-              if (needsImpactConfirmation) return;
               void sweep.executeSweep();
             }}
             txHash={sweep.txHash}

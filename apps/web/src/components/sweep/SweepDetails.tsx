@@ -66,72 +66,22 @@ export function SweepDetails({
 }) {
   if (!quote) return null;
 
-  // Worst route impact, counting only routes whose impact was actually computed against a
-  // market reference price. When none was, say "Unknown" instead of pretending it's ~0%.
-  const maxImpact =
-    quote.maxPriceImpactBps ??
-    quote.routes.reduce(
-      (max, route) => (route.priceImpactKnown === false ? max : Math.max(max, route.priceImpactBps)),
-      0,
-    );
-  const impactUnknown =
-    quote.routes.length > 0 &&
-    quote.routes.every((route) => route.priceImpactKnown === false);
-  // Dollar figure comes ONLY from the server's basket-level sum (expected market value minus
-  // quoted output across priced routes). Deriving dollars from the WORST token's percentage
-  // times the WHOLE basket falsely turned one $0.50 illiquid token into "$17 lost".
-  const basketUsd = quote.basketImpactUSD;
-  const basketBps = quote.basketImpactBps;
-
   const minimumReceive = formatTokenAmount(getMinimumReceiveRaw(quote), tokenOut);
 
-  // Color tiers key on the impact number the user actually SEES (basket-level when priced,
-  // else worst token): <10% normal gray, 10-20% light yellow, >20% red.
-  const displayedImpactBps = impactUnknown
-    ? null
-    : typeof basketBps === "number"
-      ? basketBps
-      : maxImpact;
-  const impactTone: "default" | "caution" | "danger" =
-    displayedImpactBps === null
-      ? "default"
-      : displayedImpactBps > 2_000
-        ? "danger"
-        : displayedImpactBps > 1_000
-          ? "caution"
-          : "default";
-
-  const rows: Array<{ label: string; value: string; tone?: "caution" | "danger" }> = [
+  // Price impact is intentionally NOT displayed for now (model parked; the server still
+  // computes it and uses it for aggregator rescue routing). Revisit later.
+  const rows: Array<{ label: string; value: string }> = [
     { label: "Slippage:", value: `${(slippageBps / 100).toFixed(1)}%` },
     { label: "Estimated gas fees:", value: `~${formatUsd(quote.gasEstimateUSD)}` },
-    {
-      label: "Price impact:",
-      // No reliable reference price → show "~" rather than any number. A wrong percentage is
-      // worse than an honest "approximately unknown".
-      value: impactUnknown
-        ? "~"
-        : typeof basketUsd === "number" && typeof basketBps === "number"
-          ? `~${formatUsd(basketUsd)} (${(basketBps / 100).toFixed(2)}%)`
-          : "~",
-      ...(impactTone !== "default" ? { tone: impactTone } : {}),
-    },
     ...(minimumReceive ? [{ label: "Minimum receive:", value: minimumReceive }] : []),
   ];
 
   return (
     <dl className="flex flex-col gap-2">
-      {rows.map(({ label, value, tone }) => (
+      {rows.map(({ label, value }) => (
         <div key={label} className="flex items-center justify-between gap-3">
           <dt className="text-[13px] text-slate-500 dark:text-slate-400">{label}</dt>
-          <dd
-            className={`text-[13px] font-semibold tabular-nums ${
-              tone === "danger"
-                ? "text-red-600 dark:text-red-300"
-                : tone === "caution"
-                  ? "text-amber-500 dark:text-amber-300"
-                  : "text-slate-900 dark:text-white"
-            }`}
-          >
+          <dd className="text-[13px] font-semibold tabular-nums text-slate-900 dark:text-white">
             {value}
           </dd>
         </div>
