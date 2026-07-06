@@ -56,9 +56,15 @@ function parseRequestTimeoutMs() {
 }
 
 export class BlockscoutClient {
-  private readonly baseUrl = (
-    process.env.BLOCKSCOUT_BASE_URL || DEFAULT_BLOCKSCOUT_BASE_URL
-  ).replace(/\/+$/, "");
+  private readonly baseUrl: string;
+
+  constructor(baseUrl?: string) {
+    this.baseUrl = (
+      baseUrl ||
+      process.env.BLOCKSCOUT_BASE_URL ||
+      DEFAULT_BLOCKSCOUT_BASE_URL
+    ).replace(/\/+$/, "");
+  }
   private readonly apiKeys = parseBlockscoutApiKeys();
   private readonly maxRequestsPerKey = parseMaxRequestsPerKey();
   private readonly maxRequestsPerSecondPerKey = parseMaxRequestsPerSecondPerKey();
@@ -200,3 +206,20 @@ export class BlockscoutClient {
 }
 
 export const blockscoutClient = new BlockscoutClient();
+
+// Per-chain instances. chainId 8453 returns the existing default instance (env override
+// BLOCKSCOUT_BASE_URL still applies to it); other chains use BLOCKSCOUT_BASE_URL_<chainId>
+// or the canonical https://api.blockscout.com/<chainId> host. Keys are shared across chains.
+const chainClients = new Map<number, BlockscoutClient>();
+
+export function getBlockscoutClient(chainId: number): BlockscoutClient {
+  if (chainId === 8453) return blockscoutClient;
+  let client = chainClients.get(chainId);
+  if (!client) {
+    client = new BlockscoutClient(
+      process.env[`BLOCKSCOUT_BASE_URL_${chainId}`] || `https://api.blockscout.com/${chainId}`,
+    );
+    chainClients.set(chainId, client);
+  }
+  return client;
+}

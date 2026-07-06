@@ -88,7 +88,10 @@ ALTER TABLE sweeps ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW()
 CREATE INDEX IF NOT EXISTS idx_sweeps_user ON sweeps(user_address);
 CREATE INDEX IF NOT EXISTS idx_tokens_chain_active ON tokens(chain_id, is_active);
 CREATE INDEX IF NOT EXISTS idx_tokens_liquidity ON tokens(chain_id, liquidity_usd DESC);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_tokens_address_unique ON tokens(address);
+-- Token whitelist uniqueness is per-chain: the same address can exist on Base and Ethereum.
+-- (Legacy single-column unique index idx_tokens_address_unique is dropped in
+-- sql/multichain_ethereum.sql for existing deployments.)
+CREATE UNIQUE INDEX IF NOT EXISTS idx_tokens_chain_address_unique ON tokens(chain_id, address);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_sweeps_tx_hash_unique ON sweeps(tx_hash);
 
 -- Optional short-lived cache for /api/dustsweep/tokens/:address

@@ -26,12 +26,16 @@ import { isAddress, type Address } from "viem";
  */
 
 export const BASE_CHAIN_ID = 8453;
+export const ETHEREUM_CHAIN_ID = 1;
 
 /** Canonical Permit2 (same address on every chain). Verified live on Base. */
 export const PERMIT2_ADDRESS: Address = "0x000000000022D473030F116dDEE9F6B43aC78BA3";
 
 /** WETH on Base. Verified live on Base. Constructor arg for DustSwapSweepRouter. */
 export const WETH_ADDRESS: Address = "0x4200000000000000000000000000000000000006";
+
+/** WETH on Ethereum mainnet. Constructor arg for the mainnet DustSwapSweepRouter. */
+export const ETHEREUM_WETH_ADDRESS: Address = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2";
 
 export type DustSweepV3SpenderModel = "permit2" | "self";
 
@@ -197,6 +201,113 @@ export const BASE_DUSTSWEEP_V3_TARGETS: DustSweepV3Target[] = [
   },
 ];
 
+/**
+ * Verified Ethereum mainnet (chainId 1) targets for DustSweep V3.
+ *
+ * Native execution ships with Uniswap V3 + V2 + SushiSwap (deepest native liquidity); the
+ * aggregator ladder (Kyber / 0x / LI.FI) covers Curve, Balancer, Pancake, Fluid, etc. via the
+ * rescue path. OpenOcean + Odos are PRE-ALLOWLISTED but PARKED (enabled: false) — the on-chain
+ * allowlist is inert until DUST_SWEEP_ENABLE_*_1 + DUST_SWEEP_ALLOWED_AGGREGATOR_TARGETS_1 open
+ * them. Every address must be re-verified live via eth_getCode before the owner allowlist txs;
+ * see packages/contracts/remix/DustSwapSweepRouter-Ethereum-Deploy.md.
+ */
+export const ETHEREUM_DUSTSWEEP_V3_TARGETS: DustSweepV3Target[] = [
+  {
+    id: "uniswap-v3-swaprouter02",
+    name: "Uniswap V3 SwapRouter02",
+    target: "0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45",
+    spender: "0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45",
+    spenderModel: "self",
+    calldataStyle: "uniswap_v3_swaprouter02",
+    feeTiers: [100, 500, 3000, 10000],
+    enabled: true,
+    source: "Uniswap official docs (mainnet v3 deployments); re-verify eth_getCode pre-allowlist",
+  },
+  {
+    id: "uniswap-universal-router",
+    name: "Uniswap Universal Router (V3+V4)",
+    target: "0x66a9893cC07D91D95644AEDD05D03f95e1dBA8Af",
+    spender: PERMIT2_ADDRESS,
+    spenderModel: "permit2",
+    calldataStyle: "uniswap_universal_router",
+    feeTiers: [100, 500, 3000, 10000],
+    // Parked until the V4 native adapter ships on mainnet; allowlisted so it can be flipped on
+    // without a new owner tx. V3-style routing already covered by SwapRouter02 above.
+    enabled: false,
+    source: "Uniswap official docs (mainnet UR v4); re-verify eth_getCode pre-allowlist",
+  },
+  {
+    id: "uniswap-v2-router",
+    name: "Uniswap V2 Router02",
+    target: "0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D",
+    spender: "0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D",
+    spenderModel: "self",
+    calldataStyle: "baseswap_router", // UniV2 getAmountsOut/swapExactTokensForTokens shape
+    enabled: true,
+    source: "Uniswap V2 canonical router (mainnet); re-verify eth_getCode pre-allowlist",
+  },
+  {
+    id: "sushiswap-v2-router",
+    name: "SushiSwap Router (UniV2)",
+    target: "0xd9e1cE17f2641f24aE83637ab66a2cca9C378B9F",
+    spender: "0xd9e1cE17f2641f24aE83637ab66a2cca9C378B9F",
+    spenderModel: "self",
+    calldataStyle: "baseswap_router",
+    enabled: true,
+    source: "SushiSwap canonical router (mainnet); re-verify eth_getCode pre-allowlist",
+  },
+  {
+    id: "kyber-meta-aggregation-router-v2",
+    name: "KyberSwap MetaAggregationRouterV2",
+    target: "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5",
+    spender: "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5",
+    spenderModel: "self",
+    calldataStyle: "uniswap_v3_swaprouter02", // GENERIC aggregator route; calldata is opaque
+    enabled: true,
+    source: "KyberSwap docs (same router address across chains); re-verify eth_getCode",
+  },
+  {
+    id: "zerox-allowance-holder",
+    name: "0x AllowanceHolder",
+    target: "0x0000000000001fF3684f28c67538d4D072C22734",
+    spender: "0x0000000000001fF3684f28c67538d4D072C22734",
+    spenderModel: "self",
+    calldataStyle: "uniswap_v3_swaprouter02",
+    enabled: true,
+    source: "0x docs (AllowanceHolder, same address across chains); re-verify eth_getCode",
+  },
+  {
+    id: "lifi-diamond",
+    name: "LI.FI Diamond",
+    target: "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE",
+    spender: "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE",
+    spenderModel: "self",
+    calldataStyle: "uniswap_v3_swaprouter02",
+    enabled: true,
+    source: "LI.FI docs (Diamond, same address across chains); re-verify eth_getCode",
+  },
+  {
+    id: "openocean-exchange-proxy",
+    name: "OpenOcean Exchange Proxy",
+    target: "0x6352a56caadC4F1E25CD6c75970Fa768A3304e64",
+    spender: "0x6352a56caadC4F1E25CD6c75970Fa768A3304e64",
+    spenderModel: "self",
+    calldataStyle: "uniswap_v3_swaprouter02",
+    enabled: false, // PARKED — pre-allowlist on-chain, enable via DUST_SWEEP_ENABLE_OPENOCEAN_1
+    source: "OpenOcean docs; parked pending enable + live quote verification",
+  },
+  {
+    id: "odos-router-v2",
+    name: "Odos RouterV2",
+    target: "0xCf5540fFFCdC3d510B18bFcA6d2b9987b0772559",
+    spender: "0xCf5540fFFCdC3d510B18bFcA6d2b9987b0772559",
+    spenderModel: "self",
+    calldataStyle: "uniswap_v3_swaprouter02",
+    enabled: false, // PARKED — pre-allowlist on-chain, enable via DUST_SWEEP_ENABLE_ODOS_1
+    source: "Odos docs; parked pending enable + API key + live quote verification",
+  },
+];
+
 function unique(addresses: Address[]): Address[] {
   const seen = new Set<string>();
   const out: Address[] = [];
@@ -230,4 +341,31 @@ export function getBaseDustSweepV3Allowlist(): { targets: Address[]; spenders: A
 export function getDustSweepV3RouterAddress(): Address | null {
   const candidate = process.env.DUST_SWEEP_ROUTER_V3_ADDRESS;
   return candidate && isAddress(candidate) ? (candidate as Address) : null;
+}
+
+// ── Per-chain accessors (additive; Base callers keep using the Base-specific exports above) ──
+
+/** All configured V3 targets for a chain (Base default). */
+export function getDustSweepV3TargetsForChain(chainId: number): DustSweepV3Target[] {
+  return chainId === ETHEREUM_CHAIN_ID ? ETHEREUM_DUSTSWEEP_V3_TARGETS : BASE_DUSTSWEEP_V3_TARGETS;
+}
+
+export function getActiveDustSweepV3TargetsForChain(chainId: number): DustSweepV3Target[] {
+  return getDustSweepV3TargetsForChain(chainId).filter((t) => t.enabled);
+}
+
+/**
+ * The exact owner-only allowlist a chain's V3 router needs after deploy.
+ * NOTE: for Ethereum this INCLUDES parked (enabled:false) aggregator targets so the owner can
+ * pre-allowlist them on-chain; app-side execution stays gated by the enable flags.
+ */
+export function getDustSweepV3AllowlistForChain(chainId: number): {
+  targets: Address[];
+  spenders: Address[];
+} {
+  const all = getDustSweepV3TargetsForChain(chainId);
+  return {
+    targets: unique(all.map((t) => t.target)),
+    spenders: unique(all.map((t) => t.spender)),
+  };
 }

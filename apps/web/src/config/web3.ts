@@ -57,9 +57,22 @@ function toRpcUrlList(...values: Array<string | undefined>) {
   return values.filter((value): value is string => Boolean(value && value.trim()));
 }
 
+// Ethereum mainnet RPCs, keyed-Alchemy first (same rotation machinery as Base). A dedicated
+// key set keeps mainnet CU burn attributable and off the Base pool.
+function getEthereumRpcUrls() {
+  const alchemyUrls = splitEnv(process.env.NEXT_PUBLIC_ALCHEMY_ETHEREUM_RPC_KEYS).map(
+    (key) => `https://eth-mainnet.g.alchemy.com/v2/${key}`,
+  );
+  const explicitUrls = [
+    ...splitEnv(process.env.NEXT_PUBLIC_ETHEREUM_RPC_URLS),
+    ...toRpcUrlList(process.env.NEXT_PUBLIC_ETHEREUM_RPC_URL),
+  ];
+  return unique([...alchemyUrls, ...explicitUrls]);
+}
+
 const rpcUrlsByChainId: Record<number, string[]> = {
   [base.id]: getBaseRpcUrls(),
-  [mainnet.id]: toRpcUrlList(process.env.NEXT_PUBLIC_ETHEREUM_RPC_URL),
+  [mainnet.id]: getEthereumRpcUrls(),
   [arbitrum.id]: toRpcUrlList(process.env.NEXT_PUBLIC_ARBITRUM_RPC_URL),
   [optimism.id]: toRpcUrlList(process.env.NEXT_PUBLIC_OPTIMISM_RPC_URL),
   [polygon.id]: toRpcUrlList(process.env.NEXT_PUBLIC_POLYGON_RPC_URL),

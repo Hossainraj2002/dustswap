@@ -70,7 +70,7 @@ function normalizeTokenPayload(payload: unknown): DustSweepTokensResponse {
   };
 }
 
-export function useTokenBalances(address?: Address): TokenBalanceState {
+export function useTokenBalances(address?: Address, chainId = 8453): TokenBalanceState {
   const [swappableTokens, setSwappableTokens] = useState<SwappableToken[]>([]);
   const [unavailableTokens, setUnavailableTokens] = useState<UnavailableToken[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -158,7 +158,7 @@ export function useTokenBalances(address?: Address): TokenBalanceState {
     try {
       const params = new URLSearchParams({
         address,
-        chainId: "8453",
+        chainId: String(chainId),
       });
       if (options?.force) {
         params.set("refresh", "1");
@@ -226,7 +226,8 @@ export function useTokenBalances(address?: Address): TokenBalanceState {
         setIsLoading(false);
       }
     }
-  }, [address]);
+    // chainId in deps: switching the sweep chain re-scans against the new network.
+  }, [address, chainId]);
 
   useEffect(() => {
     void refetch();

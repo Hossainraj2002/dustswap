@@ -29,6 +29,11 @@ import { WalletGateNotice } from "@/components/sweep/WalletGateModal";
 import { WalletRouteStatus } from "@/components/sweep/WalletRouteStatus";
 import { useDustSweep } from "@/hooks/useDustSweep";
 import {
+  BASE_CHAIN_ID,
+  getEnabledSweepChains,
+  getGasWarnRatio,
+} from "@/config/sweepChainConfig";
+import {
   DUST_SWEEP_PRIVY_WALLET_LIST,
   useWalletConnection,
 } from "@/hooks/useWalletConnection";
@@ -278,8 +283,24 @@ function BalanceScanStatus({
 
 export default function DustSweepPage() {
   const { address, isConnected } = useAccount();
-  const sweep = useDustSweep();
+  // Active sweep chain. Persisted per-session; defaults to Base. The selector below is only
+  // rendered when more than one chain is enabled, so with the flag off the page is unchanged.
+  const enabledSweepChains = useMemo(() => getEnabledSweepChains(), []);
+  const [sweepChainId, setSweepChainId] = useState<number>(() => {
+    if (typeof window === "undefined") return BASE_CHAIN_ID;
+    const stored = Number(window.sessionStorage.getItem("dustsweep:chainId"));
+    return enabledSweepChains.some((chain) => chain.id === stored) ? stored : BASE_CHAIN_ID;
+  });
+  const sweep = useDustSweep({ chainId: sweepChainId });
   const walletConnection = useWalletConnection();
+  const showChainSelector = enabledSweepChains.length > 1;
+  useEffect(() => {
+    try {
+      window.sessionStorage.setItem("dustsweep:chainId", String(sweepChainId));
+    } catch {
+      // sessionStorage may be unavailable (private mode) — non-fatal.
+    }
+  }, [sweepChainId]);
   const [tokenModalMode, setTokenModalMode] = useState<"multi" | "single" | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [routeBContinued, setRouteBContinued] = useState(false);
@@ -522,6 +543,33 @@ export default function DustSweepPage() {
             sweepableCount={sweep.swappableTokens.length}
           />
 
+          {/* Chain selector — only shown when more than one sweep chain is enabled. */}
+          {showChainSelector ? (
+            <div className="mb-2 flex items-center gap-2">
+              <span className="text-xs font-semibold text-gray-500 dark:text-gray-400">Network</span>
+              <div className="flex gap-1 rounded-[12px] bg-gray-100 p-1 dark:bg-white/5">
+                {enabledSweepChains.map((chainOption) => {
+                  const active = chainOption.id === sweepChainId;
+                  return (
+                    <button
+                      key={chainOption.id}
+                      type="button"
+                      onClick={() => setSweepChainId(chainOption.id)}
+                      disabled={sweep.isSweeping}
+                      className={
+                        active
+                          ? "rounded-[9px] bg-white px-3 py-1 text-sm font-bold text-[#0052ff] shadow-sm dark:bg-white/15 dark:text-blue-300"
+                          : "rounded-[9px] px-3 py-1 text-sm font-semibold text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+                      }
+                    >
+                      {chainOption.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ) : null}
+
           {/* Unified trade card: From → merge → To → receiver */}
           <div className="sweep-card space-y-1.5 p-2.5">
             <TokenFromPanel
@@ -654,6 +702,19 @@ export default function DustSweepPage() {
             />
           ) : null}
 
+          {/* Gas-vs-basket warning — only on non-Base chains (Base gas is negligible, so this
+              preserves the existing Base UX). Mainnet gas can dwarf a small dust basket. */}
+          {sweep.chainId !== BASE_CHAIN_ID &&
+          sweep.quote &&
+          sweep.quote.gasEstimateUSD > 0 &&
+          (sweep.quote.gasToBasketRatio ?? 0) >= getGasWarnRatio() ? (
+            <div className="mb-2 rounded-[12px] border border-amber-300 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800 dark:border-amber-400/40 dark:bg-amber-400/10 dark:text-amber-300">
+              Network fee ≈ ${sweep.quote.gasEstimateUSD.toFixed(2)} (~
+              {Math.round((sweep.quote.gasToBasketRatio ?? 0) * 100)}% of your basket). Gas can
+              exceed the value of small dust — consider sweeping fewer, higher-value tokens.
+            </div>
+          ) : null}
+
           {/* Sweep button */}
           <SweepButton
             visualState={buttonState}
@@ -661,6 +722,7 @@ export default function DustSweepPage() {
               void sweep.executeSweep();
             }}
             txHash={sweep.txHash}
+            chainId={sweep.chainId}
           />
         </div>
       </div>

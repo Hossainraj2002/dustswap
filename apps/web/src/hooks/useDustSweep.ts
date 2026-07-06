@@ -2,8 +2,13 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAccount, useConnection, usePublicClient, useWalletClient } from "wagmi";
-import { base } from "viem/chains";
-import { useBaseChainSwitch } from "@/hooks/useBaseChainSwitch";
+import { useSweepChainSwitch } from "@/hooks/useSweepChainSwitch";
+import {
+  BASE_CHAIN_ID,
+  getGasWarnRatio,
+  getSweepChain,
+  getSweepSelectLimit,
+} from "@/config/sweepChainConfig";
 import { concatHex, encodeFunctionData, erc20Abi, type Address, type Hex } from "viem";
 import {
   useTokenBalances,
@@ -133,6 +138,7 @@ type WalletCallsStatusResult = {
 };
 
 export type UseDustSweepReturn = {
+  chainId: number;
   swappableTokens: SwappableToken[];
   unavailableTokens: UnavailableToken[];
   selectedTokens: SelectedToken[];
@@ -704,20 +710,24 @@ function getCapForLane(lane?: string | null) {
   return lane === "owned_v1" ? V1_MAX_BATCH_SIZE : V2_MAX_BATCH_SIZE;
 }
 
-export function useDustSweep(): UseDustSweepReturn {
+export function useDustSweep(options?: { chainId?: number }): UseDustSweepReturn {
+  // Active sweep chain. Defaults to Base, so every existing (arg-less) call site is unchanged.
+  const sweepChainId = options?.chainId ?? BASE_CHAIN_ID;
+  const sweepChain = getSweepChain(sweepChainId);
   const { address, isConnected } = useAccount();
   const connection = useConnection();
   const { data: walletClient } = useWalletClient();
-  const publicClient = usePublicClient({ chainId: base.id });
-  const { switchToBase } = useBaseChainSwitch();
+  const publicClient = usePublicClient({ chainId: sweepChainId });
+  // EIP-7702 delegation is per-chain — the switch + code reads MUST target the active sweep chain.
+  const { switchToSweepChain } = useSweepChainSwitch(sweepChainId);
   const walletConnection = useWalletConnection();
   const walletStatus = useWalletWhitelist();
-  const balances = useTokenBalances(address);
+  const balances = useTokenBalances(address, sweepChainId);
   const refetchBalances = balances.refetch;
 
   const [unavailableTokens, setUnavailableTokens] = useState<UnavailableToken[]>([]);
   const [selectedTokens, setSelectedTokens] = useState<SelectedToken[]>([]);
-  const [tokenOut, setTokenOut] = useState<Token | null>(DEFAULT_OUTPUT_TOKENS[0]);
+  const [tokenOut, setTokenOut] = useState<Token | null>(sweepChain.outputTokens[0]);
   const [quote, setQuote] = useState<DustSweepQuoteResponse | null>(null);
   const [slippageBps, setSlippageBps] = useState(50);
   const [autoMode, setAutoMode] = useState(false);
@@ -790,13 +800,19 @@ export function useDustSweep(): UseDustSweepReturn {
   // use DUST_SWEEP_AUTO_SELECT_LIMIT_BASE_COINBASE when it is set, falling back to the regular
   // limit otherwise. Both are bounded by the lane execution cap so selection can never exceed
   // the on-chain batch max (50 on V2/V3). Unset regular limit ⇒ lane cap (current behavior).
+  // Per-chain regular cap: Base uses the existing env; other chains use their own limit
+  // (NEXT_PUBLIC_DUST_SWEEP_AUTO_SELECT_LIMIT_1 for Ethereum — a lower ceiling given mainnet gas).
+  const chainSelectLimit =
+    sweepChainId === BASE_CHAIN_ID ? DUST_SWEEP_AUTO_SELECT_LIMIT : getSweepSelectLimit(sweepChainId);
   const regularSelectCap =
-    DUST_SWEEP_AUTO_SELECT_LIMIT != null
-      ? Math.min(DUST_SWEEP_AUTO_SELECT_LIMIT, configuredRouteCap)
+    chainSelectLimit != null
+      ? Math.min(chainSelectLimit, configuredRouteCap)
       : configuredRouteCap;
+  // The Base/Coinbase higher-cap override is a Base-only concept.
   const isBaseOrCoinbaseWallet =
-    walletProfileBase.walletKey === "base_account" ||
-    walletProfileBase.walletKey === "coinbase";
+    sweepChainId === BASE_CHAIN_ID &&
+    (walletProfileBase.walletKey === "base_account" ||
+      walletProfileBase.walletKey === "coinbase");
   const baseCoinbaseSelectCap =
     DUST_SWEEP_AUTO_SELECT_LIMIT_BASE_COINBASE != null
       ? Math.min(DUST_SWEEP_AUTO_SELECT_LIMIT_BASE_COINBASE, configuredRouteCap)
@@ -840,7 +856,7 @@ export function useDustSweep(): UseDustSweepReturn {
     for (const token of [...balances.swappableTokens, ...balances.unavailableTokens]) {
       byAddress.set(token.address.toLowerCase(), token);
     }
-    return DEFAULT_OUTPUT_TOKENS.map((token) => {
+    return sweepChain.outputTokens.map((token) => {
       const discovered = byAddress.get(token.address.toLowerCase());
       return discovered
         ? {
@@ -852,7 +868,7 @@ export function useDustSweep(): UseDustSweepReturn {
           }
         : token;
     });
-  }, [balances.swappableTokens, balances.unavailableTokens]);
+  }, [balances.swappableTokens, balances.unavailableTokens, sweepChain.outputTokens]);
   const swappableTokens = useMemo(
     () => allSwappableTokens.filter((token) => !isSelectedOutputToken(token, tokenOut)),
     [allSwappableTokens, tokenOut],
@@ -917,7 +933,7 @@ export function useDustSweep(): UseDustSweepReturn {
     }
 
     let cancelled = false;
-    const chainIdHex = `0x${base.id.toString(16)}`;
+    const chainIdHex = `0x${sweepChainId.toString(16)}`;
     setIsDetectingRoute(true);
 
     // (b) Can the connected wallet batch atomically right now? (wallet_getCapabilities)
@@ -934,7 +950,7 @@ export function useDustSweep(): UseDustSweepReturn {
 
         const capabilityParamSets: unknown[][] = [
           [address, [chainIdHex]],
-          [address, [String(base.id)]],
+          [address, [String(sweepChainId)]],
           [address],
           [],
         ];
@@ -948,7 +964,7 @@ export function useDustSweep(): UseDustSweepReturn {
                 method: "wallet_getCapabilities",
                 params,
               });
-              const chainCapabilities = getChainCapabilities(result, base.id);
+              const chainCapabilities = getChainCapabilities(result, sweepChainId);
               detectedAtomicStatus = getBatchCapabilityStatus(chainCapabilities);
               supported = isBatchCapabilitySupported(chainCapabilities);
               if (supported) break;
@@ -971,8 +987,8 @@ export function useDustSweep(): UseDustSweepReturn {
       }
     }
 
-    // (a) Is the EOA delegated on Base, and to whom? (eth_getCode on Base).
-    // publicClient is pinned to base.id, so this always reads Base state — 7702
+    // (a) Is the EOA delegated on the active sweep chain, and to whom? (eth_getCode).
+    // publicClient is pinned to sweepChainId, so this reads the CORRECT chain's state — 7702
     // authorization is per-chain, so it must be read on the network we sweep on.
     async function detectDelegation() {
       if (!publicClient) {
@@ -1189,7 +1205,7 @@ export function useDustSweep(): UseDustSweepReturn {
         // current selection. Keep it only when WETH is actually still selected.
         const rebuilt = recomputeQuoteForRoutes(meta, carriedRoutes, meta);
         const wethStillSelected = requestTokens.some(
-          (token) => token.address.toLowerCase() === WETH_ADDRESS.toLowerCase(),
+          (token) => token.address.toLowerCase() === sweepChain.weth.toLowerCase(),
         );
         setQuote(wethStillSelected ? rebuilt : { ...rebuilt, wethUnwrap: undefined });
         if (missing.length > 0) {
@@ -1235,6 +1251,7 @@ export function useDustSweep(): UseDustSweepReturn {
           tokenOut: tokenOut.address,
           slippageBps,
           userAddress: address,
+          chainId: sweepChainId,
         }),
       });
       const payload = await response.json().catch(() => null);
@@ -1277,7 +1294,7 @@ export function useDustSweep(): UseDustSweepReturn {
         const key = token.address.toLowerCase();
         // WETH with native-ETH output is served by quote.wethUnwrap (1:1 wallet-side
         // unwrap), not by a router route — never treat it as missing/unroutable.
-        if (serverQuote.wethUnwrap && key === WETH_ADDRESS.toLowerCase()) continue;
+        if (serverQuote.wethUnwrap && key === sweepChain.weth.toLowerCase()) continue;
         const fresh = serverByToken.get(key);
         if (fresh) {
           mergedRoutes.push(fresh);
@@ -1557,7 +1574,7 @@ export function useDustSweep(): UseDustSweepReturn {
       to: args.to,
       data: concatHex([args.data, DATA_SUFFIX]),
       value: toRpcQuantity(args.value),
-      chainId: `0x${base.id.toString(16)}`,
+      chainId: `0x${sweepChainId.toString(16)}`,
     };
     let lastError: unknown;
 
@@ -1595,7 +1612,10 @@ export function useDustSweep(): UseDustSweepReturn {
   ) => {
     if (!address || !walletClient || approvalRequirements.length === 0) return;
 
-    const paymasterUrl = process.env.NEXT_PUBLIC_PAYMASTER_URL;
+    // Coinbase paymaster is Base-only — never offer it on other sweep chains.
+    const paymasterUrl = sweepChain.paymasterEligible
+      ? process.env.NEXT_PUBLIC_PAYMASTER_URL
+      : undefined;
     const usesTokenPocketExisting =
       walletProfile.executionStrategy === "tokenpocket_existing";
     // OKX must get CLEAN exact ERC20 approve calldata (no builder-code suffix) so
@@ -1605,7 +1625,7 @@ export function useDustSweep(): UseDustSweepReturn {
     for (const requirement of approvalRequirements) {
       const txBase = {
         account: address,
-        chain: base,
+        chain: sweepChain.chain,
         to: requirement.token,
         ...(attachBuilderSuffix ? { dataSuffix: DATA_SUFFIX } : {}),
         ...(walletStatus.isCoinbaseSmartWallet && paymasterUrl
@@ -1693,7 +1713,7 @@ export function useDustSweep(): UseDustSweepReturn {
             {
               version: "2.0.0",
               atomicRequired,
-              chainId: `0x${base.id.toString(16)}`,
+              chainId: `0x${sweepChainId.toString(16)}`,
               from: address,
               calls,
             },
@@ -1833,7 +1853,7 @@ export function useDustSweep(): UseDustSweepReturn {
     const client = walletClient as unknown as {
       sendCalls?: (request: {
         account?: Address;
-        chain?: typeof base;
+        chain?: typeof sweepChain.chain;
         calls: WalletSendCall[];
         capabilities?: unknown;
         forceAtomic?: boolean;
@@ -1879,7 +1899,7 @@ export function useDustSweep(): UseDustSweepReturn {
       try {
         const sendCallsResult = await client.sendCalls({
           account: args.account,
-          chain: base,
+          chain: sweepChain.chain,
           calls,
           forceAtomic: requireAtomic,
           version: "2.0.0",
@@ -1945,7 +1965,7 @@ export function useDustSweep(): UseDustSweepReturn {
 
     const sendCallsPayload = buildWalletSendCallsPayload({
       account: args.account,
-      chainId: base.id,
+      chainId: sweepChainId,
       calls,
       atomicRequired: requireAtomic,
       capabilities,
@@ -2105,7 +2125,7 @@ export function useDustSweep(): UseDustSweepReturn {
     setCompletionSummary(null);
 
     try {
-      await switchToBase();
+      await switchToSweepChain();
 
       // WETH → native ETH: a 1:1 WETH.withdraw() from the user's own wallet. For MIXED baskets
       // the withdraw call rides INSIDE the wallet's atomic bundle (one prompt; state can never
@@ -2117,14 +2137,14 @@ export function useDustSweep(): UseDustSweepReturn {
       let wethUnwrapDone = false;
       // Guard against a stale carried quote: only unwrap when WETH is actually still selected.
       const wethStillSelected = selectedTokens.some((item) =>
-        isSameAddress(item.address, WETH_ADDRESS),
+        isSameAddress(item.address, sweepChain.weth),
       );
       const wethUnwrapAmount =
         quote.wethUnwrap && wethStillSelected ? BigInt(quote.wethUnwrap.amount) : 0n;
       const wethUnwrapCall: WalletSendCall | null =
         wethUnwrapAmount > 0n
           ? {
-              to: WETH_ADDRESS,
+              to: sweepChain.weth,
               data: encodeFunctionData({
                 abi: [
                   {
@@ -2146,8 +2166,8 @@ export function useDustSweep(): UseDustSweepReturn {
         if (!wethUnwrapCall || wethUnwrapDone) return;
         unwrapHash = (await walletClient.sendTransaction({
           account: address,
-          chain: base,
-          to: WETH_ADDRESS,
+          chain: sweepChain.chain,
+          to: sweepChain.weth,
           data: wethUnwrapCall.data,
           value: 0n,
         } as never)) as Hex;
@@ -2163,7 +2183,7 @@ export function useDustSweep(): UseDustSweepReturn {
         setTxHash(unwrapHash);
         await waitForSuccessfulTransaction(unwrapHash);
         const wethToken = selectedTokens.find((item) =>
-          isSameAddress(item.address, WETH_ADDRESS),
+          isSameAddress(item.address, sweepChain.weth),
         );
         setCompletionSummary({
           txHash: unwrapHash,
@@ -2177,6 +2197,7 @@ export function useDustSweep(): UseDustSweepReturn {
           walletName: walletProfile.walletName,
           routeKind,
           completedAt: Date.now(),
+          chainId: sweepChainId,
           inputs: wethToken
             ? [
                 {
@@ -2221,6 +2242,7 @@ export function useDustSweep(): UseDustSweepReturn {
           deadline: quote.deadline,
           permit2Nonce: quote.permit2Nonce,
           userAddress: address,
+          chainId: sweepChainId,
         }),
       });
       const payload = await response.json().catch(() => null);
@@ -2320,6 +2342,7 @@ export function useDustSweep(): UseDustSweepReturn {
               permit2Nonce: quote.permit2Nonce,
               userAddress: address,
               signature,
+              chainId: sweepChainId,
             }),
           });
           const v3Payload = await v3Resp.json().catch(() => null);
@@ -2341,7 +2364,10 @@ export function useDustSweep(): UseDustSweepReturn {
       // The old encodeDustSweepPermit2Calldata used a phantom sweep() that doesn't exist on-chain.
       // Note: The current V1 contract doesn't accept Permit2 parameters inline —
       // the Permit2 signature is verified separately through the Permit2 contract.
-      const paymasterUrl = process.env.NEXT_PUBLIC_PAYMASTER_URL;
+      // Coinbase paymaster is Base-only — never offer it on other sweep chains.
+    const paymasterUrl = sweepChain.paymasterEligible
+      ? process.env.NEXT_PUBLIC_PAYMASTER_URL
+      : undefined;
       const txValue = buildTx.value ? BigInt(buildTx.value) : 0n;
       const sweepTarget = buildTx.routerAddress || buildTx.contractAddress;
       const hasV2Approvals = isOwnedModernLane(lane) && approvalRequirements.length > 0;
@@ -2482,7 +2508,7 @@ export function useDustSweep(): UseDustSweepReturn {
 
         return (await walletClient.sendTransaction({
           account: address,
-          chain: base,
+          chain: sweepChain.chain,
           to: sweepTarget,
           data: calldata,
           value: txValue,
@@ -2652,6 +2678,7 @@ export function useDustSweep(): UseDustSweepReturn {
             deadline: quote.deadline,
             permit2Nonce: quote.permit2Nonce,
             userAddress: address,
+            chainId: sweepChainId,
           }),
         });
         const chunkPayload = await chunkResponse.json().catch(() => null);
@@ -3137,7 +3164,7 @@ export function useDustSweep(): UseDustSweepReturn {
       // sees (record-sweep below stays router-only, a 1:1 unwrap is not swap volume).
       if (wethUnwrapDone && quote.wethUnwrap) {
         const wethToken = selectedTokens.find((item) =>
-          isSameAddress(item.address, WETH_ADDRESS),
+          isSameAddress(item.address, sweepChain.weth),
         );
         if (wethToken) {
           completedInputs.push({
@@ -3173,6 +3200,7 @@ export function useDustSweep(): UseDustSweepReturn {
         walletName: walletProfile.walletName,
         routeKind,
         completedAt: Date.now(),
+        chainId: sweepChainId,
         inputs: completedInputs,
       });
 
@@ -3193,6 +3221,7 @@ export function useDustSweep(): UseDustSweepReturn {
           atomicStatus: walletProfile.atomicStatus,
           routeKind,
           permit2ApprovalsNeeded: permit2SetupCount,
+          chainId: sweepChainId,
         }),
       }).catch(() => null);
 
@@ -3262,7 +3291,7 @@ export function useDustSweep(): UseDustSweepReturn {
     sendTokenPocketRawTransaction,
     selectedTokens,
     supportsWalletSendCalls,
-    switchToBase,
+    switchToSweepChain,
     tokenOut,
     waitForSuccessfulTransaction,
     waitForApprovalRequirementsCleared,
@@ -3275,6 +3304,7 @@ export function useDustSweep(): UseDustSweepReturn {
   ]);
 
   return {
+    chainId: sweepChainId,
     swappableTokens,
     unavailableTokens,
     selectedTokens,

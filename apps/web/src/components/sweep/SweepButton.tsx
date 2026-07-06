@@ -2,6 +2,7 @@
 
 import { type Hex } from "viem";
 import { type SweepButtonVisualState } from "@/types/dustsweep";
+import { getExplorerTxUrl } from "@/lib/explorer";
 
 function cx(...parts: Array<string | false | null | undefined>) {
   return parts.filter(Boolean).join(" ");
@@ -48,10 +49,12 @@ export function SweepButton({
   visualState,
   onClick,
   txHash,
+  chainId,
 }: {
   visualState: SweepButtonVisualState;
   onClick: () => void;
   txHash: Hex | null;
+  chainId?: number;
 }) {
   const disabled = visualState.state === "disabled";
   const isBusy =
@@ -67,7 +70,7 @@ export function SweepButton({
   if (isSuccess) {
     return (
       <a
-        href={`https://basescan.org/tx/${txHash}`}
+        href={getExplorerTxUrl(chainId, txHash as string)}
         target="_blank"
         rel="noreferrer"
         className="flex min-h-[52px] w-full items-center justify-center gap-2 rounded-[15px] bg-emerald-500 px-4 text-base font-bold text-white shadow-[0_14px_28px_-10px_rgba(16,185,129,0.55)] transition-all hover:bg-emerald-600"

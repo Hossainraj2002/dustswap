@@ -290,6 +290,23 @@ contract DustSwapSweepRouterTest is Test {
         });
     }
 
+    /// @dev A passthrough leg: tokenIn == the settlement token (e.g. WETH for a native sweep).
+    ///      No DEX swap; target/spender/data are ignored by the contract for these legs.
+    function _passthrough(address tokenIn, uint256 amountIn)
+        internal
+        pure
+        returns (DustSwapSweepRouter.SweepRoute memory)
+    {
+        return DustSwapSweepRouter.SweepRoute({
+            tokenIn: tokenIn,
+            amountIn: amountIn,
+            target: address(0),
+            spender: address(0),
+            value: 0,
+            data: ""
+        });
+    }
+
     function _params(address outputToken_, uint256 minOut, uint16 feeOverride)
         internal
         view
@@ -547,6 +564,59 @@ contract DustSwapSweepRouterTest is Test {
         assertEq(net, 1 ether - fee);
         assertEq(recipient.balance, recipientEthBefore + net); // got real ETH
         assertEq(IERC20(address(weth)).balanceOf(feeCollector), fee); // fee paid in WETH
+    }
+
+    // WETH swept STRAIGHT into native ETH through the router (no wallet-side unwrap): the input IS
+    // the settlement token (actualOutput == WETH), so it's a passthrough leg the router unwraps.
+    function test_ethOutput_wethPassthrough() public {
+        weth.mint(user, 5 ether);
+
+        DustSwapSweepRouter.SweepRoute[] memory routes = new DustSwapSweepRouter.SweepRoute[](1);
+        routes[0] = _passthrough(address(weth), 4 ether);
+        DustSwapSweepRouter.SweepParams memory params =
+            _params(router.NATIVE_TOKEN_SENTINEL(), 3 ether, _sentinel());
+
+        uint256 recipientEthBefore = recipient.balance;
+
+        vm.startPrank(user);
+        weth.approve(address(router), 4 ether);
+        (uint256 gross, uint256 fee, uint256 net) =
+            router.sweep(DustSwapSweepRouter.SweepMode.Allowance, routes, params, _emptyPermit(), "");
+        vm.stopPrank();
+
+        assertEq(gross, 4 ether); // the whole WETH input settled as output
+        assertEq(fee, (4 ether * DEFAULT_FEE) / 10_000);
+        assertEq(net, 4 ether - fee);
+        assertEq(recipient.balance, recipientEthBefore + net); // recipient got real ETH
+        assertEq(IERC20(address(weth)).balanceOf(feeCollector), fee); // fee paid in WETH
+        assertEq(weth.balanceOf(address(router)), 0); // nothing stranded in the router
+        assertEq(weth.balanceOf(user), 1 ether); // untouched remainder stays with the user
+    }
+
+    // Mixed basket into native ETH: a real DEX swap (tokenA -> WETH) PLUS a WETH passthrough leg,
+    // both settling into ETH in one atomic router call.
+    function test_ethOutput_mixedSwapAndWethPassthrough() public {
+        weth.mint(user, 3 ether);
+
+        DustSwapSweepRouter.SweepRoute[] memory routes = new DustSwapSweepRouter.SweepRoute[](2);
+        routes[0] = _route(address(tokenA), 4 ether, 1 ether, address(weth)); // tokenA -> WETH via DEX
+        routes[1] = _passthrough(address(weth), 2 ether); // WETH -> ETH passthrough
+        DustSwapSweepRouter.SweepParams memory params =
+            _params(router.NATIVE_TOKEN_SENTINEL(), 2 ether, _sentinel());
+
+        uint256 recipientEthBefore = recipient.balance;
+
+        vm.startPrank(user);
+        tokenA.approve(address(router), 4 ether);
+        weth.approve(address(router), 2 ether);
+        (uint256 gross,, uint256 net) =
+            router.sweep(DustSwapSweepRouter.SweepMode.Allowance, routes, params, _emptyPermit(), "");
+        vm.stopPrank();
+
+        assertEq(gross, 3 ether); // 1 (swapped) + 2 (passthrough)
+        assertEq(recipient.balance, recipientEthBefore + net);
+        assertEq(weth.balanceOf(address(router)), 0); // nothing stranded
+        assertEq(tokenA.balanceOf(address(router)), 0);
     }
 
     // ── Fee override + cap ───────────────────────────────────────

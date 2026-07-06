@@ -17,7 +17,11 @@
  */
 
 import { decodeFunctionResult, encodeFunctionData, isAddress, type Address, type Hex } from "viem";
-import { baseRpcRequest, RpcDeterministicError } from "../utils/baseRpc";
+import { RpcDeterministicError } from "../utils/baseRpc";
+import { chainRpcRequest } from "../utils/chainRpc";
+
+// chainRpcRequest(8453, …) delegates 1:1 to baseRpcRequest, so the Base path is unchanged.
+const DEFAULT_CHAIN_ID = 8453;
 
 // Canonical Multicall3 — same address on Base as on every major chain.
 const MULTICALL3_ADDRESS = (() => {
@@ -85,49 +89,62 @@ type PendingCall = {
   reject: (error: unknown) => void;
 };
 
-let queue: PendingCall[] = [];
-let flushTimer: NodeJS.Timeout | null = null;
+// One queue per chain — a batch must never mix chains (each flush is a single eth_call
+// against ONE chain's RPC pool). Base traffic keeps its own queue exactly as before.
+type ChainQueue = { queue: PendingCall[]; flushTimer: NodeJS.Timeout | null };
+const chainQueues = new Map<number, ChainQueue>();
 let breakerUntil = 0;
 // Cumulative savings counters, logged periodically so the CU reduction is visible in prod logs.
 let totalBatchedCalls = 0;
 let totalFlushes = 0;
+
+function getChainQueue(chainId: number): ChainQueue {
+  let entry = chainQueues.get(chainId);
+  if (!entry) {
+    entry = { queue: [], flushTimer: null };
+    chainQueues.set(chainId, entry);
+  }
+  return entry;
+}
 
 export function isMulticallBatchingEnabled() {
   return process.env.DUST_SWEEP_MULTICALL_BATCHING !== "false" && Date.now() >= breakerUntil;
 }
 
 /** Enqueue one eth_call; resolves with its returnData, rejects like a direct call would. */
-export function batchedEthCall(to: Address, data: Hex): Promise<Hex> {
+export function batchedEthCall(to: Address, data: Hex, chainId: number = DEFAULT_CHAIN_ID): Promise<Hex> {
   return new Promise<Hex>((resolve, reject) => {
-    queue.push({ to, data, resolve, reject });
-    if (queue.length >= MAX_BATCH) {
-      flushQueue();
+    const entry = getChainQueue(chainId);
+    entry.queue.push({ to, data, resolve, reject });
+    if (entry.queue.length >= MAX_BATCH) {
+      flushQueue(chainId);
       return;
     }
-    if (!flushTimer) {
-      flushTimer = setTimeout(flushQueue, WINDOW_MS);
+    if (!entry.flushTimer) {
+      entry.flushTimer = setTimeout(() => flushQueue(chainId), WINDOW_MS);
     }
   });
 }
 
-function flushQueue() {
-  if (flushTimer) {
-    clearTimeout(flushTimer);
-    flushTimer = null;
+function flushQueue(chainId: number) {
+  const entry = getChainQueue(chainId);
+  if (entry.flushTimer) {
+    clearTimeout(entry.flushTimer);
+    entry.flushTimer = null;
   }
-  const items = queue;
-  queue = [];
+  const items = entry.queue;
+  entry.queue = [];
   for (let i = 0; i < items.length; i += MAX_BATCH) {
-    void executeBatch(items.slice(i, i + MAX_BATCH));
+    void executeBatch(items.slice(i, i + MAX_BATCH), chainId);
   }
 }
 
-async function executeBatch(items: PendingCall[]) {
+async function executeBatch(items: PendingCall[], chainId: number) {
   if (items.length === 0) return;
 
   // A 1-item "batch" gains nothing from the Multicall hop — send it direct.
   if (items.length === 1) {
-    await runDirect(items[0]!);
+    await runDirect(items[0]!, chainId);
     return;
   }
 
@@ -143,7 +160,8 @@ async function executeBatch(items: PendingCall[]) {
         ],
       ],
     });
-    const raw = await baseRpcRequest<Hex>(
+    const raw = await chainRpcRequest<Hex>(
+      chainId,
       "eth_call",
       [{ to: MULTICALL3_ADDRESS, data: calldata }, "latest"],
       { timeoutMs: FLUSH_TIMEOUT_MS },
@@ -191,14 +209,14 @@ async function executeBatch(items: PendingCall[]) {
       coolOffMs: BREAKER_COOL_OFF_MS,
       message: batchError instanceof Error ? batchError.message : String(batchError),
     });
-    await Promise.all(items.map((item) => runDirect(item)));
+    await Promise.all(items.map((item) => runDirect(item, chainId)));
   }
 }
 
-async function runDirect(item: PendingCall) {
+async function runDirect(item: PendingCall, chainId: number) {
   try {
     item.resolve(
-      await baseRpcRequest<Hex>("eth_call", [{ to: item.to, data: item.data }, "latest"], {
+      await chainRpcRequest<Hex>(chainId, "eth_call", [{ to: item.to, data: item.data }, "latest"], {
         timeoutMs: DIRECT_TIMEOUT_MS,
       }),
     );

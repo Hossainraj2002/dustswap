@@ -1223,18 +1223,21 @@ contract DustSwapSweepRouter is Ownable, ReentrancyGuard, Pausable {
         st.initialOutputBalance = IERC20(st.actualOutput).balanceOf(address(this));
         st.routeCount = routes.length;
 
-        _pullAndExecute(mode, routes, params, st.effectiveFeeBps, permit, signature);
+        _pullAndExecute(mode, routes, params, st.effectiveFeeBps, st.actualOutput, permit, signature);
 
         return _settleOutput(st, params);
     }
 
     /// @dev Snapshot inputs, pull them in (exact amounts), run best-effort swaps, refund leftovers.
     ///      Kept in its own frame so the snapshot arrays do not crowd the entrypoint's stack.
+    ///      `actualOutput` is threaded through so passthrough legs (tokenIn == output) skip the
+    ///      swap and are NOT refunded (the output token is settled by _settleOutput, not here).
     function _pullAndExecute(
         SweepMode mode,
         SweepRoute[] calldata routes,
         SweepParams calldata params,
         uint16 effectiveFeeBps,
+        address actualOutput,
         ISignatureTransfer.PermitBatchTransferFrom calldata permit,
         bytes calldata signature
     ) internal {
@@ -1246,8 +1249,8 @@ contract DustSwapSweepRouter is Ownable, ReentrancyGuard, Pausable {
             _pullInputsWithAllowance(routes);
         }
 
-        _executeRoutesBestEffort(routes, params.deadline);
-        _refundLeftoverInputs(inputTokens, inputInitial);
+        _executeRoutesBestEffort(routes, params.deadline, actualOutput);
+        _refundLeftoverInputs(inputTokens, inputInitial, actualOutput);
     }
 
     /// @notice Execute one route. External + self-only so the parent can wrap it in try/catch.
@@ -1311,13 +1314,25 @@ contract DustSwapSweepRouter is Ownable, ReentrancyGuard, Pausable {
         for (uint256 i; i < routes.length;) {
             SweepRoute calldata route = routes[i];
 
-            if (route.tokenIn == address(0) || route.target == address(0) || route.spender == address(0)) {
-                revert ZeroAddress();
-            }
+            if (route.tokenIn == address(0)) revert ZeroAddress();
             if (route.tokenIn == NATIVE_TOKEN_SENTINEL) revert NativeInputUnsupported();
-            if (route.tokenIn == actualOutput) revert MalformedRouteData(i);
             if (route.amountIn == 0) revert ZeroAmount();
             if (route.value != 0) revert NonZeroValue(i);
+
+            // PASSTHROUGH LEG: the input already IS the settlement token (e.g. WETH swept into
+            // native ETH, since actualOutput == WETH; or the output ERC-20 itself included as dust).
+            // Nothing is swapped — the pulled tokens settle directly as output — so target/spender/
+            // data are unused and are NOT allowlist-checked. This is safe: only the user's own
+            // tokens move, straight from `msg.sender` into the output pool and back to `recipient`
+            // (minus fee); no external `target.call` is ever made for these legs.
+            if (route.tokenIn == actualOutput) {
+                unchecked {
+                    ++i;
+                }
+                continue;
+            }
+
+            if (route.target == address(0) || route.spender == address(0)) revert ZeroAddress();
             if (route.data.length < 4) revert MalformedRouteData(i);
             if (!allowedTargets[route.target]) revert TargetNotAllowed(route.target);
             if (!allowedSpenders[route.spender]) revert SpenderNotAllowed(route.spender);
@@ -1394,16 +1409,26 @@ contract DustSwapSweepRouter is Ownable, ReentrancyGuard, Pausable {
 
     // ──────────────────────────── Internal: execution ──────────────
 
-    function _executeRoutesBestEffort(SweepRoute[] calldata routes, uint256 deadline) internal {
+    function _executeRoutesBestEffort(SweepRoute[] calldata routes, uint256 deadline, address actualOutput)
+        internal
+    {
         for (uint256 i; i < routes.length;) {
             SweepRoute calldata route = routes[i];
 
-            try this.executeRoute(route, deadline) {
-                emit RouteExecuted(route.tokenIn, route.target, route.spender, route.amountIn);
-            } catch (bytes memory reason) {
-                // Best-effort: skip the failed leg. Its tokenIn stays in the router and is
-                // returned to the user by _refundLeftoverInputs — never stranded, never reverted.
-                emit RouteSkipped(route.tokenIn, route.amountIn, reason);
+            if (route.tokenIn == actualOutput) {
+                // Passthrough: the pulled tokens are already in the output denomination (e.g. WETH
+                // for a native-ETH sweep). No swap, no external call — they simply stay in the
+                // router and settle as output in _settleOutput (which unwraps WETH -> ETH on native
+                // output). Emit with target/spender == tokenIn so the leg is still observable.
+                emit RouteExecuted(route.tokenIn, route.tokenIn, route.tokenIn, route.amountIn);
+            } else {
+                try this.executeRoute(route, deadline) {
+                    emit RouteExecuted(route.tokenIn, route.target, route.spender, route.amountIn);
+                } catch (bytes memory reason) {
+                    // Best-effort: skip the failed leg. Its tokenIn stays in the router and is
+                    // returned to the user by _refundLeftoverInputs — never stranded, never reverted.
+                    emit RouteSkipped(route.tokenIn, route.amountIn, reason);
+                }
             }
 
             unchecked {
@@ -1458,8 +1483,21 @@ contract DustSwapSweepRouter is Ownable, ReentrancyGuard, Pausable {
 
     /// @dev Return any input tokens not consumed by swaps (failed legs, fee-on-transfer skips,
     ///      router refunds) back to the user. Best-effort so one weird token can't brick the batch.
-    function _refundLeftoverInputs(address[] memory tokens, uint256[] memory initialBalances) internal {
+    ///      The output token is NEVER refunded here: its whole balance is settled by _settleOutput
+    ///      (gross - fee -> recipient). Skipping it is what lets a passthrough leg (tokenIn ==
+    ///      output) be delivered as output instead of being handed back to the user.
+    function _refundLeftoverInputs(
+        address[] memory tokens,
+        uint256[] memory initialBalances,
+        address actualOutput
+    ) internal {
         for (uint256 i; i < tokens.length;) {
+            if (tokens[i] == actualOutput) {
+                unchecked {
+                    ++i;
+                }
+                continue;
+            }
             uint256 current = IERC20(tokens[i]).balanceOf(address(this));
             if (current > initialBalances[i]) {
                 uint256 refund = current - initialBalances[i];

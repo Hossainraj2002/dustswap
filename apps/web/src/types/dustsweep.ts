@@ -221,8 +221,12 @@ export type DustSweepQuoteResponse = {
   feeBps: number;
   gasEstimateETH: string;
   gasEstimateUSD: number;
+  // Estimated gas cost as a fraction of the net basket value (chains with a real gas model only;
+  // ~0 on Base). Drives the "gas is a large share of your basket" warning.
+  gasToBasketRatio?: number;
   permit2Nonce: string;
   deadline: number;
+  chainId?: number;
   executionLane?: DustSweepExecutionLane;
   routeMaxCap?: number;
 };
@@ -364,6 +368,8 @@ export type DustSweepCompletionSummary = {
   routeKind: SweepRouteKind;
   completedAt: number;
   inputs: DustSweepCompletionInput[];
+  // Sweep chain — drives the explorer link (basescan vs etherscan). Optional/defaults to Base.
+  chainId?: number;
 };
 
 export type SweepButtonVisualState =

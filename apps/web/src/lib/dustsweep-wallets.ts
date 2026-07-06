@@ -390,7 +390,7 @@ export function isBatchCapabilitySupported(chainCapabilities: unknown) {
   return status === "ready" || status === "supported";
 }
 
-export function getChainCapabilities(capabilities: unknown, chainId = base.id) {
+export function getChainCapabilities(capabilities: unknown, chainId: number = base.id) {
   if (!capabilities || typeof capabilities !== "object") {
     return undefined;
   }

@@ -4,6 +4,7 @@ import { useEffect } from "react";
 import { formatUnits } from "viem";
 import { TokenLogo } from "@/components/sweep/TokenLogo";
 import { type DustSweepCompletionSummary } from "@/types/dustsweep";
+import { getExplorerTxUrl } from "@/lib/explorer";
 
 function cx(...parts: Array<string | false | null | undefined>) {
   return parts.filter(Boolean).join(" ");
@@ -226,7 +227,7 @@ export function SweepSuccessModal({
 
   if (!summary) return null;
 
-  const explorerUrl = `https://basescan.org/tx/${summary.txHash}`;
+  const explorerUrl = getExplorerTxUrl(summary.chainId, summary.txHash);
   const outputAmount = formatTokenAmount(summary.tokenOutAmount, summary.tokenOut.decimals);
   const completedTime = new Date(summary.completedAt).toLocaleTimeString(undefined, {
     hour: "numeric",

@@ -47,7 +47,10 @@ class ProviderGovernor {
   private nextSlotAt = 0;
   private breakerOpenUntil = 0;
 
-  constructor(private readonly provider: AggregatorProviderId) {}
+  constructor(
+    private readonly provider: AggregatorProviderId,
+    private readonly chainId: number,
+  ) {}
 
   isBreakerOpen() {
     return Date.now() < this.breakerOpenUntil;
@@ -56,7 +59,7 @@ class ProviderGovernor {
   tripBreaker() {
     this.breakerOpenUntil = Date.now() + BREAKER_COOL_OFF_MS;
     console.warn(
-      `[dustsweep/aggregator] ${this.provider} rate-limited (429) — pausing calls for ${BREAKER_COOL_OFF_MS / 1000}s`,
+      `[dustsweep/aggregator] ${this.provider} (chain ${this.chainId}) rate-limited (429) — pausing calls for ${BREAKER_COOL_OFF_MS / 1000}s`,
     );
   }
 
@@ -90,7 +93,10 @@ class ProviderGovernor {
   }
 }
 
-const governors = new Map<AggregatorProviderId, ProviderGovernor>();
+// Keyed `provider:chainId` so a rate-limit storm on one chain never pauses another —
+// a mainnet 429 must not trip the breaker for Base traffic (and vice versa).
+const governors = new Map<string, ProviderGovernor>();
+const DEFAULT_CHAIN_ID = 8453;
 
 type CacheEntry = { value: unknown; expiresAt: number };
 // `ran=false` means the call was skipped (breaker open / load shed) and NEVER queried the
@@ -100,11 +106,12 @@ const resultCache = new Map<string, CacheEntry>();
 const inFlight = new Map<string, Promise<GovernedOutcome>>();
 let lastCacheSweepAt = 0;
 
-function getGovernor(provider: AggregatorProviderId) {
-  let governor = governors.get(provider);
+function getGovernor(provider: AggregatorProviderId, chainId: number) {
+  const key = `${provider}:${chainId}`;
+  let governor = governors.get(key);
   if (!governor) {
-    governor = new ProviderGovernor(provider);
-    governors.set(provider, governor);
+    governor = new ProviderGovernor(provider, chainId);
+    governors.set(key, governor);
   }
   return governor;
 }
@@ -122,8 +129,12 @@ function sweepCacheIfDue() {
  * Candidate functions call this after each fetch so a 429 opens the provider's breaker.
  * Any other status is ignored — normal validation stays in the candidate function.
  */
-export function reportAggregatorHttpStatus(provider: AggregatorProviderId, status: number) {
-  if (status === 429) getGovernor(provider).tripBreaker();
+export function reportAggregatorHttpStatus(
+  provider: AggregatorProviderId,
+  status: number,
+  chainId: number = DEFAULT_CHAIN_ID,
+) {
+  if (status === 429) getGovernor(provider, chainId).tripBreaker();
 }
 
 /**
@@ -139,9 +150,12 @@ export async function governAggregatorCall<T>(
   cacheKey: string,
   fn: () => Promise<T | null>,
   onSkipped?: () => void,
+  chainId: number = DEFAULT_CHAIN_ID,
 ): Promise<T | null> {
   sweepCacheIfDue();
-  const key = `${provider}:${cacheKey}`;
+  // chainId in the key so the same (tokenIn,tokenOut,amount) on two chains never share a cache
+  // entry or an in-flight promise — calldata and prices are chain-specific.
+  const key = `${provider}:${chainId}:${cacheKey}`;
 
   const cached = resultCache.get(key);
   if (cached && cached.expiresAt > Date.now()) return cached.value as T | null;
@@ -152,7 +166,7 @@ export async function governAggregatorCall<T>(
       let ran = false;
       let value: T | null = null;
       try {
-        value = await getGovernor(provider).schedule(async () => {
+        value = await getGovernor(provider, chainId).schedule(async () => {
           ran = true;
           return fn();
         });

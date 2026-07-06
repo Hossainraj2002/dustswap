@@ -26,7 +26,22 @@ import { questEngine } from "../services/questEngine";
 import { runtimeCache } from "../utils/runtimeCache";
 import { baseRpcRequest, alchemyRpcRequest, RpcDeterministicError, RpcTransportError } from "../utils/baseRpc";
 import { isMaintenanceBlocking, maintenanceUnavailable } from "../utils/maintenance";
-import { getBaseDustSweepV3Allowlist } from "../config/dustsweepV3Sources";
+import {
+  getBaseDustSweepV3Allowlist,
+  getActiveDustSweepV3TargetsForChain,
+  getDustSweepV3AllowlistForChain,
+} from "../config/dustsweepV3Sources";
+import {
+  BASE_CONFIG,
+  ETHEREUM_CHAIN_ID,
+  getChainAllowedAggregatorAddresses,
+  getChainRouterV3Address,
+  getEnabledSweepChainIds,
+  getSweepChainConfig,
+  isSweepChainEnabled,
+  type SweepChainConfig,
+} from "../config/sweepChains";
+import { chainRpcRequest, chainAlchemyRpcRequest } from "../utils/chainRpc";
 import { getProxiedClientIp } from "../utils/clientIp";
 import {
   governAggregatorCall,
@@ -176,6 +191,35 @@ const TWO_HOP_FEE_PAIRS = [
   [2500, 500],
   [2500, 2500],
 ] as const;
+/**
+ * Resolve the target sweep chain for a request from `?chainId=` (GET) or `body.chainId` (POST),
+ * defaulting to Base. Returns a 400 when the chain isn't in DUST_SWEEP_ENABLED_CHAIN_IDS, so
+ * Ethereum stays fully dark until the flag is flipped. Base always resolves to BASE_CONFIG.
+ */
+function resolveSweepChain(
+  c: Context,
+  bodyChainId?: unknown,
+):
+  | { ok: true; chain: SweepChainConfig }
+  | { ok: false; response: Response } {
+  const raw = bodyChainId ?? c.req.query("chainId") ?? BASE_CHAIN_ID;
+  const chainId = Number(raw);
+  if (!Number.isInteger(chainId) || !isSweepChainEnabled(chainId)) {
+    return {
+      ok: false,
+      response: c.json(
+        errorJson(`DustSweep is not enabled on chain ${raw}`, {
+          code: "CHAIN_NOT_ENABLED",
+          enabledChains: getEnabledSweepChainIds(),
+        }),
+        400,
+      ),
+    };
+  }
+  const chain = getSweepChainConfig(chainId) ?? BASE_CONFIG;
+  return { ok: true, chain };
+}
+
 function boundedEnvNumber(key: string, fallback: number, min: number, max: number) {
   const parsed = Number(process.env[key] || fallback);
   if (!Number.isFinite(parsed)) return fallback;
@@ -326,6 +370,13 @@ const DEX = {
   ALGEBRA: 7,
   ALIENBASE: 8,
   HYDREX: 9,
+  // Chain-agnostic UniswapV2-style router with the router address embedded in dexData
+  // (address router, address[] path). Lets one calldata builder serve any UniV2 clone on any
+  // chain (Ethereum: Uniswap V2, SushiSwap, ShibaSwap) without a per-DEX enum + hardcoded target.
+  UNIV2_GENERIC: 10,
+  // No swap. tokenIn already IS the output token (WETH swept into native ETH). The upgraded V3
+  // router pulls it and settles/unwraps it directly. target/spender/data are unused.
+  PASSTHROUGH: 11,
 } as const;
 
 type DustSweepExecutionLane = "owned_v1" | "owned_v2" | "basket_aggregator";
@@ -364,10 +415,11 @@ function sumRouteMinAmountOut(routes: Array<Pick<DustSweepRoute, "amountOutMin">
 function getRouterMinAmountOut(
   routes: Array<Pick<DustSweepRoute, "amountOutMin">>,
   executionLane: DustSweepExecutionLane,
+  v3Active: boolean = isV3Active(),
 ) {
   if (!routes.length) return 0n;
 
-  if (isOwnedModernLane(executionLane) && isV3Active()) {
+  if (isOwnedModernLane(executionLane) && v3Active) {
     // V3 executes routes best-effort: every DEX leg still enforces its own
     // slippage floor, and failed legs are refunded. The router-level floor
     // should therefore only require at least one quoted leg to settle, not the
@@ -392,8 +444,8 @@ function getRouterAddressForLane(executionLane: DustSweepExecutionLane) {
 // bound into the V3 witness, so the fee the user signs == the fee charged (audit L-1). Capped to
 // the contract's MAX_FEE_BPS so a misconfigured env can never make sweep() revert with FeeTooHigh.
 const V3_MAX_FEE_BPS = 300;
-function getV3FeeBps() {
-  return Math.max(0, Math.min(V3_MAX_FEE_BPS, getFeeBps()));
+function getV3FeeBps(chain: SweepChainConfig = BASE_CONFIG) {
+  return Math.max(0, Math.min(V3_MAX_FEE_BPS, getFeeBps(chain)));
 }
 
 function parseAddressSet(value: string | undefined, fallback: Address[] = []) {
@@ -410,7 +462,15 @@ function parseAddressSet(value: string | undefined, fallback: Address[] = []) {
   return new Set(addresses);
 }
 
-function getAllowedV2Targets() {
+function getAllowedV2Targets(chain: SweepChainConfig = BASE_CONFIG) {
+  // Non-Base chains: the native DEX targets come from the chain's OWN V3 registry (no env needed),
+  // plus its aggregator allowlist, plus an optional per-chain override env (DUST_SWEEP_ALLOWED_TARGETS_<id>).
+  if (chain.chainId !== BASE_CHAIN_ID) {
+    const targets = parseAddressSet(process.env[`DUST_SWEEP_ALLOWED_TARGETS_${chain.chainId}`], []);
+    for (const address of getDustSweepV3AllowlistForChain(chain.chainId).targets) targets.add(address.toLowerCase());
+    for (const address of getChainAllowedAggregatorAddresses(chain)) targets.add(address);
+    return targets;
+  }
   const targets = parseAddressSet(process.env.DUST_SWEEP_ALLOWED_TARGETS, [
     UNISWAP_V3_SWAP_ROUTER_ADDRESS,
     UNISWAP_UNIVERSAL_ROUTER_ADDRESS,
@@ -428,7 +488,15 @@ function getAllowedV2Targets() {
   return targets;
 }
 
-function getAllowedV2Spenders() {
+function getAllowedV2Spenders(chain: SweepChainConfig = BASE_CONFIG) {
+  if (chain.chainId !== BASE_CHAIN_ID) {
+    const spenders = parseAddressSet(process.env[`DUST_SWEEP_ALLOWED_SPENDERS_${chain.chainId}`], [
+      PERMIT2_ADDRESS,
+    ]);
+    for (const address of getDustSweepV3AllowlistForChain(chain.chainId).spenders) spenders.add(address.toLowerCase());
+    for (const address of getChainAllowedAggregatorAddresses(chain)) spenders.add(address);
+    return spenders;
+  }
   const spenders = parseAddressSet(process.env.DUST_SWEEP_ALLOWED_SPENDERS, [
     UNISWAP_V3_SWAP_ROUTER_ADDRESS,
     PERMIT2_ADDRESS,
@@ -1288,11 +1356,20 @@ type Erc20Metadata = {
 };
 
 const erc20MetadataCache = new Map<string, { value: Erc20Metadata; expiresAt: number }>();
-let whitelistCache: { value: Map<string, TokenWhitelistRow>; expiresAt: number } | null = null;
+const whitelistCacheByChain = new Map<
+  number,
+  { value: Map<string, TokenWhitelistRow>; expiresAt: number }
+>();
 let ethUsdCache: { price: number; expiresAt: number } | null = null;
 
-function getFeeBps() {
-  const parsed = Number(process.env.DUST_SWEEP_FEE_BPS || "200");
+function getFeeBps(chain: SweepChainConfig = BASE_CONFIG) {
+  // Per-chain fee: non-Base chains read DUST_SWEEP_FEE_BPS_<chainId> (falling back to the global
+  // DUST_SWEEP_FEE_BPS), so Ethereum can charge a different fee than Base without affecting it.
+  const raw =
+    chain.chainId !== BASE_CHAIN_ID
+      ? process.env[`DUST_SWEEP_FEE_BPS_${chain.chainId}`] ?? process.env.DUST_SWEEP_FEE_BPS
+      : process.env.DUST_SWEEP_FEE_BPS;
+  const parsed = Number(raw || "200");
   return Number.isFinite(parsed) ? parsed : 200;
 }
 
@@ -1352,8 +1429,12 @@ function bestDexFromSource(source?: string | null) {
   return "GENERIC";
 }
 
-async function alchemyRpc<T>(method: string, params: unknown[]): Promise<T> {
-  return alchemyRpcRequest<T>(method, params, {
+async function alchemyRpc<T>(
+  method: string,
+  params: unknown[],
+  chainId: number = BASE_CHAIN_ID,
+): Promise<T> {
+  return chainAlchemyRpcRequest<T>(chainId, method, params, {
     timeoutMs: DISCOVERY_ALCHEMY_TIMEOUT_MS,
     maxEndpointAttempts: DISCOVERY_ALCHEMY_MAX_ENDPOINT_ATTEMPTS,
     hedgeCount: DISCOVERY_ALCHEMY_HEDGE_COUNT,
@@ -1374,7 +1455,10 @@ function discoveryLimitedBalances<T>(balances: T[]) {
     : balances.slice(0, DISCOVERY_MAX_ERC20_BALANCES);
 }
 
-async function fetchAlchemyTokenBalances(holder: Address): Promise<AlchemyTokenBalanceDiscovery> {
+async function fetchAlchemyTokenBalances(
+  holder: Address,
+  chainId: number = BASE_CHAIN_ID,
+): Promise<AlchemyTokenBalanceDiscovery> {
   const tokenBalances: AlchemyBalance[] = [];
   const seen = new Set<string>();
   let pageKey: string | undefined;
@@ -1406,6 +1490,7 @@ async function fetchAlchemyTokenBalances(holder: Address): Promise<AlchemyTokenB
     const response = await alchemyRpc<AlchemyTokenBalancesResponse>(
       "alchemy_getTokenBalances",
       [holder, "erc20", options],
+      chainId,
     );
     pageCount += 1;
 
@@ -1811,25 +1896,35 @@ async function fetchBlockscoutWalletTokenBalances(holder: Address): Promise<Alch
   };
 }
 
-async function fetchWalletTokenBalances(holder: Address): Promise<AlchemyTokenBalanceDiscovery> {
+async function fetchWalletTokenBalances(
+  holder: Address,
+  chain: SweepChainConfig = BASE_CONFIG,
+): Promise<AlchemyTokenBalanceDiscovery> {
+  // The Blockscout REST balance snapshot is wired to Base only for now; non-Base chains rely on
+  // their dedicated Alchemy keys as the sole discovery source (Alchemy failure → stale cache).
+  const blockscoutFallbackEnabled =
+    chain.chainId === BASE_CHAIN_ID && DISCOVERY_BLOCKSCOUT_BALANCE_FALLBACK_ENABLED;
   const alchemyBreakerOpen = Date.now() < alchemyDiscoveryBreakerUntil;
 
-  if (!alchemyBreakerOpen || !DISCOVERY_BLOCKSCOUT_BALANCE_FALLBACK_ENABLED) {
+  if (!alchemyBreakerOpen || !blockscoutFallbackEnabled) {
     try {
-      const result = await fetchAlchemyTokenBalances(holder);
-      alchemyDiscoveryBreakerUntil = 0;
+      const result = await fetchAlchemyTokenBalances(holder, chain.chainId);
+      if (chain.chainId === BASE_CHAIN_ID) alchemyDiscoveryBreakerUntil = 0;
       return result;
     } catch (alchemyError) {
       const alchemyMessage = discoveryErrorMessage(alchemyError);
       // Full Alchemy failure (typically ALL keys 429 on the Token API) — cool off so the next
       // scans go straight to Blockscout instead of re-burning the keys on every request.
-      alchemyDiscoveryBreakerUntil = Date.now() + DISCOVERY_ALCHEMY_BREAKER_MS;
+      if (chain.chainId === BASE_CHAIN_ID) {
+        alchemyDiscoveryBreakerUntil = Date.now() + DISCOVERY_ALCHEMY_BREAKER_MS;
+      }
       console.warn("[dustsweep/tokens] Alchemy balance discovery failed — cooling off", {
+        chainId: chain.chainId,
         message: alchemyMessage,
         coolOffMs: DISCOVERY_ALCHEMY_BREAKER_MS,
       });
 
-      if (DISCOVERY_BLOCKSCOUT_BALANCE_FALLBACK_ENABLED) {
+      if (blockscoutFallbackEnabled) {
         try {
           const fallback = await fetchBlockscoutWalletTokenBalances(holder);
           return {
@@ -1847,7 +1942,7 @@ async function fetchWalletTokenBalances(holder: Address): Promise<AlchemyTokenBa
     }
   }
 
-  // Alchemy is cooling off — Blockscout is the primary for this window.
+  // Alchemy is cooling off — Blockscout is the primary for this window (Base only).
   try {
     const fallback = await fetchBlockscoutWalletTokenBalances(holder);
     return { ...fallback, providerError: "alchemy: cooling off after rate limit" };
@@ -1859,9 +1954,10 @@ async function fetchWalletTokenBalances(holder: Address): Promise<AlchemyTokenBa
   }
 }
 
-async function loadWhitelist() {
-  if (whitelistCache && whitelistCache.expiresAt > Date.now()) {
-    return whitelistCache.value;
+async function loadWhitelist(chain: SweepChainConfig = BASE_CONFIG) {
+  const cached = whitelistCacheByChain.get(chain.chainId);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.value;
   }
 
   const map = new Map<string, TokenWhitelistRow>();
@@ -1872,7 +1968,7 @@ async function loadWhitelist() {
       const { data, error } = await postgresDb
         .from("tokens")
         .select("address,symbol,name,decimals,logo_uri,liquidity_usd,source")
-        .eq("chain_id", BASE_CHAIN_ID)
+        .eq("chain_id", chain.chainId)
         .eq("is_active", true)
         .range(from, from + pageSize - 1);
 
@@ -1890,7 +1986,9 @@ async function loadWhitelist() {
     // The app can run before the new whitelist migration is applied.
   }
 
-  for (const token of DEFAULT_TOKEN_WHITELIST) {
+  // DEFAULT_TOKEN_WHITELIST holds Base addresses only — seed it for Base. Other chains rely on
+  // DB-seeded rows + runtime discovery (a missing hint just falls back to on-chain metadata).
+  for (const token of chain.chainId === BASE_CHAIN_ID ? DEFAULT_TOKEN_WHITELIST : []) {
     if (!map.has(token.address.toLowerCase())) {
       map.set(token.address.toLowerCase(), {
         address: token.address,
@@ -1904,10 +2002,10 @@ async function loadWhitelist() {
     }
   }
 
-  whitelistCache = {
+  whitelistCacheByChain.set(chain.chainId, {
     value: map,
     expiresAt: Date.now() + WHITELIST_CACHE_TTL_MS,
-  };
+  });
 
   return map;
 }
@@ -1927,7 +2025,10 @@ async function pLimit<T>(tasks: (() => Promise<T>)[], concurrency: number): Prom
   return results;
 }
 
-async function fetchTokenPricesDexScreener(addresses: Address[]): Promise<Record<string, number>> {
+async function fetchTokenPricesDexScreener(
+  addresses: Address[],
+  chain: SweepChainConfig = BASE_CONFIG,
+): Promise<Record<string, number>> {
   const prices: Record<string, number> = {};
   // DexScreener accepts up to 30 addresses per call — free, no auth, fast
   const BATCH = 30;
@@ -1935,7 +2036,7 @@ async function fetchTokenPricesDexScreener(addresses: Address[]): Promise<Record
     const batch = addresses.slice(i, i + BATCH);
     try {
       const response = await fetch(
-        `https://api.dexscreener.com/tokens/v1/base/${batch.join(",")}`,
+        `https://api.dexscreener.com/tokens/v1/${chain.dexscreenerSlug}/${batch.join(",")}`,
         {
           headers: {
             Accept: "application/json",
@@ -1987,8 +2088,8 @@ async function fetchTokenPricesDexScreener(addresses: Address[]): Promise<Record
   return prices;
 }
 
-async function fetchTokenPrices(addresses: Address[]) {
-  const marketHints = await fetchTokenMarketHints(addresses);
+async function fetchTokenPrices(addresses: Address[], chain: SweepChainConfig = BASE_CONFIG) {
+  const marketHints = await fetchTokenMarketHints(addresses, {}, null, chain);
   return Object.fromEntries(
     Object.entries(marketHints).map(([address, hint]) => [address, hint.priceUSD]),
   );
@@ -2109,7 +2210,10 @@ function isOutputAssetAddress(address: string) {
   );
 }
 
-async function fetchTokenMarketHintsDexScreener(addresses: Address[]): Promise<Record<string, TokenMarketHint>> {
+async function fetchTokenMarketHintsDexScreener(
+  addresses: Address[],
+  chain: SweepChainConfig = BASE_CONFIG,
+): Promise<Record<string, TokenMarketHint>> {
   const hints: Record<string, TokenMarketHint> = {};
   const batchSize = 30;
   const batches: Address[][] = [];
@@ -2123,7 +2227,7 @@ async function fetchTokenMarketHintsDexScreener(addresses: Address[]): Promise<R
       const nextHints: Record<string, TokenMarketHint> = {};
       try {
         const response = await fetch(
-          `https://api.dexscreener.com/tokens/v1/base/${batch.join(",")}`,
+          `https://api.dexscreener.com/tokens/v1/${chain.dexscreenerSlug}/${batch.join(",")}`,
           {
             headers: {
               Accept: "application/json",
@@ -2235,6 +2339,7 @@ async function fetchTokenMarketHints(
   addresses: Address[],
   providerHints: Record<string, TokenMarketHint> = {},
   maxExternalAddresses: number | null = null,
+  chain: SweepChainConfig = BASE_CONFIG,
 ): Promise<Record<string, TokenMarketHint>> {
   const hints: Record<string, TokenMarketHint> = {};
   const uniqueAddresses = Array.from(new Set(addresses.map((address) => address.toLowerCase())))
@@ -2242,7 +2347,7 @@ async function fetchTokenMarketHints(
 
   if (uniqueAddresses.length === 0) return hints;
 
-  for (const stable of [USDC_ADDRESS, USDBC_ADDRESS, USDT_ADDRESS, DAI_ADDRESS]) {
+  for (const stable of [chain.usdc, chain.usdt, chain.dai, ...chain.extraStables]) {
     hints[stable.toLowerCase()] = {
       priceUSD: 1,
       liquidityUSD: 50_000_000,
@@ -2255,7 +2360,7 @@ async function fetchTokenMarketHints(
   if (
     uniqueAddresses.some(
       (address) =>
-        address.toLowerCase() === WETH_ADDRESS.toLowerCase() ||
+        address.toLowerCase() === chain.weth.toLowerCase() ||
         isNativeTokenAddress(address),
     )
   ) {
@@ -2267,7 +2372,7 @@ async function fetchTokenMarketHints(
       source: "canonical",
       confidence: "HIGH",
     };
-    hints[WETH_ADDRESS.toLowerCase()] = ethHint;
+    hints[chain.weth.toLowerCase()] = ethHint;
     hints[NATIVE_TOKEN_SENTINEL.toLowerCase()] = ethHint;
   }
 
@@ -2284,7 +2389,7 @@ async function fetchTokenMarketHints(
   }
 
   const [dexHints, coingeckoPrices] = await Promise.all([
-    fetchTokenMarketHintsDexScreener(externalNeeded),
+    fetchTokenMarketHintsDexScreener(externalNeeded, chain),
     fetchCoinGeckoTokenPrices(externalNeeded),
   ]);
 
@@ -2304,13 +2409,24 @@ async function fetchTokenMarketHints(
   return hints;
 }
 
-async function getCachedTokenResult(address: Address, maxAgeMs = DISCOVERY_DB_CACHE_TTL_MS) {
+// The dustsweep_token_cache table is keyed by `address` only, so multichain rows are namespaced
+// in code as `${chainId}:${address}` (Base uses the bare address to preserve existing rows).
+function tokenCacheKey(address: Address, chain: SweepChainConfig) {
+  const lower = address.toLowerCase();
+  return chain.chainId === BASE_CHAIN_ID ? lower : `${chain.chainId}:${lower}`;
+}
+
+async function getCachedTokenResult(
+  address: Address,
+  chain: SweepChainConfig = BASE_CONFIG,
+  maxAgeMs = DISCOVERY_DB_CACHE_TTL_MS,
+) {
   try {
     const cutoff = new Date(Date.now() - maxAgeMs).toISOString();
     const { data, error } = await postgresDb
       .from("dustsweep_token_cache")
       .select("payload,updated_at")
-      .eq("address", address.toLowerCase())
+      .eq("address", tokenCacheKey(address, chain))
       .gte("updated_at", cutoff)
       .maybeSingle();
 
@@ -2343,11 +2459,15 @@ function markTokenResultAsStale(payload: unknown, reason: string) {
   };
 }
 
-async function setCachedTokenResult(address: Address, payload: unknown) {
+async function setCachedTokenResult(
+  address: Address,
+  payload: unknown,
+  chain: SweepChainConfig = BASE_CONFIG,
+) {
   try {
     await postgresDb.from("dustsweep_token_cache").upsert(
       {
-        address: address.toLowerCase(),
+        address: tokenCacheKey(address, chain),
         payload,
         updated_at: new Date().toISOString(),
       },
@@ -2420,16 +2540,22 @@ function sortByValueDesc(a: DiscoveryTokenResult, b: DiscoveryTokenResult) {
   return b.valueUSD - a.valueUSD;
 }
 
-async function callContract(to: Address, data: Hex, signal?: AbortSignal) {
+async function callContract(
+  to: Address,
+  data: Hex,
+  signal?: AbortSignal,
+  chainId: number = BASE_CHAIN_ID,
+) {
   // Concurrent probes are transparently packed into ONE Multicall3 eth_call (~90-95% fewer RPC
   // requests / Alchemy CU for quoting). Abort-aware callers keep the direct path — a shared
   // batch cannot honor per-call cancellation. On any batch failure the batcher itself re-runs
   // items as direct calls, so behavior is never worse than this direct path.
+  // chainRpcRequest(8453, …) / batchedEthCall(…, 8453) delegate 1:1 to the Base path.
   if (!signal && isMulticallBatchingEnabled()) {
-    return batchedEthCall(to, data);
+    return batchedEthCall(to, data, chainId);
   }
   // 5s timeout per RPC call so one slow node doesn't block the quote pipeline
-  return baseRpcRequest<Hex>("eth_call", [{ to, data }, "latest"], {
+  return chainRpcRequest<Hex>(chainId, "eth_call", [{ to, data }, "latest"], {
     signal,
     timeoutMs: 5_000,
   });
@@ -2441,13 +2567,14 @@ async function tryQuoteV3Single(
   tokenOut: Address,
   amountIn: bigint,
   fee: number,
+  chainId: number = BASE_CHAIN_ID,
 ) {
   const data = encodeFunctionData({
     abi: QUOTER_ABI,
     functionName: "quoteExactInputSingle",
     args: [{ tokenIn, tokenOut, amountIn, fee, sqrtPriceLimitX96: 0n }],
   });
-  const result = await callContract(quoter, data);
+  const result = await callContract(quoter, data, undefined, chainId);
   if (!result || result === "0x") return null;
   const decoded = decodeFunctionResult({
     abi: QUOTER_ABI,
@@ -2458,13 +2585,18 @@ async function tryQuoteV3Single(
   return amountOut > 0n ? amountOut : null;
 }
 
-async function tryQuoteV3Path(quoter: Address, path: Hex, amountIn: bigint) {
+async function tryQuoteV3Path(
+  quoter: Address,
+  path: Hex,
+  amountIn: bigint,
+  chainId: number = BASE_CHAIN_ID,
+) {
   const data = encodeFunctionData({
     abi: QUOTER_ABI,
     functionName: "quoteExactInput",
     args: [path, amountIn],
   });
-  const result = await callContract(quoter, data);
+  const result = await callContract(quoter, data, undefined, chainId);
   if (!result || result === "0x") return null;
   const decoded = decodeFunctionResult({
     abi: QUOTER_ABI,
@@ -2496,8 +2628,15 @@ async function getV3QuoteCandidates(args: {
   tokenOut: Address;
   amountIn: bigint;
   feeTiers: readonly number[];
+  // Per-chain overrides; default to Base so existing Base call sites are unchanged.
+  chainId?: number;
+  weth?: Address;
+  usdc?: Address;
 }): Promise<QuoteCandidate[]> {
   const candidates: QuoteCandidate[] = [];
+  const chainId = args.chainId ?? BASE_CHAIN_ID;
+  const weth = args.weth ?? WETH_ADDRESS;
+  const usdc = args.usdc ?? USDC_ADDRESS;
 
   for (const fee of args.feeTiers) {
     try {
@@ -2507,6 +2646,7 @@ async function getV3QuoteCandidates(args: {
         args.tokenOut,
         args.amountIn,
         fee,
+        chainId,
       );
       if (!amountOut) continue;
       candidates.push({
@@ -2525,17 +2665,17 @@ async function getV3QuoteCandidates(args: {
     }
   }
 
-  if (candidates.length > 0 || args.tokenIn.toLowerCase() === WETH_ADDRESS.toLowerCase()) {
+  if (candidates.length > 0 || args.tokenIn.toLowerCase() === weth.toLowerCase()) {
     return candidates;
   }
 
   // Two-hop: try WETH and USDC as intermediate tokens
   const intermediates: Array<{ mid: Address; label: string }> = [];
-  if (args.tokenIn.toLowerCase() !== WETH_ADDRESS.toLowerCase() && args.tokenOut.toLowerCase() !== WETH_ADDRESS.toLowerCase()) {
-    intermediates.push({ mid: WETH_ADDRESS, label: "WETH" });
+  if (args.tokenIn.toLowerCase() !== weth.toLowerCase() && args.tokenOut.toLowerCase() !== weth.toLowerCase()) {
+    intermediates.push({ mid: weth, label: "WETH" });
   }
-  if (args.tokenIn.toLowerCase() !== USDC_ADDRESS.toLowerCase() && args.tokenOut.toLowerCase() !== USDC_ADDRESS.toLowerCase()) {
-    intermediates.push({ mid: USDC_ADDRESS, label: "USDC" });
+  if (args.tokenIn.toLowerCase() !== usdc.toLowerCase() && args.tokenOut.toLowerCase() !== usdc.toLowerCase()) {
+    intermediates.push({ mid: usdc, label: "USDC" });
   }
 
   for (const { mid, label } of intermediates) {
@@ -2543,7 +2683,7 @@ async function getV3QuoteCandidates(args: {
       if (!args.feeTiers.includes(feeA) || !args.feeTiers.includes(feeB)) continue;
       try {
         const path = encodeV3Path(args.tokenIn, feeA, mid, feeB, args.tokenOut);
-        const amountOut = await tryQuoteV3Path(args.quoter, path, args.amountIn);
+        const amountOut = await tryQuoteV3Path(args.quoter, path, args.amountIn, chainId);
         if (!amountOut) continue;
         candidates.push({
           tokenIn: args.tokenIn,
@@ -2704,7 +2844,10 @@ function aggregatorsEnabled() {
   );
 }
 
-function getAllowedAggregatorAddresses() {
+function getAllowedAggregatorAddresses(chain: SweepChainConfig = BASE_CONFIG) {
+  if (chain.chainId !== BASE_CHAIN_ID) {
+    return getChainAllowedAggregatorAddresses(chain);
+  }
   return new Set(
     String(process.env.DUST_SWEEP_ALLOWED_AGGREGATOR_TARGETS || "")
       .split(",")
@@ -2714,18 +2857,31 @@ function getAllowedAggregatorAddresses() {
   );
 }
 
+/**
+ * The router/taker the aggregator calldata is built for (it holds the tokens during the sweep).
+ * Base uses the lane-resolved router; other chains are V3-only and use their configured V3 router.
+ */
+function getSweepRouterForChain(chain: SweepChainConfig): Address {
+  if (chain.chainId === BASE_CHAIN_ID) {
+    return getRouterAddressForLane(getExecutionLane());
+  }
+  return getChainRouterV3Address(chain) ?? ZERO_ADDRESS;
+}
+
 async function get0xQuoteCandidate(
   tokenIn: Address,
   tokenOut: Address,
   amountIn: bigint,
   slippageBps: number,
+  chain: SweepChainConfig = BASE_CONFIG,
 ): Promise<QuoteCandidate | null> {
-  const taker = getRouterAddressForLane(getExecutionLane());
-  if (!aggregatorsEnabled() || !isAddress(taker)) return null;
+  const taker = getSweepRouterForChain(chain);
+  const liveOnBase = chain.chainId !== BASE_CHAIN_ID || aggregatorsEnabled();
+  if (!liveOnBase || !isAddress(taker) || taker === ZERO_ADDRESS) return null;
 
   try {
     const url = new URL("https://api.0x.org/swap/allowance-holder/quote");
-    url.searchParams.set("chainId", String(BASE_CHAIN_ID));
+    url.searchParams.set("chainId", String(chain.chainId));
     url.searchParams.set("sellToken", tokenIn);
     url.searchParams.set("buyToken", tokenOut);
     url.searchParams.set("sellAmount", amountIn.toString());
@@ -2740,7 +2896,7 @@ async function get0xQuoteCandidate(
         Accept: "application/json",
       },
     });
-    reportAggregatorHttpStatus("zerox", response.status);
+    reportAggregatorHttpStatus("zerox", response.status, chain.chainId);
     if (!response.ok) return null;
 
     const quote = (await response.json()) as {
@@ -2762,7 +2918,7 @@ async function get0xQuoteCandidate(
     if (!isAddress(spenderRaw)) return null;
     const target = normalizeAddress(quote.transaction.to);
     const spender = normalizeAddress(spenderRaw);
-    const allowedAggregatorAddresses = getAllowedAggregatorAddresses();
+    const allowedAggregatorAddresses = getAllowedAggregatorAddresses(chain);
     if (
       !allowedAggregatorAddresses.has(target.toLowerCase()) ||
       !allowedAggregatorAddresses.has(spender.toLowerCase())
@@ -2811,14 +2967,16 @@ async function getLifiQuoteCandidate(
   tokenOut: Address,
   amountIn: bigint,
   slippageBps: number,
+  chain: SweepChainConfig = BASE_CONFIG,
 ): Promise<QuoteCandidate | null> {
-  const taker = getRouterAddressForLane(getExecutionLane());
-  if (!lifiEnabled() || !isAddress(taker)) return null;
+  const taker = getSweepRouterForChain(chain);
+  const baseGate = chain.chainId !== BASE_CHAIN_ID || lifiEnabled();
+  if (!baseGate || !isAddress(taker) || taker === ZERO_ADDRESS) return null;
 
   try {
     const url = new URL("https://li.quest/v1/quote");
-    url.searchParams.set("fromChain", String(BASE_CHAIN_ID));
-    url.searchParams.set("toChain", String(BASE_CHAIN_ID));
+    url.searchParams.set("fromChain", String(chain.chainId));
+    url.searchParams.set("toChain", String(chain.chainId));
     url.searchParams.set("fromToken", tokenIn);
     url.searchParams.set("toToken", tokenOut);
     url.searchParams.set("fromAmount", amountIn.toString());
@@ -2831,7 +2989,7 @@ async function getLifiQuoteCandidate(
     if (apiKey) headers["x-lifi-api-key"] = apiKey.split(",")[0]!.trim();
 
     const response = await fetch(url, { headers, signal: AbortSignal.timeout(8_000) });
-    reportAggregatorHttpStatus("lifi", response.status);
+    reportAggregatorHttpStatus("lifi", response.status, chain.chainId);
     if (!response.ok) return null;
 
     const quote = (await response.json()) as {
@@ -2840,17 +2998,17 @@ async function getLifiQuoteCandidate(
       transactionRequest?: { to?: string; data?: string; value?: string; chainId?: number };
     };
 
-    // Same-chain Base only — reject any bridge route.
+    // Same-chain only — reject any bridge route.
     if (
       quote.action &&
-      (Number(quote.action.fromChainId) !== BASE_CHAIN_ID ||
-        Number(quote.action.toChainId) !== BASE_CHAIN_ID)
+      (Number(quote.action.fromChainId) !== chain.chainId ||
+        Number(quote.action.toChainId) !== chain.chainId)
     ) {
       return null;
     }
     if (
       quote.transactionRequest?.chainId &&
-      Number(quote.transactionRequest.chainId) !== BASE_CHAIN_ID
+      Number(quote.transactionRequest.chainId) !== chain.chainId
     ) {
       return null;
     }
@@ -2864,7 +3022,7 @@ async function getLifiQuoteCandidate(
 
     const target = normalizeAddress(tx.to);
     const spender = normalizeAddress(spenderRaw);
-    const allowedAggregatorAddresses = getAllowedAggregatorAddresses();
+    const allowedAggregatorAddresses = getAllowedAggregatorAddresses(chain);
     if (
       !allowedAggregatorAddresses.has(target.toLowerCase()) ||
       !allowedAggregatorAddresses.has(spender.toLowerCase())
@@ -2904,11 +3062,11 @@ function openOceanEnabled() {
   );
 }
 
-// OpenOcean gas price (gwei) fed to the v4 swap endpoint purely so it can weight gas cost when
-// picking a route; the actual on-chain gas price is set by the outer sweep tx, not this calldata.
-const OPENOCEAN_GAS_PRICE_GWEI = process.env.DUST_SWEEP_OPENOCEAN_GAS_PRICE_GWEI || "0.05";
+// OpenOcean gas price (gwei) is now per-chain via chain.openOceanGasPriceGwei (fed to the v4 swap
+// endpoint purely so it can weight gas cost when picking a route; the actual on-chain gas price is
+// set by the outer sweep tx, not this calldata).
 
-// OpenOcean is a same-chain Base aggregator fallback (consulted after 0x and LI.FI, only when no
+// OpenOcean is a same-chain aggregator fallback (consulted after 0x and LI.FI, only when no
 // native DEX route exists). The v4 GET /swap endpoint returns ready-to-call calldata; we pin
 // account = the sweep router so the swapped output is sent to the router, pass amountDecimals (raw
 // base units, NEVER human units) and slippage as a percent (1 = 1%), reject any route that requires
@@ -2919,16 +3077,18 @@ async function getOpenOceanQuoteCandidate(
   tokenOut: Address,
   amountIn: bigint,
   slippageBps: number,
+  chain: SweepChainConfig = BASE_CONFIG,
 ): Promise<QuoteCandidate | null> {
-  const taker = getRouterAddressForLane(getExecutionLane());
-  if (!openOceanEnabled() || !isAddress(taker)) return null;
+  const taker = getSweepRouterForChain(chain);
+  const baseGate = chain.chainId !== BASE_CHAIN_ID || openOceanEnabled();
+  if (!baseGate || !isAddress(taker) || taker === ZERO_ADDRESS) return null;
 
   try {
-    const url = new URL("https://open-api.openocean.finance/v4/base/swap");
+    const url = new URL(`https://open-api.openocean.finance/v4/${chain.openOceanSlug}/swap`);
     url.searchParams.set("inTokenAddress", tokenIn);
     url.searchParams.set("outTokenAddress", tokenOut);
     url.searchParams.set("amountDecimals", amountIn.toString());
-    url.searchParams.set("gasPrice", OPENOCEAN_GAS_PRICE_GWEI);
+    url.searchParams.set("gasPrice", String(chain.openOceanGasPriceGwei));
     url.searchParams.set("slippage", String(Math.min(50, Math.max(0.05, slippageBps / 100))));
     url.searchParams.set("account", taker);
 
@@ -2937,7 +3097,7 @@ async function getOpenOceanQuoteCandidate(
     if (apiKey) headers.apikey = apiKey.trim();
 
     const response = await fetch(url, { headers, signal: AbortSignal.timeout(8_000) });
-    reportAggregatorHttpStatus("openocean", response.status);
+    reportAggregatorHttpStatus("openocean", response.status, chain.chainId);
     if (!response.ok) return null;
 
     const quote = (await response.json()) as {
@@ -2953,7 +3113,7 @@ async function getOpenOceanQuoteCandidate(
 
     if (Number(quote.code) !== 200 || !quote.data) return null;
     const swap = quote.data;
-    if (swap.chainId && Number(swap.chainId) !== BASE_CHAIN_ID) return null;
+    if (swap.chainId && Number(swap.chainId) !== chain.chainId) return null;
     if (!swap.to || !swap.data || !swap.outAmount) return null;
     if (!isAddress(swap.to) || !isHex(swap.data)) return null;
     if (swap.value && BigInt(swap.value) > 0n) return null;
@@ -2961,7 +3121,7 @@ async function getOpenOceanQuoteCandidate(
     // OpenOcean: the router contract IS the spender — approve + call the same address.
     const target = normalizeAddress(swap.to);
     const spender = target;
-    const allowedAggregatorAddresses = getAllowedAggregatorAddresses();
+    const allowedAggregatorAddresses = getAllowedAggregatorAddresses(chain);
     if (
       !allowedAggregatorAddresses.has(target.toLowerCase()) ||
       !allowedAggregatorAddresses.has(spender.toLowerCase())
@@ -3013,9 +3173,11 @@ async function getOdosQuoteCandidate(
   tokenOut: Address,
   amountIn: bigint,
   slippageBps: number,
+  chain: SweepChainConfig = BASE_CONFIG,
 ): Promise<QuoteCandidate | null> {
-  const taker = getRouterAddressForLane(getExecutionLane());
-  if (!odosEnabled() || !isAddress(taker)) return null;
+  const taker = getSweepRouterForChain(chain);
+  const baseGate = chain.chainId !== BASE_CHAIN_ID || odosEnabled();
+  if (!baseGate || !isAddress(taker) || taker === ZERO_ADDRESS) return null;
 
   try {
     const headers: Record<string, string> = {
@@ -3030,7 +3192,7 @@ async function getOdosQuoteCandidate(
       method: "POST",
       headers,
       body: JSON.stringify({
-        chainId: BASE_CHAIN_ID,
+        chainId: chain.chainId,
         inputTokens: [{ tokenAddress: tokenIn, amount: amountIn.toString() }],
         outputTokens: [{ tokenAddress: tokenOut, proportion: 1 }],
         userAddr: taker,
@@ -3040,7 +3202,7 @@ async function getOdosQuoteCandidate(
       }),
       signal: AbortSignal.timeout(8_000),
     });
-    reportAggregatorHttpStatus("odos", quoteResponse.status);
+    reportAggregatorHttpStatus("odos", quoteResponse.status, chain.chainId);
     if (!quoteResponse.ok) return null;
 
     const quote = (await quoteResponse.json()) as {
@@ -3056,7 +3218,7 @@ async function getOdosQuoteCandidate(
       body: JSON.stringify({ userAddr: taker, pathId: quote.pathId, simulate: false }),
       signal: AbortSignal.timeout(8_000),
     });
-    reportAggregatorHttpStatus("odos", assembleResponse.status);
+    reportAggregatorHttpStatus("odos", assembleResponse.status, chain.chainId);
     if (!assembleResponse.ok) return null;
 
     const assembled = (await assembleResponse.json()) as {
@@ -3065,13 +3227,13 @@ async function getOdosQuoteCandidate(
     const tx = assembled.transaction;
     if (!tx?.to || !tx?.data) return null;
     if (!isAddress(tx.to) || !isHex(tx.data)) return null;
-    if (tx.chainId && Number(tx.chainId) !== BASE_CHAIN_ID) return null;
+    if (tx.chainId && Number(tx.chainId) !== chain.chainId) return null;
     if (tx.value && BigInt(tx.value) > 0n) return null;
 
     // Odos: the router contract IS the spender — approve + call the same address.
     const target = normalizeAddress(tx.to);
     const spender = target;
-    const allowedAggregatorAddresses = getAllowedAggregatorAddresses();
+    const allowedAggregatorAddresses = getAllowedAggregatorAddresses(chain);
     if (
       !allowedAggregatorAddresses.has(target.toLowerCase()) ||
       !allowedAggregatorAddresses.has(spender.toLowerCase())
@@ -3125,9 +3287,11 @@ async function getKyberQuoteCandidate(
   tokenOut: Address,
   amountIn: bigint,
   slippageBps: number,
+  chain: SweepChainConfig = BASE_CONFIG,
 ): Promise<QuoteCandidate | null> {
-  const taker = getRouterAddressForLane(getExecutionLane());
-  if (!kyberEnabled() || !isAddress(taker)) return null;
+  const taker = getSweepRouterForChain(chain);
+  const baseGate = chain.chainId !== BASE_CHAIN_ID || kyberEnabled();
+  if (!baseGate || !isAddress(taker) || taker === ZERO_ADDRESS) return null;
 
   try {
     const headers: Record<string, string> = {
@@ -3136,12 +3300,12 @@ async function getKyberQuoteCandidate(
     };
 
     // Step 1 — route summary.
-    const url = new URL("https://aggregator-api.kyberswap.com/base/api/v1/routes");
+    const url = new URL(`https://aggregator-api.kyberswap.com/${chain.kyberSlug}/api/v1/routes`);
     url.searchParams.set("tokenIn", tokenIn);
     url.searchParams.set("tokenOut", tokenOut);
     url.searchParams.set("amountIn", amountIn.toString());
     const routeResponse = await fetch(url, { headers, signal: AbortSignal.timeout(8_000) });
-    reportAggregatorHttpStatus("kyber", routeResponse.status);
+    reportAggregatorHttpStatus("kyber", routeResponse.status, chain.chainId);
     if (!routeResponse.ok) return null;
 
     const routeJson = (await routeResponse.json()) as {
@@ -3158,7 +3322,7 @@ async function getKyberQuoteCandidate(
 
     // Step 2 — build executable calldata from the summary.
     const buildResponse = await fetch(
-      "https://aggregator-api.kyberswap.com/base/api/v1/route/build",
+      `https://aggregator-api.kyberswap.com/${chain.kyberSlug}/api/v1/route/build`,
       {
         method: "POST",
         headers: { ...headers, "Content-Type": "application/json" },
@@ -3172,7 +3336,7 @@ async function getKyberQuoteCandidate(
         signal: AbortSignal.timeout(8_000),
       },
     );
-    reportAggregatorHttpStatus("kyber", buildResponse.status);
+    reportAggregatorHttpStatus("kyber", buildResponse.status, chain.chainId);
     if (!buildResponse.ok) return null;
 
     const buildJson = (await buildResponse.json()) as {
@@ -3191,7 +3355,7 @@ async function getKyberQuoteCandidate(
     // Kyber: the MetaAggregationRouterV2 pulls the input via allowance — it IS the spender.
     const target = normalizeAddress(buildJson.data.routerAddress || routerAddressRaw);
     const spender = target;
-    const allowedAggregatorAddresses = getAllowedAggregatorAddresses();
+    const allowedAggregatorAddresses = getAllowedAggregatorAddresses(chain);
     if (
       !allowedAggregatorAddresses.has(target.toLowerCase()) ||
       !allowedAggregatorAddresses.has(spender.toLowerCase())
@@ -3492,13 +3656,18 @@ async function getHydrexQuoteCandidates(
   }
 }
 
-async function tryQuoteUniV2Path(router: Address, amountIn: bigint, path: Address[]) {
+async function tryQuoteUniV2Path(
+  router: Address,
+  amountIn: bigint,
+  path: Address[],
+  chainId: number = BASE_CHAIN_ID,
+) {
   const data = encodeFunctionData({
     abi: BASESWAP_ROUTER_ABI,
     functionName: "getAmountsOut",
     args: [amountIn, path],
   });
-  const result = await callContract(router, data);
+  const result = await callContract(router, data, undefined, chainId);
   if (!result || result === "0x") return null;
   const decoded = decodeFunctionResult({
     abi: BASESWAP_ROUTER_ABI,
@@ -3510,7 +3679,11 @@ async function tryQuoteUniV2Path(router: Address, amountIn: bigint, path: Addres
 }
 
 // Generic UniV2 (getAmountsOut / swapExactTokensForTokens) quote adapter, parameterized by router.
-// Used for AlienBase; BaseSwap keeps its own (unchanged) adapter.
+// Used for AlienBase (Base) and for Ethereum native UniV2 clones (Uniswap V2, SushiSwap).
+// `embedRouter` picks the dexData shape:
+//   - false (Base AlienBase): dexData = (address[] path); build-tx supplies the target from the enum.
+//   - true  (chain-agnostic): dexData = (address router, address[] path) with dex = UNIV2_GENERIC,
+//     so one calldata builder targets the embedded router on any chain.
 async function getUniV2QuoteCandidates(args: {
   router: Address;
   dex: number;
@@ -3518,29 +3691,34 @@ async function getUniV2QuoteCandidates(args: {
   tokenIn: Address;
   tokenOut: Address;
   amountIn: bigint;
+  chain?: SweepChainConfig;
+  embedRouter?: boolean;
 }): Promise<QuoteCandidate[]> {
+  const chain = args.chain ?? BASE_CONFIG;
+  const weth = chain.weth;
+  const usdc = chain.usdc;
   const candidates: QuoteCandidate[] = [];
   const paths: Address[][] = [[args.tokenIn, args.tokenOut]];
   if (
-    args.tokenIn.toLowerCase() !== WETH_ADDRESS.toLowerCase() &&
-    args.tokenOut.toLowerCase() !== WETH_ADDRESS.toLowerCase()
+    args.tokenIn.toLowerCase() !== weth.toLowerCase() &&
+    args.tokenOut.toLowerCase() !== weth.toLowerCase()
   ) {
-    paths.push([args.tokenIn, WETH_ADDRESS, args.tokenOut]);
+    paths.push([args.tokenIn, weth, args.tokenOut]);
   }
   if (
-    args.tokenIn.toLowerCase() !== USDC_ADDRESS.toLowerCase() &&
-    args.tokenOut.toLowerCase() !== USDC_ADDRESS.toLowerCase()
+    args.tokenIn.toLowerCase() !== usdc.toLowerCase() &&
+    args.tokenOut.toLowerCase() !== usdc.toLowerCase()
   ) {
-    paths.push([args.tokenIn, USDC_ADDRESS, args.tokenOut]);
+    paths.push([args.tokenIn, usdc, args.tokenOut]);
   }
 
   for (const path of paths) {
     try {
-      const amountOut = await tryQuoteUniV2Path(args.router, args.amountIn, path);
+      const amountOut = await tryQuoteUniV2Path(args.router, args.amountIn, path, chain.chainId);
       if (!amountOut) continue;
       const midLabel =
         path.length > 2
-          ? path[1].toLowerCase() === WETH_ADDRESS.toLowerCase()
+          ? path[1].toLowerCase() === weth.toLowerCase()
             ? " via WETH"
             : " via USDC"
           : "";
@@ -3549,9 +3727,11 @@ async function getUniV2QuoteCandidates(args: {
         amountIn: args.amountIn.toString(),
         amountOutMin: "0",
         estimatedOut: amountOut.toString(),
-        dex: args.dex,
+        dex: args.embedRouter ? DEX.UNIV2_GENERIC : args.dex,
         dexName: `${args.dexName}${midLabel}`,
-        dexData: encodeAbiParameters([{ type: "address[]" }], [path]),
+        dexData: args.embedRouter
+          ? encodeAbiParameters([{ type: "address" }, { type: "address[]" }], [args.router, path])
+          : encodeAbiParameters([{ type: "address[]" }], [path]),
         amountOut,
       });
     } catch {
@@ -3583,7 +3763,48 @@ async function getNativeQuoteCandidates(
   tokenIn: Address,
   tokenOut: Address,
   amountIn: bigint,
+  chain: SweepChainConfig = BASE_CONFIG,
 ): Promise<QuoteCandidate[]> {
+  // Non-Base chains describe their native ladder declaratively (chain.nativeSources). Base keeps
+  // nativeSources === null and runs the original hardcoded task list below, byte-identical.
+  if (chain.nativeSources) {
+    const tasks: Array<Promise<QuoteCandidate[]>> = [];
+    for (const source of chain.nativeSources) {
+      if (source.kind === "uniswap_v3" && source.quoter) {
+        tasks.push(
+          getV3QuoteCandidates({
+            dex: DEX.UNISWAP_V3,
+            dexName: source.dexName,
+            quoter: source.quoter,
+            tokenIn,
+            tokenOut,
+            amountIn,
+            feeTiers: source.feeTiers ?? UNISWAP_FEE_TIERS,
+            chainId: chain.chainId,
+            weth: chain.weth,
+            usdc: chain.usdc,
+          }),
+        );
+      } else if (source.kind === "univ2") {
+        // Native UniswapV2-style router (Ethereum: Uniswap V2, SushiSwap). Router embedded in
+        // dexData so build-tx targets exactly this router (DEX.UNIV2_GENERIC).
+        tasks.push(
+          getUniV2QuoteCandidates({
+            router: source.router,
+            dex: DEX.UNIV2_GENERIC,
+            dexName: source.dexName,
+            tokenIn,
+            tokenOut,
+            amountIn,
+            chain,
+            embedRouter: true,
+          }),
+        );
+      }
+    }
+    return (await Promise.all(tasks)).flat();
+  }
+
   const tasks: Array<Promise<QuoteCandidate[]>> = [
     getV3QuoteCandidates({
       dex: DEX.UNISWAP_V3,
@@ -3649,15 +3870,19 @@ function computeMarketImpactBps(amountOut: bigint, market?: QuoteMarketContext |
 // Governed aggregator ladder — keyless/cheapest first. `enabled` is checked BEFORE the governor
 // so disabled providers cost zero pacing latency; each candidate fn re-checks it internally too.
 // Calls are paced + circuit-broken by the governor and cached by exact (in, out, amount).
+type AggregatorFetchFn = (
+  tokenIn: Address,
+  tokenOut: Address,
+  amountIn: bigint,
+  slippageBps: number,
+  chain: SweepChainConfig,
+) => Promise<QuoteCandidate | null>;
+
 const AGGREGATOR_LADDER: Array<{
   provider: AggregatorProviderId;
+  /** Base gate (module env). Non-Base chains additionally require chain.aggregators[provider]. */
   enabled: () => boolean;
-  fetch: (
-    tokenIn: Address,
-    tokenOut: Address,
-    amountIn: bigint,
-    slippageBps: number,
-  ) => Promise<QuoteCandidate | null>;
+  fetch: AggregatorFetchFn;
 }> = [
   { provider: "kyber", enabled: kyberEnabled, fetch: getKyberQuoteCandidate },
   { provider: "zerox", enabled: aggregatorsEnabled, fetch: get0xQuoteCandidate },
@@ -3665,6 +3890,22 @@ const AGGREGATOR_LADDER: Array<{
   { provider: "openocean", enabled: openOceanEnabled, fetch: getOpenOceanQuoteCandidate },
   { provider: "odos", enabled: odosEnabled, fetch: getOdosQuoteCandidate },
 ];
+
+// Whether a provider is live for a given chain. Base: exactly the existing module gate (so Base
+// behavior is unchanged). Non-Base: the chain's own enable flag AND the shared preconditions
+// (API key / allowlist) that the module gate already checks via `baseEnabled`.
+function isAggregatorLiveForChain(
+  provider: AggregatorProviderId,
+  baseEnabled: () => boolean,
+  chain: SweepChainConfig,
+): boolean {
+  if (chain.chainId === BASE_CHAIN_ID) return baseEnabled();
+  if (!chain.aggregators[provider]) return false;
+  // Shared preconditions still apply per chain: a non-empty allowlist, and (for 0x) an API key.
+  if (getChainAllowedAggregatorAddresses(chain).size === 0) return false;
+  if (provider === "zerox" && !get0xApiKey()) return false;
+  return true;
+}
 
 // Hard time budget for the rescue phase. The per-token quote task has a 12s hard timeout that
 // would SKIP the token entirely — a rescue that overruns must degrade to the native route, never
@@ -3678,24 +3919,21 @@ const AGGREGATOR_RESCUE_BUDGET_MS = boundedEnvNumber(
 
 async function getGovernedAggregatorCandidate(
   provider: AggregatorProviderId,
-  fetchCandidate: (
-    tokenIn: Address,
-    tokenOut: Address,
-    amountIn: bigint,
-    slippageBps: number,
-  ) => Promise<QuoteCandidate | null>,
+  fetchCandidate: AggregatorFetchFn,
   tokenIn: Address,
   tokenOut: Address,
   amountIn: bigint,
   slippageBps: number,
+  chain: SweepChainConfig = BASE_CONFIG,
   onSkipped?: () => void,
 ) {
   const cacheKey = `${tokenIn.toLowerCase()}:${tokenOut.toLowerCase()}:${amountIn.toString()}:${slippageBps}`;
   return governAggregatorCall(
     provider,
     cacheKey,
-    () => fetchCandidate(tokenIn, tokenOut, amountIn, slippageBps),
+    () => fetchCandidate(tokenIn, tokenOut, amountIn, slippageBps, chain),
     onSkipped,
+    chain.chainId,
   );
 }
 
@@ -3706,9 +3944,10 @@ async function getBestQuote(
   slippageBps: number,
   executionLane: DustSweepExecutionLane,
   market?: QuoteMarketContext | null,
+  chain: SweepChainConfig = BASE_CONFIG,
 ) {
   // 1) Native DEX routers first.
-  const nativeCandidates = (await getNativeQuoteCandidates(tokenIn, tokenOut, amountIn)).filter(
+  const nativeCandidates = (await getNativeQuoteCandidates(tokenIn, tokenOut, amountIn, chain)).filter(
     (candidate) => isCandidateExecutableInLane(candidate, executionLane),
   );
   const bestNative = pickBestCandidate(nativeCandidates);
@@ -3733,7 +3972,7 @@ async function getBestQuote(
     let bestRescue: QuoteCandidate | null = null;
     const rescueDeadline = Date.now() + AGGREGATOR_RESCUE_BUDGET_MS;
     for (const { provider, enabled, fetch: fetchCandidate } of AGGREGATOR_LADDER) {
-      if (!enabled()) continue;
+      if (!isAggregatorLiveForChain(provider, enabled, chain)) continue;
       const remainingMs = rescueDeadline - Date.now();
       if (remainingMs <= 0) break; // over budget — the native route stands, token is never lost
       const candidate = await Promise.race([
@@ -3744,6 +3983,7 @@ async function getBestQuote(
           tokenOut,
           amountIn,
           slippageBps,
+          chain,
         ),
         new Promise<null>((resolve) => setTimeout(() => resolve(null), remainingMs)),
       ]);
@@ -3775,7 +4015,7 @@ async function getBestQuote(
   //    they strictly widen coverage of sweepable dust.
   let anyProviderSkipped = false;
   for (const { provider, enabled, fetch: fetchCandidate } of AGGREGATOR_LADDER) {
-    if (!enabled()) continue;
+    if (!isAggregatorLiveForChain(provider, enabled, chain)) continue;
     const candidate = await getGovernedAggregatorCandidate(
       provider,
       fetchCandidate,
@@ -3783,6 +4023,7 @@ async function getBestQuote(
       tokenOut,
       amountIn,
       slippageBps,
+      chain,
       () => {
         anyProviderSkipped = true;
       },
@@ -3881,11 +4122,14 @@ function buildPermit2WitnessTypedData(args: {
   nonce: string;
   deadline: number;
   witness: Permit2Witness;
+  chainId?: number;
 }) {
   return {
     domain: {
       name: "Permit2",
-      chainId: BASE_CHAIN_ID,
+      // MUST be the sweep chain — Permit2 verifies EIP-712 against its own chainId, so a Base
+      // domain on Ethereum would make the user's signature invalid and the sweep revert.
+      chainId: args.chainId ?? BASE_CHAIN_ID,
       verifyingContract: PERMIT2_ADDRESS,
     },
     types: {
@@ -3940,11 +4184,14 @@ function buildV3WitnessTypedData(args: {
   nonce: string;
   deadline: number;
   witness: DustSweepV3Witness;
+  chainId?: number;
 }) {
   return {
     domain: {
       name: "Permit2",
-      chainId: BASE_CHAIN_ID,
+      // MUST be the sweep chain (see buildPermit2WitnessTypedData) — a wrong chainId makes the
+      // signed Permit2 witness invalid on that chain and the sweep reverts.
+      chainId: args.chainId ?? BASE_CHAIN_ID,
       verifyingContract: PERMIT2_ADDRESS,
     },
     types: {
@@ -4064,26 +4311,26 @@ function buildV1Calldata(args: {
   });
 }
 
-function assertConfiguredV2Route(route: DustSweepV2Route) {
-  const allowedTargets = getAllowedV2Targets();
-  const allowedSpenders = getAllowedV2Spenders();
+function assertConfiguredV2Route(route: DustSweepV2Route, chain: SweepChainConfig = BASE_CONFIG) {
+  const allowedTargets = getAllowedV2Targets(chain);
+  const allowedSpenders = getAllowedV2Spenders(chain);
 
   if (!allowedTargets.has(route.target.toLowerCase())) {
-    throw new Error(`V2 target ${route.target} is not configured in DUST_SWEEP_ALLOWED_TARGETS`);
+    throw new Error(`Swap target ${route.target} is not in the ${chain.name} allowlist`);
   }
 
   if (!allowedSpenders.has(route.spender.toLowerCase())) {
-    throw new Error(`V2 spender ${route.spender} is not configured in DUST_SWEEP_ALLOWED_SPENDERS`);
+    throw new Error(`Swap spender ${route.spender} is not in the ${chain.name} allowlist`);
   }
 }
 
-async function readV2AllowedTarget(routerAddress: Address, target: Address) {
+async function readV2AllowedTarget(routerAddress: Address, target: Address, chainId: number = BASE_CHAIN_ID) {
   const data = encodeFunctionData({
     abi: DUST_SWEEP_ROUTER_V2_ABI,
     functionName: "allowedTargets",
     args: [target],
   });
-  const result = await callContract(routerAddress, data);
+  const result = await callContract(routerAddress, data, undefined, chainId);
   const allowed = decodeFunctionResult({
     abi: DUST_SWEEP_ROUTER_V2_ABI,
     functionName: "allowedTargets",
@@ -4092,13 +4339,13 @@ async function readV2AllowedTarget(routerAddress: Address, target: Address) {
   return allowed;
 }
 
-async function readV2AllowedSpender(routerAddress: Address, spender: Address) {
+async function readV2AllowedSpender(routerAddress: Address, spender: Address, chainId: number = BASE_CHAIN_ID) {
   const data = encodeFunctionData({
     abi: DUST_SWEEP_ROUTER_V2_ABI,
     functionName: "allowedSpenders",
     args: [spender],
   });
-  const result = await callContract(routerAddress, data);
+  const result = await callContract(routerAddress, data, undefined, chainId);
   const allowed = decodeFunctionResult({
     abi: DUST_SWEEP_ROUTER_V2_ABI,
     functionName: "allowedSpenders",
@@ -4107,7 +4354,11 @@ async function readV2AllowedSpender(routerAddress: Address, spender: Address) {
   return allowed;
 }
 
-async function assertOnchainV2RouterAllowlist(routerAddress: Address, routes: DustSweepV2Route[]) {
+async function assertOnchainV2RouterAllowlist(
+  routerAddress: Address,
+  routes: DustSweepV2Route[],
+  chainId: number = BASE_CHAIN_ID,
+) {
   const targets = Array.from(new Set(routes.map((route) => route.target.toLowerCase() as Lowercase<Address>)));
   const spenders = Array.from(new Set(routes.map((route) => route.spender.toLowerCase() as Lowercase<Address>)));
 
@@ -4115,13 +4366,13 @@ async function assertOnchainV2RouterAllowlist(routerAddress: Address, routes: Du
     Promise.all(
       targets.map(async (target) => ({
         address: target,
-        allowed: await readV2AllowedTarget(routerAddress, getAddress(target)),
+        allowed: await readV2AllowedTarget(routerAddress, getAddress(target), chainId),
       })),
     ),
     Promise.all(
       spenders.map(async (spender) => ({
         address: spender,
-        allowed: await readV2AllowedSpender(routerAddress, getAddress(spender)),
+        allowed: await readV2AllowedSpender(routerAddress, getAddress(spender), chainId),
       })),
     ),
   ]);
@@ -4219,7 +4470,17 @@ function buildUniswapV4UniversalRouterCalldata(args: {
   });
 }
 
-function buildV2Route(route: DustSweepRoute, tokenOut: Address, receiver: Address, deadline: number): DustSweepV2Route {
+// Native Uniswap V3 SwapRouter02 per chain. Base uses the module default; Ethereum uses the
+// canonical mainnet SwapRouter02. Verified addresses; the owner must allowlist the ETH one.
+const ETH_UNISWAP_V3_SWAP_ROUTER = "0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45" as Address;
+
+function buildV2Route(
+  route: DustSweepRoute,
+  tokenOut: Address,
+  receiver: Address,
+  deadline: number,
+  chain: SweepChainConfig = BASE_CONFIG,
+): DustSweepV2Route {
   const amountIn = BigInt(route.amountIn);
   const amountOutMin = BigInt(route.amountOutMin);
 
@@ -4227,8 +4488,38 @@ function buildV2Route(route: DustSweepRoute, tokenOut: Address, receiver: Addres
     throw new Error("Native ETH must be wrapped to WETH before using owned_v2.");
   }
 
+  // Passthrough leg (WETH -> native ETH): NO swap. The upgraded V3 router pulls tokenIn (== the
+  // output token) and unwraps it at settlement. target/spender/data are ignored on-chain, so we
+  // set target/spender = tokenIn (non-zero, self) and empty data.
+  if (route.dex === DEX.PASSTHROUGH) {
+    return {
+      tokenIn: route.tokenIn,
+      amountIn,
+      target: route.tokenIn,
+      spender: route.tokenIn,
+      value: 0n,
+      data: "0x" as Hex,
+    };
+  }
+
+  // Generic UniswapV2-style leg with the router embedded in dexData — used for Ethereum native
+  // sources (Uniswap V2, SushiSwap). The embedded router is the target AND the spender.
+  if (route.dex === DEX.UNIV2_GENERIC) {
+    const [router, path] = decodeAbiParameters(
+      [{ type: "address" }, { type: "address[]" }],
+      route.dexData as Hex,
+    );
+    const data = encodeFunctionData({
+      abi: BASESWAP_SWAP_ABI, // standard UniV2 swapExactTokensForTokens(uint,uint,address[],address,uint)
+      functionName: "swapExactTokensForTokens",
+      args: [amountIn, amountOutMin, path as Address[], receiver, BigInt(deadline)],
+    });
+    return { tokenIn: route.tokenIn, amountIn, target: router as Address, spender: router as Address, value: 0n, data };
+  }
+
   if (route.dex === DEX.UNISWAP_V3) {
-    const target = UNISWAP_V3_SWAP_ROUTER_ADDRESS;
+    const target =
+      chain.chainId === ETHEREUM_CHAIN_ID ? ETH_UNISWAP_V3_SWAP_ROUTER : UNISWAP_V3_SWAP_ROUTER_ADDRESS;
     const v3 = decodeV3DexData(route.dexData as Hex);
     const data = v3.isMultiHop
       ? encodeFunctionData({
@@ -4942,13 +5233,13 @@ async function scanOnchainPools(args: {
   return { pools, errors };
 }
 
-async function readErc20Balance(token: Address, holder: Address) {
+async function readErc20Balance(token: Address, holder: Address, chainId: number = BASE_CHAIN_ID) {
   const data = encodeFunctionData({
     abi: erc20Abi,
     functionName: "balanceOf",
     args: [holder],
   });
-  const result = await callContract(token, data);
+  const result = await callContract(token, data, undefined, chainId);
   return decodeFunctionResult({
     abi: erc20Abi,
     functionName: "balanceOf",
@@ -4956,13 +5247,18 @@ async function readErc20Balance(token: Address, holder: Address) {
   }) as bigint;
 }
 
-async function readErc20Allowance(token: Address, owner: Address, spender: Address) {
+async function readErc20Allowance(
+  token: Address,
+  owner: Address,
+  spender: Address,
+  chainId: number = BASE_CHAIN_ID,
+) {
   const data = encodeFunctionData({
     abi: erc20Abi,
     functionName: "allowance",
     args: [owner, spender],
   });
-  const result = await callContract(token, data);
+  const result = await callContract(token, data, undefined, chainId);
   return decodeFunctionResult({
     abi: erc20Abi,
     functionName: "allowance",
@@ -4970,7 +5266,11 @@ async function readErc20Allowance(token: Address, owner: Address, spender: Addre
   }) as bigint;
 }
 
-async function findStaleRouteBalances(userAddress: Address, routes: DustSweepRoute[]) {
+async function findStaleRouteBalances(
+  userAddress: Address,
+  routes: DustSweepRoute[],
+  chainId: number = BASE_CHAIN_ID,
+) {
   const stale: Array<{
     token: Address;
     required: string;
@@ -4982,7 +5282,7 @@ async function findStaleRouteBalances(userAddress: Address, routes: DustSweepRou
   // on RPC round-trips before the wallet prompt could open.
   const items = routes.filter((route) => BigInt(route.amountIn || "0") > 0n);
   const balances = await pLimit(
-    items.map((route) => () => readErc20Balance(route.tokenIn, userAddress)),
+    items.map((route) => () => readErc20Balance(route.tokenIn, userAddress, chainId)),
     PREFLIGHT_READ_CONCURRENCY,
   );
 
@@ -5021,10 +5321,11 @@ async function isRoutePullable(
   token: Address,
   amountIn: string,
   recipient: Address,
+  chainId: number = BASE_CHAIN_ID,
 ): Promise<boolean> {
   if (BigInt(amountIn || "0") <= 0n) return true;
 
-  const key = `${user.toLowerCase()}:${token.toLowerCase()}:${amountIn}:${recipient.toLowerCase()}`;
+  const key = `${chainId}:${user.toLowerCase()}:${token.toLowerCase()}:${amountIn}:${recipient.toLowerCase()}`;
   const now = Date.now();
   const cached = transferProbeCache.get(key);
   if (cached && cached.expires > now) return cached.pullable;
@@ -5038,7 +5339,8 @@ async function isRoutePullable(
   let pullable = true;
   let definite = true;
   try {
-    await baseRpcRequest<Hex>(
+    await chainRpcRequest<Hex>(
+      chainId,
       "eth_call",
       [{ from: user, to: token, data }, "latest"],
       { timeoutMs: 5_000 },
@@ -5064,11 +5366,12 @@ async function findUntransferableRoutes(
   userAddress: Address,
   routes: Array<{ tokenIn: Address; amountIn: string }>,
   recipient: Address,
+  chainId: number = BASE_CHAIN_ID,
 ): Promise<Address[]> {
   const items = routes.filter((route) => BigInt(route.amountIn || "0") > 0n);
   const probes = await pLimit(
     items.map((route) => async (): Promise<Address | null> => {
-      const pullable = await isRoutePullable(userAddress, route.tokenIn, route.amountIn, recipient);
+      const pullable = await isRoutePullable(userAddress, route.tokenIn, route.amountIn, recipient, chainId);
       return pullable ? null : route.tokenIn;
     }),
     PREFLIGHT_READ_CONCURRENCY,
@@ -5076,11 +5379,20 @@ async function findUntransferableRoutes(
   return probes.filter((token): token is Address => token !== null);
 }
 
-async function findMissingPermit2Approvals(userAddress: Address, routes: DustSweepRoute[]) {
-  return findMissingTokenApprovals(userAddress, routes, PERMIT2_ADDRESS);
+async function findMissingPermit2Approvals(
+  userAddress: Address,
+  routes: DustSweepRoute[],
+  chainId: number = BASE_CHAIN_ID,
+) {
+  return findMissingTokenApprovals(userAddress, routes, PERMIT2_ADDRESS, chainId);
 }
 
-async function findMissingTokenApprovals(userAddress: Address, routes: DustSweepRoute[], spender: Address) {
+async function findMissingTokenApprovals(
+  userAddress: Address,
+  routes: DustSweepRoute[],
+  spender: Address,
+  chainId: number = BASE_CHAIN_ID,
+) {
   const requiredByToken = new Map<string, { token: Address; amount: bigint }>();
 
   for (const route of routes) {
@@ -5106,7 +5418,7 @@ async function findMissingTokenApprovals(userAddress: Address, routes: DustSweep
   // the pre-prompt delay on large sweeps).
   const items = Array.from(requiredByToken.values());
   const allowances = await pLimit(
-    items.map((item) => () => readErc20Allowance(item.token, userAddress, spender)),
+    items.map((item) => () => readErc20Allowance(item.token, userAddress, spender, chainId)),
     PREFLIGHT_READ_CONCURRENCY,
   );
 
@@ -5224,8 +5536,9 @@ async function upsertTokenRows(rows: TokenWhitelistRow[]): Promise<TokenUpsertRe
   if (rows.length === 0) return { written: 0, skipped: 0, errors: [] };
 
   const payload = rows.map(toTokenUpsertRow);
+  // Whitelist rows are chain-scoped: conflict on (chain_id, address), not address alone.
   const { error } = await postgresDb.from("tokens").upsert(payload, {
-    onConflict: "address",
+    onConflict: "chain_id,address",
   });
 
   if (!error) {
@@ -5645,7 +5958,7 @@ export async function syncWhitelistFromBlockscoutDexScreener(args: {
     }));
 
     const { error } = await postgresDb.from("tokens").upsert(chunk, {
-      onConflict: "address",
+      onConflict: "chain_id,address",
     });
     if (error) throw new Error(error.message);
   }
@@ -6050,7 +6363,7 @@ export async function syncWhitelistFromGeckoTerminal(args: {
     }));
 
     const { error } = await postgresDb.from("tokens").upsert(chunk, {
-      onConflict: "address",
+      onConflict: "chain_id,address",
     });
     if (error) throw new Error(error.message);
   }
@@ -6382,13 +6695,12 @@ async function handleDustSweepTokensRequest(c: Context, rawAddress?: string) {
     return c.json(errorJson("A valid wallet address is required"), 400);
   }
 
-  const requestedChainId = Number(c.req.query("chainId") || BASE_CHAIN_ID);
-  if (requestedChainId !== BASE_CHAIN_ID) {
-    return c.json(errorJson("DustSweep discovery is Base-only for this release"), 400);
-  }
+  const resolved = resolveSweepChain(c);
+  if (!resolved.ok) return resolved.response;
+  const chain = resolved.chain;
 
   const userAddress = normalizeAddress(rawAddress);
-  const runtimeKey = `dustsweep:tokens:${BASE_CHAIN_ID}:${userAddress.toLowerCase()}`;
+  const runtimeKey = `dustsweep:tokens:${chain.chainId}:${userAddress.toLowerCase()}`;
   const forceRefresh =
     ["1", "true", "yes"].includes(String(c.req.query("refresh") || "").toLowerCase()) ||
     ["1", "true", "yes"].includes(String(c.req.query("force") || "").toLowerCase());
@@ -6401,7 +6713,7 @@ async function handleDustSweepTokensRequest(c: Context, rawAddress?: string) {
     const loadTokenResult = async () => {
       const startedAt = Date.now();
       if (!forceRefresh) {
-        const cached = await getCachedTokenResult(userAddress);
+        const cached = await getCachedTokenResult(userAddress, chain);
         if (cached) return cached;
       }
 
@@ -6412,11 +6724,11 @@ async function handleDustSweepTokensRequest(c: Context, rawAddress?: string) {
 
       try {
         [whitelist, erc20Discovery] = await Promise.all([
-          loadWhitelist(),
-          fetchWalletTokenBalances(userAddress),
+          loadWhitelist(chain),
+          fetchWalletTokenBalances(userAddress, chain),
         ]);
       } catch (error) {
-        const stale = await getCachedTokenResult(userAddress, DISCOVERY_STALE_DB_CACHE_TTL_MS);
+        const stale = await getCachedTokenResult(userAddress, chain, DISCOVERY_STALE_DB_CACHE_TTL_MS);
         if (stale) {
           console.warn("[dustsweep/tokens] Serving stale token discovery cache", {
             address: userAddress,
@@ -6452,6 +6764,7 @@ async function handleDustSweepTokensRequest(c: Context, rawAddress?: string) {
         allAddresses,
         providerMarketHints,
         maxExternalMarketHints,
+        chain,
       );
       const metadataByAddress = await loadDiscoveryMetadata(nonZero, whitelist, marketHints);
 
@@ -6538,12 +6851,15 @@ async function handleDustSweepTokensRequest(c: Context, rawAddress?: string) {
         // ── Classification logic ──
         // USDC, USDT can be swept
 
-        // WETH is temporarily NOT selectable as a sweep input (the in-bundle unwrap flow works
-        // and stays in code, but is parked to avoid flow complications). It surfaces in the
-        // excluded-output-assets bucket instead of vanishing. Re-enable without a deploy via
-        // DUST_SWEEP_EXCLUDE_WETH_INPUT=false.
+        // WETH visibility is per-chain:
+        //   - Passthrough chains (Ethereum, upgraded router): WETH is a FIRST-CLASS sweepable
+        //     input — swappable to any ERC-20, and unwrapped to native ETH by the router.
+        //   - Non-passthrough chains (Base, original router): WETH stays parked in the
+        //     excluded-output-assets bucket (the in-bundle wallet-side unwrap flow still applies),
+        //     exactly as before. Re-enable on those chains via DUST_SWEEP_EXCLUDE_WETH_INPUT=false.
         if (
-          tokenAddress.toLowerCase() === WETH_ADDRESS.toLowerCase() &&
+          tokenAddress.toLowerCase() === chain.weth.toLowerCase() &&
+          !chain.supportsWethPassthrough &&
           process.env.DUST_SWEEP_EXCLUDE_WETH_INPUT !== "false"
         ) {
           excludedOutputAssets.push({
@@ -6565,7 +6881,7 @@ async function handleDustSweepTokensRequest(c: Context, rawAddress?: string) {
           continue;
         }
 
-        if (baseToken.valueUSD < MIN_VALUE_USD && priceUSD > 0) {
+        if (baseToken.valueUSD < chain.minValueUsd && priceUSD > 0) {
           hidden.push({
             ...baseToken,
             status: "HIDDEN",
@@ -6607,7 +6923,7 @@ async function handleDustSweepTokensRequest(c: Context, rawAddress?: string) {
       excludedOutputAssets.sort(sortByValueDesc);
 
       const payload = {
-        chainId: BASE_CHAIN_ID,
+        chainId: chain.chainId,
         refreshedAt: new Date().toISOString(),
         discovery: {
           erc20BalanceCount: nonZero.length,
@@ -6633,7 +6949,7 @@ async function handleDustSweepTokensRequest(c: Context, rawAddress?: string) {
         excludedOutputAssets,
       };
 
-      await setCachedTokenResult(userAddress, payload);
+      await setCachedTokenResult(userAddress, payload, chain);
       return payload;
     };
 
@@ -6670,6 +6986,47 @@ dustsweepRoutes.get("/tokens/:address", async (c) => {
   return handleDustSweepTokensRequest(c, c.req.param("address"));
 });
 
+// Live gas price per chain, short-cached. Base keeps its legacy hardcoded display (gasModel null),
+// so this is only ever hit for chains with a real gas model (Ethereum), where the cost matters.
+const gasPriceWeiCache = new Map<number, { wei: bigint; expiresAt: number }>();
+async function getCachedGasPriceWei(chainId: number): Promise<bigint> {
+  const cached = gasPriceWeiCache.get(chainId);
+  if (cached && cached.expiresAt > Date.now()) return cached.wei;
+  try {
+    const hex = await chainRpcRequest<string>(chainId, "eth_gasPrice", [], { timeoutMs: 4_000 });
+    const wei = BigInt(hex);
+    gasPriceWeiCache.set(chainId, { wei, expiresAt: Date.now() + 15_000 });
+    return wei;
+  } catch {
+    return cached?.wei ?? 0n;
+  }
+}
+
+// Honest per-chain gas estimate for the sweep. Base preserves the historical display literals
+// (gasModel === null → zero behavior change). Chains with a gasModel (Ethereum) compute
+// gasUnits × live gasPrice × native USD so the UI can warn when gas dwarfs the basket value.
+async function computeSweepGasEstimate(
+  chain: SweepChainConfig,
+  routeCount: number,
+): Promise<{ eth: string; usd: number }> {
+  if (!chain.gasModel) {
+    return {
+      eth: (0.0000015 + routeCount * 0.0000007).toFixed(8),
+      usd: Math.round((0.004 + routeCount * 0.0015) * 100) / 100,
+    };
+  }
+  const gasUnits = BigInt(
+    Math.round(chain.gasModel.baseUnits + routeCount * chain.gasModel.perRouteUnits),
+  );
+  const [gasPriceWei, nativeUsd] = await Promise.all([
+    getCachedGasPriceWei(chain.chainId),
+    fetchEthUsdPrice().catch(() => 0),
+  ]);
+  const ethCost = Number(formatUnits(gasUnits * gasPriceWei, 18));
+  const usd = nativeUsd > 0 && Number.isFinite(ethCost) ? ethCost * nativeUsd : 0;
+  return { eth: ethCost.toFixed(8), usd: Math.round(usd * 100) / 100 };
+}
+
 dustsweepRoutes.post("/quote", async (c) => {
   const body = await c.req.json<{
     tokenIns?: string[];
@@ -6677,7 +7034,12 @@ dustsweepRoutes.post("/quote", async (c) => {
     tokenOut?: string;
     slippageBps?: number;
     userAddress?: string;
+    chainId?: number;
   }>();
+
+  const resolved = resolveSweepChain(c, body.chainId);
+  if (!resolved.ok) return resolved.response;
+  const chain = resolved.chain;
 
   if (!body.tokenIns?.length || !body.amounts?.length || !body.tokenOut || !body.userAddress) {
     return c.json(errorJson("tokenIns, amounts, tokenOut, and userAddress are required"), 400);
@@ -6686,31 +7048,33 @@ dustsweepRoutes.post("/quote", async (c) => {
     return c.json(errorJson("tokenIns and amounts length mismatch"), 400);
   }
 
-  // Enforce actual contract capability — V1 contract has MAX_BATCH_SIZE = 10
-  const executionLane = getExecutionLane();
-  const routeMaxCap = getRouteMaxCap(executionLane);
+  // Chain-aware lane: Ethereum is V3-only (owned modern lane); Base honors DUST_SWEEP_EXECUTION_LANE.
+  const executionLane: DustSweepExecutionLane =
+    chain.chainId === BASE_CHAIN_ID ? getExecutionLane() : "owned_v2";
+  // Enforce actual contract capability AND the per-chain economic cap (ETH default 15).
+  const routeMaxCap = Math.min(getRouteMaxCap(executionLane), chain.routeMaxCap);
 
   if (body.tokenIns.length > routeMaxCap) {
-    return c.json(errorJson(`Maximum ${routeMaxCap} tokens per sweep (${executionLane} lane)`), 400);
+    return c.json(errorJson(`Maximum ${routeMaxCap} tokens per sweep on ${chain.name}`), 400);
   }
   if (!isAddress(body.tokenOut) || !isAddress(body.userAddress)) {
     return c.json(errorJson("Invalid tokenOut or userAddress"), 400);
   }
 
   const tokenOut = normalizeAddress(body.tokenOut);
-  const actualTokenOut = tokenOut.toLowerCase() === NATIVE_TOKEN_SENTINEL.toLowerCase() ? WETH_ADDRESS : tokenOut;
+  const actualTokenOut = tokenOut.toLowerCase() === NATIVE_TOKEN_SENTINEL.toLowerCase() ? chain.weth : tokenOut;
   const isNativeOutput = isNativeTokenAddress(tokenOut);
   const slippageBps = Math.max(1, Math.min(3000, Number(body.slippageBps || 50)));
   let routes: DustSweepRoute[] = [];
   const skippedTokens: QuoteSkippedToken[] = [];
-  const whitelist = await loadWhitelist();
+  const whitelist = await loadWhitelist(chain);
   const userAddress = normalizeAddress(body.userAddress);
 
   // Resolve output token decimals from whitelist, default to 6 for USDC, 18 otherwise
   const outputWhitelistRow = whitelist.get(tokenOut.toLowerCase());
   const outputDecimals = outputWhitelistRow
     ? Number(outputWhitelistRow.decimals ?? 18)
-    : tokenOut.toLowerCase() === USDC_ADDRESS.toLowerCase()
+    : tokenOut.toLowerCase() === chain.usdc.toLowerCase()
       ? 6
       : 18;
 
@@ -6744,7 +7108,7 @@ dustsweepRoutes.post("/quote", async (c) => {
     }
 
     const unwrapToNative =
-      isNativeOutput && tokenIn.toLowerCase() === WETH_ADDRESS.toLowerCase();
+      isNativeOutput && tokenIn.toLowerCase() === chain.weth.toLowerCase();
 
     let amountIn: bigint;
     try {
@@ -6767,14 +7131,17 @@ dustsweepRoutes.post("/quote", async (c) => {
   // ── Step 2: check live balances in parallel ─────────────────────────────────
   const balanceChecks = await Promise.all(
     pending.map(({ tokenIn, amountIn }) =>
-      readErc20Balance(tokenIn, userAddress)
+      readErc20Balance(tokenIn, userAddress, chain.chainId)
         .then((live) => ({ live, amountIn, ok: live >= amountIn }))
         .catch(() => ({ live: 0n, amountIn, ok: false })),
     ),
   );
 
   const readyToQuote: PendingToken[] = [];
-  // WETH → native ETH: direct 1:1 wallet-side unwrap, kept OUT of the router routes entirely.
+  // WETH → native ETH handling:
+  //   - Non-passthrough chains (Base): a 1:1 wallet-side unwrap, kept OUT of the router routes.
+  //   - Passthrough chains (Ethereum, upgraded router): WETH rides INSIDE the router as a
+  //     passthrough route — pulled with the rest, unwrapped to ETH at settlement, one atomic tx.
   let wethUnwrapAmount = 0n;
   for (let i = 0; i < pending.length; i++) {
     const item = pending[i]!;
@@ -6784,6 +7151,19 @@ dustsweepRoutes.post("/quote", async (c) => {
         token: item.tokenIn,
         reason: "BALANCE_CHANGED",
         message: "Token balance changed. Refresh balances before sweeping this token.",
+      });
+    } else if (item.unwrapToNative && chain.supportsWethPassthrough) {
+      // Passthrough leg: 1:1, no DEX. The contract detects tokenIn == actualOutput (WETH).
+      routes.push({
+        tokenIn: item.tokenIn,
+        amountIn: item.amountIn.toString(),
+        amountOutMin: item.amountIn.toString(),
+        estimatedOut: item.amountIn.toString(),
+        dex: DEX.PASSTHROUGH,
+        dexName: "WETH → ETH",
+        dexData: "0x" as Hex,
+        priceImpactBps: 0, // 1:1 unwrap — zero impact
+        priceImpactKnown: true,
       });
     } else if (item.unwrapToNative) {
       wethUnwrapAmount += item.amountIn;
@@ -6845,7 +7225,7 @@ dustsweepRoutes.post("/quote", async (c) => {
   const quoteTasks = readyToQuote.map(
     ({ tokenIn, amountIn }) =>
       async () => {
-        const cacheKey = `routeability:${tokenIn.toLowerCase()}:${tokenOut.toLowerCase()}`;
+        const cacheKey = `routeability:${chain.chainId}:${tokenIn.toLowerCase()}:${tokenOut.toLowerCase()}`;
 
         // 1. Check runtime memory cache (fastest)
         const memCached = runtimeCache.get<{ status: string; checkedAt: number }>(cacheKey);
@@ -6854,7 +7234,7 @@ dustsweepRoutes.post("/quote", async (c) => {
         }
 
         // 2. Check DB persistent cache (survives restarts)
-        const dbCached = await getDbRouteability(tokenIn, tokenOut, amountIn);
+        const dbCached = await getDbRouteability(tokenIn, tokenOut, amountIn, chain.chainId);
         if (dbCached) {
           if (dbCached.status === "NO_ROUTE") {
             runtimeCache.set(cacheKey, { status: "NO_ROUTE", checkedAt: Date.now() }, ROUTEABILITY_NO_ROUTE_TTL);
@@ -6879,14 +7259,15 @@ dustsweepRoutes.post("/quote", async (c) => {
           slippageBps,
           executionLane,
           marketContexts.get(tokenIn.toLowerCase()) ?? null,
+          chain,
         )
           .then(async (best) => {
             if (best) {
               runtimeCache.set(cacheKey, { status: "OK", checkedAt: Date.now() }, ROUTEABILITY_OK_TTL);
-              await setDbRouteability(tokenIn, tokenOut, amountIn, "OK", ROUTEABILITY_OK_TTL * 10, best);
+              await setDbRouteability(tokenIn, tokenOut, amountIn, "OK", ROUTEABILITY_OK_TTL * 10, best, chain.chainId);
             } else {
               runtimeCache.set(cacheKey, { status: "NO_ROUTE", checkedAt: Date.now() }, ROUTEABILITY_NO_ROUTE_TTL);
-              await setDbRouteability(tokenIn, tokenOut, amountIn, "NO_ROUTE", ROUTEABILITY_NO_ROUTE_TTL * 10);
+              await setDbRouteability(tokenIn, tokenOut, amountIn, "NO_ROUTE", ROUTEABILITY_NO_ROUTE_TTL * 10, undefined, chain.chainId);
             }
             return { tokenIn, amountIn, best, error: null as string | null, cachedNoRoute: false };
           })
@@ -6894,7 +7275,7 @@ dustsweepRoutes.post("/quote", async (c) => {
             const message = error instanceof Error ? error.message : String(error);
             if (error instanceof RpcDeterministicError) {
               runtimeCache.set(cacheKey, { status: "NO_ROUTE", checkedAt: Date.now() }, ROUTEABILITY_NO_ROUTE_TTL);
-              await setDbRouteability(tokenIn, tokenOut, amountIn, "NO_ROUTE", ROUTEABILITY_NO_ROUTE_TTL * 10);
+              await setDbRouteability(tokenIn, tokenOut, amountIn, "NO_ROUTE", ROUTEABILITY_NO_ROUTE_TTL * 10, undefined, chain.chainId);
             }
             return {
               tokenIn,
@@ -7009,11 +7390,11 @@ dustsweepRoutes.post("/quote", async (c) => {
     (sum, route) => sum + BigInt(route.estimatedOut),
     0n,
   );
-  const prices = await fetchTokenPrices([tokenOut]);
-  const outputPrice = prices[tokenOut.toLowerCase()] || (tokenOut.toLowerCase() === USDC_ADDRESS.toLowerCase() ? 1 : 0);
+  const prices = await fetchTokenPrices([tokenOut], chain);
+  const outputPrice = prices[tokenOut.toLowerCase()] || (tokenOut.toLowerCase() === chain.usdc.toLowerCase() ? 1 : 0);
   const totalEstimatedOutUSD =
     Number(formatUnits(totalEstimatedOut, outputDecimals)) * outputPrice;
-  const feeBps = getFeeBps();
+  const feeBps = getFeeBps(chain);
   const protocolFeeAmount = (totalEstimatedOut * BigInt(feeBps)) / 10_000n;
   const netEstimatedOut = totalEstimatedOut - protocolFeeAmount;
   const minAmountOut = getRouterMinAmountOut(cappedRoutes, executionLane);
@@ -7066,7 +7447,15 @@ dustsweepRoutes.post("/quote", async (c) => {
         }
       : undefined;
 
+  const gasEstimate = await computeSweepGasEstimate(chain, cappedRoutes.length);
+  // Basket value the gas is compared against (net of fee): the UI warns when gas is a large
+  // fraction of it. On Base gas is ~0 so the ratio is negligible and nothing changes.
+  const basketValueForGas = Math.max(0.01, Math.round(netEstimatedOutUSD * 100) / 100);
+  const gasToBasketRatio =
+    gasEstimate.usd > 0 ? Math.round((gasEstimate.usd / basketValueForGas) * 1000) / 1000 : 0;
+
   return c.json({
+    chainId: chain.chainId,
     routes: cappedRoutes,
     ...(wethUnwrap ? { wethUnwrap } : {}),
     skippedTokens,
@@ -7081,8 +7470,9 @@ dustsweepRoutes.post("/quote", async (c) => {
     requiresImpactConfirmation,
     ...(basketImpactUSD !== undefined ? { basketImpactUSD, basketImpactBps } : {}),
     feeBps,
-    gasEstimateETH: (0.0000015 + cappedRoutes.length * 0.0000007).toFixed(8),
-    gasEstimateUSD: Math.round((0.004 + cappedRoutes.length * 0.0015) * 100) / 100,
+    gasEstimateETH: gasEstimate.eth,
+    gasEstimateUSD: gasEstimate.usd,
+    gasToBasketRatio,
     permit2Nonce,
     deadline,
     executionLane,
@@ -7099,11 +7489,21 @@ dustsweepRoutes.post("/build-tx", async (c) => {
     permit2Nonce?: string;
     userAddress?: string;
     signature?: string;
+    chainId?: number;
   }>();
 
-  const executionLane = getExecutionLane();
-  const routeMaxCap = getRouteMaxCap(executionLane);
-  const routerAddress = getRouterAddressForLane(executionLane);
+  const resolved = resolveSweepChain(c, body.chainId);
+  if (!resolved.ok) return resolved.response;
+  const chain = resolved.chain;
+
+  // Ethereum is V3-only (owned modern lane); Base honors DUST_SWEEP_EXECUTION_LANE.
+  const executionLane: DustSweepExecutionLane =
+    chain.chainId === BASE_CHAIN_ID ? getExecutionLane() : "owned_v2";
+  const routeMaxCap = Math.min(getRouteMaxCap(executionLane), chain.routeMaxCap);
+  const routerAddress =
+    chain.chainId === BASE_CHAIN_ID
+      ? getRouterAddressForLane(executionLane)
+      : getChainRouterV3Address(chain) ?? ZERO_ADDRESS;
   // owned_v2 auth mode. Defaults to "allowance" (approve + sweepWithAllowance, no
   // signature) so Coinbase/Base smart wallets can bundle approvals + sweep into a
   // single atomic wallet_sendCalls. Only an explicit "permit2" opts into the
@@ -7169,7 +7569,7 @@ dustsweepRoutes.post("/build-tx", async (c) => {
   }
 
   const userAddress = normalizeAddress(body.userAddress);
-  const staleBalances = await findStaleRouteBalances(userAddress, routes);
+  const staleBalances = await findStaleRouteBalances(userAddress, routes, chain.chainId);
   if (staleBalances.length > 0) {
     return c.json(
       errorJson("Token balance changed. Refresh balances and try again.", {
@@ -7190,7 +7590,7 @@ dustsweepRoutes.post("/build-tx", async (c) => {
 
   const buildTokenOut = normalizeAddress(body.tokenOut);
   const buildReceiver = normalizeAddress(body.receiver);
-  const actualTokenOut = isNativeTokenAddress(buildTokenOut) ? WETH_ADDRESS : buildTokenOut;
+  const actualTokenOut = isNativeTokenAddress(buildTokenOut) ? chain.weth : buildTokenOut;
 
   if (routes.some((route) => route.tokenIn.toLowerCase() === actualTokenOut.toLowerCase())) {
     return c.json(
@@ -7211,7 +7611,7 @@ dustsweepRoutes.post("/build-tx", async (c) => {
     executionLane === "owned_v2" &&
     v2AuthMode !== "permit2"
   ) {
-    const untransferable = await findUntransferableRoutes(userAddress, routes, routerAddress);
+    const untransferable = await findUntransferableRoutes(userAddress, routes, routerAddress, chain.chainId);
     if (untransferable.length > 0) {
       const dropSet = new Set(untransferable.map((token) => token.toLowerCase()));
       for (const token of untransferable) {
@@ -7273,20 +7673,26 @@ dustsweepRoutes.post("/build-tx", async (c) => {
     });
   }
 
+  // Ethereum uses the V3 router exclusively; on Base, V3 activation is env-gated.
+  const chainV3Active = chain.chainId === BASE_CHAIN_ID ? isV3Active() : true;
+
   let v2Routes: DustSweepV2Route[];
   try {
-    v2Routes = routes.map((route) => buildV2Route(route, actualTokenOut, routerAddress, body.deadline!));
-    for (const route of v2Routes) assertConfiguredV2Route(route);
-    await assertOnchainV2RouterAllowlist(routerAddress, v2Routes);
+    v2Routes = routes.map((route) => buildV2Route(route, actualTokenOut, routerAddress, body.deadline!, chain));
+    // Passthrough legs (WETH -> ETH) have target/spender == the token, not an allowlisted DEX —
+    // the contract skips the allowlist for them, so the off-chain + on-chain checks must too.
+    const swapRoutes = v2Routes.filter((_, i) => routes[i]!.dex !== DEX.PASSTHROUGH);
+    for (const route of swapRoutes) assertConfiguredV2Route(route, chain);
+    await assertOnchainV2RouterAllowlist(routerAddress, swapRoutes, chain.chainId);
   } catch (error) {
     return c.json(errorJson((error as Error).message || "Failed to build V2 route"), 400);
   }
 
-  const minAmountOut = getRouterMinAmountOut(routes, executionLane);
+  const minAmountOut = getRouterMinAmountOut(routes, executionLane, chainV3Active);
   const value = v2Routes.reduce((sum, route) => sum + route.value, 0n);
   if (v2AuthMode !== "permit2") {
-    const routerApprovals = await findMissingTokenApprovals(userAddress, routes, routerAddress);
-    const v3Active = isV3Active();
+    const routerApprovals = await findMissingTokenApprovals(userAddress, routes, routerAddress, chain.chainId);
+    const v3Active = chainV3Active;
     const calldata = v3Active
       ? encodeV3SweepCalldata({
           mode: V3_SWEEP_MODE.Allowance,
@@ -7295,7 +7701,7 @@ dustsweepRoutes.post("/build-tx", async (c) => {
           recipient: buildReceiver,
           minAmountOut,
           deadline: body.deadline!,
-          feeBpsOverride: getV3FeeBps(),
+          feeBpsOverride: getV3FeeBps(chain),
         })
       : encodeV2AllowanceSweepCalldata({
           v2Routes,
@@ -7331,12 +7737,12 @@ dustsweepRoutes.post("/build-tx", async (c) => {
     });
   }
 
-  const permit2Approvals = await findMissingPermit2Approvals(userAddress, routes);
+  const permit2Approvals = await findMissingPermit2Approvals(userAddress, routes, chain.chainId);
   const routeHash = hashV2Routes(v2Routes);
   const permit2Signature = body.signature && isHex(body.signature) ? (body.signature as Hex) : "0x";
 
-  if (isV3Active()) {
-    const feeBpsOverride = getV3FeeBps();
+  if (chainV3Active) {
+    const feeBpsOverride = getV3FeeBps(chain);
     const v3Witness: DustSweepV3Witness = {
       routeHash,
       outputToken: buildTokenOut,
@@ -7351,6 +7757,7 @@ dustsweepRoutes.post("/build-tx", async (c) => {
       nonce: String(body.permit2Nonce),
       deadline: body.deadline!,
       witness: v3Witness,
+      chainId: chain.chainId,
     });
     const v3Calldata = encodeV3SweepCalldata({
       mode: V3_SWEEP_MODE.Permit2Signature,
@@ -7415,6 +7822,7 @@ dustsweepRoutes.post("/build-tx", async (c) => {
     nonce: String(body.permit2Nonce),
     deadline: body.deadline,
     witness,
+    chainId: chain.chainId,
   });
   const signature = body.signature && isHex(body.signature) ? body.signature as Hex : "0x";
   const calldata = encodeV2SweepCalldata({
@@ -7469,7 +7877,16 @@ dustsweepRoutes.post("/record-sweep", async (c) => {
     userAddress?: string;
     tokensSwapped?: number;
     valueUSD?: number;
+    chainId?: number;
   }>();
+
+  const resolved = resolveSweepChain(c, body.chainId);
+  if (!resolved.ok) return resolved.response;
+  const chain = resolved.chain;
+  // SWEEP-ONLY multichain scope: sweeps on every enabled chain are RECORDED (chain-keyed rows),
+  // but points/quests/rewards remain Base-only for now. This isolates the rewards economy while
+  // still tracking ETH volume in the DB.
+  const rewardsEligible = chain.chainId === BASE_CHAIN_ID;
 
   if (!body.txHash || !body.userAddress || body.tokensSwapped == null) {
     return c.json(errorJson("txHash, userAddress, and tokensSwapped are required"), 400);
@@ -7490,69 +7907,85 @@ dustsweepRoutes.post("/record-sweep", async (c) => {
         tx_hash: body.txHash.toLowerCase(),
         tokens_swapped: tokensSwapped,
         value_usd: valueUSD,
-        chain_id: BASE_CHAIN_ID,
+        chain_id: chain.chainId,
       },
       { onConflict: "tx_hash" },
     );
 
+    // Per-chain sweep count — Base quests only ever count Base sweeps (finding 4).
     const { count } = await postgresDb
       .from("sweeps")
       .select("id", { count: "exact", head: true })
-      .eq("user_address", userAddress.toLowerCase());
+      .eq("user_address", userAddress.toLowerCase())
+      .eq("chain_id", chain.chainId);
     sweepCount = count || 0;
   } catch {
     // Sweep history table may not be migrated locally yet. Points still record below.
   }
 
   let pointsAwarded = 0;
-  try {
-    pointsAwarded = await pointsEngine.recordSweep(
-      userAddress,
-      body.txHash,
-      tokensSwapped,
-      valueUSD,
-    );
-  } catch (error) {
-    console.error("[dustsweep/record-sweep] points error:", error);
+  if (rewardsEligible) {
+    try {
+      pointsAwarded = await pointsEngine.recordSweep(
+        userAddress,
+        body.txHash,
+        tokensSwapped,
+        valueUSD,
+      );
+    } catch (error) {
+      console.error("[dustsweep/record-sweep] points error:", error);
+    }
   }
 
-  // Advance admin-created sweep quests now that the sweep row is persisted.
+  // Advance admin-created sweep quests now that the sweep row is persisted (Base only).
   let completedQuests: Array<{
     questId: string;
     slug: string;
     awardedPoints: number;
   }> = [];
-  try {
-    const questSync = await questEngine.syncRecordedSweepProgress(userAddress);
-    completedQuests = questSync.completedQuests;
-  } catch (error) {
-    console.error("[dustsweep/record-sweep] quest error:", error);
+  if (rewardsEligible) {
+    try {
+      const questSync = await questEngine.syncRecordedSweepProgress(userAddress);
+      completedQuests = questSync.completedQuests;
+    } catch (error) {
+      console.error("[dustsweep/record-sweep] quest error:", error);
+    }
   }
 
   return c.json({
     success: true,
+    chainId: chain.chainId,
+    rewardsEligible,
     completedQuests,
-    questProgress: {
-      FIRST_SWEEP: sweepCount === 1 || tokensSwapped > 0,
-      SWEEP_10_TOKENS: tokensSwapped >= 10,
-      SWEEP_50_TOKENS: tokensSwapped >= 50,
-      SWEEP_100_USD: valueUSD >= 100,
-      SWEEP_5_TIMES: sweepCount >= 5,
-      pointsAwarded,
-    },
+    // Quest progress is a Base-only concept for now; non-Base sweeps report no progress.
+    questProgress: rewardsEligible
+      ? {
+          FIRST_SWEEP: sweepCount === 1 || tokensSwapped > 0,
+          SWEEP_10_TOKENS: tokensSwapped >= 10,
+          SWEEP_50_TOKENS: tokensSwapped >= 50,
+          SWEEP_100_USD: valueUSD >= 100,
+          SWEEP_5_TIMES: sweepCount >= 5,
+          pointsAwarded,
+        }
+      : { pointsAwarded: 0 },
   });
 });
 
 // ── Routeability DB Cache Persistence ───────────────────────────────────────
 
-async function getDbRouteability(tokenIn: Address, tokenOut: Address, amountIn: bigint) {
+async function getDbRouteability(
+  tokenIn: Address,
+  tokenOut: Address,
+  amountIn: bigint,
+  chainId: number = BASE_CHAIN_ID,
+) {
   try {
     // Bucket amount to normalize cache keys (e.g. 1.23 ETH and 1.24 ETH are same bucket)
     const amountBucket = amountIn.toString().slice(0, 3);
     const { data } = await postgresDb
       .from("dustsweep_routeability_cache")
       .select("*")
-      .eq("chain_id", BASE_CHAIN_ID)
+      .eq("chain_id", chainId)
       .eq("token_in", tokenIn.toLowerCase())
       .eq("token_out", tokenOut.toLowerCase())
       .eq("amount_bucket", amountBucket)
@@ -7573,11 +8006,12 @@ async function setDbRouteability(
   status: "OK" | "NO_ROUTE",
   ttlMs: number,
   payload?: any,
+  chainId: number = BASE_CHAIN_ID,
 ) {
   try {
     const amountBucket = amountIn.toString().slice(0, 3);
     await postgresDb.from("dustsweep_routeability_cache").upsert({
-      chain_id: BASE_CHAIN_ID,
+      chain_id: chainId,
       token_in: tokenIn.toLowerCase(),
       token_out: tokenOut.toLowerCase(),
       amount_bucket: amountBucket,

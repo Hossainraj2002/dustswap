@@ -3611,6 +3611,8 @@ export class QuestEngine {
         .from("sweeps")
         .select("value_usd, tokens_swapped")
         .eq("user_address", address.toLowerCase())
+        // Sweep quests are Base-only: never count sweeps from other chains (multichain guard).
+        .eq("chain_id", 8453)
         .gte("created_at", occurredBounds.start.toISOString());
 
       if (occurredBounds.end) {
