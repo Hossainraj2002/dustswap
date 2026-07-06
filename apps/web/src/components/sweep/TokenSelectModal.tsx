@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { TokenLogo } from "@/components/sweep/TokenLogo";
+import { type SweepChain } from "@/config/sweepChainConfig";
 import {
   type SelectedToken,
   type SwappableToken,
@@ -94,23 +95,50 @@ function confidenceDot(token: Token, mutedReason?: string) {
   return "bg-slate-300 dark:bg-slate-600";
 }
 
-function NetworkRow() {
+const CHAIN_ICON: Record<string, string> = {
+  base: BASE_ICON,
+  ethereum:
+    "https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/info/logo.png",
+};
+
+function NetworkRow({
+  chains,
+  activeChainId,
+  onChainChange,
+  disabled,
+}: {
+  chains: SweepChain[];
+  activeChainId: number;
+  onChainChange: (chainId: number) => void;
+  disabled?: boolean;
+}) {
   return (
     <div className="flex items-center gap-2">
-      <button
-        type="button"
-        className="inline-flex h-11 items-center gap-2 rounded-[13px] border-[1.5px] border-[#0052ff] bg-blue-50 px-3.5 text-[15px] font-bold text-slate-900 shadow-[0_1px_2px_rgba(16,24,40,0.05)] dark:bg-blue-400/10 dark:text-white"
-        aria-pressed="true"
-      >
-        <img src={BASE_ICON} alt="Base" className="h-5 w-5 rounded-full" />
-        Base
-      </button>
-      <span
-        className="inline-flex h-11 cursor-default select-none items-center gap-1.5 rounded-[13px] border border-dashed border-slate-300 px-3.5 text-[13px] font-semibold text-slate-400 dark:border-white/15 dark:text-slate-500"
-        title="More networks coming soon"
-      >
-        More soon
-      </span>
+      {chains.map((chain) => {
+        const active = chain.id === activeChainId;
+        return (
+          <button
+            key={chain.id}
+            type="button"
+            aria-pressed={active}
+            disabled={disabled && !active}
+            onClick={() => {
+              if (!active) onChainChange(chain.id);
+            }}
+            className={cx(
+              "inline-flex h-11 items-center gap-2 rounded-[13px] px-3.5 text-[15px] transition disabled:opacity-50",
+              active
+                ? "border-[1.5px] border-[#0052ff] bg-blue-50 font-bold text-slate-900 shadow-[0_1px_2px_rgba(16,24,40,0.05)] dark:bg-blue-400/10 dark:text-white"
+                : "border border-slate-300 font-semibold text-slate-500 hover:border-blue-300 hover:text-slate-900 dark:border-white/15 dark:text-slate-400 dark:hover:text-white",
+            )}
+          >
+            {CHAIN_ICON[chain.key] ? (
+              <img src={CHAIN_ICON[chain.key]} alt={chain.label} className="h-5 w-5 rounded-full" />
+            ) : null}
+            {chain.label}
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -218,6 +246,9 @@ export function TokenSelectModal({
   onSelectAll,
   onClose,
   routeMaxCap,
+  enabledChains,
+  chainId,
+  onChainChange,
 }: {
   isOpen: boolean;
   mode: "multi" | "single";
@@ -235,7 +266,11 @@ export function TokenSelectModal({
   onSelectAll: () => void;
   onClose: () => void;
   routeMaxCap: number;
+  enabledChains: SweepChain[];
+  chainId: number;
+  onChainChange: (chainId: number) => void;
 }) {
+  const activeChain = enabledChains.find((chain) => chain.id === chainId) ?? enabledChains[0];
   const [query, setQuery] = useState("");
   const selectedSet = useMemo(
     () => new Set(selectedTokens.map((token) => token.address.toLowerCase())),
@@ -320,7 +355,12 @@ export function TokenSelectModal({
             </span>
           </div>
 
-          <NetworkRow />
+          <NetworkRow
+            chains={enabledChains}
+            activeChainId={chainId}
+            onChainChange={onChainChange}
+            disabled={isScanning}
+          />
 
           {mode === "single" ? (
             <div>
@@ -352,7 +392,7 @@ export function TokenSelectModal({
           <div>
             <div className="mb-2 flex items-center justify-between gap-3">
               <p className="text-[13px] font-semibold text-slate-500 dark:text-slate-400">
-                {mode === "single" ? "Your tokens" : "Base"}
+                {mode === "single" ? "Your tokens" : activeChain?.label ?? "Base"}
                 {mode === "multi" ? (
                   <span className="ml-2 text-xs font-normal text-slate-400 dark:text-slate-500">
                     {visibleSwappable.length} sweepable / {discoveryLabel}

@@ -293,7 +293,6 @@ export default function DustSweepPage() {
   });
   const sweep = useDustSweep({ chainId: sweepChainId });
   const walletConnection = useWalletConnection();
-  const showChainSelector = enabledSweepChains.length > 1;
   useEffect(() => {
     try {
       window.sessionStorage.setItem("dustsweep:chainId", String(sweepChainId));
@@ -463,6 +462,9 @@ export default function DustSweepPage() {
         onSelectAll={sweep.selectAllTokens}
         onClose={() => setTokenModalMode(null)}
         routeMaxCap={sweep.routeMaxCap}
+        enabledChains={enabledSweepChains}
+        chainId={sweepChainId}
+        onChainChange={setSweepChainId}
       />
 
       <SlippageSettings
@@ -543,32 +545,7 @@ export default function DustSweepPage() {
             sweepableCount={sweep.swappableTokens.length}
           />
 
-          {/* Chain selector — only shown when more than one sweep chain is enabled. */}
-          {showChainSelector ? (
-            <div className="mb-2 flex items-center gap-2">
-              <span className="text-xs font-semibold text-gray-500 dark:text-gray-400">Network</span>
-              <div className="flex gap-1 rounded-[12px] bg-gray-100 p-1 dark:bg-white/5">
-                {enabledSweepChains.map((chainOption) => {
-                  const active = chainOption.id === sweepChainId;
-                  return (
-                    <button
-                      key={chainOption.id}
-                      type="button"
-                      onClick={() => setSweepChainId(chainOption.id)}
-                      disabled={sweep.isSweeping}
-                      className={
-                        active
-                          ? "rounded-[9px] bg-white px-3 py-1 text-sm font-bold text-[#0052ff] shadow-sm dark:bg-white/15 dark:text-blue-300"
-                          : "rounded-[9px] px-3 py-1 text-sm font-semibold text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
-                      }
-                    >
-                      {chainOption.label}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          ) : null}
+          {/* Network selection now lives inside the "Select tokens" modal (chain chips). */}
 
           {/* Unified trade card: From → merge → To → receiver */}
           <div className="sweep-card space-y-1.5 p-2.5">
