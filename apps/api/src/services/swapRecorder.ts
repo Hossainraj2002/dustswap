@@ -95,6 +95,18 @@ const RECEIPT_MAX_ATTEMPTS = 20;
 const DEFAULT_ETH_PRICE_USD = Number(process.env.DEFAULT_ETH_PRICE_USD || "3500");
 const TOKEN_PRICE_CACHE_TABLE = "token_price_cache_daily";
 
+// ── Swap USD sanity bounds ──────────────────────────────────────────────────
+// DustSwap is a dust tool: real swaps are tiny (median ~$1, p99 ~$286). A swap
+// conserves value, so the USD notional derived from the OUTPUT token must stay
+// close to the value of the INPUT token. Illiquid meme/scam output tokens break
+// this — CoinGecko returns an unreliable per-token price and the user receives an
+// enormous token quantity, so `output_amount * price` explodes into millions or
+// trillions of dollars. These bounds clamp the recorded USD back to reality
+// BEFORE it is written to swap_transactions and every downstream aggregate.
+const MAX_SWAP_VALUE_USD = Number(process.env.MAX_SWAP_VALUE_USD || "250000"); // absolute backstop
+const SWAP_VALUE_SANITY_THRESHOLD_USD = 1_000; // only scrutinize notionals above this
+const MAX_TRUSTED_OUTPUT_OVER_INPUT_RATIO = 3n; // output may exceed trusted input by at most 3x
+
 type SwapRecordRow = {
   tx_hash: string;
   amount_usd: string | number | null;
@@ -1316,6 +1328,59 @@ async function getTokenPriceUsd(
   }
 }
 
+/**
+ * Clamp a swap's output-derived USD notional back to a sane value before it is
+ * persisted. A swap conserves value, so when the INPUT token is one we price
+ * reliably (native / wrapped-native / USDC — not an arbitrary contract-address
+ * CoinGecko lookup) we cross-check the output notional against it and trust the
+ * input side when the output ballooned (illiquid/scam output-token mispricing).
+ * An absolute cap is applied as a final backstop for cases we cannot cross-check.
+ */
+async function sanitizeSwapUsdScaled(args: {
+  chainConfig: SwapChainConfig;
+  dayKey: string;
+  outputUsdScaled: bigint;
+  inputAddress: string;
+  inputDecimals: number;
+  inputAmountRaw: bigint;
+}): Promise<bigint> {
+  let value = args.outputUsdScaled;
+
+  const thresholdScaled = parseScaledDecimal(String(SWAP_VALUE_SANITY_THRESHOLD_USD), USD_SCALE);
+  if (value <= thresholdScaled) {
+    return value; // normal dust swap — nothing to scrutinize
+  }
+
+  // Cross-check against the input side only when the input is an asset we price
+  // from a hardcoded value / coin id (reliable), not by contract-address lookup.
+  if (
+    getAssetPriceDbKey(args.inputAddress, args.chainConfig) !== null &&
+    args.inputAmountRaw > 0n
+  ) {
+    try {
+      const inputPrice = await getTokenPriceUsd(args.chainConfig, args.inputAddress, args.dayKey);
+      const inputUsdScaled = calculateUsdAmountScaled(
+        args.inputAmountRaw,
+        args.inputDecimals,
+        inputPrice.priceScaled
+      );
+      if (inputUsdScaled === 0n) {
+        // Trusted input rounds to ~$0 yet output claims a large notional → the
+        // output token was mispriced; the real routed value is dust.
+        return 0n;
+      }
+      if (value > inputUsdScaled * MAX_TRUSTED_OUTPUT_OVER_INPUT_RATIO) {
+        return inputUsdScaled;
+      }
+    } catch {
+      // Could not price the input; fall through to the absolute cap.
+    }
+  }
+
+  const maxScaled = parseScaledDecimal(String(MAX_SWAP_VALUE_USD), USD_SCALE);
+  return value > maxScaled ? maxScaled : value;
+}
+
 async function upsertDailyVolumeFallback(
   userId: number,
   address: string,
@@ -1624,10 +1689,14 @@ async function recordDustSwapAggregatorSwap(args: {
     ),
   ]);
 
-  const amountUsdScaled = outputData.reduce(
+  const rawAmountUsdScaled = outputData.reduce(
     (sum, item) => sum + item.amountUsdScaled,
     0n
   );
+  // Absolute backstop against a mispriced output token (see sanitizeSwapUsdScaled).
+  const maxAmountUsdScaled = parseScaledDecimal(String(MAX_SWAP_VALUE_USD), USD_SCALE);
+  const amountUsdScaled =
+    rawAmountUsdScaled > maxAmountUsdScaled ? maxAmountUsdScaled : rawAmountUsdScaled;
   const amountUsd = formatScaledDecimal(amountUsdScaled, USD_SCALE);
   const grossAmountOut = args.events.reduce((sum, event) => sum + event.grossAmountOut, 0n);
   const netAmountOut = args.events.reduce((sum, event) => sum + event.netAmountOut, 0n);
@@ -1876,7 +1945,14 @@ export async function recordSwap(input: {
             metadata: outPrice.metadata,
           };
         })();
-  const amountUsdScaled = priceResult.amountUsdScaled;
+  const amountUsdScaled = await sanitizeSwapUsdScaled({
+    chainConfig,
+    dayKey,
+    outputUsdScaled: priceResult.amountUsdScaled,
+    inputAddress: srcToken.address,
+    inputDecimals: srcToken.decimals,
+    inputAmountRaw: decodedSwap.spentAmount,
+  });
   const amountUsd = formatScaledDecimal(amountUsdScaled, USD_SCALE);
   const occurredAtIso = occurredAt.toISOString();
   const metadata = {
