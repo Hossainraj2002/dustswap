@@ -31,7 +31,7 @@ SELECT
   swaps.id AS swap_transaction_id,
   swaps.tx_hash,
   swaps.chain_id,
-  LEAST(swaps.amount_usd, 250000::NUMERIC) AS amount_usd,
+  LEAST(swaps.amount_usd, 250000::NUMERIC)::NUMERIC(20,6) AS amount_usd,
   swaps.occurred_at,
   date_trunc('week', swaps.occurred_at AT TIME ZONE 'UTC')::DATE AS week_start_utc,
   (LEAST(swaps.amount_usd, 250000::NUMERIC) * 0.002::NUMERIC) AS protocol_fee_usd,

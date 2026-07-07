@@ -4207,16 +4207,17 @@ export class QuestEngine {
     const nextMetadata = {
       ...(progress.metadata || {}),
       ...metadata,
-      completedAt: nowIso,
+      completedAt: progress.completed_at || nowIso,
     };
 
-    const updated = await this.upsertProgress({
-      userId,
-      quest,
-      cycleKey,
-      walletAddress: walletForQuest,
-      existing: progress,
-      updates: {
+    // Atomically claim the reward: only one concurrent completion can flip
+    // rewarded_at from NULL -> now. Any other in-flight sync for the same quest
+    // row loses the conditional UPDATE and skips the award, so points are granted
+    // EXACTLY once even when multiple swap/quest syncs race (the previous
+    // read-then-write guard could double-award under concurrency).
+    const claim = await postgresDb
+      .from("quest_progress")
+      .update({
         status: "completed",
         progress: Math.max(progress.progress, quest.target_value),
         target_value: quest.target_value,
@@ -4229,22 +4230,54 @@ export class QuestEngine {
             ? metadata.verified_at
             : progress.verified_at ?? null,
         metadata: nextMetadata,
-      },
-    });
+        updated_at: nowIso,
+      })
+      .eq("id", progress.id)
+      .is("rewarded_at", null)
+      .select("id");
 
-    const awardedPoints = await pointsEngine.awardCustomPoints(
-      address,
-      quest.reward_points,
-      "quest_completion",
-      {
-        questId: quest.id,
-        questSlug: quest.slug,
-        cycleKey,
-        campaignKey: normalizeCampaignKey(quest.campaign_key),
-        category: quest.category,
-        platform: quest.platform,
-      }
-    );
+    if (claim.error) {
+      throw new Error(`Failed to claim quest reward: ${claim.error.message}`);
+    }
+
+    const claimedRows = Array.isArray(claim.data)
+      ? claim.data
+      : claim.data
+        ? [claim.data]
+        : [];
+    if (claimedRows.length === 0) {
+      // Another concurrent completion already claimed and awarded this quest.
+      this.invalidateQuestBoardCache(address);
+      const current = await this.getProgress(userId, quest.id, cycleKey, walletForQuest);
+      return {
+        progress: current ?? progress,
+        awardedPoints: 0,
+      };
+    }
+
+    let awardedPoints = 0;
+    try {
+      awardedPoints = await pointsEngine.awardCustomPoints(
+        address,
+        quest.reward_points,
+        "quest_completion",
+        {
+          questId: quest.id,
+          questSlug: quest.slug,
+          cycleKey,
+          campaignKey: normalizeCampaignKey(quest.campaign_key),
+          category: quest.category,
+          platform: quest.platform,
+        }
+      );
+    } catch (awardError) {
+      // Release the claim so a later sync can retry awarding (avoid a lost reward).
+      await postgresDb
+        .from("quest_progress")
+        .update({ rewarded_at: null, updated_at: new Date().toISOString() })
+        .eq("id", progress.id);
+      throw awardError;
+    }
 
     await this.syncCampaignWhitelistForUser(
       userId,
@@ -4252,6 +4285,9 @@ export class QuestEngine {
       normalizeCampaignKey(quest.campaign_key)
     );
     this.invalidateQuestBoardCache(address);
+
+    const updated =
+      (await this.getProgress(userId, quest.id, cycleKey, walletForQuest)) ?? progress;
 
     return {
       progress: updated,
