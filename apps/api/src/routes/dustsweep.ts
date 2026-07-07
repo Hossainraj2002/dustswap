@@ -2200,12 +2200,12 @@ function isNativeTokenAddress(address: string) {
   return address.toLowerCase() === NATIVE_TOKEN_SENTINEL.toLowerCase();
 }
 
-function isOutputAssetAddress(address: string) {
+function isOutputAssetAddress(address: string, chain: SweepChainConfig = BASE_CONFIG) {
   const key = address.toLowerCase();
   return (
-    key === USDC_ADDRESS.toLowerCase() ||
-    key === WETH_ADDRESS.toLowerCase() ||
-    key === USDT_ADDRESS.toLowerCase() ||
+    key === chain.usdc.toLowerCase() ||
+    key === chain.weth.toLowerCase() ||
+    key === chain.usdt.toLowerCase() ||
     key === NATIVE_TOKEN_SENTINEL.toLowerCase()
   );
 }
@@ -5437,8 +5437,14 @@ async function findMissingTokenApprovals(
   return approvals;
 }
 
-function getCachedErc20Metadata(token: Address) {
-  const key = token.toLowerCase();
+// Keyed per-chain: the same address on Base and Ethereum is a DIFFERENT token, so metadata must
+// not collide across chains.
+function erc20MetaKey(token: Address, chainId: number) {
+  return `${chainId}:${token.toLowerCase()}`;
+}
+
+function getCachedErc20Metadata(token: Address, chainId: number = BASE_CHAIN_ID) {
+  const key = erc20MetaKey(token, chainId);
   const cached = erc20MetadataCache.get(key);
   if (!cached) return null;
   if (cached.expiresAt <= Date.now()) {
@@ -5448,15 +5454,18 @@ function getCachedErc20Metadata(token: Address) {
   return cached.value;
 }
 
-function setCachedErc20Metadata(token: Address, value: Erc20Metadata) {
-  erc20MetadataCache.set(token.toLowerCase(), {
+function setCachedErc20Metadata(token: Address, value: Erc20Metadata, chainId: number = BASE_CHAIN_ID) {
+  erc20MetadataCache.set(erc20MetaKey(token, chainId), {
     value,
     expiresAt: Date.now() + ERC20_METADATA_CACHE_TTL_MS,
   });
 }
 
-async function readErc20Metadata(token: Address): Promise<Erc20Metadata> {
-  const cached = getCachedErc20Metadata(token);
+async function readErc20Metadata(
+  token: Address,
+  chainId: number = BASE_CHAIN_ID,
+): Promise<Erc20Metadata> {
+  const cached = getCachedErc20Metadata(token, chainId);
   if (cached) return cached;
 
   const fallbackSymbol = `${token.slice(0, 6)}...${token.slice(-4)}`;
@@ -5464,14 +5473,20 @@ async function readErc20Metadata(token: Address): Promise<Erc20Metadata> {
     callContract(
       token,
       encodeFunctionData({ abi: erc20Abi, functionName: "symbol" }),
+      undefined,
+      chainId,
     ),
     callContract(
       token,
       encodeFunctionData({ abi: erc20Abi, functionName: "name" }),
+      undefined,
+      chainId,
     ),
     callContract(
       token,
       encodeFunctionData({ abi: erc20Abi, functionName: "decimals" }),
+      undefined,
+      chainId,
     ),
   ]);
 
@@ -5512,7 +5527,7 @@ async function readErc20Metadata(token: Address): Promise<Erc20Metadata> {
     name: sanitizeDbText(name, symbol || fallbackSymbol, 120),
     decimals: Number.isFinite(decimals) ? decimals : 18,
   };
-  setCachedErc20Metadata(token, metadata);
+  setCachedErc20Metadata(token, metadata, chainId);
   return metadata;
 }
 
@@ -6641,6 +6656,7 @@ async function loadDiscoveryMetadata(
   balances: AlchemyBalance[],
   whitelist: Map<string, TokenWhitelistRow>,
   marketHints: Record<string, TokenMarketHint>,
+  chain: SweepChainConfig = BASE_CONFIG,
 ) {
   const metadataByAddress = new Map<string, Erc20Metadata>();
   const seen = new Set<string>();
@@ -6663,12 +6679,12 @@ async function loadDiscoveryMetadata(
     const market = marketHints[key];
     if (
       !market ||
-      (market.priceUSD <= 0 && market.liquidityUSD <= 0 && !isOutputAssetAddress(tokenAddress))
+      (market.priceUSD <= 0 && market.liquidityUSD <= 0 && !isOutputAssetAddress(tokenAddress, chain))
     ) {
       continue;
     }
 
-    const cached = getCachedErc20Metadata(tokenAddress);
+    const cached = getCachedErc20Metadata(tokenAddress, chain.chainId);
     if (cached) {
       metadataByAddress.set(key, cached);
       continue;
@@ -6676,7 +6692,7 @@ async function loadDiscoveryMetadata(
 
     tasks.push(async () => ({
       key,
-      metadata: await readErc20Metadata(tokenAddress).catch(() => null),
+      metadata: await readErc20Metadata(tokenAddress, chain.chainId).catch(() => null),
     }));
   }
 
@@ -6766,7 +6782,7 @@ async function handleDustSweepTokensRequest(c: Context, rawAddress?: string) {
         maxExternalMarketHints,
         chain,
       );
-      const metadataByAddress = await loadDiscoveryMetadata(nonZero, whitelist, marketHints);
+      const metadataByAddress = await loadDiscoveryMetadata(nonZero, whitelist, marketHints, chain);
 
       const swappable: DiscoveryTokenResult[] = [];
       const unavailable: DiscoveryTokenResult[] = [];
@@ -7203,7 +7219,7 @@ dustsweepRoutes.post("/quote", async (c) => {
       let decimals: number | undefined = whitelist.get(tokenIn.toLowerCase())?.decimals;
       if (!Number.isFinite(Number(decimals))) {
         try {
-          decimals = (await readErc20Metadata(tokenIn)).decimals;
+          decimals = (await readErc20Metadata(tokenIn, chain.chainId)).decimals;
         } catch {
           return;
         }
@@ -7351,12 +7367,16 @@ dustsweepRoutes.post("/quote", async (c) => {
   // batch preview on OKX/Coinbase. Surface these on the unavailable list now, at
   // quote time, so the basket the user opens in their wallet is already clean.
   if (PREFLIGHT_TRANSFER_PROBE_ENABLED && routes.length > 0) {
-    const sweepRouter = getRouterAddressForLane(executionLane);
+    // Must be the ACTIVE chain's router and the ACTIVE chain's RPC — using the Base router on the
+    // Base RPC here would probe transfers on the wrong network and falsely flag ETH tokens as
+    // CANT_TRANSFER (or pass honeypots).
+    const sweepRouter = getSweepRouterForChain(chain);
     if (isAddress(sweepRouter) && sweepRouter !== "0x0000000000000000000000000000000000000000") {
       const untransferable = await findUntransferableRoutes(
         userAddress,
         routes.map((route) => ({ tokenIn: route.tokenIn, amountIn: route.amountIn })),
         sweepRouter,
+        chain.chainId,
       );
       if (untransferable.length > 0) {
         const dropSet = new Set(untransferable.map((token) => token.toLowerCase()));
@@ -7397,7 +7417,11 @@ dustsweepRoutes.post("/quote", async (c) => {
   const feeBps = getFeeBps(chain);
   const protocolFeeAmount = (totalEstimatedOut * BigInt(feeBps)) / 10_000n;
   const netEstimatedOut = totalEstimatedOut - protocolFeeAmount;
-  const minAmountOut = getRouterMinAmountOut(cappedRoutes, executionLane);
+  const minAmountOut = getRouterMinAmountOut(
+    cappedRoutes,
+    executionLane,
+    chain.chainId === BASE_CHAIN_ID ? isV3Active() : true,
+  );
   const feeAmountUSD = (totalEstimatedOutUSD * feeBps) / 10_000;
   const netEstimatedOutUSD = totalEstimatedOutUSD - feeAmountUSD;
   const deadline = Math.floor(Date.now() / 1000) + 1800;
