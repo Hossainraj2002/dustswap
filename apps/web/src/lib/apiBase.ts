@@ -26,6 +26,10 @@ export function getPublicApiOrigin() {
   return normalizePublicApiOrigin(process.env.NEXT_PUBLIC_API_URL);
 }
 
+export function getDirectPublicApiOrigin() {
+  return normalizePublicApiOrigin(process.env.NEXT_PUBLIC_API_URL);
+}
+
 export function buildPublicApiUrl(path: string) {
   const normalizedPath = path
     ? path.startsWith("/")

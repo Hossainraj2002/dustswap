@@ -4,7 +4,11 @@ import type {
   AdminQuestInput,
   QuestBoardResponse,
 } from "@/types/quests";
-import { buildPublicApiUrl, publicApiFetch } from "@/lib/apiBase";
+import {
+  buildPublicApiUrl,
+  getDirectPublicApiOrigin,
+  publicApiFetch,
+} from "@/lib/apiBase";
 import type { Hex } from "viem";
 
 const SAVE_X_USERNAME_RECENT_TTL_MS = 15_000;
@@ -138,7 +142,7 @@ export function getDiscordConnectUrl(input: {
   signature: Hex;
   returnTo?: string;
 }) {
-  const url = new URL(getQuestsApiUrl("/discord/connect"));
+  const url = new URL("/api/quests/discord/connect", getDirectPublicApiOrigin());
   url.searchParams.set("address", input.address);
   url.searchParams.set("message", input.message);
   url.searchParams.set("signature", input.signature);
