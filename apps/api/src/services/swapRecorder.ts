@@ -51,12 +51,26 @@ const USDT_BASE = "0xfde4c96c8593536e31f229ea8f37b2ada2699bb2";
 const USDBC_BASE = "0xd9aaec86b65d86f6a7b5b1b0c42ffa531710b6ca";
 const DAI_BASE = "0x50c5725949a6f0c72e6c4a641f24049a917db0cb";
 const USDE_BASE = "0x5d3a1ff2b6bab83b63cd9ad0787074081a52ef34";
-const TRUSTED_BASE_USD_TOKENS = new Set([
+const WBTC_BASE = "0x0555e30da8f98308edb960aa94c0db47230d2b9c";
+const CBBTC_BASE = "0xcbb7c0000ab88b473b1f5afd9ef808440eed33bf";
+const TBTC_BASE = "0x236aa50979d5f3de3bd1eeb40e81137f22ab794b";
+const CBETH_BASE = "0x2ae3f1ec7f1f5012cfeab0185bfc7aa3cf0dec22";
+const RETH_BASE = "0xb6fe221fe9eef5aba221c348ba20a1bf5e73624c";
+const WEETH_BASE = "0x04c0599ae5a44757c0af6f9ec3b93da8976c150a";
+const WSTETH_BASE = "0xc1cba3fcea344f92d9239c08c0568f6f2f0ee452";
+const TRUSTED_BASE_VALUATION_TOKENS = new Set([
   USDC_BASE,
   USDT_BASE,
   USDBC_BASE,
   DAI_BASE,
   USDE_BASE,
+  WBTC_BASE,
+  CBBTC_BASE,
+  TBTC_BASE,
+  CBETH_BASE,
+  RETH_BASE,
+  WEETH_BASE,
+  WSTETH_BASE,
 ]);
 const OPENOCEAN_EXCHANGE_V2 = "0x6352a56caadc4f1e25cd6c75970fa768a3304e64";
 const OPENOCEAN_AGGREGATION_ROUTER = "0x6dd434082eab5cd134628d4b9a6e4d0813ef8b07";
@@ -407,8 +421,10 @@ function getAssetPriceDbKey(address: string, chainConfig: SwapChainConfig) {
   return null;
 }
 
-function isKnownUsdToken(address: string, chainConfig: SwapChainConfig) {
-  return chainConfig.id === base.id && TRUSTED_BASE_USD_TOKENS.has(normalizeAddress(address));
+function isTrustedValuationToken(address: string, chainConfig: SwapChainConfig) {
+  return (
+    chainConfig.id === base.id && TRUSTED_BASE_VALUATION_TOKENS.has(normalizeAddress(address))
+  );
 }
 
 function hasReliableUsdQuote(
@@ -416,11 +432,10 @@ function hasReliableUsdQuote(
   address: string,
   priceSource?: string | null
 ) {
-  const normalizedSource = (priceSource || "").toLowerCase();
+  void priceSource;
   return (
-    normalizedSource.startsWith("openocean_") ||
     getAssetPriceDbKey(address, chainConfig) !== null ||
-    isKnownUsdToken(address, chainConfig)
+    isTrustedValuationToken(address, chainConfig)
   );
 }
 
@@ -1395,11 +1410,11 @@ async function getTokenPriceUsd(
 
 /**
  * Clamp a swap's output-derived USD notional back to a sane value before it is
- * persisted. A swap conserves value, so when the INPUT token is one we price
- * reliably (native / wrapped-native / stablecoin, not an arbitrary contract-address
- * CoinGecko lookup) we trust the input side when the output quote is not a
- * reliable source. That preserves real large swaps while blocking illiquid/scam
- * output-token mispricing.
+ * persisted. A swap conserves value, so when the OUTPUT is not native /
+ * wrapped-native / stablecoin, use the INPUT side only when it cannot create a
+ * high-dollar arbitrary-token valuation. That keeps real stable/native swaps near
+ * their spent notional while blocking arbitrary token or OpenOcean valuation
+ * mistakes from inflating monitor/quest volume.
  * High arbitrary-output quotes that cannot be verified are recorded as zero.
  * OpenOcean referrer swaps use strict verification when OpenOcean has not yet
  * indexed the tx, because the output token quote is only a fallback.
@@ -1415,23 +1430,14 @@ async function sanitizeSwapUsdScaled(args: {
   inputDecimals: number;
   inputAmountRaw: bigint;
 }): Promise<bigint> {
-  let value = args.outputUsdScaled;
-
+  const value = args.outputUsdScaled;
   const thresholdScaled = parseScaledDecimal(String(SWAP_VALUE_SANITY_THRESHOLD_USD), USD_SCALE);
-  if (!args.strictOutputVerification && value <= thresholdScaled) {
-    return value;
-  }
 
   if (hasReliableUsdQuote(args.chainConfig, args.outputAddress, args.outputPriceSource)) {
     return value;
   }
 
-  // Cross-check against the input side only when the input is an asset we price
-  // from a hardcoded value / coin id (reliable), not by contract-address lookup.
-  if (
-    getAssetPriceDbKey(args.inputAddress, args.chainConfig) !== null &&
-    args.inputAmountRaw > 0n
-  ) {
+  if (args.inputAmountRaw > 0n) {
     try {
       const inputPrice = await getTokenPriceUsd(args.chainConfig, args.inputAddress, args.dayKey);
       const inputUsdScaled = calculateUsdAmountScaled(
@@ -1439,15 +1445,35 @@ async function sanitizeSwapUsdScaled(args: {
         args.inputDecimals,
         inputPrice.priceScaled
       );
+      if (hasReliableUsdQuote(args.chainConfig, args.inputAddress, inputPrice.source)) {
+        return inputUsdScaled;
+      }
+
       if (inputUsdScaled === 0n) {
-        // Trusted input rounds to ~$0 yet output claims a large notional → the
+        // Input value rounds to ~$0 while output claims a large notional; the
         // output token was mispriced; the real routed value is dust.
         return 0n;
       }
-      return inputUsdScaled;
+      if (inputUsdScaled <= thresholdScaled) {
+        if (!args.strictOutputVerification && value > 0n && value <= thresholdScaled) {
+          return inputUsdScaled < value ? inputUsdScaled : value;
+        }
+
+        return inputUsdScaled;
+      }
+
+      if (!args.strictOutputVerification && value <= thresholdScaled) {
+        return value;
+      }
+
+      return 0n;
     } catch {
       // Could not price the input; treat the high arbitrary-output quote as unverified.
     }
+  }
+
+  if (!args.strictOutputVerification && value <= thresholdScaled) {
+    return value;
   }
 
   return 0n;

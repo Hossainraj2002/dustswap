@@ -28,6 +28,7 @@ const files = [
   "sql/swap_volume_rpc.sql",
   "sql/multichain_swap_capture.sql",
   "sql/swap_token_price_cache.sql",
+  "sql/swap_volume_write_guard.sql",
   "sql/recent_trader_wallets_72h.sql",
   "sql/referral_leaderboard_min_invites.sql",
   "sql/referral_leaderboard_snapshot_fix.sql",
