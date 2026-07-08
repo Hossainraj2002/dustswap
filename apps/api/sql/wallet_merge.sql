@@ -90,6 +90,63 @@ CREATE TABLE IF NOT EXISTS wallet_unlinks (
   created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'user_wallets_wallet_address_evm_check'
+  ) THEN
+    ALTER TABLE user_wallets
+      ADD CONSTRAINT user_wallets_wallet_address_evm_check
+      CHECK (wallet_address ~* '^0x[0-9a-f]{40}$')
+      NOT VALID;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'wallet_spin_balances_wallet_address_evm_check'
+  ) THEN
+    ALTER TABLE wallet_spin_balances
+      ADD CONSTRAINT wallet_spin_balances_wallet_address_evm_check
+      CHECK (wallet_address ~* '^0x[0-9a-f]{40}$')
+      NOT VALID;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'wallet_link_requests_source_wallet_evm_check'
+  ) THEN
+    ALTER TABLE wallet_link_requests
+      ADD CONSTRAINT wallet_link_requests_source_wallet_evm_check
+      CHECK (source_wallet ~* '^0x[0-9a-f]{40}$')
+      NOT VALID;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'wallet_link_requests_target_wallet_evm_check'
+  ) THEN
+    ALTER TABLE wallet_link_requests
+      ADD CONSTRAINT wallet_link_requests_target_wallet_evm_check
+      CHECK (target_wallet IS NULL OR target_wallet ~* '^0x[0-9a-f]{40}$')
+      NOT VALID;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'account_merges_secondary_wallet_evm_check'
+  ) THEN
+    ALTER TABLE account_merges
+      ADD CONSTRAINT account_merges_secondary_wallet_evm_check
+      CHECK (secondary_wallet ~* '^0x[0-9a-f]{40}$')
+      NOT VALID;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'wallet_unlinks_detached_wallet_evm_check'
+  ) THEN
+    ALTER TABLE wallet_unlinks
+      ADD CONSTRAINT wallet_unlinks_detached_wallet_evm_check
+      CHECK (detached_wallet ~* '^0x[0-9a-f]{40}$')
+      NOT VALID;
+  END IF;
+END $$;
+
 -- ---------------------------------------------------------
 -- Column / constraint changes on existing tables
 -- ---------------------------------------------------------
@@ -318,6 +375,28 @@ BEGIN
   DELETE FROM referrals WHERE referee_id = p_secondary_user_id;
   -- guard against self-referral created by the re-point
   DELETE FROM referrals WHERE referrer_id = referee_id;
+
+  -- Keep users.referred_by aligned with the canonical referrals ledger after
+  -- referrer/referee rows are re-pointed during the merge.
+  UPDATE users u
+  SET referred_by = p_primary_user_id, updated_at = NOW()
+  WHERE u.referred_by = p_secondary_user_id
+    AND u.id <> p_primary_user_id
+    AND u.merged_into IS NULL;
+
+  UPDATE users u
+  SET referred_by = r.referrer_id, updated_at = NOW()
+  FROM referrals r
+  WHERE r.referee_id = u.id
+    AND r.referrer_id IS NOT NULL
+    AND u.id <> r.referrer_id
+    AND u.merged_into IS NULL
+    AND u.referred_by IS DISTINCT FROM r.referrer_id
+    AND (
+      u.id = p_primary_user_id
+      OR r.referrer_id = p_primary_user_id
+      OR u.referred_by = p_secondary_user_id
+    );
 
   -- social_accounts UNIQUE(user_id, platform) + UNIQUE(platform, platform_user_id)
   UPDATE social_accounts s SET user_id = p_primary_user_id

@@ -75,6 +75,7 @@ function fmtUSD(value: number | undefined) {
 
 function discoveryBadge(token: Token, mutedReason?: string) {
   if (mutedReason) return mutedReason;
+  if (token.name && token.name !== token.symbol) return token.name;
   if (token.status === "LIQUIDITY_PENDING") return "Quote pending";
   if (token.status === "PRICED") return token.priceConfidence === "HIGH" ? "High confidence" : "Priced";
   if (token.status === "UNKNOWN_PRICE") return "No price";

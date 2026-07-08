@@ -97,6 +97,28 @@ BEGIN
   -- guard against self-referral created by the re-point
   DELETE FROM referrals WHERE referrer_id = referee_id;
 
+  -- Keep users.referred_by aligned with the canonical referrals ledger after
+  -- referrer/referee rows are re-pointed during the merge.
+  UPDATE users u
+  SET referred_by = p_primary_user_id, updated_at = NOW()
+  WHERE u.referred_by = p_secondary_user_id
+    AND u.id <> p_primary_user_id
+    AND u.merged_into IS NULL;
+
+  UPDATE users u
+  SET referred_by = r.referrer_id, updated_at = NOW()
+  FROM referrals r
+  WHERE r.referee_id = u.id
+    AND r.referrer_id IS NOT NULL
+    AND u.id <> r.referrer_id
+    AND u.merged_into IS NULL
+    AND u.referred_by IS DISTINCT FROM r.referrer_id
+    AND (
+      u.id = p_primary_user_id
+      OR r.referrer_id = p_primary_user_id
+      OR u.referred_by = p_secondary_user_id
+    );
+
   -- social_accounts UNIQUE(user_id, platform) + UNIQUE(platform, platform_user_id)
   UPDATE social_accounts s SET user_id = p_primary_user_id
   WHERE s.user_id = p_secondary_user_id

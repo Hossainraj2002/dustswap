@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { type Address } from "viem";
+import { getSweepChain } from "@/config/sweepChainConfig";
 import {
   type DustSweepTokensResponse,
   type SwappableToken,
@@ -110,12 +111,13 @@ export function useTokenBalances(address?: Address, chainId = 8453): TokenBalanc
     activeControllerRef.current?.abort();
     const controller = new AbortController();
     activeControllerRef.current = controller;
-    const isNewAddress = activeAddressRef.current !== normalizedAddress;
-    activeAddressRef.current = normalizedAddress;
+    const requestKey = `${chainId}:${normalizedAddress}`;
+    const isNewAddress = activeAddressRef.current !== requestKey;
+    activeAddressRef.current = requestKey;
     const startedAt = Date.now();
     const isCurrentSequence = () =>
       requestSeqRef.current === requestSeq &&
-      activeAddressRef.current === normalizedAddress;
+      activeAddressRef.current === requestKey;
     const isCurrentRequest = () => isCurrentSequence() && !controller.signal.aborted;
 
     if (isNewAddress) {
@@ -128,7 +130,7 @@ export function useTokenBalances(address?: Address, chainId = 8453): TokenBalanc
     setError(null);
     setScan({
       phase: "scanning",
-      message: "Finding Base balances...",
+      message: `Finding ${getSweepChain(chainId).label} balances...`,
       discoveredCount: lastDiscoveredCountRef.current,
       walletAddress: address,
     });

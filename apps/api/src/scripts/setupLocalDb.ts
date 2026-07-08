@@ -33,6 +33,7 @@ const files = [
   "sql/referral_leaderboard_snapshot_fix.sql",
   "sql/profile_completion_guide.sql",
   "sql/partner_program.sql",
+  "sql/partner_program_swap_value_cap.sql",
   "sql/partner_content_submissions.sql",
   "sql/spin_feature.sql",
   "sql/x_oauth_getx_verification.sql",

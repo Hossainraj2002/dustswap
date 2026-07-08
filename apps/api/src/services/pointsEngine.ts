@@ -64,6 +64,8 @@ const CFG = {
   SPIN_TICKET_COST: 1,
 } as const;
 
+const EVM_ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
+
 const STREAK_RECOVERY_ENABLED = isEnabledFlag(process.env.STREAK_RECOVERY_ENABLED);
 
 const REFERRAL_FOUNDER_PASS_CONTRACT =
@@ -1076,7 +1078,7 @@ export class PointsEngine {
   >();
 
   private getReferralApplyKey(address: string) {
-    return address.trim().toLowerCase();
+    return this.normalizeRequiredWalletAddress(address);
   }
 
   private getReferralApplyRecentKey(address: string, code: string) {
@@ -1144,6 +1146,19 @@ export class PointsEngine {
 
   private normalizeStoredAddress(address: string) {
     return address.trim().toLowerCase();
+  }
+
+  private normalizeOptionalWalletAddress(address: string) {
+    const normalized = this.normalizeStoredAddress(address);
+    return EVM_ADDRESS_RE.test(normalized) ? normalized : null;
+  }
+
+  private normalizeRequiredWalletAddress(address: string) {
+    const normalized = this.normalizeStoredAddress(address);
+    if (!EVM_ADDRESS_RE.test(normalized)) {
+      throw new Error("Invalid wallet address");
+    }
+    return normalized;
   }
 
   // Resolve a wallet to its owning account through user_wallets. A linked
@@ -1258,11 +1273,15 @@ export class PointsEngine {
   // unauthenticated GET reads (profile settings, profile completion, …) that
   // must show the SHARED account data for linked secondary wallets.
   async getAccountByWallet(address: string): Promise<UserRecord | null> {
-    return this.resolveUserByWallet(this.normalizeStoredAddress(address));
+    const normalizedAddress = this.normalizeOptionalWalletAddress(address);
+    if (!normalizedAddress) {
+      return null;
+    }
+    return this.resolveUserByWallet(normalizedAddress);
   }
 
   async getOrCreate(address: string): Promise<UserRecord> {
-    const normalizedAddress = this.normalizeStoredAddress(address);
+    const normalizedAddress = this.normalizeRequiredWalletAddress(address);
 
     // Fast path: wallet already maps to an account (its own primary, or linked
     // as a secondary wallet to another account). Backfill guarantees existing
@@ -1805,7 +1824,8 @@ export class PointsEngine {
     const { data, error } = await postgresDb
       .from("users")
       .select("id, address, total_points")
-      .in("id", uniqueUserIds);
+      .in("id", uniqueUserIds)
+      .is("merged_into", null);
 
     if (error) {
       throw new Error(`Fetch leaderboard users: ${error.message}`);
@@ -1858,7 +1878,10 @@ export class PointsEngine {
   }
 
   private async findExistingUser(address: string) {
-    const normalizedAddress = this.normalizeStoredAddress(address);
+    const normalizedAddress = this.normalizeOptionalWalletAddress(address);
+    if (!normalizedAddress) {
+      return null;
+    }
     return this.resolveUserByWallet(normalizedAddress);
   }
 
@@ -1911,8 +1934,9 @@ export class PointsEngine {
   }
 
   private buildDefaultBalanceUser(address?: string) {
+    const normalizedAddress = address ? this.normalizeOptionalWalletAddress(address) : null;
     return {
-      address: address ? this.normalizeStoredAddress(address) : "",
+      address: normalizedAddress ?? "",
       referral_code: "",
       total_points: 0,
       current_streak: 0,
@@ -2397,6 +2421,7 @@ export class PointsEngine {
         postgresDb
           .from("users")
           .select("total_points")
+          .is("merged_into", null)
           .gt("total_points", 0)
           .range(from, to)
     );
@@ -2411,6 +2436,7 @@ export class PointsEngine {
     const { data, error } = await postgresDb
       .from("users")
       .select("id, address, total_points, current_streak, last_check_in, spin_tickets")
+      .is("merged_into", null)
       .or(LEADERBOARD_FALLBACK_USER_FILTER)
       .order("total_points", { ascending: false })
       .order("id", { ascending: true })
@@ -2435,6 +2461,7 @@ export class PointsEngine {
       .from("users")
       .select("id, address, total_points, current_streak, last_check_in, spin_tickets")
       .eq("id", userId)
+      .is("merged_into", null)
       .maybeSingle();
 
     if (userError) {
@@ -2449,6 +2476,7 @@ export class PointsEngine {
     const { count, error: rankError } = await postgresDb
       .from("users")
       .select("id", { count: "exact", head: true })
+      .is("merged_into", null)
       .or(LEADERBOARD_FALLBACK_USER_FILTER)
       .gt("total_points", Number(user.total_points || 0));
 
@@ -5292,10 +5320,14 @@ export class PointsEngine {
     code: string
   ): Promise<{ valid: boolean; normalizedCode: string; message: string }> {
     const normalizedCode = code.trim().toUpperCase();
-    const normalizedUserAddress = this.normalizeStoredAddress(userAddress);
+    const normalizedUserAddress = this.normalizeOptionalWalletAddress(userAddress);
 
     if (!normalizedCode) {
       return { valid: false, normalizedCode, message: "Enter a referral code." };
+    }
+
+    if (!normalizedUserAddress) {
+      return { valid: false, normalizedCode, message: "Invalid wallet address." };
     }
 
     const user = await this.findExistingUser(normalizedUserAddress);

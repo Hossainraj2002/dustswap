@@ -3,6 +3,7 @@ import {
   ETHEREUM_WETH_ADDRESS,
   PERMIT2_ADDRESS,
   WETH_ADDRESS as BASE_WETH_ADDRESS,
+  getDustSweepV3TargetsForChain,
 } from "./dustsweepV3Sources";
 
 /**
@@ -195,7 +196,7 @@ function ethereumConfig(): SweepChainConfig {
       zerox: boolEnv("DUST_SWEEP_ENABLE_ZEROX_1", true),
       lifi: boolEnv("DUST_SWEEP_ENABLE_LIFI_1", true),
       openocean: boolEnv("DUST_SWEEP_ENABLE_OPENOCEAN_1", false),
-      odos: boolEnv("DUST_SWEEP_ENABLE_ODOS_1", false),
+      odos: boolEnv("DUST_SWEEP_ENABLE_ODOS_1", true),
     },
     allowedAggregatorTargetsEnv: "DUST_SWEEP_ALLOWED_AGGREGATOR_TARGETS_1",
     // Native ladder on Ethereum: Uniswap V3 (concentrated liquidity) + Uniswap V2 + SushiSwap
@@ -292,11 +293,25 @@ export function getChainRouterV3Address(config: SweepChainConfig): Address | nul
 
 /** This chain's aggregator target/spender allowlist (lowercased set). */
 export function getChainAllowedAggregatorAddresses(config: SweepChainConfig): Set<string> {
-  return new Set(
-    String(process.env[config.allowedAggregatorTargetsEnv] || "")
-      .split(",")
-      .map((item) => item.trim())
-      .filter((item) => isAddress(item))
-      .map((item) => item.toLowerCase()),
-  );
+  const configured = String(process.env[config.allowedAggregatorTargetsEnv] || "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter((item) => isAddress(item))
+    .map((item) => item.toLowerCase());
+
+  if (configured.length > 0) return new Set(configured);
+
+  // Non-Base chains already have their verified V3 aggregator targets in code. Use that registry
+  // as the default quote allowlist so Ethereum does not silently lose all aggregator routes when
+  // DUST_SWEEP_ALLOWED_AGGREGATOR_TARGETS_1 is omitted. Base keeps its env-only behavior.
+  if (config.chainId === BASE_CHAIN_ID) return new Set();
+
+  const aggregatorIds = ["kyber", "zerox", "lifi", "openocean", "odos"];
+  const addresses = getDustSweepV3TargetsForChain(config.chainId)
+    .filter((target) => aggregatorIds.some((id) => target.id.includes(id)))
+    .flatMap((target) => [target.target, target.spender])
+    .filter((address) => isAddress(address))
+    .map((address) => address.toLowerCase());
+
+  return new Set(addresses);
 }

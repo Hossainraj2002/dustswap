@@ -25,6 +25,19 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS x_name TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS x_avatar TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS x_connected BOOLEAN NOT NULL DEFAULT false;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS x_connected_at TIMESTAMPTZ;
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conname = 'users_address_evm_or_merged_check'
+  ) THEN
+    ALTER TABLE users
+      ADD CONSTRAINT users_address_evm_or_merged_check
+      CHECK (address ~* '^0x[0-9a-f]{40}$' OR address ~ '^merged:[0-9]+$')
+      NOT VALID;
+  END IF;
+END $$;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_x_user_id_unique
   ON users(x_user_id)
   WHERE x_user_id IS NOT NULL;
@@ -371,6 +384,9 @@ CREATE INDEX IF NOT EXISTS idx_history_tx_hash
   ON sweep_history(tx_hash);
 CREATE INDEX IF NOT EXISTS idx_history_chain_tx_hash_type
   ON sweep_history(chain_id, tx_hash, type);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_sweep_history_swap_chain_tx_unique
+  ON sweep_history(COALESCE(chain_id, -1), LOWER(tx_hash))
+  WHERE type = 'swap' AND tx_hash IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_referrals_referrer
   ON referrals(referrer_id);
 CREATE INDEX IF NOT EXISTS idx_recovery_user  ON streak_recovery_events(user_id, created_at DESC);

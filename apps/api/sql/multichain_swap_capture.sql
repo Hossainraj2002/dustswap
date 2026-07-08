@@ -16,6 +16,10 @@ CREATE INDEX IF NOT EXISTS idx_activity_events_swap_filters
 CREATE INDEX IF NOT EXISTS idx_sweep_history_chain_tx_hash_type
   ON sweep_history(chain_id, tx_hash, type);
 
+CREATE UNIQUE INDEX IF NOT EXISTS idx_sweep_history_swap_chain_tx_unique
+  ON sweep_history(COALESCE(chain_id, -1), LOWER(tx_hash))
+  WHERE type = 'swap' AND tx_hash IS NOT NULL;
+
 -- Drop legacy global tx-hash uniqueness after the chain-aware indexes exist.
 ALTER TABLE swap_transactions
   DROP CONSTRAINT IF EXISTS swap_transactions_tx_hash_key;

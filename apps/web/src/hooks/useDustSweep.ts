@@ -77,6 +77,10 @@ import {
 
 const NATIVE_TOKEN_SENTINEL = "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE" as Address;
 const USDT_ADDRESS = "0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2" as Address;
+const ETHEREUM_USDT_ADDRESS = "0xdAC17F958D2ee523a2206206994597C13D831ec7" as Address;
+const RESET_FIRST_APPROVAL_TOKENS = new Set(
+  [USDT_ADDRESS, ETHEREUM_USDT_ADDRESS].map((address) => address.toLowerCase()),
+);
 
 // USDC first = the DEFAULT output token (tokenOut initializes to DEFAULT_OUTPUT_TOKENS[0]).
 export const DEFAULT_OUTPUT_TOKENS: Token[] = [
@@ -547,7 +551,7 @@ function uniqueApprovalRequirements(routes: DustSweepQuoteResponse["routes"]) {
 }
 
 function requiresApprovalReset(token: Address) {
-  return token.toLowerCase() === USDT_ADDRESS.toLowerCase();
+  return RESET_FIRST_APPROVAL_TOKENS.has(token.toLowerCase());
 }
 
 function isTxHash(value: unknown): value is Hex {

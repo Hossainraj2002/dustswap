@@ -1196,6 +1196,8 @@ type TokenBalanceMetadataHint = {
   name?: string;
   decimals?: number;
   logoURI?: string;
+  logo_uri?: string;
+  logo?: string;
   priceUSD?: number;
   liquidityUSD?: number;
   bestDex?: string;
@@ -1542,7 +1544,7 @@ function normalizeTokenMetadataHint(
     symbol: sanitizeDbText(String(metadata.symbol || fallbackSymbol), fallbackSymbol, 32),
     name: sanitizeDbText(String(metadata.name || metadata.symbol || fallbackSymbol), fallbackSymbol, 120),
     decimals: Number.isFinite(decimals) ? decimals : 18,
-    logoURI: metadata.logoURI,
+    logoURI: metadata.logoURI || metadata.logo_uri || metadata.logo,
   };
 }
 
@@ -2289,8 +2291,19 @@ async function fetchTokenMarketHintsDexScreener(
   return hints;
 }
 
-async function fetchCoinGeckoTokenPrices(addresses: Address[]): Promise<Record<string, number>> {
+function getCoinGeckoPlatform(chain: SweepChainConfig) {
+  if (chain.chainId === BASE_CHAIN_ID) return "base";
+  if (chain.chainId === ETHEREUM_CHAIN_ID) return "ethereum";
+  return null;
+}
+
+async function fetchCoinGeckoTokenPrices(
+  addresses: Address[],
+  chain: SweepChainConfig = BASE_CONFIG,
+): Promise<Record<string, number>> {
   if (addresses.length === 0) return {};
+  const platform = getCoinGeckoPlatform(chain);
+  if (!platform) return {};
 
   const prices: Record<string, number> = {};
   const batchSize = 75;
@@ -2304,7 +2317,7 @@ async function fetchCoinGeckoTokenPrices(addresses: Address[]): Promise<Record<s
     batches.map((batch) => async () => {
       const nextPrices: Record<string, number> = {};
       try {
-        const url = new URL("https://api.coingecko.com/api/v3/simple/token_price/base");
+        const url = new URL(`https://api.coingecko.com/api/v3/simple/token_price/${platform}`);
         url.searchParams.set("contract_addresses", batch.map((a) => a.toLowerCase()).join(","));
         url.searchParams.set("vs_currencies", "usd");
         const response = await fetch(url, {
@@ -2390,7 +2403,7 @@ async function fetchTokenMarketHints(
 
   const [dexHints, coingeckoPrices] = await Promise.all([
     fetchTokenMarketHintsDexScreener(externalNeeded, chain),
-    fetchCoinGeckoTokenPrices(externalNeeded),
+    fetchCoinGeckoTokenPrices(externalNeeded, chain),
   ]);
 
   for (const [address, priceUSD] of Object.entries(coingeckoPrices)) {
@@ -2895,6 +2908,7 @@ async function get0xQuoteCandidate(
         "0x-version": "v2",
         Accept: "application/json",
       },
+      signal: AbortSignal.timeout(8_000),
     });
     reportAggregatorHttpStatus("zerox", response.status, chain.chainId);
     if (!response.ok) return null;
@@ -6655,7 +6669,6 @@ dustsweepRoutes.post("/admin/sync-whitelist-pool-events", async (c) => {
 async function loadDiscoveryMetadata(
   balances: AlchemyBalance[],
   whitelist: Map<string, TokenWhitelistRow>,
-  marketHints: Record<string, TokenMarketHint>,
   chain: SweepChainConfig = BASE_CONFIG,
 ) {
   const metadataByAddress = new Map<string, Erc20Metadata>();
@@ -6673,14 +6686,6 @@ async function loadDiscoveryMetadata(
     const metadataHint = normalizeTokenMetadataHint(tokenAddress, balance.metadata);
     if (metadataHint) {
       metadataByAddress.set(key, metadataHint);
-      continue;
-    }
-
-    const market = marketHints[key];
-    if (
-      !market ||
-      (market.priceUSD <= 0 && market.liquidityUSD <= 0 && !isOutputAssetAddress(tokenAddress, chain))
-    ) {
       continue;
     }
 
@@ -6782,7 +6787,7 @@ async function handleDustSweepTokensRequest(c: Context, rawAddress?: string) {
         maxExternalMarketHints,
         chain,
       );
-      const metadataByAddress = await loadDiscoveryMetadata(nonZero, whitelist, marketHints, chain);
+      const metadataByAddress = await loadDiscoveryMetadata(nonZero, whitelist, chain);
 
       const swappable: DiscoveryTokenResult[] = [];
       const unavailable: DiscoveryTokenResult[] = [];
@@ -7202,13 +7207,13 @@ dustsweepRoutes.post("/quote", async (c) => {
     quoteMarketHints = await fetchTokenMarketHints([
       ...readyToQuote.map((item) => item.tokenIn),
       tokenOut,
-    ]);
+    ], {}, null, chain);
   } catch {
     // Quoting works without market prices — impact just stays unknown.
   }
   const outTokenPriceUSD =
     quoteMarketHints[tokenOut.toLowerCase()]?.priceUSD ||
-    (tokenOut.toLowerCase() === USDC_ADDRESS.toLowerCase() ? 1 : 0);
+    (tokenOut.toLowerCase() === chain.usdc.toLowerCase() ? 1 : 0);
   const marketContexts = new Map<string, QuoteMarketContext>();
   await Promise.all(
     readyToQuote.map(async ({ tokenIn, amountIn }) => {
@@ -7616,7 +7621,13 @@ dustsweepRoutes.post("/build-tx", async (c) => {
   const buildReceiver = normalizeAddress(body.receiver);
   const actualTokenOut = isNativeTokenAddress(buildTokenOut) ? chain.weth : buildTokenOut;
 
-  if (routes.some((route) => route.tokenIn.toLowerCase() === actualTokenOut.toLowerCase())) {
+  if (
+    routes.some(
+      (route) =>
+        route.dex !== DEX.PASSTHROUGH &&
+        route.tokenIn.toLowerCase() === actualTokenOut.toLowerCase(),
+    )
+  ) {
     return c.json(
       errorJson("Selected input includes the output token. Remove it and refresh the quote.", {
         code: "OUTPUT_INPUT_MATCH",

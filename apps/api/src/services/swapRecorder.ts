@@ -25,6 +25,14 @@ const OPENOCEAN_DETAIL_TIMEOUT_MS = Math.min(
   6_000,
   Math.max(1_000, Number(process.env.OPENOCEAN_DETAIL_TIMEOUT_MS || "3000"))
 );
+const OPENOCEAN_DETAIL_RETRY_ATTEMPTS = Math.min(
+  6,
+  Math.max(1, Number(process.env.OPENOCEAN_DETAIL_RETRY_ATTEMPTS || "4"))
+);
+const OPENOCEAN_DETAIL_RETRY_DELAY_MS = Math.min(
+  5_000,
+  Math.max(250, Number(process.env.OPENOCEAN_DETAIL_RETRY_DELAY_MS || "1250"))
+);
 const OPENOCEAN_REFERRER_ADDRESS = normalizeAddress(
   process.env.OPENOCEAN_REFERRER_ADDRESS ||
     process.env.NEXT_PUBLIC_OPENOCEAN_REFERRER_ADDRESS ||
@@ -39,6 +47,17 @@ const DUSTSWAP_BUILDER_CODE =
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 const ETH_PLACEHOLDER = "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
 const USDC_BASE = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913";
+const USDT_BASE = "0xfde4c96c8593536e31f229ea8f37b2ada2699bb2";
+const USDBC_BASE = "0xd9aaec86b65d86f6a7b5b1b0c42ffa531710b6ca";
+const DAI_BASE = "0x50c5725949a6f0c72e6c4a641f24049a917db0cb";
+const USDE_BASE = "0x5d3a1ff2b6bab83b63cd9ad0787074081a52ef34";
+const TRUSTED_BASE_USD_TOKENS = new Set([
+  USDC_BASE,
+  USDT_BASE,
+  USDBC_BASE,
+  DAI_BASE,
+  USDE_BASE,
+]);
 const OPENOCEAN_EXCHANGE_V2 = "0x6352a56caadc4f1e25cd6c75970fa768a3304e64";
 const OPENOCEAN_AGGREGATION_ROUTER = "0x6dd434082eab5cd134628d4b9a6e4d0813ef8b07";
 const OPENOCEAN_ZKSYNC_ROUTER = "0x36a1acbbcafca2468b85011ddd16e7cb4d673230";
@@ -103,9 +122,7 @@ const TOKEN_PRICE_CACHE_TABLE = "token_price_cache_daily";
 // enormous token quantity, so `output_amount * price` explodes into millions or
 // trillions of dollars. These bounds clamp the recorded USD back to reality
 // BEFORE it is written to swap_transactions and every downstream aggregate.
-const MAX_SWAP_VALUE_USD = Number(process.env.MAX_SWAP_VALUE_USD || "250000"); // absolute backstop
 const SWAP_VALUE_SANITY_THRESHOLD_USD = 1_000; // only scrutinize notionals above this
-const MAX_TRUSTED_OUTPUT_OVER_INPUT_RATIO = 3n; // output may exceed trusted input by at most 3x
 
 type SwapRecordRow = {
   tx_hash: string;
@@ -233,10 +250,13 @@ type OpenOceanTransactionDetail = {
   tx_hash?: string;
   usd_valuation?: number | string;
   referrer?: string | null;
+  referrer_fee?: number | string | null;
   in_token_symbol?: string | null;
   out_token_symbol?: string | null;
   in_amount_value?: string | null;
   out_amount_value?: string | null;
+  tx_profit?: string | number | null;
+  tx_profit_valuation?: string | number | null;
   create_at?: string | null;
   update_at?: string | null;
 };
@@ -387,6 +407,23 @@ function getAssetPriceDbKey(address: string, chainConfig: SwapChainConfig) {
   return null;
 }
 
+function isKnownUsdToken(address: string, chainConfig: SwapChainConfig) {
+  return chainConfig.id === base.id && TRUSTED_BASE_USD_TOKENS.has(normalizeAddress(address));
+}
+
+function hasReliableUsdQuote(
+  chainConfig: SwapChainConfig,
+  address: string,
+  priceSource?: string | null
+) {
+  const normalizedSource = (priceSource || "").toLowerCase();
+  return (
+    normalizedSource.startsWith("openocean_") ||
+    getAssetPriceDbKey(address, chainConfig) !== null ||
+    isKnownUsdToken(address, chainConfig)
+  );
+}
+
 function getCoinGeckoId(address: string, chainConfig: SwapChainConfig) {
   const normalized = normalizeAddress(address);
   if (
@@ -477,8 +514,36 @@ async function fetchOpenOceanTransactionDetail(
   }
 }
 
+async function fetchOpenOceanTransactionDetailWithRetry(
+  chainConfig: SwapChainConfig,
+  txHash: string
+) {
+  let latestDetail: OpenOceanTransactionDetail | null = null;
+
+  for (let attempt = 1; attempt <= OPENOCEAN_DETAIL_RETRY_ATTEMPTS; attempt += 1) {
+    const detail = await fetchOpenOceanTransactionDetail(chainConfig, txHash);
+    if (detail) {
+      latestDetail = detail;
+      if (getOpenOceanAmountUsd(detail) !== null) {
+        return detail;
+      }
+    }
+
+    if (attempt < OPENOCEAN_DETAIL_RETRY_ATTEMPTS) {
+      await sleep(OPENOCEAN_DETAIL_RETRY_DELAY_MS * attempt);
+    }
+  }
+
+  return latestDetail;
+}
+
 function getOpenOceanAmountUsd(detail: OpenOceanTransactionDetail | null) {
   return getPositiveUsdValue(detail?.usd_valuation);
+}
+
+function getOpenOceanProtocolFeeUsdText(detail: OpenOceanTransactionDetail | null) {
+  const value = detail?.tx_profit_valuation;
+  return getPositiveUsdValue(value) === null ? null : String(value);
 }
 
 function getPositiveUsdValue(value: string | number | null | undefined) {
@@ -1331,15 +1396,21 @@ async function getTokenPriceUsd(
 /**
  * Clamp a swap's output-derived USD notional back to a sane value before it is
  * persisted. A swap conserves value, so when the INPUT token is one we price
- * reliably (native / wrapped-native / USDC — not an arbitrary contract-address
- * CoinGecko lookup) we cross-check the output notional against it and trust the
- * input side when the output ballooned (illiquid/scam output-token mispricing).
- * An absolute cap is applied as a final backstop for cases we cannot cross-check.
+ * reliably (native / wrapped-native / stablecoin, not an arbitrary contract-address
+ * CoinGecko lookup) we trust the input side when the output quote is not a
+ * reliable source. That preserves real large swaps while blocking illiquid/scam
+ * output-token mispricing.
+ * High arbitrary-output quotes that cannot be verified are recorded as zero.
+ * OpenOcean referrer swaps use strict verification when OpenOcean has not yet
+ * indexed the tx, because the output token quote is only a fallback.
  */
 async function sanitizeSwapUsdScaled(args: {
   chainConfig: SwapChainConfig;
   dayKey: string;
   outputUsdScaled: bigint;
+  outputAddress: string;
+  outputPriceSource?: string | null;
+  strictOutputVerification?: boolean;
   inputAddress: string;
   inputDecimals: number;
   inputAmountRaw: bigint;
@@ -1347,8 +1418,12 @@ async function sanitizeSwapUsdScaled(args: {
   let value = args.outputUsdScaled;
 
   const thresholdScaled = parseScaledDecimal(String(SWAP_VALUE_SANITY_THRESHOLD_USD), USD_SCALE);
-  if (value <= thresholdScaled) {
-    return value; // normal dust swap — nothing to scrutinize
+  if (!args.strictOutputVerification && value <= thresholdScaled) {
+    return value;
+  }
+
+  if (hasReliableUsdQuote(args.chainConfig, args.outputAddress, args.outputPriceSource)) {
+    return value;
   }
 
   // Cross-check against the input side only when the input is an asset we price
@@ -1369,16 +1444,13 @@ async function sanitizeSwapUsdScaled(args: {
         // output token was mispriced; the real routed value is dust.
         return 0n;
       }
-      if (value > inputUsdScaled * MAX_TRUSTED_OUTPUT_OVER_INPUT_RATIO) {
-        return inputUsdScaled;
-      }
+      return inputUsdScaled;
     } catch {
-      // Could not price the input; fall through to the absolute cap.
+      // Could not price the input; treat the high arbitrary-output quote as unverified.
     }
   }
 
-  const maxScaled = parseScaledDecimal(String(MAX_SWAP_VALUE_USD), USD_SCALE);
-  return value > maxScaled ? maxScaled : value;
+  return 0n;
 }
 
 async function upsertDailyVolumeFallback(
@@ -1693,11 +1765,35 @@ async function recordDustSwapAggregatorSwap(args: {
     (sum, item) => sum + item.amountUsdScaled,
     0n
   );
-  // Absolute backstop against a mispriced output token (see sanitizeSwapUsdScaled).
-  const maxAmountUsdScaled = parseScaledDecimal(String(MAX_SWAP_VALUE_USD), USD_SCALE);
-  const amountUsdScaled =
-    rawAmountUsdScaled > maxAmountUsdScaled ? maxAmountUsdScaled : rawAmountUsdScaled;
+  const outputQuotesReliable = outputData.every((item) =>
+    hasReliableUsdQuote(args.chainConfig, item.token.address, item.price.source)
+  );
+  const amountUsdScaled = await sanitizeSwapUsdScaled({
+    chainConfig: args.chainConfig,
+    dayKey,
+    outputUsdScaled: rawAmountUsdScaled,
+    outputAddress: outputQuotesReliable ? primaryDstToken.address : ZERO_ADDRESS,
+    outputPriceSource: outputQuotesReliable ? outputData[0]?.price.source : null,
+    inputAddress: srcToken.address,
+    inputDecimals: srcToken.decimals,
+    inputAmountRaw: primaryEvent.amountIn,
+  });
   const amountUsd = formatScaledDecimal(amountUsdScaled, USD_SCALE);
+  const rawProtocolFeeUsdScaled = outputData.reduce(
+    (sum, item) =>
+      sum +
+      calculateUsdAmountScaled(
+        item.event.feeAmount,
+        item.token.decimals,
+        item.price.priceScaled
+      ),
+    0n
+  );
+  const protocolFeeUsdScaled =
+    rawAmountUsdScaled > 0n && amountUsdScaled < rawAmountUsdScaled
+      ? (rawProtocolFeeUsdScaled * amountUsdScaled) / rawAmountUsdScaled
+      : rawProtocolFeeUsdScaled;
+  const protocolFeeUsd = formatScaledDecimal(protocolFeeUsdScaled, USD_SCALE);
   const grossAmountOut = args.events.reduce((sum, event) => sum + event.grossAmountOut, 0n);
   const netAmountOut = args.events.reduce((sum, event) => sum + event.netAmountOut, 0n);
   const feeAmount = args.events.reduce((sum, event) => sum + event.feeAmount, 0n);
@@ -1724,6 +1820,9 @@ async function recordDustSwapAggregatorSwap(args: {
     chainId: args.resolvedChainId,
     chainKey: args.chainConfig.key,
     chainLabel: args.chainConfig.label,
+    rawAmountUsd: formatScaledDecimal(rawAmountUsdScaled, USD_SCALE),
+    sanitizedAmountUsd: amountUsd,
+    protocolFeeUsd,
     submittedHash: args.normalizedTxHash,
     submittedKind: args.resolvedTransaction.submittedKind,
     resolvedTxHash: args.resolvedTransaction.resolvedTxHash,
@@ -1913,7 +2012,10 @@ export async function recordSwap(input: {
     getTokenMetadata(client, chainConfig, decodedSwap.dstToken),
     trustedOpenOceanAmountUsd
       ? Promise.resolve(null)
-      : fetchOpenOceanTransactionDetail(chainConfig, resolvedTransaction.resolvedTxHash),
+      : fetchOpenOceanTransactionDetailWithRetry(
+          chainConfig,
+          resolvedTransaction.resolvedTxHash
+        ),
   ]);
 
   const occurredAt = new Date(Number(block.timestamp) * 1000);
@@ -1949,11 +2051,18 @@ export async function recordSwap(input: {
     chainConfig,
     dayKey,
     outputUsdScaled: priceResult.amountUsdScaled,
+    outputAddress: dstToken.address,
+    outputPriceSource: priceResult.source,
+    strictOutputVerification:
+      attributionSource === "openocean_referrer" &&
+      !trustedOpenOceanAmountUsd &&
+      !openOceanAmountUsd,
     inputAddress: srcToken.address,
     inputDecimals: srcToken.decimals,
     inputAmountRaw: decodedSwap.spentAmount,
   });
   const amountUsd = formatScaledDecimal(amountUsdScaled, USD_SCALE);
+  const protocolFeeUsd = getOpenOceanProtocolFeeUsdText(openOceanDetail);
   const occurredAtIso = occurredAt.toISOString();
   const metadata = {
     chainId: resolvedChainId,
@@ -1961,6 +2070,12 @@ export async function recordSwap(input: {
     chainLabel: chainConfig.label,
     priceSource: priceResult.source,
     priceMetadata: priceResult.metadata,
+    rawAmountUsd: formatScaledDecimal(priceResult.amountUsdScaled, USD_SCALE),
+    sanitizedAmountUsd: amountUsd,
+    protocolFeeUsd,
+    openOceanReferrerFee: openOceanDetail?.referrer_fee ?? null,
+    openOceanTxProfit: openOceanDetail?.tx_profit ?? null,
+    openOceanTxProfitUsd: openOceanDetail?.tx_profit_valuation ?? null,
     submittedHash: normalizedTxHash,
     submittedKind: resolvedTransaction.submittedKind,
     resolvedTxHash: resolvedTransaction.resolvedTxHash,

@@ -31,13 +31,12 @@ SELECT
   swaps.id AS swap_transaction_id,
   swaps.tx_hash,
   swaps.chain_id,
-  LEAST(swaps.amount_usd, 250000::NUMERIC)::NUMERIC(20,6) AS amount_usd,
+  swap_values.amount_usd,
   swaps.occurred_at,
   date_trunc('week', swaps.occurred_at AT TIME ZONE 'UTC')::DATE AS week_start_utc,
-  (LEAST(swaps.amount_usd, 250000::NUMERIC) * 0.002::NUMERIC) AS protocol_fee_usd,
+  swap_values.protocol_fee_usd,
   (
-    LEAST(swaps.amount_usd, 250000::NUMERIC)
-    * 0.002::NUMERIC
+    swap_values.protocol_fee_usd
     * (fee_history.fee_share_percent / 100::NUMERIC)
   ) AS reward_usd
 FROM partner_program_referred_users referred
@@ -45,6 +44,19 @@ JOIN partner_fee_share_history fee_history
   ON fee_history.partner_member_id = referred.partner_member_id
 JOIN swap_transactions swaps
   ON swaps.user_id = referred.referee_user_id
+CROSS JOIN LATERAL (
+  SELECT
+    LEAST(GREATEST(swaps.amount_usd, 0::NUMERIC), 250000::NUMERIC)::NUMERIC(20,6) AS amount_usd,
+    CASE
+      WHEN (swaps.metadata->>'protocolFeeUsd') ~ '^[0-9]+(\.[0-9]+)?$'
+        THEN (swaps.metadata->>'protocolFeeUsd')::NUMERIC(20,12)
+      WHEN
+        LOWER(COALESCE(swaps.referrer, '')) = '0x0fd79f3ceae7dda5cfc15b35188e67efac542573'
+        OR swaps.metadata->>'attributionSource' = 'openocean_referrer'
+        THEN 0::NUMERIC
+      ELSE LEAST(GREATEST(swaps.amount_usd, 0::NUMERIC), 250000::NUMERIC) * 0.002::NUMERIC
+    END AS protocol_fee_usd
+) swap_values
 WHERE
   swaps.occurred_at >= GREATEST(
     referred.whitelisted_at,

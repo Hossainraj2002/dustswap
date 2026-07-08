@@ -157,6 +157,10 @@ export function TokenFromPanel({
           <div className="grid grid-cols-3 gap-2">
             {visibleTokens.map((token) => {
               const failed = failedSet.has(token.address.toLowerCase());
+              const tokenLabel =
+                token.name && token.name !== token.symbol
+                  ? `${token.symbol} - ${token.name}`
+                  : token.symbol;
 
               return (
                 <div
@@ -167,7 +171,7 @@ export function TokenFromPanel({
                       ? "border border-red-200 bg-red-50 text-red-800 dark:border-red-400/30 dark:bg-red-400/10"
                       : "sweep-chip text-slate-900 dark:text-white",
                   )}
-                  title={failed ? `${token.symbol} has no current route` : token.symbol}
+                  title={failed ? `${tokenLabel} has no current route` : tokenLabel}
                 >
                   <TokenLogo token={token} size="sm" muted={failed} />
                   <div className="min-w-0 flex-1 leading-tight">

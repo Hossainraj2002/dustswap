@@ -175,7 +175,7 @@ function MetricDelta({ current, previous }: { current: number; previous: number 
 
   return (
     <span
-      className={`inline-flex items-center rounded-md px-2 py-1 text-xs font-semibold ${
+      className={`inline-flex shrink-0 items-center rounded-md px-2 py-1 text-xs font-semibold ${
         isPositive
           ? "bg-emerald-50 text-emerald-700"
           : "bg-rose-50 text-rose-700"
@@ -312,7 +312,7 @@ function MetricCards({
   onSelect: (metric: MetricKey) => void;
 }) {
   return (
-    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-2">
       {rows.map((row) => (
         <button
           key={row.key}
@@ -325,7 +325,9 @@ function MetricCards({
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
               <p className="text-sm font-semibold text-slate-500">{row.label}</p>
-              <p className="mt-2 break-words text-2xl font-semibold text-slate-950">{row.displayValue}</p>
+              <p className="mt-2 whitespace-nowrap text-xl font-semibold tabular-nums text-slate-950 sm:text-2xl">
+                {row.displayValue}
+              </p>
             </div>
             <MetricDelta current={row.value} previous={row.previous} />
           </div>
@@ -814,7 +816,7 @@ export function AdminMonitorPanel() {
 
         {data && activeMetric && userMetric ? (
           <>
-            <section className="grid gap-5 xl:grid-cols-[1fr_360px]">
+            <section className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_460px]">
               <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                   <div>
