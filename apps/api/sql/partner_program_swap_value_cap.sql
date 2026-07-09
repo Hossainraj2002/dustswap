@@ -1,11 +1,12 @@
--- Defense-in-depth: bound the per-swap USD used for partner reward math.
+-- Defense-in-depth: safe partner reward math from sanitized swap volume.
 --
 -- Root fix lives in swapRecorder (sanitizeSwapUsdScaled) so swap_transactions
--- never stores an absurd amount_usd again. This view-level LEAST() cap is a
--- second line of defence: even if a mispriced row ever slips through, a single
--- swap can contribute at most MAX_SWAP_VALUE_USD (250k) to a partner's
--- qualifying volume / protocol fee / reward. DustSwap is a dust tool — real
--- swaps are a few dollars — so this can never clip a legitimate swap.
+-- never stores an absurd amount_usd again, and swap_volume_write_guard.sql blocks
+-- high unanchored rows at the database layer. This view-level guard is a second
+-- line of defence for partner payouts: high unanchored legacy/future rows count
+-- as $0, while real anchored volume is paid by the program rule:
+--   reward = amount_usd * 0.2% protocol-fee basis * partner fee-share percent.
+-- At the default 50% share, that is 0.1% of referred-user swap volume.
 --
 -- Re-run this after partner_program.sql. CREATE OR REPLACE keeps dependent views
 -- (referral_counts, alltime/weekly metrics, referred_user metrics) intact.
@@ -46,16 +47,19 @@ JOIN swap_transactions swaps
   ON swaps.user_id = referred.referee_user_id
 CROSS JOIN LATERAL (
   SELECT
-    LEAST(GREATEST(swaps.amount_usd, 0::NUMERIC), 250000::NUMERIC)::NUMERIC(20,6) AS amount_usd,
     CASE
-      WHEN (swaps.metadata->>'protocolFeeUsd') ~ '^[0-9]+(\.[0-9]+)?$'
-        THEN (swaps.metadata->>'protocolFeeUsd')::NUMERIC(20,12)
-      WHEN
-        LOWER(COALESCE(swaps.referrer, '')) = '0x0fd79f3ceae7dda5cfc15b35188e67efac542573'
-        OR swaps.metadata->>'attributionSource' = 'openocean_referrer'
+      WHEN swaps.amount_usd IS NULL OR swaps.amount_usd < 0::NUMERIC THEN 0::NUMERIC
+      WHEN swaps.amount_usd > 1000::NUMERIC
+        AND NOT swap_volume_is_trusted_anchor(swaps.chain_id, swaps.src_token_address)
+        AND NOT swap_volume_is_trusted_anchor(swaps.chain_id, swaps.dst_token_address)
         THEN 0::NUMERIC
-      ELSE LEAST(GREATEST(swaps.amount_usd, 0::NUMERIC), 250000::NUMERIC) * 0.002::NUMERIC
-    END AS protocol_fee_usd
+      ELSE swaps.amount_usd
+    END::NUMERIC(20,6) AS amount_usd
+) safe_swap
+CROSS JOIN LATERAL (
+  SELECT
+    safe_swap.amount_usd,
+    safe_swap.amount_usd * 0.002::NUMERIC AS protocol_fee_usd
 ) swap_values
 WHERE
   swaps.occurred_at >= GREATEST(

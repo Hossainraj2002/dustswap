@@ -102,11 +102,13 @@ const WINDOW_DAYS: Record<MonitorWindowKey, number> = {
   "90d": 90,
 };
 
-const MAX_MONITOR_SWAP_VOLUME_USD = 1_000_000;
 const MONITOR_SWAP_VOLUME_SQL = `CASE
-  WHEN amount_usd >= 0 AND amount_usd <= ${MAX_MONITOR_SWAP_VOLUME_USD}
-    THEN amount_usd::numeric
-  ELSE 0::numeric
+  WHEN amount_usd IS NULL OR amount_usd < 0 THEN 0::numeric
+  WHEN amount_usd > 1000::numeric
+    AND NOT swap_volume_is_trusted_anchor(chain_id, src_token_address)
+    AND NOT swap_volume_is_trusted_anchor(chain_id, dst_token_address)
+    THEN 0::numeric
+  ELSE amount_usd::numeric
 END`;
 
 function toNumber(value: NumericLike) {

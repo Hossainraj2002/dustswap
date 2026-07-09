@@ -72,6 +72,13 @@ const TRUSTED_BASE_VALUATION_TOKENS = new Set([
   WEETH_BASE,
   WSTETH_BASE,
 ]);
+const BASE_USD_STABLE_TOKENS = new Set([
+  USDC_BASE,
+  USDT_BASE,
+  USDBC_BASE,
+  DAI_BASE,
+  USDE_BASE,
+]);
 const OPENOCEAN_EXCHANGE_V2 = "0x6352a56caadc4f1e25cd6c75970fa768a3304e64";
 const OPENOCEAN_AGGREGATION_ROUTER = "0x6dd434082eab5cd134628d4b9a6e4d0813ef8b07";
 const OPENOCEAN_ZKSYNC_ROUTER = "0x36a1acbbcafca2468b85011ddd16e7cb4d673230";
@@ -414,8 +421,8 @@ function getAssetPriceDbKey(address: string, chainConfig: SwapChainConfig) {
     return chainConfig.nativeCoinGeckoId.toUpperCase();
   }
 
-  if (chainConfig.id === base.id && normalized === USDC_BASE) {
-    return "USDC";
+  if (chainConfig.id === base.id && BASE_USD_STABLE_TOKENS.has(normalized)) {
+    return "USD_STABLE";
   }
 
   return null;
@@ -424,6 +431,12 @@ function getAssetPriceDbKey(address: string, chainConfig: SwapChainConfig) {
 function isTrustedValuationToken(address: string, chainConfig: SwapChainConfig) {
   return (
     chainConfig.id === base.id && TRUSTED_BASE_VALUATION_TOKENS.has(normalizeAddress(address))
+  );
+}
+
+function isUsdStableToken(address: string, chainConfig: SwapChainConfig) {
+  return (
+    chainConfig.id === base.id && BASE_USD_STABLE_TOKENS.has(normalizeAddress(address))
   );
 }
 
@@ -1359,10 +1372,10 @@ async function getTokenPriceUsd(
     return entry;
   };
 
-  if (chainConfig.id === base.id && assetKey === USDC_BASE) {
+  if (isUsdStableToken(assetKey, chainConfig)) {
     return persistPriceEntry({
       priceScaled: parseScaledDecimal("1", PRICE_SCALE),
-      source: "hardcoded_usdc",
+      source: "hardcoded_usd_stable",
       metadata: {
         chain: chainConfig.key,
         chainId: chainConfig.id,
@@ -1424,6 +1437,8 @@ async function sanitizeSwapUsdScaled(args: {
   dayKey: string;
   outputUsdScaled: bigint;
   outputAddress: string;
+  outputDecimals?: number | null;
+  outputAmountRaw?: bigint | null;
   outputPriceSource?: string | null;
   strictOutputVerification?: boolean;
   inputAddress: string;
@@ -1432,21 +1447,50 @@ async function sanitizeSwapUsdScaled(args: {
 }): Promise<bigint> {
   const value = args.outputUsdScaled;
   const thresholdScaled = parseScaledDecimal(String(SWAP_VALUE_SANITY_THRESHOLD_USD), USD_SCALE);
+  const outputAddress = getAssetPriceKey(args.outputAddress);
+  const inputAddress = getAssetPriceKey(args.inputAddress);
+  const outputReliable = hasReliableUsdQuote(
+    args.chainConfig,
+    outputAddress,
+    args.outputPriceSource
+  );
+  const inputIsStable = isUsdStableToken(inputAddress, args.chainConfig);
+  const outputIsStable = isUsdStableToken(outputAddress, args.chainConfig);
 
-  if (hasReliableUsdQuote(args.chainConfig, args.outputAddress, args.outputPriceSource)) {
+  if (inputIsStable && args.inputAmountRaw > 0n) {
+    return calculateUsdAmountScaled(
+      args.inputAmountRaw,
+      args.inputDecimals,
+      parseScaledDecimal("1", PRICE_SCALE)
+    );
+  }
+
+  if (outputIsStable && args.outputAmountRaw && args.outputDecimals != null) {
+    return calculateUsdAmountScaled(
+      args.outputAmountRaw,
+      args.outputDecimals,
+      parseScaledDecimal("1", PRICE_SCALE)
+    );
+  }
+
+  if (outputReliable && !args.inputAmountRaw) {
     return value;
   }
 
   if (args.inputAmountRaw > 0n) {
     try {
-      const inputPrice = await getTokenPriceUsd(args.chainConfig, args.inputAddress, args.dayKey);
+      const inputPrice = await getTokenPriceUsd(args.chainConfig, inputAddress, args.dayKey);
       const inputUsdScaled = calculateUsdAmountScaled(
         args.inputAmountRaw,
         args.inputDecimals,
         inputPrice.priceScaled
       );
-      if (hasReliableUsdQuote(args.chainConfig, args.inputAddress, inputPrice.source)) {
+      if (hasReliableUsdQuote(args.chainConfig, inputAddress, inputPrice.source)) {
         return inputUsdScaled;
+      }
+
+      if (outputReliable) {
+        return value;
       }
 
       if (inputUsdScaled === 0n) {
@@ -1470,6 +1514,10 @@ async function sanitizeSwapUsdScaled(args: {
     } catch {
       // Could not price the input; treat the high arbitrary-output quote as unverified.
     }
+  }
+
+  if (outputReliable) {
+    return value;
   }
 
   if (!args.strictOutputVerification && value <= thresholdScaled) {
@@ -1794,11 +1842,17 @@ async function recordDustSwapAggregatorSwap(args: {
   const outputQuotesReliable = outputData.every((item) =>
     hasReliableUsdQuote(args.chainConfig, item.token.address, item.price.source)
   );
+  const grossAmountOut = args.events.reduce((sum, event) => sum + event.grossAmountOut, 0n);
+  const netAmountOut = args.events.reduce((sum, event) => sum + event.netAmountOut, 0n);
+  const feeAmount = args.events.reduce((sum, event) => sum + event.feeAmount, 0n);
+  const amountIn = primaryEvent.amountIn;
   const amountUsdScaled = await sanitizeSwapUsdScaled({
     chainConfig: args.chainConfig,
     dayKey,
     outputUsdScaled: rawAmountUsdScaled,
     outputAddress: outputQuotesReliable ? primaryDstToken.address : ZERO_ADDRESS,
+    outputDecimals: outputQuotesReliable ? primaryDstToken.decimals : null,
+    outputAmountRaw: outputQuotesReliable ? netAmountOut : null,
     outputPriceSource: outputQuotesReliable ? outputData[0]?.price.source : null,
     inputAddress: srcToken.address,
     inputDecimals: srcToken.decimals,
@@ -1820,10 +1874,6 @@ async function recordDustSwapAggregatorSwap(args: {
       ? (rawProtocolFeeUsdScaled * amountUsdScaled) / rawAmountUsdScaled
       : rawProtocolFeeUsdScaled;
   const protocolFeeUsd = formatScaledDecimal(protocolFeeUsdScaled, USD_SCALE);
-  const grossAmountOut = args.events.reduce((sum, event) => sum + event.grossAmountOut, 0n);
-  const netAmountOut = args.events.reduce((sum, event) => sum + event.netAmountOut, 0n);
-  const feeAmount = args.events.reduce((sum, event) => sum + event.feeAmount, 0n);
-  const amountIn = primaryEvent.amountIn;
   const outputSummaries = outputData.map((item) => ({
     tokenAddress: item.token.address,
     tokenSymbol: item.token.symbol,
@@ -2078,6 +2128,8 @@ export async function recordSwap(input: {
     dayKey,
     outputUsdScaled: priceResult.amountUsdScaled,
     outputAddress: dstToken.address,
+    outputDecimals: dstToken.decimals,
+    outputAmountRaw: decodedSwap.returnAmount,
     outputPriceSource: priceResult.source,
     strictOutputVerification:
       attributionSource === "openocean_referrer" &&
