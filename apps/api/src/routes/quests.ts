@@ -6,6 +6,10 @@ import {
   type XAccountAuthInput,
 } from "../services/questEngine";
 import { pointsEngine } from "../services/pointsEngine";
+import {
+  AdminWalletReplacementError,
+  adminWalletReplacementService,
+} from "../services/adminWalletReplacement";
 import { runtimeCache } from "../utils/runtimeCache";
 import { DiscordVerificationError } from "../services/discordVerification";
 import { isMaintenanceBlocking, maintenanceUnavailable } from "../utils/maintenance";
@@ -190,6 +194,68 @@ questsRoutes.post("/admin/manual-points", async (c) => {
     return c.json(
       { success: false, error: (error as Error).message },
       400
+    );
+  }
+});
+
+questsRoutes.get("/admin/wallet-replacements", async (c) => {
+  const authError = assertAdmin(c);
+  if (authError) {
+    return authError;
+  }
+
+  try {
+    const data = await adminWalletReplacementService.listRecent(c.req.query("limit"));
+    return c.json({ success: true, data });
+  } catch (error) {
+    return c.json(
+      { success: false, error: (error as Error).message },
+      500
+    );
+  }
+});
+
+questsRoutes.post("/admin/wallet-replacements/preview", async (c) => {
+  const authError = assertAdmin(c);
+  if (authError) {
+    return authError;
+  }
+
+  try {
+    const body = (await c.req.json()) as {
+      oldWallet?: string;
+      newWallet?: string;
+    };
+    const data = await adminWalletReplacementService.preview(body);
+    return c.json({ success: true, data });
+  } catch (error) {
+    const status = error instanceof AdminWalletReplacementError ? error.status : 400;
+    return c.json(
+      { success: false, error: (error as Error).message },
+      status as 400 | 500
+    );
+  }
+});
+
+questsRoutes.post("/admin/wallet-replacements", async (c) => {
+  const authError = assertAdmin(c);
+  if (authError) {
+    return authError;
+  }
+
+  try {
+    const body = (await c.req.json()) as {
+      oldWallet?: string;
+      newWallet?: string;
+      note?: string;
+    };
+    const data = await adminWalletReplacementService.replace(body);
+    return c.json({ success: true, data });
+  } catch (error) {
+    const status = error instanceof AdminWalletReplacementError ? error.status : 400;
+    return c.json(
+      { success: false, error: (error as Error).message },
+      status as 400 | 500
     );
   }
 });

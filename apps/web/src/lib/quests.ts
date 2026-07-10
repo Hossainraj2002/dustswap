@@ -2,6 +2,9 @@ import type {
   AdminManualPointsEntryInput,
   AdminManualPointsGrantResult,
   AdminQuestInput,
+  AdminWalletReplacementHistoryEntry,
+  AdminWalletReplacementPreview,
+  AdminWalletReplacementResult,
   QuestBoardResponse,
 } from "@/types/quests";
 import {
@@ -551,6 +554,72 @@ export async function grantAdminManualPoints(
   return parseJson<{
     success: boolean;
     data?: AdminManualPointsGrantResult;
+    error?: string;
+  }>(response);
+}
+
+export async function previewAdminWalletReplacement(
+  adminToken: string,
+  input: {
+    oldWallet: string;
+    newWallet: string;
+  }
+) {
+  const response = await publicApiFetch(getQuestsApiUrl("/admin/wallet-replacements/preview"), {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-admin-token": adminToken,
+    },
+    body: JSON.stringify(input),
+  });
+
+  return parseJson<{
+    success: boolean;
+    data?: AdminWalletReplacementPreview;
+    error?: string;
+  }>(response);
+}
+
+export async function replaceAdminWallet(
+  adminToken: string,
+  input: {
+    oldWallet: string;
+    newWallet: string;
+    note?: string;
+  }
+) {
+  const response = await publicApiFetch(getQuestsApiUrl("/admin/wallet-replacements"), {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-admin-token": adminToken,
+    },
+    body: JSON.stringify(input),
+  });
+
+  return parseJson<{
+    success: boolean;
+    data?: AdminWalletReplacementResult;
+    error?: string;
+  }>(response);
+}
+
+export async function fetchAdminWalletReplacements(adminToken: string, limit = 20) {
+  const url = new URL(getQuestsApiUrl("/admin/wallet-replacements"));
+  url.searchParams.set("limit", String(limit));
+
+  const response = await publicApiFetch(url.toString(), {
+    headers: {
+      "Content-Type": "application/json",
+      "x-admin-token": adminToken,
+    },
+    cache: "no-store",
+  });
+
+  return parseJson<{
+    success: boolean;
+    data?: AdminWalletReplacementHistoryEntry[];
     error?: string;
   }>(response);
 }

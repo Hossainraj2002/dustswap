@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { AdminManualPointsPanel } from "@/components/admin/AdminManualPointsPanel";
+import { AdminWalletReplacementPanel } from "@/components/admin/AdminWalletReplacementPanel";
 import {
   fetchAdminCampaignWhitelist,
   deleteAdminQuest,
@@ -702,6 +703,7 @@ export default function AdminQuestsPage() {
       ) : (
         <>
           <AdminManualPointsPanel adminToken={adminToken} />
+          <AdminWalletReplacementPanel adminToken={adminToken} />
 
           <div className="grid gap-5 lg:grid-cols-[1.1fr_0.9fr]">
             <section className="rounded-[28px] border border-gray-200 bg-white shadow-sm p-5">

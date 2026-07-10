@@ -41,6 +41,7 @@ const files = [
   "sql/user_profiles.sql",
   "sql/wallet_merge.sql",
   "sql/wallet_merge_constraints.sql",
+  "sql/admin_wallet_replacement.sql",
 ];
 
 async function main() {

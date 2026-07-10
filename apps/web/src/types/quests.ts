@@ -160,3 +160,52 @@ export type AdminManualPointsGrantResult = {
     idempotent: boolean;
   }>;
 };
+
+export type AdminWalletReplacementLog = {
+  level: "plus" | "minus" | "backup" | "warning" | "info";
+  message: string;
+  count?: number;
+};
+
+export type AdminWalletReplacementCounts = Record<string, number>;
+
+export type AdminWalletReplacementPreview = {
+  oldWallet: string;
+  newWallet: string;
+  canReplace: boolean;
+  requiresConfirmation: boolean;
+  relation: "unused" | "same_account" | "different_user";
+  oldAccount: {
+    userId: number;
+    address: string;
+    totalPoints: number;
+    currentStreak: number;
+    longestStreak: number;
+    counts: AdminWalletReplacementCounts;
+    totalRows: number;
+  };
+  newWalletState: {
+    ownerUserId: number | null;
+    ownerAddress: string | null;
+    isPrimary: boolean;
+    totalPoints: number;
+    counts: AdminWalletReplacementCounts;
+    totalRows: number;
+  };
+  warnings: string[];
+};
+
+export type AdminWalletReplacementResult = {
+  replacementId: number;
+  oldWallet: string;
+  newWallet: string;
+  primaryUserId: number;
+  displacedUserId: number | null;
+  logs: AdminWalletReplacementLog[];
+  backupSaved: boolean;
+};
+
+export type AdminWalletReplacementHistoryEntry = AdminWalletReplacementResult & {
+  note: string | null;
+  createdAt: string;
+};
