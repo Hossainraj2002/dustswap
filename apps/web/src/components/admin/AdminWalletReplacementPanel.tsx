@@ -424,7 +424,7 @@ export function AdminWalletReplacementPanel({ adminToken }: { adminToken: string
                     className="mt-1"
                   />
                   <span>
-                    I understand the new wallet's live DustSwap data will be backed up and
+                    I understand the new wallet&apos;s live DustSwap data will be backed up and
                     overwritten by the old wallet account.
                   </span>
                 </label>
