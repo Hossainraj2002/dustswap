@@ -695,8 +695,6 @@ export default function AdminQuestsPage() {
         </div>
       ) : null}
 
-      <AdminWalletReplacementPanel adminToken={adminToken} />
-
       {!isUnlocked ? (
         <section className="rounded-[28px] border border-dashed border-gray-200 bg-gray-50 p-6 text-sm leading-7 text-gray-600">
           Enter a valid admin token and tap <span className="font-semibold text-gray-900">Load Quests</span> to unlock the quest manager.
@@ -705,6 +703,7 @@ export default function AdminQuestsPage() {
       ) : (
         <>
           <AdminManualPointsPanel adminToken={adminToken} />
+          <AdminWalletReplacementPanel adminToken={adminToken} />
 
           <div className="grid gap-5 lg:grid-cols-[1.1fr_0.9fr]">
             <section className="rounded-[28px] border border-gray-200 bg-white shadow-sm p-5">
