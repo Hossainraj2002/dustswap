@@ -892,6 +892,26 @@ export function useDustSweep(options?: { chainId?: number }): UseDustSweepReturn
     okxOneClickAbandonedRef.current = false;
   }, [address]);
 
+  // Chain switch: every token-scoped piece of state still points at OLD-chain addresses —
+  // tokenOut especially (Base USDC ≠ BSC USDT/USDC), so keeping it would quote to a token that
+  // does not exist on the new chain. Reset to the new chain's defaults. Ref-guarded so the
+  // initial mount (already initialized from sweepChain) is untouched.
+  const prevSweepChainIdRef = useRef(sweepChainId);
+  useEffect(() => {
+    if (prevSweepChainIdRef.current === sweepChainId) return;
+    prevSweepChainIdRef.current = sweepChainId;
+    setTokenOut(sweepChain.outputTokens[0] ?? null);
+    setSelectedTokens([]);
+    setUnavailableTokens([]);
+    setQuote(null);
+    setQuoteError(null);
+    setTxHash(null);
+    setError(null);
+    setSweepStep("idle");
+    setExecutionNotice(null);
+    setAutoMode(false);
+  }, [sweepChainId, sweepChain.outputTokens]);
+
   useEffect(() => {
     if (!isConnected || !address) {
       setSelectedTokens([]);

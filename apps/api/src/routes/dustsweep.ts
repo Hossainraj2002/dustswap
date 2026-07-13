@@ -33,6 +33,7 @@ import {
 } from "../config/dustsweepV3Sources";
 import {
   BASE_CONFIG,
+  BSC_CHAIN_ID,
   ETHEREUM_CHAIN_ID,
   getChainAllowedAggregatorAddresses,
   getChainRouterV3Address,
@@ -126,6 +127,22 @@ const UNISWAP_V3_QUOTER_ADDRESS = (process.env.UNISWAP_V3_QUOTER_ADDRESS ||
   "0x3d4e44Eb1374240CE5F1B871ab261CD16335B76a") as Address;
 const PANCAKE_V3_QUOTER_ADDRESS = (process.env.PANCAKE_V3_QUOTER_ADDRESS ||
   "0xB048Bbc1Ee6b733FFfCFb9e9CeF7375518e25997") as Address;
+// ── BSC (56) constants — only consulted when the request chain is BSC. All verified live
+// 2026-07-10 via eth_getCode + a functional quote probe on bsc-dataseed.bnbchain.org. ──
+const BSC_PANCAKE_V3_SWAP_ROUTER_ADDRESS = (process.env.PANCAKE_V3_SWAP_ROUTER_ADDRESS_56 ||
+  "0x13f4EA83D0bd40E75C8222255bc855a974568Dd4") as Address;
+const BSC_PANCAKE_V3_QUOTER_ADDRESS = (process.env.PANCAKE_V3_QUOTER_ADDRESS_56 ||
+  "0xB048Bbc1Ee6b733FFfCFb9e9CeF7375518e25997") as Address;
+const BSC_WBNB_ADDRESS = "0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c" as Address;
+const BSC_USDT_ADDRESS = "0x55d398326f99059fF775485246999027B3197955" as Address; // 18 decimals
+
+// Display-only symbols for route labels — BSC wraps BNB, not ETH. Base/Ethereum strings unchanged.
+function wrappedNativeSymbol(chainId: number) {
+  return chainId === BSC_CHAIN_ID ? "WBNB" : "WETH";
+}
+function nativeAssetSymbol(chainId: number) {
+  return chainId === BSC_CHAIN_ID ? "BNB" : "ETH";
+}
 const AERODROME_ROUTER_ADDRESS = (process.env.AERODROME_ROUTER_ADDRESS ||
   "0xcF77a3Ba9A5CA399B7c97c74d54e5b1Beb874E43") as Address;
 const AERODROME_FACTORY_ADDRESS = (process.env.AERODROME_FACTORY_ADDRESS ||
@@ -1363,6 +1380,7 @@ const whitelistCacheByChain = new Map<
   { value: Map<string, TokenWhitelistRow>; expiresAt: number }
 >();
 let ethUsdCache: { price: number; expiresAt: number } | null = null;
+let bnbUsdCache: { price: number; expiresAt: number } | null = null;
 
 function getFeeBps(chain: SweepChainConfig = BASE_CONFIG) {
   // Per-chain fee: non-Base chains read DUST_SWEEP_FEE_BPS_<chainId> (falling back to the global
@@ -2294,6 +2312,7 @@ async function fetchTokenMarketHintsDexScreener(
 function getCoinGeckoPlatform(chain: SweepChainConfig) {
   if (chain.chainId === BASE_CHAIN_ID) return "base";
   if (chain.chainId === ETHEREUM_CHAIN_ID) return "ethereum";
+  if (chain.chainId === BSC_CHAIN_ID) return "binance-smart-chain";
   return null;
 }
 
@@ -2377,16 +2396,18 @@ async function fetchTokenMarketHints(
         isNativeTokenAddress(address),
     )
   ) {
-    const ethUsd = await fetchEthUsdPrice();
-    const ethHint: TokenMarketHint = {
-      priceUSD: ethUsd,
+    // Per-chain native price: BNB on BSC, ETH elsewhere. chain.weth is the wrapped NATIVE
+    // (WBNB on BSC), so pricing it at the ETH price would misvalue every WBNB sweep.
+    const nativeUsd = await fetchNativeUsdPrice(chain);
+    const nativeHint: TokenMarketHint = {
+      priceUSD: nativeUsd,
       liquidityUSD: 50_000_000,
       bestDex: "UNISWAP_V3",
       source: "canonical",
       confidence: "HIGH",
     };
-    hints[chain.weth.toLowerCase()] = ethHint;
-    hints[NATIVE_TOKEN_SENTINEL.toLowerCase()] = ethHint;
+    hints[chain.weth.toLowerCase()] = nativeHint;
+    hints[NATIVE_TOKEN_SENTINEL.toLowerCase()] = nativeHint;
   }
 
   for (const [address, hint] of Object.entries(providerHints)) {
@@ -2685,7 +2706,7 @@ async function getV3QuoteCandidates(args: {
   // Two-hop: try WETH and USDC as intermediate tokens
   const intermediates: Array<{ mid: Address; label: string }> = [];
   if (args.tokenIn.toLowerCase() !== weth.toLowerCase() && args.tokenOut.toLowerCase() !== weth.toLowerCase()) {
-    intermediates.push({ mid: weth, label: "WETH" });
+    intermediates.push({ mid: weth, label: wrappedNativeSymbol(chainId) });
   }
   if (args.tokenIn.toLowerCase() !== usdc.toLowerCase() && args.tokenOut.toLowerCase() !== usdc.toLowerCase()) {
     intermediates.push({ mid: usdc, label: "USDC" });
@@ -3733,7 +3754,7 @@ async function getUniV2QuoteCandidates(args: {
       const midLabel =
         path.length > 2
           ? path[1].toLowerCase() === weth.toLowerCase()
-            ? " via WETH"
+            ? ` via ${wrappedNativeSymbol(chain.chainId)}`
             : " via USDC"
           : "";
       candidates.push({
@@ -3784,10 +3805,12 @@ async function getNativeQuoteCandidates(
   if (chain.nativeSources) {
     const tasks: Array<Promise<QuoteCandidate[]>> = [];
     for (const source of chain.nativeSources) {
-      if (source.kind === "uniswap_v3" && source.quoter) {
+      if ((source.kind === "uniswap_v3" || source.kind === "pancake_v3") && source.quoter) {
+        // pancake_v3 shares the QuoterV2 quote shape but must build as DEX.PANCAKESWAP_V3 so
+        // buildV2Route targets the chain's Pancake SmartRouter (deadline-style ABI).
         tasks.push(
           getV3QuoteCandidates({
-            dex: DEX.UNISWAP_V3,
+            dex: source.kind === "pancake_v3" ? DEX.PANCAKESWAP_V3 : DEX.UNISWAP_V3,
             dexName: source.dexName,
             quoter: source.quoter,
             tokenIn,
@@ -4484,9 +4507,11 @@ function buildUniswapV4UniversalRouterCalldata(args: {
   });
 }
 
-// Native Uniswap V3 SwapRouter02 per chain. Base uses the module default; Ethereum uses the
-// canonical mainnet SwapRouter02. Verified addresses; the owner must allowlist the ETH one.
+// Native Uniswap V3 SwapRouter02 per chain. Base uses the module default; Ethereum and BSC use
+// their canonical SwapRouter02 deployments. Verified addresses; the owner must allowlist each.
 const ETH_UNISWAP_V3_SWAP_ROUTER = "0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45" as Address;
+const BSC_UNISWAP_V3_SWAP_ROUTER = (process.env.UNISWAP_V3_SWAP_ROUTER_ADDRESS_56 ||
+  "0xB971eF87ede563556b2ED4b1C0b0019111Dd85d2") as Address;
 
 function buildV2Route(
   route: DustSweepRoute,
@@ -4533,7 +4558,11 @@ function buildV2Route(
 
   if (route.dex === DEX.UNISWAP_V3) {
     const target =
-      chain.chainId === ETHEREUM_CHAIN_ID ? ETH_UNISWAP_V3_SWAP_ROUTER : UNISWAP_V3_SWAP_ROUTER_ADDRESS;
+      chain.chainId === ETHEREUM_CHAIN_ID
+        ? ETH_UNISWAP_V3_SWAP_ROUTER
+        : chain.chainId === BSC_CHAIN_ID
+          ? BSC_UNISWAP_V3_SWAP_ROUTER
+          : UNISWAP_V3_SWAP_ROUTER_ADDRESS;
     const v3 = decodeV3DexData(route.dexData as Hex);
     const data = v3.isMultiHop
       ? encodeFunctionData({
@@ -4568,7 +4597,10 @@ function buildV2Route(
   }
 
   if (route.dex === DEX.PANCAKESWAP_V3) {
-    const target = PANCAKE_V3_SWAP_ROUTER_ADDRESS;
+    // SmartRouter per chain: Base keeps its historical constant; BSC targets its own SmartRouter
+    // (same contract family, same ABI — verified via a live QuoterV2 probe 2026-07-10).
+    const target =
+      chain.chainId === BSC_CHAIN_ID ? BSC_PANCAKE_V3_SWAP_ROUTER_ADDRESS : PANCAKE_V3_SWAP_ROUTER_ADDRESS;
     const v3 = decodeV3DexData(route.dexData as Hex);
     const data = v3.isMultiHop
       ? encodeFunctionData({
@@ -5085,6 +5117,89 @@ async function fetchEthUsdPrice() {
 
   ethUsdCache = { price: 0, expiresAt: Date.now() + 15_000 };
   return 0;
+}
+
+// BNB is NOT ETH: BSC's gas + WBNB market hint must be priced off BNB. Same ladder shape as
+// fetchEthUsdPrice — two keyless HTTP sources, then an on-chain quote, then an env fallback.
+async function fetchBnbUsdPrice() {
+  if (bnbUsdCache && bnbUsdCache.expiresAt > Date.now()) {
+    return bnbUsdCache.price;
+  }
+
+  const cacheAndReturn = (price: number, ttlMs = 60_000) => {
+    bnbUsdCache = { price, expiresAt: Date.now() + ttlMs };
+    return price;
+  };
+
+  const livePriceLookups = [
+    async () => {
+      // Binance spot — BNB's deepest market, keyless.
+      const response = await fetch("https://api.binance.com/api/v3/ticker/price?symbol=BNBUSDT", {
+        headers: { Accept: "application/json" },
+        signal: AbortSignal.timeout(2_500),
+      });
+      if (!response.ok) throw new Error("Binance BNB price unavailable");
+      const payload = (await response.json()) as { price?: string };
+      return Number(payload.price || 0);
+    },
+    async () => {
+      const response = await fetch("https://api.coingecko.com/api/v3/simple/price?ids=binancecoin&vs_currencies=usd", {
+        headers: { Accept: "application/json" },
+        signal: AbortSignal.timeout(3_000),
+      });
+      if (!response.ok) throw new Error("CoinGecko BNB price unavailable");
+      const payload = (await response.json()) as { binancecoin?: { usd?: number } };
+      return Number(payload.binancecoin?.usd || 0);
+    },
+    async () => {
+      // On-chain: 1 WBNB -> USDT via the Pancake V3 QuoterV2. BSC USDT is 18 decimals.
+      const quotes = await Promise.allSettled(
+        [100, 500, 2500].map((fee) =>
+          tryQuoteV3Single(
+            BSC_PANCAKE_V3_QUOTER_ADDRESS,
+            BSC_WBNB_ADDRESS,
+            BSC_USDT_ADDRESS,
+            1_000_000_000_000_000_000n,
+            fee,
+            BSC_CHAIN_ID,
+          ),
+        ),
+      );
+      const prices = quotes
+        .map((result) =>
+          result.status === "fulfilled" && result.value
+            ? Number(formatUnits(result.value, 18))
+            : 0,
+        )
+        .filter((price) => Number.isFinite(price) && price > 0);
+      return prices.length > 0 ? Math.max(...prices) : 0;
+    },
+  ];
+
+  for (const lookup of livePriceLookups) {
+    try {
+      const price = await lookup();
+      if (Number.isFinite(price) && price > 0) {
+        return cacheAndReturn(price);
+      }
+    } catch {
+      // Continue to the next live source.
+    }
+  }
+
+  const fallback = Number(process.env.DEFAULT_BNB_PRICE_USD || 0);
+  if (Number.isFinite(fallback) && fallback > 0) {
+    console.warn("[dustsweep] Using configured DEFAULT_BNB_PRICE_USD fallback", { fallback });
+    return cacheAndReturn(fallback, 15_000);
+  }
+
+  bnbUsdCache = { price: 0, expiresAt: Date.now() + 15_000 };
+  return 0;
+}
+
+/** The sweep chain's NATIVE asset price in USD (BNB on BSC, ETH on Base/Ethereum). */
+async function fetchNativeUsdPrice(chain: SweepChainConfig) {
+  return chain.chainId === BSC_CHAIN_ID ? fetchBnbUsdPrice() : fetchEthUsdPrice();
 }
 
 async function getLogsChunk(args: {
@@ -7041,7 +7156,7 @@ async function computeSweepGasEstimate(
   );
   const [gasPriceWei, nativeUsd] = await Promise.all([
     getCachedGasPriceWei(chain.chainId),
-    fetchEthUsdPrice().catch(() => 0),
+    fetchNativeUsdPrice(chain).catch(() => 0),
   ]);
   const ethCost = Number(formatUnits(gasUnits * gasPriceWei, 18));
   const usd = nativeUsd > 0 && Number.isFinite(ethCost) ? ethCost * nativeUsd : 0;
@@ -7091,12 +7206,13 @@ dustsweepRoutes.post("/quote", async (c) => {
   const whitelist = await loadWhitelist(chain);
   const userAddress = normalizeAddress(body.userAddress);
 
-  // Resolve output token decimals from whitelist, default to 6 for USDC, 18 otherwise
+  // Resolve output token decimals from whitelist; the USDC fallback is per-chain (BSC's
+  // Binance-Peg USDC is 18 decimals, not the usual 6).
   const outputWhitelistRow = whitelist.get(tokenOut.toLowerCase());
   const outputDecimals = outputWhitelistRow
     ? Number(outputWhitelistRow.decimals ?? 18)
     : tokenOut.toLowerCase() === chain.usdc.toLowerCase()
-      ? 6
+      ? chain.usdcDecimals
       : 18;
 
   // ── Step 1: validate and parse all inputs (no whitelist gating) ─────────────
@@ -7181,7 +7297,7 @@ dustsweepRoutes.post("/quote", async (c) => {
         amountOutMin: item.amountIn.toString(),
         estimatedOut: item.amountIn.toString(),
         dex: DEX.PASSTHROUGH,
-        dexName: "WETH → ETH",
+        dexName: `${wrappedNativeSymbol(chain.chainId)} → ${nativeAssetSymbol(chain.chainId)}`,
         dexData: "0x" as Hex,
         priceImpactBps: 0, // 1:1 unwrap — zero impact
         priceImpactKnown: true,

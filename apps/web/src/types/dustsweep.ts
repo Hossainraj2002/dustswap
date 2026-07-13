@@ -386,7 +386,7 @@ export type SweepButtonVisualState =
   | { state: "setup"; label: "Approve setup..." }
   | { state: "signing"; label: "Sign in wallet..." }
   | { state: "pending"; label: "Sweeping..." }
-  | { state: "success"; label: "Swept! View on Basescan" }
+  | { state: "success"; label: `Swept! View on ${string}` } // per-chain explorer name
   | { state: "error"; label: "Try again" };
 
 export type WalletWhitelistStatus = {

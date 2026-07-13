@@ -58,6 +58,7 @@ function getDexIcon(dexName: string) {
   if (name.includes("UNISWAP") || name.includes("UNI ")) return "/dex/uniswap.png";
   if (name.includes("AERODROME") || name.includes("AERO ")) return "/dex/aerodrome.png";
   if (name.includes("PANCAKE") || name.includes("CAKE")) return "/dex/pancakeswap.png";
+  if (name.includes("BISWAP")) return "/dex/biswap.png";
   if (name.includes("BASESWAP")) return "/dex/baseswap.png";
   if (name.includes("ALIEN")) return "/dex/alienbase.png";
   if (name.includes("DACKIE")) return "/dex/dackieswap.png";
@@ -67,6 +68,8 @@ function getDexIcon(dexName: string) {
   if (name.includes("KYBER")) return "/dex/kyberswap.png";
   if (name.includes("HYDREX")) return "/dex/hydrex.png";
   if (name.startsWith("0X")) return "/dex/zerox.png";
+  // BSC passthrough leg ("WBNB → BNB") — real BNB mark instead of the generic icon.
+  if (name.includes("WBNB") || name.includes("BNB")) return "/dex/bnb.png";
   return GENERIC_DEX_ICON;
 }
 
@@ -82,6 +85,7 @@ function formatDexName(dexName: string) {
     return name.includes("SLIPSTREAM") ? "Aerodrome CL" : "Aerodrome";
   }
   if (name.includes("PANCAKE") || name.includes("CAKE")) return "PancakeSwap";
+  if (name.includes("BISWAP")) return "Biswap";
   if (name.includes("BASESWAP")) return "BaseSwap";
   if (name.includes("ALIEN")) return "AlienBase";
   if (name.includes("DACKIE")) return "DackieSwap";

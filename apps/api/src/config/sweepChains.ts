@@ -1,5 +1,6 @@
 import { isAddress, type Address } from "viem";
 import {
+  BSC_WBNB_ADDRESS,
   ETHEREUM_WETH_ADDRESS,
   PERMIT2_ADDRESS,
   WETH_ADDRESS as BASE_WETH_ADDRESS,
@@ -20,6 +21,7 @@ import {
 
 export const BASE_CHAIN_ID = 8453;
 export const ETHEREUM_CHAIN_ID = 1;
+export const BSC_CHAIN_ID = 56;
 
 export const NATIVE_TOKEN_SENTINEL =
   "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE" as Address;
@@ -27,6 +29,7 @@ export const NATIVE_TOKEN_SENTINEL =
 /** Native DEX adapter selector — which on-chain quoter/router pair to probe on this chain. */
 export type NativeSourceKind =
   | "uniswap_v3" // exactInput/exactInputSingle via QuoterV2
+  | "pancake_v3" // same QuoterV2 quote shape, but routes build against the Pancake SmartRouter ABI
   | "univ2"; // getAmountsOut via a UniswapV2Router02-compatible router
 
 export type NativeSourceSpec = {
@@ -55,7 +58,7 @@ export type AggregatorEnableFlags = {
 
 export type SweepChainConfig = {
   chainId: number;
-  slug: "base" | "ethereum";
+  slug: "base" | "ethereum" | "bsc";
   name: string;
   explorerUrl: string;
 
@@ -67,6 +70,11 @@ export type SweepChainConfig = {
   wbtc: Address;
   /** Extra chain-native stables treated as safe output/whitelist (Base: USDbC). */
   extraStables: Address[];
+  /**
+   * Decimals of this chain's USDC. Base/Ethereum USDC is 6, but BSC's Binance-Peg USDC is 18 —
+   * used wherever code would otherwise assume the 6-decimal convention.
+   */
+  usdcDecimals: number;
 
   // ── execution ──
   /** Env name that holds this chain's DustSwapSweepRouter V3 address. */
@@ -138,6 +146,7 @@ export const BASE_CONFIG: SweepChainConfig = {
   dai: "0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb" as Address,
   wbtc: "0x0555E30da8f98308EdB960aa94C0Db47230d2B9c" as Address,
   extraStables: ["0xd9aAEc86B65D86f6A7B5B1b0c42FFA531710b6CA" as Address], // USDbC
+  usdcDecimals: 6,
   routerV3Env: "DUST_SWEEP_ROUTER_V3_ADDRESS",
   supportsLegacyLanes: true,
   // Base still runs the ORIGINAL V3 contract (no passthrough) — keep WETH hidden + wallet-side unwrap.
@@ -176,6 +185,7 @@ function ethereumConfig(): SweepChainConfig {
     dai: "0x6B175474E89094C44Da98b954EedeAC495271d0F" as Address,
     wbtc: "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599" as Address,
     extraStables: [],
+    usdcDecimals: 6,
     routerV3Env: "DUST_SWEEP_ROUTER_V3_ADDRESS_1",
     supportsLegacyLanes: false,
     // Ethereum deploys the UPGRADED V3 contract with WETH passthrough — WETH is first-class here.
@@ -243,6 +253,104 @@ function ethereumConfig(): SweepChainConfig {
   };
 }
 
+// ── BNB Smart Chain (56) ─────────────────────────────────────────────────────
+// Native ladder (top venues by real 24h volume, DeFiLlama 2026-07-10): PancakeSwap V3 ($253M) +
+// PancakeSwap V2 ($30M) + Uniswap V3 on BSC ($24.7M) + Biswap (UniV2, quotes competitively).
+// Everything else on BSC — ApeSwap, BakerySwap, MDEX, THENA, DODO, Wombat, +more — is reached
+// (and price-optimized across) by the aggregator rescue path (Kyber / 0x / LI.FI). All addresses
+// verified live 2026-07-10 via eth_getCode + functional quote probes (see dustsweepV3Sources.ts).
+//
+// BSC gotchas encoded here:
+//   - native token is BNB, NOT ETH → dustsweep.ts prices gas + the WBNB hint via
+//     fetchNativeUsdPrice(chain), never fetchEthUsdPrice() directly.
+//   - USDT/USDC/DAI are ALL 18 decimals on BSC (usdcDecimals: 18).
+//   - weth = WBNB (wrapped native). Binance-Peg WETH 0x2170…33F8 is just a normal bridged ERC20.
+function bscConfig(): SweepChainConfig {
+  return {
+    chainId: BSC_CHAIN_ID,
+    slug: "bsc",
+    name: "BNB Smart Chain",
+    explorerUrl: "https://bscscan.com",
+    weth: BSC_WBNB_ADDRESS,
+    usdc: "0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d" as Address, // 18 decimals (Binance-Peg)
+    usdt: "0x55d398326f99059fF775485246999027B3197955" as Address, // 18 decimals
+    dai: "0x1AF3F329e8BE154074D8769D1FFa4eE058B1DBc3" as Address, // 18 decimals
+    wbtc: "0x7130d2A12B9BCbFAe4f2634d864A1Ee1Ce3Ead9c" as Address, // BTCB, 18 decimals
+    extraStables: [], // BUSD is deprecated — deliberately excluded
+    usdcDecimals: 18,
+    routerV3Env: "DUST_SWEEP_ROUTER_V3_ADDRESS_56",
+    supportsLegacyLanes: false,
+    // BSC deploys the UPGRADED V3 contract (same source as Ethereum's) — WBNB is a first-class
+    // sweepable input that unwraps to BNB via the router passthrough leg.
+    supportsWethPassthrough: boolEnv("DUST_SWEEP_WETH_PASSTHROUGH_56", true),
+    routeMaxCap: numberEnv("DUST_SWEEP_ROUTE_MAX_CAP_56", 10, 1, 50),
+    minValueUsd: numberEnv("DUST_SWEEP_MIN_VALUE_USD_56", 0.1, 0, 1_000),
+    gasModel: {
+      baseUnits: numberEnv("DUST_SWEEP_GAS_UNITS_BASE_56", 120_000, 21_000, 5_000_000),
+      perRouteUnits: numberEnv("DUST_SWEEP_GAS_UNITS_PER_ROUTE_56", 180_000, 21_000, 2_000_000),
+    },
+    kyberSlug: "bsc",
+    openOceanSlug: "bsc",
+    dexscreenerSlug: "bsc",
+    openOceanGasPriceGwei: numberEnv("DUST_SWEEP_OPENOCEAN_GAS_PRICE_GWEI_56", 1, 0.001, 5_000),
+    aggregators: {
+      kyber: boolEnv("DUST_SWEEP_ENABLE_KYBER_56", true),
+      zerox: boolEnv("DUST_SWEEP_ENABLE_ZEROX_56", true),
+      lifi: boolEnv("DUST_SWEEP_ENABLE_LIFI_56", true),
+      openocean: boolEnv("DUST_SWEEP_ENABLE_OPENOCEAN_56", false),
+      odos: boolEnv("DUST_SWEEP_ENABLE_ODOS_56", false),
+    },
+    allowedAggregatorTargetsEnv: "DUST_SWEEP_ALLOWED_AGGREGATOR_TARGETS_56",
+    nativeSources: [
+      {
+        kind: "pancake_v3",
+        dexName: "PancakeSwap V3",
+        // SmartRouter (self-spender), QuoterV2, v3 factory — BSC. *_56 env overrides allowed.
+        router:
+          process.env.PANCAKE_V3_SWAP_ROUTER_ADDRESS_56 &&
+          isAddress(process.env.PANCAKE_V3_SWAP_ROUTER_ADDRESS_56)
+            ? (process.env.PANCAKE_V3_SWAP_ROUTER_ADDRESS_56 as Address)
+            : ("0x13f4EA83D0bd40E75C8222255bc855a974568Dd4" as Address),
+        quoter:
+          process.env.PANCAKE_V3_QUOTER_ADDRESS_56 &&
+          isAddress(process.env.PANCAKE_V3_QUOTER_ADDRESS_56)
+            ? (process.env.PANCAKE_V3_QUOTER_ADDRESS_56 as Address)
+            : ("0xB048Bbc1Ee6b733FFfCFb9e9CeF7375518e25997" as Address),
+        factory: "0x0BFbCF9fa4f9C56B0F40a671Ad40E0805A091865" as Address,
+        feeTiers: [100, 500, 2500, 10000],
+      },
+      {
+        kind: "univ2",
+        dexName: "PancakeSwap V2",
+        router: "0x10ED43C718714eb63d5aA57B78B54704E256024E" as Address,
+        factory: "0xcA143Ce32Fe78f1f7019d7d551a6402fC5350c73" as Address,
+      },
+      {
+        kind: "uniswap_v3",
+        dexName: "Uniswap V3",
+        router:
+          process.env.UNISWAP_V3_SWAP_ROUTER_ADDRESS_56 &&
+          isAddress(process.env.UNISWAP_V3_SWAP_ROUTER_ADDRESS_56)
+            ? (process.env.UNISWAP_V3_SWAP_ROUTER_ADDRESS_56 as Address)
+            : ("0xB971eF87ede563556b2ED4b1C0b0019111Dd85d2" as Address),
+        quoter:
+          process.env.UNISWAP_V3_QUOTER_ADDRESS_56 &&
+          isAddress(process.env.UNISWAP_V3_QUOTER_ADDRESS_56)
+            ? (process.env.UNISWAP_V3_QUOTER_ADDRESS_56 as Address)
+            : ("0x78D78E420Da98ad378D7799bE8f4AF69033EB077" as Address),
+        factory: "0xdB1d10011AD0Ff90774D0C6Bb92e5C5c8b4461F7" as Address,
+        feeTiers: [100, 500, 3000, 10000],
+      },
+      {
+        kind: "univ2",
+        dexName: "Biswap",
+        router: "0x3a6d8cA21D1CF76F653A67577FA0D27453350dD8" as Address,
+        factory: "0x858E3312ed3A876947EA49d572A7C42DE08af7EE" as Address,
+      },
+    ],
+  };
+}
+
 // Router-from-env is read lazily (envAddress) so a SwapRouter override doesn't require a rebuild.
 // nativeSources.router for uniswap_v3 falls back to the literal when the *_1 override is 0x0.
 function withResolvedRouters(config: SweepChainConfig): SweepChainConfig {
@@ -260,6 +368,7 @@ function withResolvedRouters(config: SweepChainConfig): SweepChainConfig {
 const CHAIN_CONFIGS: Record<number, () => SweepChainConfig> = {
   [BASE_CHAIN_ID]: () => BASE_CONFIG,
   [ETHEREUM_CHAIN_ID]: () => withResolvedRouters(ethereumConfig()),
+  [BSC_CHAIN_ID]: () => withResolvedRouters(bscConfig()),
 };
 
 /** Chains DustSweep will serve. Default: Base only. Flip DUST_SWEEP_ENABLED_CHAIN_IDS to open ETH. */

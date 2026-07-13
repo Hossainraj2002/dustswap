@@ -1,5 +1,5 @@
-import { createPublicClient, custom } from "viem";
-import { mainnet } from "viem/chains";
+import { createPublicClient, custom, type Chain } from "viem";
+import { bsc, mainnet } from "viem/chains";
 import {
   alchemyRpcRequest,
   baseRpcRequest,
@@ -26,6 +26,7 @@ import {
  */
 
 export const ETHEREUM_CHAIN_ID = 1;
+export const BSC_CHAIN_ID = 56;
 const BASE_CHAIN_ID = 8453;
 
 const DEFAULT_ROTATION_CALLS = 100;
@@ -39,7 +40,7 @@ type AlchemyGenericPoolMode = "first" | "last" | "off";
 type ChainRpcSettings = {
   chainId: number;
   /** viem chain object for createPublicClient. */
-  chain: typeof mainnet;
+  chain: Chain;
   publicRpcUrl: string;
   alchemyHost: string; // e.g. eth-mainnet.g.alchemy.com
   /** Preferred keyed-Alchemy env names (comma lists), in priority order. */
@@ -51,6 +52,12 @@ type ChainRpcSettings = {
   rotationCallsEnv: string;
   publicFallbackEnv: string;
   dedicatedOnlyEnv: string;
+  /**
+   * Whether the hosted Blockscout JSON-RPC (api.blockscout.com/<chainId>/json-rpc) serves this
+   * chain. BSC is NOT hosted there (verified live 2026-07-10: "Network not supported"), so its
+   * pool must skip those endpoints instead of burning a failover hop on every request.
+   */
+  blockscoutSupported: boolean;
 };
 
 const CHAIN_RPC_SETTINGS: Record<number, ChainRpcSettings> = {
@@ -67,6 +74,24 @@ const CHAIN_RPC_SETTINGS: Record<number, ChainRpcSettings> = {
     rotationCallsEnv: "ETHEREUM_RPC_ROTATION_CALLS",
     publicFallbackEnv: "ETHEREUM_RPC_PUBLIC_FALLBACK",
     dedicatedOnlyEnv: "ALCHEMY_ETHEREUM_RPC_DEDICATED_ONLY",
+    blockscoutSupported: true,
+  },
+  [BSC_CHAIN_ID]: {
+    chainId: BSC_CHAIN_ID,
+    chain: bsc,
+    publicRpcUrl: "https://bsc-dataseed.bnbchain.org",
+    // Verified live 2026-07-10: bnb-mainnet serves eth_* AND alchemy_getTokenBalances. NOTE the
+    // Alchemy app must have the BNB network enabled (dashboard → app → Networks) or every call
+    // returns "BNB_MAINNET is not enabled for this app".
+    alchemyHost: "bnb-mainnet.g.alchemy.com",
+    // Same isolation rationale as Ethereum: a separate key set keeps CU burn attributable.
+    alchemyKeyEnvs: ["ALCHEMY_BSC_RPC_KEYS", "ALCHEMY_BSC_RPC_KEY"],
+    alchemyUrlEnvs: ["ALCHEMY_BSC_RPC_URLS", "ALCHEMY_BSC_RPC"],
+    rpcUrlEnvs: ["BSC_RPC_URLS", "BSC_RPC_URL"],
+    rotationCallsEnv: "BSC_RPC_ROTATION_CALLS",
+    publicFallbackEnv: "BSC_RPC_PUBLIC_FALLBACK",
+    dedicatedOnlyEnv: "ALCHEMY_BSC_RPC_DEDICATED_ONLY",
+    blockscoutSupported: false,
   },
 };
 
@@ -188,6 +213,7 @@ const BLOCKSCOUT_RPC_MAX_PER_REQUEST = (() => {
 })();
 
 function getBlockscoutRpcEndpoints(settings: ChainRpcSettings): BaseRpcEndpoint[] {
+  if (!settings.blockscoutSupported) return [];
   const keys = unique([
     ...splitEnv(process.env.BLOCKSCOUT_API_KEYS),
     ...splitEnv(process.env.BLOCKSCOUT_API_KEY),

@@ -27,6 +27,7 @@ import { isAddress, type Address } from "viem";
 
 export const BASE_CHAIN_ID = 8453;
 export const ETHEREUM_CHAIN_ID = 1;
+export const BSC_CHAIN_ID = 56;
 
 /** Canonical Permit2 (same address on every chain). Verified live on Base. */
 export const PERMIT2_ADDRESS: Address = "0x000000000022D473030F116dDEE9F6B43aC78BA3";
@@ -36,6 +37,12 @@ export const WETH_ADDRESS: Address = "0x4200000000000000000000000000000000000006
 
 /** WETH on Ethereum mainnet. Constructor arg for the mainnet DustSwapSweepRouter. */
 export const ETHEREUM_WETH_ADDRESS: Address = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2";
+
+/**
+ * WBNB on BSC (the chain's wrapped native). Constructor arg for the BSC DustSwapSweepRouter.
+ * Verified live 2026-07-10 via eth_getCode + decimals()=18 + symbol()=WBNB on bsc-dataseed.
+ */
+export const BSC_WBNB_ADDRESS: Address = "0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c";
 
 export type DustSweepV3SpenderModel = "permit2" | "self";
 
@@ -308,6 +315,132 @@ export const ETHEREUM_DUSTSWEEP_V3_TARGETS: DustSweepV3Target[] = [
   },
 ];
 
+/**
+ * Verified BSC (chainId 56) targets for DustSweep V3.
+ *
+ * Native execution ships with PancakeSwap V3 + V2, Uniswap V3 (BSC) and Biswap — the only venues
+ * with meaningful 24h volume (DeFiLlama 2026-07-10: Pancake V3 $253M, Pancake V2 $30M, Uni V3
+ * $24.7M; everything else <$3M). ApeSwap/BakerySwap/MDEX/THENA etc. are reached via the
+ * aggregator rescue path (Kyber / 0x / LI.FI). OpenOcean + Odos are PRE-ALLOWLISTED but PARKED
+ * (enabled: false) — inert until DUST_SWEEP_ENABLE_*_56 + DUST_SWEEP_ALLOWED_AGGREGATOR_TARGETS_56
+ * open them. Every address below was verified live on 2026-07-10 via eth_getCode on
+ * bsc-dataseed.bnbchain.org AND a functional probe (getAmountsOut / quoteExactInputSingle / live
+ * aggregator API response) — never explorer labels. Re-verify via eth_getCode before the owner
+ * allowlist txs; see packages/contracts/remix/DustSwapSweepRouter-BSC-Deploy.md.
+ */
+export const BSC_DUSTSWEEP_V3_TARGETS: DustSweepV3Target[] = [
+  {
+    id: "pancakeswap-v3-smart-router",
+    name: "PancakeSwap V3 SmartRouter",
+    target: "0x13f4EA83D0bd40E75C8222255bc855a974568Dd4",
+    spender: "0x13f4EA83D0bd40E75C8222255bc855a974568Dd4",
+    spenderModel: "self",
+    calldataStyle: "pancake_smart_router",
+    feeTiers: [100, 500, 2500, 10000],
+    enabled: true,
+    source:
+      "Verified live 2026-07-10: eth_getCode ok; QuoterV2 0xB048…5997 answered quoteExactInputSingle " +
+      "WBNB→USDT at fee 100 and 500 (~573 USDT/WBNB).",
+  },
+  {
+    id: "pancakeswap-v2-router",
+    name: "PancakeSwap V2 Router",
+    target: "0x10ED43C718714eb63d5aA57B78B54704E256024E",
+    spender: "0x10ED43C718714eb63d5aA57B78B54704E256024E",
+    spenderModel: "self",
+    calldataStyle: "baseswap_router", // UniV2 getAmountsOut/swapExactTokensForTokens shape
+    enabled: true,
+    source:
+      "Verified live 2026-07-10: eth_getCode ok; getAmountsOut(1 WBNB→USDT) returned ~572 USDT.",
+  },
+  {
+    id: "uniswap-v3-swaprouter02",
+    name: "Uniswap V3 SwapRouter02 (BSC)",
+    target: "0xB971eF87ede563556b2ED4b1C0b0019111Dd85d2",
+    spender: "0xB971eF87ede563556b2ED4b1C0b0019111Dd85d2",
+    spenderModel: "self",
+    calldataStyle: "uniswap_v3_swaprouter02",
+    feeTiers: [100, 500, 3000, 10000],
+    enabled: true,
+    source:
+      "Verified live 2026-07-10: eth_getCode ok; QuoterV2 0x78D7…B077 answered quoteExactInputSingle " +
+      "WBNB→USDT at fee 500/3000 (~573 USDT/WBNB).",
+  },
+  {
+    id: "biswap-router",
+    name: "Biswap Router (UniV2)",
+    target: "0x3a6d8cA21D1CF76F653A67577FA0D27453350dD8",
+    spender: "0x3a6d8cA21D1CF76F653A67577FA0D27453350dD8",
+    spenderModel: "self",
+    calldataStyle: "baseswap_router",
+    enabled: true,
+    source:
+      "Verified live 2026-07-10: eth_getCode ok; getAmountsOut(1 WBNB→USDT) returned ~570.6 USDT " +
+      "(competitive with Pancake).",
+  },
+  {
+    id: "kyber-meta-aggregation-router-v2",
+    name: "KyberSwap MetaAggregationRouterV2",
+    target: "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5",
+    spender: "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5",
+    spenderModel: "self",
+    calldataStyle: "uniswap_v3_swaprouter02", // GENERIC aggregator route; calldata is opaque
+    enabled: true,
+    source:
+      "Verified live 2026-07-10: Kyber /bsc/api/v1/routes returned routerAddress == this address; " +
+      "eth_getCode ok on BSC.",
+  },
+  {
+    id: "zerox-allowance-holder",
+    name: "0x AllowanceHolder",
+    target: "0x0000000000001fF3684f28c67538d4D072C22734",
+    spender: "0x0000000000001fF3684f28c67538d4D072C22734",
+    spenderModel: "self",
+    calldataStyle: "uniswap_v3_swaprouter02",
+    enabled: true,
+    source:
+      "Verified live 2026-07-10: 0x v2 allowance-holder quote chainId=56 returned to+spender == " +
+      "this address; eth_getCode ok on BSC.",
+  },
+  {
+    id: "lifi-diamond",
+    name: "LI.FI Diamond",
+    target: "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE",
+    spender: "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE",
+    spenderModel: "self",
+    calldataStyle: "uniswap_v3_swaprouter02",
+    enabled: true,
+    source:
+      "Verified live 2026-07-10: LI.FI /v1/quote fromChain=56 returned approvalAddress + " +
+      "transactionRequest.to == this address; eth_getCode ok on BSC.",
+  },
+  {
+    id: "openocean-exchange-proxy",
+    name: "OpenOcean Exchange Proxy",
+    target: "0x6352a56caadC4F1E25CD6c75970Fa768A3304e64",
+    spender: "0x6352a56caadC4F1E25CD6c75970Fa768A3304e64",
+    spenderModel: "self",
+    calldataStyle: "uniswap_v3_swaprouter02",
+    enabled: false, // PARKED — pre-allowlist on-chain, enable via DUST_SWEEP_ENABLE_OPENOCEAN_56
+    source:
+      "Verified live 2026-07-10: eth_getCode ok on BSC; OpenOcean v4/bsc/quote responds. Parked " +
+      "pending enable + swap-payload verification.",
+  },
+  {
+    id: "odos-router-v2",
+    name: "Odos RouterV2 (BSC)",
+    // NOTE: Odos routers are per-chain — this is NOT the mainnet address.
+    target: "0x89b8AA89FDd0507a99d334CBe3C808fAFC7d850E",
+    spender: "0x89b8AA89FDd0507a99d334CBe3C808fAFC7d850E",
+    spenderModel: "self",
+    calldataStyle: "uniswap_v3_swaprouter02",
+    enabled: false, // PARKED — pre-allowlist on-chain, enable via DUST_SWEEP_ENABLE_ODOS_56
+    source:
+      "Verified live 2026-07-10: Odos /info/contract-info/v2/56 returned this routerAddress; " +
+      "eth_getCode ok on BSC. Parked pending enable + live quote verification.",
+  },
+];
+
 function unique(addresses: Address[]): Address[] {
   const seen = new Set<string>();
   const out: Address[] = [];
@@ -347,7 +480,9 @@ export function getDustSweepV3RouterAddress(): Address | null {
 
 /** All configured V3 targets for a chain (Base default). */
 export function getDustSweepV3TargetsForChain(chainId: number): DustSweepV3Target[] {
-  return chainId === ETHEREUM_CHAIN_ID ? ETHEREUM_DUSTSWEEP_V3_TARGETS : BASE_DUSTSWEEP_V3_TARGETS;
+  if (chainId === ETHEREUM_CHAIN_ID) return ETHEREUM_DUSTSWEEP_V3_TARGETS;
+  if (chainId === BSC_CHAIN_ID) return BSC_DUSTSWEEP_V3_TARGETS;
+  return BASE_DUSTSWEEP_V3_TARGETS;
 }
 
 export function getActiveDustSweepV3TargetsForChain(chainId: number): DustSweepV3Target[] {

@@ -1,4 +1,4 @@
-import { base, mainnet } from "wagmi/chains";
+import { base, bsc, mainnet } from "wagmi/chains";
 import type { Chain } from "wagmi/chains";
 import { type Address } from "viem";
 import { type Token } from "@/types/dustsweep";
@@ -14,12 +14,13 @@ import { type Token } from "@/types/dustsweep";
 
 export const BASE_CHAIN_ID = 8453;
 export const ETHEREUM_CHAIN_ID = 1;
+export const BSC_CHAIN_ID = 56;
 
 const NATIVE_TOKEN_SENTINEL = "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE" as Address;
 
 export type SweepChain = {
   id: number;
-  key: "base" | "ethereum";
+  key: "base" | "ethereum" | "bsc";
   label: string;
   chain: Chain;
   weth: Address;
@@ -27,6 +28,8 @@ export type SweepChain = {
   /** Per-chain output token list; USDC first = the default tokenOut. */
   outputTokens: Token[];
   explorerUrl: string;
+  /** Explorer brand name for UI copy ("Swept! View on …"). */
+  explorerName: string;
   /** Env holding this chain's deployed DustSwapSweepRouter V3 address (the owned-lane spender). */
   routerV3Env: string;
   /** Env holding this chain's manual/auto selection cap. */
@@ -101,6 +104,40 @@ const ETHEREUM_OUTPUT_TOKENS: Token[] = [
   },
 ];
 
+// BSC gotcha: USDT/USDC are 18 DECIMALS here (unlike the 6-decimal Base/Ethereum versions).
+// USDT is first (= default output) — it is by far the deepest stable on BSC. Native is BNB.
+const BSC_OUTPUT_TOKENS: Token[] = [
+  {
+    address: "0x55d398326f99059fF775485246999027B3197955" as Address,
+    symbol: "USDT",
+    name: "Tether USD",
+    decimals: 18,
+    logoURI: "https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/smartchain/assets/0x55d398326f99059fF775485246999027B3197955/logo.png",
+  },
+  {
+    address: NATIVE_TOKEN_SENTINEL,
+    symbol: "BNB",
+    name: "BNB",
+    decimals: 18,
+    logoURI: "https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/smartchain/info/logo.png",
+    isNative: true,
+  },
+  {
+    address: "0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c" as Address,
+    symbol: "WBNB",
+    name: "Wrapped BNB",
+    decimals: 18,
+    logoURI: "https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/smartchain/assets/0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c/logo.png",
+  },
+  {
+    address: "0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d" as Address,
+    symbol: "USDC",
+    name: "USD Coin",
+    decimals: 18,
+    logoURI: "https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/smartchain/assets/0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d/logo.png",
+  },
+];
+
 export const SWEEP_CHAINS: SweepChain[] = [
   {
     id: BASE_CHAIN_ID,
@@ -111,6 +148,7 @@ export const SWEEP_CHAINS: SweepChain[] = [
     usdc: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" as Address,
     outputTokens: BASE_OUTPUT_TOKENS,
     explorerUrl: "https://basescan.org",
+    explorerName: "Basescan",
     routerV3Env: "NEXT_PUBLIC_DUST_SWEEP_ROUTER_V3_ADDRESS",
     selectLimitEnv: "NEXT_PUBLIC_DUST_SWEEP_AUTO_SELECT_LIMIT",
     paymasterEligible: true,
@@ -125,10 +163,26 @@ export const SWEEP_CHAINS: SweepChain[] = [
     usdc: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48" as Address,
     outputTokens: ETHEREUM_OUTPUT_TOKENS,
     explorerUrl: "https://etherscan.io",
+    explorerName: "Etherscan",
     routerV3Env: "NEXT_PUBLIC_DUST_SWEEP_ROUTER_V3_ADDRESS_1",
     selectLimitEnv: "NEXT_PUBLIC_DUST_SWEEP_AUTO_SELECT_LIMIT_1",
     paymasterEligible: false,
     approvalWaitTimeoutMs: 180_000,
+  },
+  {
+    id: BSC_CHAIN_ID,
+    key: "bsc",
+    label: "BNB Chain",
+    chain: bsc, // nativeCurrency BNB — drives wallet_addEthereumChain + native symbol display
+    weth: "0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c" as Address, // WBNB
+    usdc: "0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d" as Address, // 18 decimals on BSC
+    outputTokens: BSC_OUTPUT_TOKENS,
+    explorerUrl: "https://bscscan.com",
+    explorerName: "BscScan",
+    routerV3Env: "NEXT_PUBLIC_DUST_SWEEP_ROUTER_V3_ADDRESS_56",
+    selectLimitEnv: "NEXT_PUBLIC_DUST_SWEEP_AUTO_SELECT_LIMIT_56",
+    paymasterEligible: false,
+    approvalWaitTimeoutMs: 90_000, // ~3s blocks — Base-like cadence
   },
 ];
 
@@ -137,7 +191,9 @@ function readSelectLimit(chainId: number): number | null {
   const raw =
     chainId === ETHEREUM_CHAIN_ID
       ? process.env.NEXT_PUBLIC_DUST_SWEEP_AUTO_SELECT_LIMIT_1
-      : process.env.NEXT_PUBLIC_DUST_SWEEP_AUTO_SELECT_LIMIT;
+      : chainId === BSC_CHAIN_ID
+        ? process.env.NEXT_PUBLIC_DUST_SWEEP_AUTO_SELECT_LIMIT_56
+        : process.env.NEXT_PUBLIC_DUST_SWEEP_AUTO_SELECT_LIMIT;
   const parsed = Number(raw);
   return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : null;
 }
@@ -146,7 +202,9 @@ function readRouterV3(chainId: number): Address | null {
   const raw =
     chainId === ETHEREUM_CHAIN_ID
       ? process.env.NEXT_PUBLIC_DUST_SWEEP_ROUTER_V3_ADDRESS_1
-      : process.env.NEXT_PUBLIC_DUST_SWEEP_ROUTER_V3_ADDRESS;
+      : chainId === BSC_CHAIN_ID
+        ? process.env.NEXT_PUBLIC_DUST_SWEEP_ROUTER_V3_ADDRESS_56
+        : process.env.NEXT_PUBLIC_DUST_SWEEP_ROUTER_V3_ADDRESS;
   return raw && /^0x[0-9a-fA-F]{40}$/.test(raw) ? (raw as Address) : null;
 }
 

@@ -102,8 +102,9 @@ function getSweepButtonState(args: {
   hasQuoteError: boolean;
   sweepStep: ReturnType<typeof useDustSweep>["sweepStep"];
   routeKind: SweepRouteKind;
+  explorerName: string;
 }): SweepButtonVisualState {
-  if (args.sweepStep === "success") return { state: "success", label: "Swept! View on Basescan" };
+  if (args.sweepStep === "success") return { state: "success", label: `Swept! View on ${args.explorerName}` };
   if (args.sweepStep === "error") return { state: "error", label: "Try again" };
   if (args.sweepStep === "approving") {
     return args.routeKind === "batch"
@@ -286,11 +287,17 @@ export default function DustSweepPage() {
   // Active sweep chain. Persisted per-session; defaults to Base. The selector below is only
   // rendered when more than one chain is enabled, so with the flag off the page is unchanged.
   const enabledSweepChains = useMemo(() => getEnabledSweepChains(), []);
-  const [sweepChainId, setSweepChainId] = useState<number>(() => {
-    if (typeof window === "undefined") return BASE_CHAIN_ID;
+  // Always render Base on the server AND the first client render, then restore the stored chain
+  // after mount — reading sessionStorage during the initial render made SSR and client HTML
+  // disagree (hydration error) for anyone whose stored chain wasn't Base.
+  const [sweepChainId, setSweepChainId] = useState<number>(BASE_CHAIN_ID);
+  useEffect(() => {
     const stored = Number(window.sessionStorage.getItem("dustsweep:chainId"));
-    return enabledSweepChains.some((chain) => chain.id === stored) ? stored : BASE_CHAIN_ID;
-  });
+    if (enabledSweepChains.some((chain) => chain.id === stored)) {
+      setSweepChainId(stored);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const sweep = useDustSweep({ chainId: sweepChainId });
   const walletConnection = useWalletConnection();
   useEffect(() => {
@@ -395,6 +402,8 @@ export default function DustSweepPage() {
     hasQuoteError: Boolean(sweep.quoteError),
     sweepStep: sweep.sweepStep,
     routeKind: sweep.routeKind,
+    explorerName:
+      enabledSweepChains.find((chain) => chain.id === sweepChainId)?.explorerName ?? "Basescan",
   });
 
   const buttonState: SweepButtonVisualState = baseButtonState;
