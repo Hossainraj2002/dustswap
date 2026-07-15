@@ -50,14 +50,19 @@ export function SweepButton({
   onClick,
   txHash,
   chainId,
+  busy = false,
 }: {
   visualState: SweepButtonVisualState;
   onClick: () => void;
   txHash: Hex | null;
   chainId?: number;
+  // Forces the spinner/disabled state independent of `visualState` (e.g. while a chain switch is
+  // in flight so the "Switch to <chain>" button can't be re-triggered mid-prompt).
+  busy?: boolean;
 }) {
   const disabled = visualState.state === "disabled";
   const isBusy =
+    busy ||
     visualState.state === "loading" ||
     visualState.state === "approving" ||
     visualState.state === "setup" ||
@@ -65,7 +70,8 @@ export function SweepButton({
     visualState.state === "pending";
   const isSuccess = visualState.state === "success" && txHash;
   const isPreview = visualState.state === "preview";
-  const isPrimary = isPreview || visualState.state === "ready";
+  const isSwitch = visualState.state === "switch";
+  const isPrimary = isPreview || isSwitch || visualState.state === "ready";
 
   if (isSuccess) {
     return (
@@ -99,7 +105,14 @@ export function SweepButton({
       )}
     >
       {isBusy ? <Spinner /> : null}
-      {isPreview ? (
+      {isSwitch && !isBusy ? (
+        <>
+          <svg viewBox="0 0 24 24" className="h-[18px] w-[18px]" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M4 7h13M4 7l3-3M4 7l3 3M20 17H7M20 17l-3-3M20 17l-3 3" />
+          </svg>
+          {visualState.label}
+        </>
+      ) : isPreview ? (
         <>
           <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />

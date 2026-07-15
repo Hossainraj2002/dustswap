@@ -151,6 +151,7 @@ function AssetRow({
   disabled,
   mutedReason,
   multi,
+  chainId,
   onClick,
 }: {
   token: Token & Partial<Pick<SwappableToken, "balanceFormatted" | "valueUSD">>;
@@ -158,6 +159,7 @@ function AssetRow({
   disabled?: boolean;
   mutedReason?: string;
   multi?: boolean;
+  chainId?: number;
   onClick?: () => void;
 }) {
   const balance = fmtBalance(token.balanceFormatted);
@@ -179,7 +181,7 @@ function AssetRow({
       )}
     >
       <span className="flex min-w-0 items-center gap-3">
-        <TokenLogo token={token} size="md" muted={disabled} />
+        <TokenLogo token={token} size="md" muted={disabled} chainId={chainId} />
         <span className="min-w-0">
           <span className="block truncate text-[15px] font-bold text-slate-900 dark:text-white">{token.symbol}</span>
           <span className="flex items-center gap-1.5">
@@ -383,7 +385,7 @@ export function TokenSelectModal({
                         : "sweep-chip text-slate-800 hover:border-blue-300 dark:text-slate-100",
                     )}
                   >
-                    <TokenLogo token={token} size="sm" />
+                    <TokenLogo token={token} size="sm" chainId={chainId} />
                     {token.symbol}
                   </button>
                 ))}
@@ -418,7 +420,12 @@ export function TokenSelectModal({
 
             <div className="space-y-0.5">
               {disabledOutputToken ? (
-                <AssetRow token={disabledOutputToken} disabled mutedReason="Selected output token" />
+                <AssetRow
+                  token={disabledOutputToken}
+                  disabled
+                  mutedReason="Selected output token"
+                  chainId={chainId}
+                />
               ) : null}
 
               {(mode === "single" ? visibleOutputTokens : visibleSwappable).map((token) => {
@@ -437,6 +444,7 @@ export function TokenSelectModal({
                     selected={selected}
                     multi={mode === "multi"}
                     disabled={rowDisabled}
+                    chainId={chainId}
                     onClick={() => {
                       if (mode === "single") {
                         onSelectOutputToken(token);
@@ -472,6 +480,7 @@ export function TokenSelectModal({
                         token={token}
                         disabled
                         mutedReason={reasonText(token.reason)}
+                        chainId={chainId}
                       />
                     ))}
                   </div>

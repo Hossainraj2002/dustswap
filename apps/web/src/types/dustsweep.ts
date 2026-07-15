@@ -377,6 +377,8 @@ export type SweepButtonVisualState =
   | { state: "disabled"; label: "Select output token" }
   | { state: "disabled"; label: "No route available" }
   | { state: "disabled"; label: "Confirm high price impact" }
+  // Wallet is on the wrong network for the selected sweep chain — clicking switches it.
+  | { state: "switch"; label: string }
   | { state: "preview"; label: "Preview Sweep" }
   | { state: "ready"; label: "Sweep" }
   | { state: "loading"; label: "Finding balances..." }

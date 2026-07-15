@@ -406,7 +406,6 @@ export default function DustSweepPage() {
       enabledSweepChains.find((chain) => chain.id === sweepChainId)?.explorerName ?? "Basescan",
   });
 
-  const buttonState: SweepButtonVisualState = baseButtonState;
   const walletModeNotice =
     sweep.executionNotice ||
     (isDevView && sweep.batchMode && sweep.selectedTokens.length > 0
@@ -440,6 +439,26 @@ export default function DustSweepPage() {
     sweep.sweepStep === "signing" ||
     sweep.sweepStep === "pending" ||
     sweep.sweepStep === "success";
+
+  // Wallet-on-wrong-network gate. Once the user has a sweep ready to send, the primary button
+  // becomes "Switch to <chain>" until the connected wallet's LIVE chain matches the selected sweep
+  // chain — so a sweep can never be signed/submitted on the wrong network (the reported bug).
+  const activeChainLabel =
+    enabledSweepChains.find((chain) => chain.id === sweepChainId)?.label ?? "the selected network";
+  const needsChainSwitch =
+    hasConnectedWallet &&
+    !sweep.isOnSweepChain &&
+    sweep.selectedTokens.length > 0 &&
+    Boolean(sweep.tokenOut) &&
+    !isExecuting;
+  const buttonState: SweepButtonVisualState = needsChainSwitch
+    ? {
+        state: "switch",
+        label: sweep.isSwitchingChain
+          ? `Switching to ${activeChainLabel}...`
+          : `Switch to ${activeChainLabel}`,
+      }
+    : baseButtonState;
   const usesStandardMetaMaskApprovals =
     sweep.routeKind === "batch" &&
     sweep.walletProfile.walletKey === "metamask" &&
@@ -705,8 +724,13 @@ export default function DustSweepPage() {
           <SweepButton
             visualState={buttonState}
             onClick={() => {
+              if (buttonState.state === "switch") {
+                void sweep.switchChain();
+                return;
+              }
               void sweep.executeSweep();
             }}
+            busy={needsChainSwitch && sweep.isSwitchingChain}
             txHash={sweep.txHash}
             chainId={sweep.chainId}
           />

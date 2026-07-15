@@ -177,37 +177,55 @@ export function useSweepChainSwitch(targetChainId: number) {
 
   const switchToSweepChain = useCallback(async () => {
     if (!isConnected) throw new Error("Connect your wallet first.");
-    if (isOnChain) return true;
 
     setIsSwitching(true);
     try {
-      const provider = await getRequestProvider();
-      const providerChainId = provider ? await readProviderChainId(provider).catch(() => null) : null;
-      if ((providerChainId ?? chainId) === targetChainId) {
+      let provider = await getRequestProvider();
+
+      // AUTHORITATIVE confirmation — the wallet's LIVE chain, never React state. This is what makes
+      // the switch honest: a raw eth_sendTransaction / wallet_sendCalls ignores any chainId hint and
+      // submits to whatever chain the wallet is actually on, so we must only ever report success once
+      // the provider itself reports the target chain.
+      const isProviderOnTarget = async () => {
+        if (!provider) return chainId === targetChainId;
+        const live = await readProviderChainId(provider).catch(() => null);
+        return live === targetChainId;
+      };
+
+      if (await isProviderOnTarget()) {
         setObservedChainId(targetChainId);
         return true;
       }
 
+      // 1) wagmi switch (prompts the wallet). A non-rejection failure is non-fatal — fall through to
+      //    the raw provider path. A user rejection is surfaced as-is.
       try {
-        const switchedChain = await switchChainAsync({ chainId: targetChainId });
-        if (provider) await waitForProviderChainId(provider, targetChainId);
-        setObservedChainId(switchedChain?.id ?? targetChainId);
-        return true;
+        await switchChainAsync({ chainId: targetChainId });
       } catch (error) {
         if (isUserRejectedRequest(error)) throw error;
-        if (!provider) throw error;
+      }
+      if (provider) await waitForProviderChainId(provider, targetChainId);
+      if (await isProviderOnTarget()) {
+        setObservedChainId(targetChainId);
+        return true;
       }
 
-      if (!provider) {
-        throw new Error(
-          `Your wallet connection could not switch to ${sweepChain.label} automatically. Please switch and try again.`,
-        );
+      // 2) Raw EIP-3326 switch (+ EIP-3085 add-chain fallback) directly on the provider.
+      if (!provider) provider = await getRequestProvider();
+      if (provider) {
+        await requestChainFromProvider(provider);
+        await waitForProviderChainId(provider, targetChainId);
+        if (await isProviderOnTarget()) {
+          setObservedChainId(targetChainId);
+          return true;
+        }
       }
 
-      await requestChainFromProvider(provider);
-      await waitForProviderChainId(provider, targetChainId);
-      setObservedChainId(targetChainId);
-      return true;
+      // The wallet never landed on the target chain. Do NOT let the caller sign — a sweep here would
+      // be submitted on the wrong network. Abort with a clear, actionable message instead.
+      throw new Error(
+        `Your wallet is still on the wrong network. Open your wallet, switch to ${sweepChain.label}, and try again.`,
+      );
     } catch (error) {
       throw new Error(getSwitchErrorMessage(error));
     } finally {
@@ -218,7 +236,6 @@ export function useSweepChainSwitch(targetChainId: number) {
     getRequestProvider,
     getSwitchErrorMessage,
     isConnected,
-    isOnChain,
     requestChainFromProvider,
     switchChainAsync,
     sweepChain.label,

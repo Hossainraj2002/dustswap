@@ -264,6 +264,34 @@ const DISCOVERY_STALE_DB_CACHE_TTL_MS = boundedEnvNumber(
 );
 const DISCOVERY_MARKET_HINT_CONCURRENCY = boundedEnvNumber("DUST_SWEEP_MARKET_HINT_CONCURRENCY", 4, 1, 8);
 const DISCOVERY_MARKET_HINT_TIMEOUT_MS = boundedEnvNumber("DUST_SWEEP_MARKET_HINT_TIMEOUT_MS", 3_500, 1_000, 8_000);
+// Thin-pool price sanity cross-check (see reconcileThinPoolPrices). A DexScreener price whose pool
+// liquidity is below this floor is treated as UNTRUSTED *only* when it implies a user-noticeable USD
+// value, at which point it is cross-checked against CoinGecko. Correct thin-pool prices (e.g. a
+// stablecoin in a shallow pool) are confirmed and left unchanged.
+const DISCOVERY_THIN_POOL_LIQUIDITY_USD = boundedEnvNumber(
+  "DUST_SWEEP_THIN_POOL_LIQUIDITY_USD",
+  15_000,
+  0,
+  1_000_000,
+);
+// Only cross-check a suspect whose thin-pool price implies at least this displayed USD value — the
+// distortions users actually notice (a broken pool inflating a dust token to hundreds of dollars).
+const DISCOVERY_PRICE_SANITY_MIN_VALUE_USD = boundedEnvNumber(
+  "DUST_SWEEP_PRICE_SANITY_MIN_VALUE_USD",
+  2,
+  0,
+  10_000,
+);
+// Hard cap on CoinGecko cross-check calls per discovery pass (bounded latency; result is cached).
+const DISCOVERY_PRICE_SANITY_MAX_CHECKS = boundedEnvNumber(
+  "DUST_SWEEP_PRICE_SANITY_MAX_CHECKS",
+  12,
+  0,
+  50,
+);
+// Adopt the CoinGecko price only when it diverges from the thin-pool price by more than this
+// fraction — leaves genuinely-correct thin-pool prices (stablecoins, etc.) untouched.
+const DISCOVERY_PRICE_SANITY_DIVERGENCE = 0.25;
 const DISCOVERY_BLOCKSCOUT_FAST_PRICING =
   process.env.DUST_SWEEP_BLOCKSCOUT_FAST_PRICING !== "false";
 // Cap on EXTERNAL (DexScreener/CoinGecko) price lookups for tokens Blockscout didn't price.
@@ -2230,6 +2258,24 @@ function isOutputAssetAddress(address: string, chain: SweepChainConfig = BASE_CO
   );
 }
 
+// Deterministic per-chain logo CDN (DefiLlama token-icons), keyed by chainId + lowercased contract
+// address. Used as the LAST-RESORT logo when neither the whitelist, the balance provider, nor the
+// market hint returned an icon — which on the Alchemy discovery path (raw balances, no metadata) is
+// most non-whitelisted tokens. DefiLlama aggregates Trustwallet/CoinGecko/CMC assets (far broader
+// Base + mid/long-tail coverage than Trustwallet alone) and returns HTTP 404 for tokens it doesn't
+// know, so the frontend TokenLogo cleanly degrades those to a letter avatar. Strictly additive:
+// every token the CDN knows gets a real logo; unknown tokens look exactly as they do today.
+const DETERMINISTIC_LOGO_CHAIN_IDS = new Set<number>([
+  BASE_CHAIN_ID,
+  ETHEREUM_CHAIN_ID,
+  BSC_CHAIN_ID,
+]);
+
+function deterministicTokenLogo(address: Address, chain: SweepChainConfig): string | undefined {
+  if (!DETERMINISTIC_LOGO_CHAIN_IDS.has(chain.chainId)) return undefined;
+  return `https://token-icons.llamao.fi/icons/tokens/${chain.chainId}/${address.toLowerCase()}?h=48&w=48`;
+}
+
 async function fetchTokenMarketHintsDexScreener(
   addresses: Address[],
   chain: SweepChainConfig = BASE_CONFIG,
@@ -2339,8 +2385,17 @@ async function fetchCoinGeckoTokenPrices(
         const url = new URL(`https://api.coingecko.com/api/v3/simple/token_price/${platform}`);
         url.searchParams.set("contract_addresses", batch.map((a) => a.toLowerCase()).join(","));
         url.searchParams.set("vs_currencies", "usd");
+        // CoinGecko's keyless free tier now caps contract_addresses at 1 per call (a batch of 75
+        // just 400s), so this fallback is effectively dead without a key. Send the same demo/pro key
+        // swapRecorder already uses, which restores multi-address batching + higher rate limits.
+        const cgHeaders: Record<string, string> = { Accept: "application/json" };
+        const cgKey = process.env.COINGECKO_API_KEY || "";
+        if (cgKey) {
+          cgHeaders["x-cg-demo-api-key"] = cgKey;
+          cgHeaders["x-cg-pro-api-key"] = cgKey;
+        }
         const response = await fetch(url, {
-          headers: { Accept: "application/json" },
+          headers: cgHeaders,
           signal: AbortSignal.timeout(DISCOVERY_MARKET_HINT_TIMEOUT_MS),
         });
         if (!response.ok) return nextPrices;
@@ -2441,6 +2496,90 @@ async function fetchTokenMarketHints(
   }
 
   return hints;
+}
+
+// DexScreener is our only BULK price source on the discovery path (CoinGecko's free tier now rejects
+// multi-address batches). A thin DexScreener pool — a few $k of liquidity — can report a wildly
+// wrong priceUsd: e.g. real MAV is ~$0.009 but a broken $1.6k pool quotes $14, inflating a 24-token
+// dust balance to ~$337. This cross-checks ONLY the suspects (a thin-pool price implying a
+// user-noticeable USD value) against CoinGecko's curated, manipulation-resistant feed and adopts
+// CoinGecko's price when the two diverge materially. It is bounded (≤ DISCOVERY_PRICE_SANITY_MAX_CHECKS
+// single-address lookups) and fail-open: any CoinGecko hiccup leaves the DexScreener price untouched,
+// and correct thin-pool prices (stablecoins in shallow pools, etc.) are confirmed and left as-is.
+// Mutates `marketHints` in place so the downstream discovery builder picks up the corrected price.
+async function reconcileThinPoolPrices(
+  balances: AlchemyBalance[],
+  marketHints: Record<string, TokenMarketHint>,
+  metadataByAddress: Map<string, Erc20Metadata>,
+  whitelist: Map<string, TokenWhitelistRow>,
+  chain: SweepChainConfig,
+): Promise<void> {
+  if (DISCOVERY_PRICE_SANITY_MAX_CHECKS <= 0) return;
+  const platform = getCoinGeckoPlatform(chain);
+  if (!platform) return;
+
+  const suspects: Array<{ address: Address; key: string; dexPrice: number; valueUSD: number }> = [];
+  for (const balance of balances) {
+    if (!isAddress(balance.contractAddress)) continue;
+    const address = normalizeAddress(balance.contractAddress);
+    const key = address.toLowerCase();
+    const hint = marketHints[key];
+    if (!hint || hint.source !== "dexscreener" || hint.priceUSD <= 0) continue;
+    if (hint.liquidityUSD >= DISCOVERY_THIN_POOL_LIQUIDITY_USD) continue;
+
+    const decimalsRaw = Number(
+      whitelist.get(key)?.decimals ?? metadataByAddress.get(key)?.decimals ?? 18,
+    );
+    const decimals = Number.isFinite(decimalsRaw) ? decimalsRaw : 18;
+    let valueUSD = 0;
+    try {
+      valueUSD = Number(formatUnits(BigInt(balance.tokenBalance), decimals)) * hint.priceUSD;
+    } catch {
+      continue;
+    }
+    if (!Number.isFinite(valueUSD) || valueUSD < DISCOVERY_PRICE_SANITY_MIN_VALUE_USD) continue;
+    suspects.push({ address, key, dexPrice: hint.priceUSD, valueUSD });
+  }
+
+  if (suspects.length === 0) return;
+  // Correct the biggest distortions first when a wallet has more suspects than the call budget.
+  suspects.sort((a, b) => b.valueUSD - a.valueUSD);
+  const capped = suspects.slice(0, DISCOVERY_PRICE_SANITY_MAX_CHECKS);
+
+  const apiKey = process.env.COINGECKO_API_KEY || "";
+  await pLimit(
+    capped.map((suspect) => async () => {
+      try {
+        const url = new URL(`https://api.coingecko.com/api/v3/simple/token_price/${platform}`);
+        url.searchParams.set("contract_addresses", suspect.address.toLowerCase());
+        url.searchParams.set("vs_currencies", "usd");
+        const headers: Record<string, string> = { Accept: "application/json" };
+        if (apiKey) {
+          headers["x-cg-demo-api-key"] = apiKey;
+          headers["x-cg-pro-api-key"] = apiKey;
+        }
+        const response = await fetch(url, {
+          headers,
+          signal: AbortSignal.timeout(DISCOVERY_MARKET_HINT_TIMEOUT_MS),
+        });
+        if (!response.ok) return;
+        const data = (await response.json()) as Record<string, { usd?: number }>;
+        const cgPrice = Number(data[suspect.address.toLowerCase()]?.usd || 0);
+        if (!Number.isFinite(cgPrice) || cgPrice <= 0) return;
+        if (Math.abs(cgPrice - suspect.dexPrice) / cgPrice <= DISCOVERY_PRICE_SANITY_DIVERGENCE) return;
+
+        const hint = marketHints[suspect.key];
+        if (!hint) return;
+        hint.priceUSD = cgPrice;
+        hint.source = "coingecko";
+        // A thin pool the quote engine still has to route through — keep it MEDIUM, not HIGH.
+        hint.confidence = "MEDIUM";
+      } catch {
+        // Fail-open: keep the DexScreener price when CoinGecko is unavailable/rate-limited.
+      }
+    }),
+    Math.min(3, DISCOVERY_MARKET_HINT_CONCURRENCY),
+  );
 }
 
 // The dustsweep_token_cache table is keyed by `address` only, so multichain rows are namespaced
@@ -6904,6 +7043,11 @@ async function handleDustSweepTokensRequest(c: Context, rawAddress?: string) {
       );
       const metadataByAddress = await loadDiscoveryMetadata(nonZero, whitelist, chain);
 
+      // Correct wildly-wrong values from thin/broken DexScreener pools (e.g. a $1.6k pool quoting
+      // MAV at $14 vs its real ~$0.009) before bucketing, so display value AND the swappable/hidden
+      // split both use the sane price. Bounded + fail-open; no-op for wallets without such outliers.
+      await reconcileThinPoolPrices(nonZero, marketHints, metadataByAddress, whitelist, chain);
+
       const swappable: DiscoveryTokenResult[] = [];
       const unavailable: DiscoveryTokenResult[] = [];
       const hidden: DiscoveryTokenResult[] = [];
@@ -6952,7 +7096,7 @@ async function handleDustSweepTokensRequest(c: Context, rawAddress?: string) {
         const priceUSD = market.priceUSD;
         liquidityUSD = Math.max(liquidityUSD, market.liquidityUSD);
         bestDex = market.bestDex !== "GENERIC" ? market.bestDex : bestDex;
-        logoURI = logoURI || market.logoURI;
+        logoURI = logoURI || market.logoURI || deterministicTokenLogo(tokenAddress, chain);
         const valueUSD = Number(balanceFormatted) * priceUSD;
         const risk = getRiskClassification({
           symbol,

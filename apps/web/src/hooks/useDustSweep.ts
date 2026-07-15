@@ -143,6 +143,12 @@ type WalletCallsStatusResult = {
 
 export type UseDustSweepReturn = {
   chainId: number;
+  /** True only when the connected wallet's LIVE chain equals the selected sweep chain. */
+  isOnSweepChain: boolean;
+  /** A wallet chain switch is in flight. */
+  isSwitchingChain: boolean;
+  /** Prompt the wallet to switch to the selected sweep chain (verified; errors land in `error`). */
+  switchChain: () => Promise<boolean>;
   swappableTokens: SwappableToken[];
   unavailableTokens: UnavailableToken[];
   selectedTokens: SelectedToken[];
@@ -723,7 +729,11 @@ export function useDustSweep(options?: { chainId?: number }): UseDustSweepReturn
   const { data: walletClient } = useWalletClient();
   const publicClient = usePublicClient({ chainId: sweepChainId });
   // EIP-7702 delegation is per-chain — the switch + code reads MUST target the active sweep chain.
-  const { switchToSweepChain } = useSweepChainSwitch(sweepChainId);
+  const {
+    switchToSweepChain,
+    isOnChain: isOnSweepChain,
+    isSwitching: isSwitchingChain,
+  } = useSweepChainSwitch(sweepChainId);
   const walletConnection = useWalletConnection();
   const walletStatus = useWalletWhitelist();
   const balances = useTokenBalances(address, sweepChainId);
@@ -3327,8 +3337,26 @@ export function useDustSweep(options?: { chainId?: number }): UseDustSweepReturn
     walletStatus,
   ]);
 
+  // User-facing chain switch (the "Switch to <chain>" button). Wraps the verified switch so any
+  // failure lands in the hook's `error` surface instead of an unhandled rejection.
+  const switchChain = useCallback(async () => {
+    setError(null);
+    try {
+      await switchToSweepChain();
+      return true;
+    } catch (switchError) {
+      setError(
+        switchError instanceof Error ? switchError.message : "Could not switch network. Please try again.",
+      );
+      return false;
+    }
+  }, [switchToSweepChain]);
+
   return {
     chainId: sweepChainId,
+    isOnSweepChain,
+    isSwitchingChain,
+    switchChain,
     swappableTokens,
     unavailableTokens,
     selectedTokens,
