@@ -5,9 +5,12 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTheme } from "@/components/theme/ThemeProvider";
 import { useWalletConnection } from "@/hooks/useWalletConnection";
 import { subscribeToSwapTamperWarning } from "@/lib/clientEvents";
+import {
+  detectPocketUniverse,
+  isPocketUniverseGateEnabled,
+  observePocketUniverse,
+} from "@/lib/pocketUniverseDetect";
 import { BASE_CHAIN_ID, NATIVE_ETH, USDC_ADDRESS } from "@/lib/tokens";
-
-const SWAP_TAMPER_SESSION_KEY = "dustswap.swap.tamperWarning";
 
 const OPENOCEAN_REFERRER_ADDRESS =
   process.env.NEXT_PUBLIC_OPENOCEAN_REFERRER_ADDRESS ||
@@ -104,54 +107,102 @@ const OpenOceanWidget = dynamic<{ integrator: string; config: any }>(
   }
 );
 
+function PocketUniverseGate({
+  onRecheck,
+  isRechecking,
+}: {
+  onRecheck: () => void;
+  isRechecking: boolean;
+}) {
+  return (
+    <div className="mx-auto w-full max-w-[440px] px-3 sm:px-0">
+      <div className="rounded-[24px] border border-rose-200 bg-white p-6 shadow-[0_24px_80px_rgba(190,18,60,0.12)] dark:border-rose-400/30 dark:bg-[rgba(11,18,32,0.92)]">
+        <div className="flex items-center gap-3">
+          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-rose-100 text-xl dark:bg-rose-500/15">
+            🛑
+          </div>
+          <div>
+            <p className="text-[11px] font-black uppercase tracking-[0.22em] text-rose-600 dark:text-rose-300">
+              Swap paused
+            </p>
+            <h2 className="text-lg font-black tracking-tight text-slate-950 dark:text-white">
+              Pocket Universe is active
+            </h2>
+          </div>
+        </div>
+
+        <p className="mt-4 text-sm leading-6 text-slate-600 dark:text-slate-300">
+          Pocket Universe modifies swaps in your browser — it replaces DustSwap&apos;s fee
+          routing with its own address and adds a 0.8% charge. Swaps made while it&apos;s on are{" "}
+          <span className="font-semibold text-slate-900 dark:text-white">not tracked</span>: they
+          don&apos;t count toward your volume, quests, or rewards, and part of your funds is diverted.
+        </p>
+
+        <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-white/10 dark:bg-white/5">
+          <p className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+            To continue
+          </p>
+          <ol className="mt-2 space-y-1.5 text-sm text-slate-700 dark:text-slate-200">
+            <li>1. Open your browser extensions and turn off <span className="font-semibold">Pocket Universe</span> (or disable it for this site).</li>
+            <li>2. Press <span className="font-semibold">Re-check</span> below.</li>
+          </ol>
+        </div>
+
+        <button
+          type="button"
+          onClick={onRecheck}
+          disabled={isRechecking}
+          className="mt-5 flex w-full items-center justify-center rounded-[16px] bg-[linear-gradient(135deg,#2563eb,#0ea5e9)] px-5 py-3 text-base font-black text-white shadow-[0_16px_34px_rgba(37,99,235,0.24)] transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {isRechecking ? "Reloading…" : "Re-check"}
+        </button>
+
+        <p className="mt-3 text-center text-xs text-slate-400 dark:text-slate-500">
+          Re-check reloads the page. This lock only applies to the Swap page.
+        </p>
+      </div>
+    </div>
+  );
+}
+
 export default function SwapPageClient() {
   const { openWalletModal } = useWalletConnection();
   const { resolvedTheme } = useTheme();
 
-  // Fee-theft warning: a browser extension (e.g. Pocket Universe) rewrote the
-  // OpenOcean referrer. The banner persists (per session) until dismissed; a
-  // toast flashes on each new detection.
-  const [tamperBannerVisible, setTamperBannerVisible] = useState(false);
-  const [tamperToastVisible, setTamperToastVisible] = useState(false);
+  // Pocket Universe gate. PU injects beneath the app and diverts swap fees, so a
+  // calldata guard can't stop it — instead we detect PU and lock the widget until
+  // it's disabled. Detection is passive (see pocketUniverseDetect.ts) and folds in
+  // the server's on-chain hijack signal. Detection re-runs fresh on every mount,
+  // so a reload after disabling PU clears the lock.
+  const [puBlocked, setPuBlocked] = useState(false);
+  const [isRechecking, setIsRechecking] = useState(false);
+
+  const gateEnabled = isPocketUniverseGateEnabled();
 
   useEffect(() => {
-    if (typeof window !== "undefined") {
-      try {
-        if (window.sessionStorage.getItem(SWAP_TAMPER_SESSION_KEY) === "1") {
-          setTamperBannerVisible(true);
-        }
-      } catch {
-        // sessionStorage may be unavailable (private mode) — non-fatal.
-      }
+    if (!gateEnabled) {
+      return;
     }
 
-    let toastTimer: number | undefined;
-    const unsubscribe = subscribeToSwapTamperWarning(() => {
-      setTamperBannerVisible(true);
-      setTamperToastVisible(true);
-      try {
-        window.sessionStorage.setItem(SWAP_TAMPER_SESSION_KEY, "1");
-      } catch {
-        // ignore storage failures
-      }
-      window.clearTimeout(toastTimer);
-      toastTimer = window.setTimeout(() => setTamperToastVisible(false), 7000);
-    });
+    if (detectPocketUniverse().detected) {
+      setPuBlocked(true);
+    }
+
+    const stopObserving = observePocketUniverse(() => setPuBlocked(true));
+    const unsubscribe = subscribeToSwapTamperWarning(() => setPuBlocked(true));
 
     return () => {
-      window.clearTimeout(toastTimer);
+      stopObserving();
       unsubscribe();
     };
-  }, []);
+  }, [gateEnabled]);
 
-  const dismissTamperBanner = useCallback(() => {
-    setTamperBannerVisible(false);
-    setTamperToastVisible(false);
-    try {
-      window.sessionStorage.removeItem(SWAP_TAMPER_SESSION_KEY);
-    } catch {
-      // ignore storage failures
-    }
+  const recheckPocketUniverse = useCallback(() => {
+    setIsRechecking(true);
+    // Disabling an extension does NOT remove hooks it already injected into this
+    // page — only a reload does. Reload, then detection re-runs fresh on mount:
+    // if PU is gone the page loads normally, otherwise the gate re-engages.
+    window.location.reload();
   }, []);
 
   const config = useMemo(
@@ -179,49 +230,22 @@ export default function SwapPageClient() {
       className="flex flex-col items-center justify-center overflow-x-hidden bg-transparent px-0 py-6 sm:px-4 sm:py-8"
       style={{ minHeight: "calc(100dvh - 100px)" }}
     >
-      {tamperBannerVisible ? (
-        <div className="mx-auto mb-4 w-full max-w-[420px] px-3 sm:px-0">
-          <div className="rounded-2xl border border-amber-300 bg-amber-50 px-4 py-3 text-amber-900 shadow-[0_10px_30px_rgba(245,158,11,0.15)] dark:border-amber-400/40 dark:bg-amber-500/10 dark:text-amber-100">
-            <div className="flex items-start gap-3">
-              <span aria-hidden className="mt-0.5 text-lg leading-none">⚠️</span>
-              <div className="min-w-0 flex-1">
-                <p className="text-sm font-bold">A browser extension is redirecting your swap fees</p>
-                <p className="mt-1 text-xs leading-5 text-amber-800 dark:text-amber-200/90">
-                  We detected that an extension such as <span className="font-semibold">Pocket Universe</span> replaced
-                  DustSwap&apos;s referrer on your swap and diverted the fee to itself. Disable it for
-                  {" "}
-                  <span className="font-semibold">app.dustswap.wtf</span>, then refresh and swap again to stay protected.
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={dismissTamperBanner}
-                className="shrink-0 rounded-lg px-2 py-1 text-xs font-semibold text-amber-700 transition hover:bg-amber-100 dark:text-amber-200 dark:hover:bg-amber-500/15"
-              >
-                Dismiss
-              </button>
-            </div>
+      {gateEnabled && puBlocked ? (
+        <PocketUniverseGate
+          onRecheck={recheckPocketUniverse}
+          isRechecking={isRechecking}
+        />
+      ) : (
+        <div className="mx-auto flex w-full max-w-[420px] justify-center">
+          <div className="dustswap-openocean-widget w-full min-w-0">
+            <OpenOceanWidget
+              key={resolvedTheme}
+              integrator="DustSwap"
+              config={config as any}
+            />
           </div>
         </div>
-      ) : null}
-
-      {tamperToastVisible ? (
-        <div className="pointer-events-none fixed inset-x-0 top-4 z-[80] flex justify-center px-4">
-          <div className="pointer-events-auto max-w-md rounded-xl border border-amber-300 bg-amber-50 px-4 py-2.5 text-sm font-semibold text-amber-900 shadow-[0_16px_40px_rgba(15,23,42,0.18)] dark:border-amber-400/40 dark:bg-amber-500/15 dark:text-amber-100">
-            ⚠️ A browser extension redirected your swap fee — please disable it.
-          </div>
-        </div>
-      ) : null}
-
-      <div className="mx-auto flex w-full max-w-[420px] justify-center">
-        <div className="dustswap-openocean-widget w-full min-w-0">
-          <OpenOceanWidget
-            key={resolvedTheme}
-            integrator="DustSwap"
-            config={config as any}
-          />
-        </div>
-      </div>
+      )}
       <style jsx global>{`
         @media (max-width: 640px) {
           .dustswap-openocean-widget .MuiInputAdornment-positionEnd {
