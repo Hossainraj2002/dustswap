@@ -526,6 +526,27 @@ export default function SpinPage() {
       return;
     }
 
+    // Pre-send guard: re-confirm a ticket exists on the server before sending an
+    // on-chain spin. This stops gas-wasting spins from a stale ticket count or a
+    // page manipulated by a browser extension (the backend rejects them anyway,
+    // but this avoids the wasted gas). Fail-open on any network error so a
+    // transient API hiccup never blocks a legitimate spin.
+    try {
+      const fresh = await fetchPointsSummary(address, { force: true });
+      if (fresh.success && fresh.balance) {
+        setBalance(fresh.balance);
+        if ((fresh.balance.spinTickets ?? 0) <= 0) {
+          setToast({
+            kind: "error",
+            message: "You don't have any ticket to spin right now.",
+          });
+          return;
+        }
+      }
+    } catch {
+      // Ignore — proceed; the backend still enforces the ticket on /spin.
+    }
+
     setFlowStage("wallet");
 
     try {
@@ -564,6 +585,9 @@ export default function SpinPage() {
     } catch (error) {
       console.error(error);
       setFlowStage("idle");
+      // Reconcile the on-screen ticket count with the server after any failure so
+      // it can never look "stuck" (which is what made users think spins were free).
+      void loadBalance({ force: true, silent: true });
       setToast({
         kind: "error",
         message: getErrorMessage(error) || "Spin transaction failed. Try again.",
@@ -575,6 +599,7 @@ export default function SpinPage() {
     historyOpen,
     isOnBase,
     isSwitchingToBase,
+    loadBalance,
     loadHistory,
     promptSwitchToBase,
     sendSpinTransaction,

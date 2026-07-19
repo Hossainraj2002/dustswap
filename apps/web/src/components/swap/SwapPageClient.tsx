@@ -1,10 +1,13 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useMemo } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTheme } from "@/components/theme/ThemeProvider";
 import { useWalletConnection } from "@/hooks/useWalletConnection";
+import { subscribeToSwapTamperWarning } from "@/lib/clientEvents";
 import { BASE_CHAIN_ID, NATIVE_ETH, USDC_ADDRESS } from "@/lib/tokens";
+
+const SWAP_TAMPER_SESSION_KEY = "dustswap.swap.tamperWarning";
 
 const OPENOCEAN_REFERRER_ADDRESS =
   process.env.NEXT_PUBLIC_OPENOCEAN_REFERRER_ADDRESS ||
@@ -105,6 +108,52 @@ export default function SwapPageClient() {
   const { openWalletModal } = useWalletConnection();
   const { resolvedTheme } = useTheme();
 
+  // Fee-theft warning: a browser extension (e.g. Pocket Universe) rewrote the
+  // OpenOcean referrer. The banner persists (per session) until dismissed; a
+  // toast flashes on each new detection.
+  const [tamperBannerVisible, setTamperBannerVisible] = useState(false);
+  const [tamperToastVisible, setTamperToastVisible] = useState(false);
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      try {
+        if (window.sessionStorage.getItem(SWAP_TAMPER_SESSION_KEY) === "1") {
+          setTamperBannerVisible(true);
+        }
+      } catch {
+        // sessionStorage may be unavailable (private mode) — non-fatal.
+      }
+    }
+
+    let toastTimer: number | undefined;
+    const unsubscribe = subscribeToSwapTamperWarning(() => {
+      setTamperBannerVisible(true);
+      setTamperToastVisible(true);
+      try {
+        window.sessionStorage.setItem(SWAP_TAMPER_SESSION_KEY, "1");
+      } catch {
+        // ignore storage failures
+      }
+      window.clearTimeout(toastTimer);
+      toastTimer = window.setTimeout(() => setTamperToastVisible(false), 7000);
+    });
+
+    return () => {
+      window.clearTimeout(toastTimer);
+      unsubscribe();
+    };
+  }, []);
+
+  const dismissTamperBanner = useCallback(() => {
+    setTamperBannerVisible(false);
+    setTamperToastVisible(false);
+    try {
+      window.sessionStorage.removeItem(SWAP_TAMPER_SESSION_KEY);
+    } catch {
+      // ignore storage failures
+    }
+  }, []);
+
   const config = useMemo(
     () => ({
       ...WIDGET_BASE_CONFIG,
@@ -130,6 +179,40 @@ export default function SwapPageClient() {
       className="flex flex-col items-center justify-center overflow-x-hidden bg-transparent px-0 py-6 sm:px-4 sm:py-8"
       style={{ minHeight: "calc(100dvh - 100px)" }}
     >
+      {tamperBannerVisible ? (
+        <div className="mx-auto mb-4 w-full max-w-[420px] px-3 sm:px-0">
+          <div className="rounded-2xl border border-amber-300 bg-amber-50 px-4 py-3 text-amber-900 shadow-[0_10px_30px_rgba(245,158,11,0.15)] dark:border-amber-400/40 dark:bg-amber-500/10 dark:text-amber-100">
+            <div className="flex items-start gap-3">
+              <span aria-hidden className="mt-0.5 text-lg leading-none">⚠️</span>
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-bold">A browser extension is redirecting your swap fees</p>
+                <p className="mt-1 text-xs leading-5 text-amber-800 dark:text-amber-200/90">
+                  We detected that an extension such as <span className="font-semibold">Pocket Universe</span> replaced
+                  DustSwap&apos;s referrer on your swap and diverted the fee to itself. Disable it for
+                  {" "}
+                  <span className="font-semibold">app.dustswap.wtf</span>, then refresh and swap again to stay protected.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={dismissTamperBanner}
+                className="shrink-0 rounded-lg px-2 py-1 text-xs font-semibold text-amber-700 transition hover:bg-amber-100 dark:text-amber-200 dark:hover:bg-amber-500/15"
+              >
+                Dismiss
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {tamperToastVisible ? (
+        <div className="pointer-events-none fixed inset-x-0 top-4 z-[80] flex justify-center px-4">
+          <div className="pointer-events-auto max-w-md rounded-xl border border-amber-300 bg-amber-50 px-4 py-2.5 text-sm font-semibold text-amber-900 shadow-[0_16px_40px_rgba(15,23,42,0.18)] dark:border-amber-400/40 dark:bg-amber-500/15 dark:text-amber-100">
+            ⚠️ A browser extension redirected your swap fee — please disable it.
+          </div>
+        </div>
+      ) : null}
+
       <div className="mx-auto flex w-full max-w-[420px] justify-center">
         <div className="dustswap-openocean-widget w-full min-w-0">
           <OpenOceanWidget

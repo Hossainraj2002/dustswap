@@ -4,13 +4,16 @@ import { useEffect, useRef } from "react";
 import { useConnection } from "wagmi";
 import { appendBuilderCodeToData } from "@/lib/builderCode";
 import { isErc20ApproveCall, isOpenOceanRouterAddress } from "@/lib/paymaster";
-import { emitDataInvalidation } from "@/lib/clientEvents";
+import { emitDataInvalidation, emitSwapTamperWarning } from "@/lib/clientEvents";
 import { buildPublicApiUrl, publicApiFetch } from "@/lib/apiBase";
 import { clearPointsSummaryCache } from "@/lib/points";
 import { BASE_CHAIN_ID } from "@/lib/tokens";
 import {
+  SWAP_REFERRER_TAMPERED_ERROR_MESSAGE,
   SWAP_ROUTE_UNAVAILABLE_ERROR_MESSAGE,
   getInvalidSwapTxReason,
+  getSwapReferrerTamperReason,
+  isSwapReferrerGuardEnabled,
   validateWalletSendCalls,
   type WalletCall,
   type WalletSendCallsRequest,
@@ -369,15 +372,50 @@ function throwBlockedSwapTransaction({
   tx,
   chainId,
   callIndex,
+  message,
 }: {
   reason: string;
   method?: string;
   tx?: WalletCall | Record<string, unknown>;
   chainId?: number;
   callIndex?: number;
+  message?: string;
 }): never {
   warnBlockedSwapTransaction({ reason, method, tx, chainId, callIndex });
-  throw new Error(SWAP_ROUTE_UNAVAILABLE_ERROR_MESSAGE);
+  throw new Error(message ?? SWAP_ROUTE_UNAVAILABLE_ERROR_MESSAGE);
+}
+
+// Layer A — pre-sign fee-theft guard. Only on /swap, only Base (certified
+// zero-false-positive there), only when the kill-switch is on. Blocks a swap that
+// targets an OpenOcean router but has had DustSwap's referrer stripped by an
+// extension, and warns the user. Returns true if it blocked (never returns then).
+function guardSwapReferrerOrThrow(
+  calls: Array<WalletCall | Record<string, unknown>>,
+  method: string,
+  resolvedChainId: number
+) {
+  if (
+    !isSwapReferrerGuardEnabled() ||
+    !shouldGuardSwapWidgetTransaction() ||
+    resolvedChainId !== BASE_CHAIN_ID
+  ) {
+    return;
+  }
+
+  for (let index = 0; index < calls.length; index += 1) {
+    const call = calls[index];
+    if (getSwapReferrerTamperReason(call, isOpenOceanRouterAddress)) {
+      emitSwapTamperWarning({ source: "pre_sign_block" });
+      throwBlockedSwapTransaction({
+        reason: "referrer_stripped",
+        method,
+        tx: call,
+        chainId: resolvedChainId,
+        callIndex: calls.length > 1 ? index : undefined,
+        message: SWAP_REFERRER_TAMPERED_ERROR_MESSAGE,
+      });
+    }
+  }
 }
 
 function shouldGuardSwapWidgetTransaction() {
@@ -603,6 +641,7 @@ async function postSwapRecord(item: CaptureQueueItem) {
         success?: boolean;
         error?: string;
         code?: string;
+        referrer?: string | null;
         questSync?: {
           success?: boolean;
           completedQuests?: Array<{ awardedPoints: number; questId: string; slug: string }>;
@@ -610,6 +649,12 @@ async function postSwapRecord(item: CaptureQueueItem) {
         };
       })
     : {};
+
+  // Layer B — server verified the on-chain referrer was hijacked by an extension.
+  // Reliable regardless of extension injection order; warn the user to disable it.
+  if (payload.code === "referrer_hijacked") {
+    emitSwapTamperWarning({ source: "onchain_detected", referrer: payload.referrer ?? null });
+  }
 
   if (!response.ok || !payload.success) {
     const error = new Error(
@@ -1007,6 +1052,8 @@ export function useSwapCapture() {
             });
           }
 
+          guardSwapReferrerOrThrow([request], method, resolvedChainId);
+
           // Preserve builder code attribution on swap and approval calls,
           // but keep the original wallet method so the widget can track state correctly.
           forwardedArgs = applyBuilderCodeToEligibleSwapTransaction(
@@ -1037,6 +1084,12 @@ export function useSwapCapture() {
               callIndex: invalidRequest.callIndex,
             });
           }
+
+          guardSwapReferrerOrThrow(
+            Array.isArray(request.calls) ? request.calls : [],
+            method,
+            resolvedChainId
+          );
         }
 
         let result = await originalRequest(forwardedArgs);

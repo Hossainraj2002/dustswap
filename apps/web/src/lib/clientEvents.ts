@@ -62,3 +62,42 @@ export function subscribeToDataInvalidation(
     window.removeEventListener(DATA_INVALIDATION_EVENT, handler as EventListener);
   };
 }
+
+// ── Swap referrer-tamper warning ────────────────────────────────────────────
+// Fired when a browser extension (e.g. Pocket Universe) rewrote the OpenOcean
+// referrer on a DustSwap swap — either blocked before signing (client guard) or
+// detected on-chain after the fact (server `referrer_hijacked`). The swap page
+// listens and shows a warning so the user can disable the extension.
+export type SwapTamperDetail = {
+  source: "pre_sign_block" | "onchain_detected";
+  referrer?: string | null;
+};
+
+const SWAP_TAMPER_EVENT = "dustswap:swap-tamper";
+
+export function emitSwapTamperWarning(detail: SwapTamperDetail) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  window.dispatchEvent(
+    new CustomEvent<SwapTamperDetail>(SWAP_TAMPER_EVENT, { detail })
+  );
+}
+
+export function subscribeToSwapTamperWarning(
+  listener: (detail: SwapTamperDetail) => void
+) {
+  if (typeof window === "undefined") {
+    return () => {};
+  }
+
+  const handler = (event: Event) => {
+    listener((event as CustomEvent<SwapTamperDetail>).detail);
+  };
+
+  window.addEventListener(SWAP_TAMPER_EVENT, handler as EventListener);
+  return () => {
+    window.removeEventListener(SWAP_TAMPER_EVENT, handler as EventListener);
+  };
+}

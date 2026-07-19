@@ -288,6 +288,18 @@ class SwapRecorderError extends Error {}
 class ValidationError extends SwapRecorderError {}
 class PendingTransactionError extends SwapRecorderError {}
 class UnprocessableSwapError extends SwapRecorderError {}
+// Raised when a transaction IS a legitimate OpenOcean swap by this wallet (routing
+// context resolved) but its on-chain referrer was replaced by a foreign address —
+// i.e. a browser extension (e.g. Pocket Universe) redirected the swap fee. The swap
+// is still NOT credited (attribution failed), but this distinct type lets the API
+// signal the frontend so it can warn the user to disable the extension.
+class ReferrerHijackError extends UnprocessableSwapError {
+  readonly foreignReferrer?: string;
+  constructor(message: string, foreignReferrer?: string) {
+    super(message);
+    this.foreignReferrer = foreignReferrer;
+  }
+}
 
 function normalizeAddress(address: string) {
   return address.toLowerCase();
@@ -2077,6 +2089,24 @@ export async function recordSwap(input: {
       : null;
 
   if (!attributionSource) {
+    // Routing context already resolved: this tx went to an OpenOcean router and
+    // belongs to this wallet. If it nonetheless carries a non-zero referrer that
+    // is not ours (and no builder-code attribution), the swap fee was redirected
+    // to a third party — the Pocket-Universe-style hijack. Surface it distinctly
+    // so the frontend can warn the user. The swap remains uncredited either way.
+    const foreignReferrer = decodedSwap.referrer;
+    const isForeignReferrer =
+      !!foreignReferrer &&
+      foreignReferrer !== ZERO_ADDRESS &&
+      foreignReferrer !== OPENOCEAN_REFERRER_ADDRESS;
+
+    if (isForeignReferrer) {
+      throw new ReferrerHijackError(
+        "Swap fees were redirected to a third-party referrer by a browser extension",
+        foreignReferrer
+      );
+    }
+
     throw new UnprocessableSwapError("Swap transaction was not routed through DustSwap");
   }
 
@@ -2330,6 +2360,7 @@ export function getCurrentWeekKey() {
 
 export const swapRecorderErrors = {
   PendingTransactionError,
+  ReferrerHijackError,
   SwapRecorderError,
   UnprocessableSwapError,
   ValidationError,

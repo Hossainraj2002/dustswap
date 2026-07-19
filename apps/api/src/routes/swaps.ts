@@ -100,6 +100,18 @@ swapsRoutes.post("/record", async (c) => {
       return c.json({ success: false, error: error.message, code: "receipt_pending" }, 500);
     }
 
+    if (error instanceof swapRecorderErrors.ReferrerHijackError) {
+      return c.json(
+        {
+          success: false,
+          error: error.message,
+          code: "referrer_hijacked",
+          referrer: error.foreignReferrer ?? null,
+        },
+        422
+      );
+    }
+
     if (error instanceof swapRecorderErrors.UnprocessableSwapError) {
       return c.json({ success: false, error: error.message }, 422);
     }
