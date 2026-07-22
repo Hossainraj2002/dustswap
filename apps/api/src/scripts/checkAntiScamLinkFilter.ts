@@ -12,13 +12,60 @@ const domainExamples = [
   ["dustswap.wtf", true],
   ["app.dustswap.wtf", true],
   ["claims.dustswap.wtf", true],
+  // Real subdomains of the allowed X roots are now accepted (mobile app, media).
+  ["mobile.x.com", true],
+  ["mobile.twitter.com", true],
   ["dustswap-wtf.com", false],
   ["dustswap.web.app", false],
   ["dustswapwtf.com", false],
   ["dustswap.claim.xyz", false],
   ["dustswap-wtf.vercel.app", false],
+  // Lookalikes must still be blocked even with generalized subdomain matching.
   ["dustswap.wtf.evil.com", false],
   ["bad-dustswap.wtf.evil.com", false],
+  ["x.com.evil.com", false],
+] as const;
+
+// Mirrors the shipped DEFAULT_ALLOWED_DOMAINS so we can assert the X ecosystem,
+// Discord media CDN, and GIF pickers are accepted while invites stay blocked.
+const defaultAllowedDomains = new Set([
+  "dustswap.wtf",
+  "x.com",
+  "twitter.com",
+  "t.co",
+  "twimg.com",
+  "fxtwitter.com",
+  "vxtwitter.com",
+  "fixupx.com",
+  "discordapp.com",
+  "discordapp.net",
+  "tenor.com",
+  "giphy.com",
+  "basescan.org",
+  "bscscan.com",
+  "etherscan.io",
+]);
+
+const defaultDomainExamples = [
+  ["t.co", true],
+  ["pbs.twimg.com", true],
+  ["video.twimg.com", true],
+  ["fxtwitter.com", true],
+  ["cdn.discordapp.com", true],
+  ["media.discordapp.net", true],
+  ["tenor.com", true],
+  ["media.tenor.com", true],
+  ["giphy.com", true],
+  // Block explorers (official-links + everyday tx sharing).
+  ["basescan.org", true],
+  ["bscscan.com", true],
+  ["etherscan.io", true],
+  // Invites and arbitrary domains remain blocked.
+  ["discord.gg", false],
+  ["discord.com", false],
+  ["basescan.org.evil.com", false],
+  ["bit.ly", false],
+  ["evil.com", false],
 ] as const;
 
 const messageExamples = [
@@ -41,6 +88,16 @@ for (const [domain, expectedAllowed] of domainExamples) {
     failures += 1;
     console.error(
       `Domain example failed: ${domain} normalized=${normalizeHostname(domain)} expected=${expectedAllowed} actual=${actualAllowed}`
+    );
+  }
+}
+
+for (const [domain, expectedAllowed] of defaultDomainExamples) {
+  const actualAllowed = isAllowedHostname(domain, defaultAllowedDomains);
+  if (actualAllowed !== expectedAllowed) {
+    failures += 1;
+    console.error(
+      `Default domain example failed: ${domain} normalized=${normalizeHostname(domain)} expected=${expectedAllowed} actual=${actualAllowed}`
     );
   }
 }

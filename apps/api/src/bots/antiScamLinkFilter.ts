@@ -3,6 +3,7 @@ import {
   ChannelType,
   Events,
   PermissionFlagsBits,
+  WebhookType,
   type AnyThreadChannel,
   type Channel,
   type Client,
@@ -17,11 +18,41 @@ import {
 } from "discord.js";
 import { formatDiscordUser, isUnknownMemberError } from "./earlyContributorBotCore";
 
-const DEFAULT_ALLOWED_DOMAINS = ["x.com", "twitter.com", "dustswap.wtf"] as const;
-const DUSTSWAP_ROOT_DOMAIN = "dustswap.wtf";
+const DEFAULT_ALLOWED_DOMAINS = [
+  // Official Dustswap (real subdomains such as app.dustswap.wtf are allowed too)
+  "dustswap.wtf",
+  // X / Twitter ecosystem. Subdomains (mobile.x.com), media (pbs.twimg.com,
+  // video.twimg.com), the t.co link shortener, and the embed-fixer domains
+  // people routinely paste for X posts are all covered.
+  "x.com",
+  "twitter.com",
+  "t.co",
+  "twimg.com",
+  "fxtwitter.com",
+  "vxtwitter.com",
+  "fixupx.com",
+  // Discord-native media: attachment CDN + the built-in GIF pickers. Note we
+  // deliberately do NOT allow discord.com / discord.gg so invite links stay
+  // blocked per server policy.
+  "discordapp.com",
+  "discordapp.net",
+  "tenor.com",
+  "giphy.com",
+  // Block explorers. basescan.org is in DustSwap's own official-links doc, and
+  // members share explorer tx links constantly in a Base/BSC community; leaving
+  // these blocked would wrongly time users out. Read-only, safe to allow.
+  "basescan.org",
+  "bscscan.com",
+  "etherscan.io",
+] as const;
 const VIOLATION_WINDOW_MS = 24 * 60 * 60 * 1000;
 const FIRST_TIMEOUT_MS = 60 * 60 * 1000;
 const SECOND_TIMEOUT_MS = 12 * 60 * 60 * 1000;
+const THIRD_TIMEOUT_MS = 24 * 60 * 60 * 1000;
+// Untrusted webhooks are removed only after this many blocked posts in the
+// window, so a single off-allowlist link from a legit (un-allowlisted) webhook
+// does not nuke it, while a leaked/abused webhook that keeps spamming is killed.
+const WEBHOOK_AUTO_DELETE_THRESHOLD = 2;
 const WARNING_DELETE_MS = 10 * 1000;
 const WARNING_MESSAGE =
   "Your message was removed because only official Dustswap links and X links are allowed in this server. Repeated violations will result in timeout or ban.";
@@ -59,6 +90,41 @@ export type AntiScamFilterConfig = {
   allowedDomains: Set<string>;
   channelWarningEnabled: boolean;
   dmWarningEnabled: boolean;
+  // Application/user IDs of bots that are fully trusted (your ticket bot, mod
+  // bots, your own bots). Trusted integrations are never scanned or touched.
+  trustedBotIds: Set<string>;
+  // Webhook IDs that are fully trusted (e.g. your CI/status webhook). Trusted
+  // webhooks are never scanned or touched.
+  trustedWebhookIds: Set<string>;
+  // Scan messages from *untrusted incoming webhooks* (the leaked-webhook-URL
+  // attack vector) and delete any that carry a blocked link. On by default —
+  // this is the main defense against a scammer abusing a webhook. Webhooks are
+  // never banned (you cannot ban a webhook); see deleteUntrustedWebhooks.
+  moderateWebhooks: boolean;
+  // When an untrusted incoming webhook posts a blocked link, also delete the
+  // webhook itself (requires Manage Webhooks), not just the message. On by
+  // default: a non-allowlisted webhook posting scam links is almost certainly
+  // leaked/malicious, so removing it stops the whole spam run at the source.
+  deleteUntrustedWebhooks: boolean;
+  // Scan messages from *untrusted bots* (bots not on trustedBotIds) and delete
+  // blocked-link messages. Off by default because a bot can only be added by an
+  // admin; enable if you want defense against a socially-engineered rogue bot.
+  // Untrusted bots are deleted-only, never timed out or banned.
+  moderateUntrustedBots: boolean;
+  // Scan Discord's auto-generated link-preview embeds. Off by default: for human
+  // messages these are unfurled from links already present in the content, so
+  // scanning them re-flags the target page's own links (e.g. a quoted tweet).
+  scanEmbeds: boolean;
+  // Scan attachment file names / titles / descriptions. Off by default: a
+  // Discord-hosted upload is not a clickable link, and file names like clip.mkv
+  // were being misread as blocked domains.
+  scanAttachments: boolean;
+  // Permanently ban on the 3rd violation. Off by default; when off the 3rd
+  // violation applies a 24h timeout instead of an irreversible ban.
+  autoBanEnabled: boolean;
+  // Treat members with Administrator / Manage Server / Moderate Members / Manage
+  // Messages as exempt (like trusted staff), so moderators are never auto-punished.
+  exemptElevatedMembers: boolean;
 };
 
 type LoadAntiScamConfigOptions = {
@@ -75,7 +141,12 @@ type DeleteStatus = {
 };
 
 type LogRecord = {
-  status: "DELETED" | "STAFF EXEMPT - EXTERNAL LINK NOT DELETED" | "PERMISSION WARNING";
+  status:
+    | "DELETED"
+    | "STAFF EXEMPT - EXTERNAL LINK NOT DELETED"
+    | "PERMISSION WARNING"
+    | "UNTRUSTED WEBHOOK - DELETED"
+    | "UNTRUSTED BOT - DELETED";
   eventKind: MessageEventKind | "startup" | "threadCreate" | "threadUpdate";
   userTag?: string;
   userId?: string;
@@ -151,14 +222,14 @@ function validateSnowflake(name: string, value: string) {
   }
 }
 
-function parseSnowflakeSet(raw: string | undefined) {
+function parseSnowflakeSet(raw: string | undefined, label = "TRUSTED_ROLE_IDS") {
   const values = new Set<string>();
   for (const item of raw?.split(",") ?? []) {
     const value = item.trim();
     if (!value) {
       continue;
     }
-    validateSnowflake("TRUSTED_ROLE_IDS", value);
+    validateSnowflake(label, value);
     values.add(value);
   }
   return values;
@@ -189,6 +260,15 @@ export function loadAntiScamFilterConfig(
     allowedDomains: parseAllowedDomains(process.env.ALLOWED_DOMAINS),
     channelWarningEnabled: parseBooleanEnv("CHANNEL_WARNING_ENABLED", true),
     dmWarningEnabled: parseBooleanEnv("DM_WARNING_ENABLED", true),
+    trustedBotIds: parseSnowflakeSet(process.env.TRUSTED_BOT_IDS, "TRUSTED_BOT_IDS"),
+    trustedWebhookIds: parseSnowflakeSet(process.env.TRUSTED_WEBHOOK_IDS, "TRUSTED_WEBHOOK_IDS"),
+    moderateWebhooks: parseBooleanEnv("ANTI_SCAM_MODERATE_WEBHOOKS", true),
+    deleteUntrustedWebhooks: parseBooleanEnv("ANTI_SCAM_DELETE_UNTRUSTED_WEBHOOKS", true),
+    moderateUntrustedBots: parseBooleanEnv("ANTI_SCAM_MODERATE_UNTRUSTED_BOTS", false),
+    scanEmbeds: parseBooleanEnv("ANTI_SCAM_SCAN_EMBEDS", false),
+    scanAttachments: parseBooleanEnv("ANTI_SCAM_SCAN_ATTACHMENTS", false),
+    autoBanEnabled: parseBooleanEnv("ANTI_SCAM_AUTO_BAN", false),
+    exemptElevatedMembers: parseBooleanEnv("ANTI_SCAM_EXEMPT_ELEVATED", true),
   };
 }
 
@@ -207,12 +287,17 @@ export function isAllowedHostname(hostname: string, allowedDomains: Set<string>)
     return true;
   }
 
-  // Only the official Dustswap root allows real subdomains. This prevents
-  // lookalikes such as dustswap.wtf.evil.com or dustswap-wtf.com.
-  return (
-    allowedDomains.has(DUSTSWAP_ROOT_DOMAIN) &&
-    normalized.endsWith(`.${DUSTSWAP_ROOT_DOMAIN}`)
-  );
+  // Allow real subdomains of any allowed root (app.dustswap.wtf, mobile.x.com,
+  // pbs.twimg.com, media.tenor.com, cdn.discordapp.com ...). Matching on a
+  // leading "." keeps lookalikes such as dustswap.wtf.evil.com blocked: they
+  // end in ".evil.com" and therefore match no allowed root.
+  for (const root of allowedDomains) {
+    if (normalized.endsWith(`.${root}`)) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 function trimUrlCandidate(candidate: string) {
@@ -272,44 +357,61 @@ export function findBlockedDomainsInText(text: string, allowedDomains: Set<strin
   );
 }
 
-function collectMessageText(message: Message<boolean>) {
+type MessageScanOptions = {
+  scanEmbeds?: boolean;
+  scanAttachments?: boolean;
+};
+
+function collectMessageText(message: Message<boolean>, options: MessageScanOptions = {}) {
   const parts: string[] = [];
 
   if (message.content) {
     parts.push(message.content);
   }
 
-  for (const embed of message.embeds) {
-    if (embed.url) {
-      parts.push(embed.url);
-    }
-    if (embed.title) {
-      parts.push(embed.title);
-    }
-    if (embed.description) {
-      parts.push(embed.description);
-    }
-    if (embed.author?.name) {
-      parts.push(embed.author.name);
-    }
-    if (embed.author?.url) {
-      parts.push(embed.author.url);
-    }
-    if (embed.footer?.text) {
-      parts.push(embed.footer.text);
-    }
-    for (const field of embed.fields) {
-      parts.push(field.name, field.value);
+  // Discord unfurls link-preview embeds from URLs already in the content, so for
+  // ordinary human messages the embeds contain the *target* page's own links
+  // (e.g. links inside a quoted tweet). Scanning them punishes people for simply
+  // posting an allowed X link, so it is opt-in via ANTI_SCAM_SCAN_EMBEDS.
+  if (options.scanEmbeds) {
+    for (const embed of message.embeds) {
+      if (embed.url) {
+        parts.push(embed.url);
+      }
+      if (embed.title) {
+        parts.push(embed.title);
+      }
+      if (embed.description) {
+        parts.push(embed.description);
+      }
+      if (embed.author?.name) {
+        parts.push(embed.author.name);
+      }
+      if (embed.author?.url) {
+        parts.push(embed.author.url);
+      }
+      if (embed.footer?.text) {
+        parts.push(embed.footer.text);
+      }
+      for (const field of embed.fields) {
+        parts.push(field.name, field.value);
+      }
     }
   }
 
-  for (const attachment of message.attachments.values()) {
-    parts.push(attachment.name);
-    if (attachment.title) {
-      parts.push(attachment.title);
-    }
-    if (attachment.description) {
-      parts.push(attachment.description);
+  // Attachment file names are not clickable links, and a Discord-hosted upload
+  // cannot be a phishing domain. Scanning them mislabels ordinary files
+  // (clip.mkv, photo.tiff, audio.flac ...) as blocked domains, so it is opt-in
+  // via ANTI_SCAM_SCAN_ATTACHMENTS.
+  if (options.scanAttachments) {
+    for (const attachment of message.attachments.values()) {
+      parts.push(attachment.name);
+      if (attachment.title) {
+        parts.push(attachment.title);
+      }
+      if (attachment.description) {
+        parts.push(attachment.description);
+      }
     }
   }
 
@@ -318,9 +420,13 @@ function collectMessageText(message: Message<boolean>) {
 
 export function findBlockedDomainsInMessage(
   message: Message<boolean>,
-  config: Pick<AntiScamFilterConfig, "allowedDomains">
+  config: Pick<AntiScamFilterConfig, "allowedDomains" | "scanEmbeds" | "scanAttachments">
 ) {
-  return [...new Set(findBlockedDomainsInText(collectMessageText(message), config.allowedDomains))];
+  const text = collectMessageText(message, {
+    scanEmbeds: config.scanEmbeds,
+    scanAttachments: config.scanAttachments,
+  });
+  return [...new Set(findBlockedDomainsInText(text, config.allowedDomains))];
 }
 
 function getChannelName(channel: TextBasedChannel | Channel | null) {
@@ -348,6 +454,89 @@ function memberHasTrustedRole(member: GuildMember | null, trustedRoleIds: Set<st
   }
 
   return member.roles.cache.some((role) => trustedRoleIds.has(role.id));
+}
+
+function memberIsElevated(member: GuildMember | null, config: AntiScamFilterConfig) {
+  if (!member || !config.exemptElevatedMembers) {
+    return false;
+  }
+
+  return (
+    member.permissions.has(PermissionFlagsBits.Administrator) ||
+    member.permissions.has(PermissionFlagsBits.ManageGuild) ||
+    member.permissions.has(PermissionFlagsBits.ModerateMembers) ||
+    member.permissions.has(PermissionFlagsBits.ManageMessages)
+  );
+}
+
+type AuthorClass =
+  | "self"
+  | "trusted-integration"
+  | "untrusted-webhook"
+  | "untrusted-bot"
+  | "human";
+
+// A real, deletable incoming webhook carries a webhookId that differs from any
+// applicationId. Bot interaction/slash-command responses set webhookId ===
+// applicationId, so this reliably separates "someone POSTed through a webhook
+// URL" (the leaked-URL attack) from an ordinary bot reply.
+function isRealIncomingWebhookMessage(message: Message<true>) {
+  return Boolean(message.webhookId) && message.webhookId !== message.applicationId;
+}
+
+function isTrustedIntegration(message: Message<true>, config: AntiScamFilterConfig) {
+  if (message.webhookId && config.trustedWebhookIds.has(message.webhookId)) {
+    return true;
+  }
+  if (config.trustedBotIds.has(message.author.id)) {
+    return true;
+  }
+  if (message.applicationId && config.trustedBotIds.has(message.applicationId)) {
+    return true;
+  }
+  return false;
+}
+
+function classifyAuthor(
+  message: Message<true>,
+  client: Client,
+  config: AntiScamFilterConfig
+): AuthorClass {
+  if (message.author.id === client.user?.id) {
+    return "self";
+  }
+  if (isTrustedIntegration(message, config)) {
+    return "trusted-integration";
+  }
+  if (isRealIncomingWebhookMessage(message)) {
+    return "untrusted-webhook";
+  }
+  if (message.author.bot) {
+    return "untrusted-bot";
+  }
+  return "human";
+}
+
+// Integration (bot/webhook) messages can carry attacker-controlled rich embeds,
+// so unlike human messages we always scan the embed contents here.
+function findBlockedDomainsForIntegration(message: Message<true>, config: AntiScamFilterConfig) {
+  const text = collectMessageText(message, { scanEmbeds: true, scanAttachments: false });
+  return [...new Set(findBlockedDomainsInText(text, config.allowedDomains))];
+}
+
+async function deleteWebhookForMessage(message: Message<true>, reason: string) {
+  try {
+    const webhook = await message.fetchWebhook();
+    if (webhook.type !== WebhookType.Incoming) {
+      return "webhook not deleted: not a deletable incoming webhook";
+    }
+    await webhook.delete(reason);
+    return "malicious webhook deleted";
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    console.error(`[Anti-Scam Filter] Failed to delete webhook for message ${message.id}:`, error);
+    return `webhook delete failed: ${detail}`;
+  }
 }
 
 async function fetchMessageIfNeeded(message: Message<boolean> | PartialMessage) {
@@ -449,7 +638,8 @@ function recordViolation(
 async function applyViolationAction(
   message: Message<true>,
   member: GuildMember | null,
-  violationCount: number
+  violationCount: number,
+  config: AntiScamFilterConfig
 ) {
   if (violationCount <= 1) {
     if (!member) {
@@ -481,13 +671,30 @@ async function applyViolationAction(
     }
   }
 
+  if (config.autoBanEnabled) {
+    try {
+      await message.guild.members.ban(message.author.id, { reason: BAN_REASON });
+      return "3rd violation: user banned";
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      console.error(`[Anti-Scam Filter] Failed to ban ${message.author.id}:`, error);
+      return `3rd violation: ban failed: ${detail}`;
+    }
+  }
+
+  // Auto-ban disabled (default): apply a long timeout instead of an
+  // irreversible ban. Re-enable permanent bans with ANTI_SCAM_AUTO_BAN=true.
+  if (!member) {
+    return "3rd violation: 24h timeout failed because member was unavailable (auto-ban disabled)";
+  }
+
   try {
-    await message.guild.members.ban(message.author.id, { reason: BAN_REASON });
-    return "3rd violation: user banned";
+    await member.timeout(THIRD_TIMEOUT_MS, "Repeated blocked/scam link violation in Dustswap Discord");
+    return "3rd violation: timeout 24h applied (auto-ban disabled)";
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
-    console.error(`[Anti-Scam Filter] Failed to ban ${message.author.id}:`, error);
-    return `3rd violation: ban failed: ${detail}`;
+    console.error(`[Anti-Scam Filter] Failed to timeout ${message.author.id} for 24h:`, error);
+    return `3rd violation: 24h timeout failed: ${detail}`;
   }
 }
 
@@ -787,6 +994,17 @@ async function scanGuildPermissions(client: Client, config: AntiScamFilterConfig
     );
   }
 
+  if (
+    config.deleteUntrustedWebhooks &&
+    !botMember.permissions.has(PermissionFlagsBits.ManageWebhooks)
+  ) {
+    await warnProtectionGap(
+      client,
+      config,
+      "Anti-scam filter cannot remove malicious webhooks because missing permission: Manage Webhooks"
+    );
+  }
+
   const channels = await guild.channels.fetch();
   for (const channel of channels.values()) {
     if (channel) {
@@ -821,8 +1039,21 @@ export function startAntiScamLinkFilter(client: Client, config: AntiScamFilterCo
   logInfo("Global anti-scam link filter enabled");
   logInfo(`Allowed domains: ${[...config.allowedDomains].join(", ")}`);
   logInfo(`Trusted staff role IDs: ${config.trustedRoleIds.size || "none configured"}`);
+  logInfo(
+    `Trusted integrations: ${config.trustedBotIds.size} bot ID(s), ${config.trustedWebhookIds.size} webhook ID(s)`
+  );
+  logInfo(
+    `Integration policy: untrusted webhooks=${
+      config.moderateWebhooks
+        ? `scan+delete${config.deleteUntrustedWebhooks ? " (auto-remove webhook)" : ""}`
+        : "off"
+    }, untrusted bots=${config.moderateUntrustedBots ? "scan+delete" : "off"}, auto-ban=${
+      config.autoBanEnabled ? "on" : "off (24h timeout)"
+    }`
+  );
 
   const violationTimestampsByUserId = new Map<string, number[]>();
+  const webhookBlockedTimestampsById = new Map<string, number[]>();
   const handledViolationMessageIds = new Set<string>();
   let queue = Promise.resolve();
 
@@ -838,6 +1069,77 @@ export function startAntiScamLinkFilter(client: Client, config: AntiScamFilterCo
     return queue;
   };
 
+  // Untrusted bots/webhooks: remove the scam message (and, for webhooks, the
+  // webhook itself) but never treat them as member violations, time out, or ban.
+  const handleIntegrationMessage = async (
+    message: Message<true>,
+    authorClass: "untrusted-webhook" | "untrusted-bot",
+    eventKind: MessageEventKind
+  ) => {
+    const isWebhook = authorClass === "untrusted-webhook";
+
+    // Untrusted webhooks are moderated by default (leaked-URL threat); untrusted
+    // bots only when ANTI_SCAM_MODERATE_UNTRUSTED_BOTS is enabled.
+    if (isWebhook ? !config.moderateWebhooks : !config.moderateUntrustedBots) {
+      return;
+    }
+
+    const blockedDomains = findBlockedDomainsForIntegration(message, config);
+    if (blockedDomains.length === 0) {
+      return;
+    }
+
+    if (handledViolationMessageIds.has(message.id)) {
+      return;
+    }
+    handledViolationMessageIds.add(message.id);
+
+    const deleteStatus = await deleteBlockedMessage(message);
+    const actions = [deleteStatus.label];
+
+    if (isWebhook) {
+      if (!config.deleteUntrustedWebhooks) {
+        actions.push("webhook left in place (ANTI_SCAM_DELETE_UNTRUSTED_WEBHOOKS disabled)");
+      } else {
+        const offenseCount = recordViolation(
+          webhookBlockedTimestampsById,
+          message.webhookId!,
+          Date.now()
+        );
+        if (offenseCount >= WEBHOOK_AUTO_DELETE_THRESHOLD) {
+          actions.push(
+            await deleteWebhookForMessage(
+              message,
+              "Untrusted webhook repeatedly posted blocked/scam links in Dustswap Discord"
+            )
+          );
+        } else {
+          actions.push(
+            `webhook flagged ${offenseCount}/${WEBHOOK_AUTO_DELETE_THRESHOLD}; message removed, webhook kept for now`
+          );
+        }
+      }
+    } else {
+      actions.push("untrusted bot: message removed, no timeout or ban");
+    }
+
+    await sendModLog(client, config, {
+      status: isWebhook ? "UNTRUSTED WEBHOOK - DELETED" : "UNTRUSTED BOT - DELETED",
+      eventKind,
+      userTag: formatDiscordUser(message.author),
+      userId: message.webhookId ?? message.author.id,
+      channelName: getChannelName(message.channel),
+      channelId: message.channelId,
+      messageLink: messageLink(message),
+      blockedDomains,
+      originalContent: message.content,
+      scannedText: collectMessageText(message, { scanEmbeds: true, scanAttachments: false }),
+      actionTaken: actions.join("; "),
+      dmWarningStatus: "skipped",
+      timestamp: new Date().toISOString(),
+    });
+  };
+
   const handleMessage = async (
     rawMessage: Message<boolean> | PartialMessage,
     eventKind: MessageEventKind
@@ -847,17 +1149,33 @@ export function startAntiScamLinkFilter(client: Client, config: AntiScamFilterCo
       return;
     }
 
-    if (fetched.author.id === client.user?.id) {
+    const authorClass = classifyAuthor(fetched, client, config);
+
+    // The filter's own messages and explicitly trusted integrations (your
+    // ticket bot, mod bots, CI/status webhooks) are never scanned or touched.
+    if (authorClass === "self" || authorClass === "trusted-integration") {
       return;
     }
 
+    // Untrusted webhooks and bots are handled separately: their scam messages
+    // (and, for webhooks, the webhook itself) are removed, but they are never
+    // counted as member violations, timed out, or banned.
+    if (authorClass === "untrusted-webhook" || authorClass === "untrusted-bot") {
+      await handleIntegrationMessage(fetched, authorClass, eventKind);
+      return;
+    }
+
+    // ----- Human members -----
     const blockedDomains = findBlockedDomainsInMessage(fetched, config);
     if (blockedDomains.length === 0) {
       return;
     }
 
     const member = await fetchMemberForMessage(fetched);
-    const scannedText = collectMessageText(fetched);
+    const scannedText = collectMessageText(fetched, {
+      scanEmbeds: config.scanEmbeds,
+      scanAttachments: config.scanAttachments,
+    });
     const timestamp = new Date().toISOString();
     const baseLog = {
       eventKind,
@@ -872,7 +1190,7 @@ export function startAntiScamLinkFilter(client: Client, config: AntiScamFilterCo
       timestamp,
     } satisfies Partial<LogRecord>;
 
-    if (memberHasTrustedRole(member, config.trustedRoleIds)) {
+    if (memberHasTrustedRole(member, config.trustedRoleIds) || memberIsElevated(member, config)) {
       await sendModLog(client, config, {
         ...baseLog,
         status: "STAFF EXEMPT - EXTERNAL LINK NOT DELETED",
@@ -887,16 +1205,17 @@ export function startAntiScamLinkFilter(client: Client, config: AntiScamFilterCo
     }
     handledViolationMessageIds.add(fetched.id);
 
+    const deleteStatus = await deleteBlockedMessage(fetched);
+    const channelWarningStatus = await sendChannelWarning(fetched, config);
+
     const violationCount = recordViolation(
       violationTimestampsByUserId,
       fetched.author.id,
       Date.now()
     );
 
-    const deleteStatus = await deleteBlockedMessage(fetched);
-    const channelWarningStatus = await sendChannelWarning(fetched, config);
     const dmWarningStatus = await sendDmWarning(fetched.author, config);
-    const moderationStatus = await applyViolationAction(fetched, member, violationCount);
+    const moderationStatus = await applyViolationAction(fetched, member, violationCount, config);
 
     await sendModLog(client, config, {
       ...baseLog,
