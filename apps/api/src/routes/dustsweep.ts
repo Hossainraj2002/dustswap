@@ -35,6 +35,7 @@ import {
   BASE_CONFIG,
   BSC_CHAIN_ID,
   ETHEREUM_CHAIN_ID,
+  ROBINHOOD_CHAIN_ID,
   getChainAllowedAggregatorAddresses,
   getChainRouterV3Address,
   getEnabledSweepChainIds,
@@ -1634,8 +1635,11 @@ async function sleepForBlockscoutBalanceRetry(response: Response | null, attempt
 async function fetchBlockscoutWalletTokenPage(
   holder: Address,
   nextPageParams?: Record<string, unknown>,
+  blockscoutBaseUrl?: string,
 ) {
-  const url = new URL(`${getBlockscoutApiV2BaseUrl()}/addresses/${holder}/tokens`);
+  const url = new URL(
+    `${(blockscoutBaseUrl || getBlockscoutApiV2BaseUrl()).replace(/\/$/, "")}/addresses/${holder}/tokens`,
+  );
   url.searchParams.set("type", "ERC-20");
 
   for (const [key, value] of Object.entries(nextPageParams || {})) {
@@ -1689,8 +1693,10 @@ async function fetchBlockscoutWalletTokenPage(
   throw lastError ?? new Error("Blockscout wallet token discovery failed");
 }
 
-async function fetchBlockscoutWalletTokenSnapshot(holder: Address) {
-  const url = new URL(`${getBlockscoutApiV2BaseUrl()}/addresses/${holder}/token-balances`);
+async function fetchBlockscoutWalletTokenSnapshot(holder: Address, blockscoutBaseUrl?: string) {
+  const url = new URL(
+    `${(blockscoutBaseUrl || getBlockscoutApiV2BaseUrl()).replace(/\/$/, "")}/addresses/${holder}/token-balances`,
+  );
   const apiKey = getBlockscoutApiKey();
   if (apiKey) url.searchParams.set("apikey", apiKey);
 
@@ -1736,8 +1742,10 @@ async function fetchBlockscoutWalletTokenSnapshot(holder: Address) {
   throw lastError ?? new Error("Blockscout wallet token snapshot failed");
 }
 
-async function fetchBlockscoutTokenListSnapshot(holder: Address) {
-  const url = new URL(getBlockscoutApiV2BaseUrl().replace(/\/api\/v2\/?$/, "/api"));
+async function fetchBlockscoutTokenListSnapshot(holder: Address, blockscoutBaseUrl?: string) {
+  const url = new URL(
+    (blockscoutBaseUrl || getBlockscoutApiV2BaseUrl()).replace(/\/api\/v2\/?$/, "/api"),
+  );
   url.searchParams.set("module", "account");
   url.searchParams.set("action", "tokenlist");
   url.searchParams.set("address", holder);
@@ -1868,7 +1876,10 @@ function addBlockscoutTokenListItem(
   });
 }
 
-async function fetchBlockscoutWalletTokenBalances(holder: Address): Promise<AlchemyTokenBalanceDiscovery> {
+async function fetchBlockscoutWalletTokenBalances(
+  holder: Address,
+  blockscoutBaseUrl?: string,
+): Promise<AlchemyTokenBalanceDiscovery> {
   const tokenBalances: AlchemyBalance[] = [];
   const seen = new Set<string>();
   const seenCursors = new Set<string>();
@@ -1879,11 +1890,11 @@ async function fetchBlockscoutWalletTokenBalances(holder: Address): Promise<Alch
 
   try {
     const snapshot = await Promise.any([
-      fetchBlockscoutWalletTokenSnapshot(holder).then((items) => ({
+      fetchBlockscoutWalletTokenSnapshot(holder, blockscoutBaseUrl).then((items) => ({
         kind: "token-balances" as const,
         items,
       })),
-      fetchBlockscoutTokenListSnapshot(holder).then((items) => ({
+      fetchBlockscoutTokenListSnapshot(holder, blockscoutBaseUrl).then((items) => ({
         kind: "tokenlist" as const,
         items,
       })),
@@ -1912,7 +1923,11 @@ async function fetchBlockscoutWalletTokenBalances(holder: Address): Promise<Alch
   }
 
   while (!reachedDiscoveryLimit(pageCount, DISCOVERY_BLOCKSCOUT_BALANCE_MAX_PAGES)) {
-    const page = await fetchBlockscoutWalletTokenPage(holder, nextPageParams || undefined);
+    const page = await fetchBlockscoutWalletTokenPage(
+      holder,
+      nextPageParams || undefined,
+      blockscoutBaseUrl,
+    );
     pageCount += 1;
 
     for (const item of page.items || []) {
@@ -1948,11 +1963,20 @@ async function fetchWalletTokenBalances(
   holder: Address,
   chain: SweepChainConfig = BASE_CONFIG,
 ): Promise<AlchemyTokenBalanceDiscovery> {
-  // The Blockscout REST balance snapshot is wired to Base only for now; non-Base chains rely on
-  // their dedicated Alchemy keys as the sole discovery source (Alchemy failure → stale cache).
+  // Blockscout REST balance fallback: Base keeps its env-driven URL exactly as before; a
+  // non-Base chain opts in by setting chain.blockscoutRestBaseUrl (Robinhood: its self-hosted
+  // instance — Alchemy token-API support there is unproven). Keys keep resolving from the
+  // existing BLOCKSCOUT_API_KEYS / BLOCKSCOUT_API_KEY envs; Ethereum/BSC set no URL and stay
+  // Alchemy-only (Alchemy failure → stale cache), unchanged.
+  const chainBlockscoutBaseUrl =
+    chain.chainId === BASE_CHAIN_ID ? undefined : chain.blockscoutRestBaseUrl;
   const blockscoutFallbackEnabled =
-    chain.chainId === BASE_CHAIN_ID && DISCOVERY_BLOCKSCOUT_BALANCE_FALLBACK_ENABLED;
-  const alchemyBreakerOpen = Date.now() < alchemyDiscoveryBreakerUntil;
+    (chain.chainId === BASE_CHAIN_ID || Boolean(chainBlockscoutBaseUrl)) &&
+    DISCOVERY_BLOCKSCOUT_BALANCE_FALLBACK_ENABLED;
+  // The Alchemy cool-off breaker stays BASE-SCOPED: other chains use separate key sets, so a
+  // throttled Base pool must not push their scans off healthy dedicated keys.
+  const alchemyBreakerOpen =
+    chain.chainId === BASE_CHAIN_ID && Date.now() < alchemyDiscoveryBreakerUntil;
 
   if (!alchemyBreakerOpen || !blockscoutFallbackEnabled) {
     try {
@@ -1974,7 +1998,7 @@ async function fetchWalletTokenBalances(
 
       if (blockscoutFallbackEnabled) {
         try {
-          const fallback = await fetchBlockscoutWalletTokenBalances(holder);
+          const fallback = await fetchBlockscoutWalletTokenBalances(holder, chainBlockscoutBaseUrl);
           return {
             ...fallback,
             providerError: `alchemy: ${alchemyMessage}`,
@@ -1990,9 +2014,10 @@ async function fetchWalletTokenBalances(
     }
   }
 
-  // Alchemy is cooling off — Blockscout is the primary for this window (Base only).
+  // Alchemy is cooling off — Blockscout is the primary for this window (Base only; the breaker
+  // above is base-scoped, so non-Base chains never take this path).
   try {
-    const fallback = await fetchBlockscoutWalletTokenBalances(holder);
+    const fallback = await fetchBlockscoutWalletTokenBalances(holder, chainBlockscoutBaseUrl);
     return { ...fallback, providerError: "alchemy: cooling off after rate limit" };
   } catch (blockscoutError) {
     console.warn("[dustsweep/tokens] Blockscout balance discovery failed", {
@@ -2269,6 +2294,7 @@ const DETERMINISTIC_LOGO_CHAIN_IDS = new Set<number>([
   BASE_CHAIN_ID,
   ETHEREUM_CHAIN_ID,
   BSC_CHAIN_ID,
+  ROBINHOOD_CHAIN_ID, // verified 2026-07-26: llamao serves 4663 (HTTP 200 for WETH + USDG)
 ]);
 
 function deterministicTokenLogo(address: Address, chain: SweepChainConfig): string | undefined {
@@ -2359,6 +2385,8 @@ function getCoinGeckoPlatform(chain: SweepChainConfig) {
   if (chain.chainId === BASE_CHAIN_ID) return "base";
   if (chain.chainId === ETHEREUM_CHAIN_ID) return "ethereum";
   if (chain.chainId === BSC_CHAIN_ID) return "binance-smart-chain";
+  // Verified 2026-07-26: /api/v3/asset_platforms lists id "robinhood" with chain_identifier 4663.
+  if (chain.chainId === ROBINHOOD_CHAIN_ID) return "robinhood";
   return null;
 }
 
@@ -4651,6 +4679,11 @@ function buildUniswapV4UniversalRouterCalldata(args: {
 const ETH_UNISWAP_V3_SWAP_ROUTER = "0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45" as Address;
 const BSC_UNISWAP_V3_SWAP_ROUTER = (process.env.UNISWAP_V3_SWAP_ROUTER_ADDRESS_56 ||
   "0xB971eF87ede563556b2ED4b1C0b0019111Dd85d2") as Address;
+// Robinhood's SwapRouter02 is NOT at the canonical mainnet address (that one is an empty decoy
+// on 4663) — this is the official Robinhood-chain Uniswap deployment, verified live 2026-07-26
+// via eth_getCode + factory()/WETH9() + a functional QuoterV2 probe (see dustsweepV3Sources.ts).
+const ROBINHOOD_UNISWAP_V3_SWAP_ROUTER = (process.env.UNISWAP_V3_SWAP_ROUTER_ADDRESS_4663 ||
+  "0xCaf681a66D020601342297493863E78C959E5cb2") as Address;
 
 function buildV2Route(
   route: DustSweepRoute,
@@ -4701,7 +4734,9 @@ function buildV2Route(
         ? ETH_UNISWAP_V3_SWAP_ROUTER
         : chain.chainId === BSC_CHAIN_ID
           ? BSC_UNISWAP_V3_SWAP_ROUTER
-          : UNISWAP_V3_SWAP_ROUTER_ADDRESS;
+          : chain.chainId === ROBINHOOD_CHAIN_ID
+            ? ROBINHOOD_UNISWAP_V3_SWAP_ROUTER
+            : UNISWAP_V3_SWAP_ROUTER_ADDRESS;
     const v3 = decodeV3DexData(route.dexData as Hex);
     const data = v3.isMultiHop
       ? encodeFunctionData({

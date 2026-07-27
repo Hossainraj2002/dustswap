@@ -2,6 +2,7 @@ import { base, bsc, mainnet } from "wagmi/chains";
 import type { Chain } from "wagmi/chains";
 import { type Address } from "viem";
 import { type Token } from "@/types/dustsweep";
+import { robinhood } from "./robinhoodChain";
 
 /**
  * Frontend per-chain sweep configuration for DustSweep.
@@ -15,12 +16,13 @@ import { type Token } from "@/types/dustsweep";
 export const BASE_CHAIN_ID = 8453;
 export const ETHEREUM_CHAIN_ID = 1;
 export const BSC_CHAIN_ID = 56;
+export const ROBINHOOD_CHAIN_ID = 4663;
 
 const NATIVE_TOKEN_SENTINEL = "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE" as Address;
 
 export type SweepChain = {
   id: number;
-  key: "base" | "ethereum" | "bsc";
+  key: "base" | "ethereum" | "bsc" | "robinhood";
   label: string;
   chain: Chain;
   weth: Address;
@@ -138,6 +140,35 @@ const BSC_OUTPUT_TOKENS: Token[] = [
   },
 ];
 
+// Robinhood Chain gotchas: NO USDC/USDT/DAI exist there — the chain's USD stable is USDG
+// ("Global Dollar", Paxos), 6 DECIMALS, live-verified 2026-07-26 (36k holders, $118M/day).
+// The OTHER USDG-labeled token 0x0A3B…954F is a 2-holder test deploy — never list it.
+// USDG is first (= default output); native is ETH (Arbitrum-stack L2, wrapped native is WETH).
+const ROBINHOOD_OUTPUT_TOKENS: Token[] = [
+  {
+    address: "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168" as Address,
+    symbol: "USDG",
+    name: "Global Dollar",
+    decimals: 6,
+    logoURI: "https://assets.coingecko.com/coins/images/51281/standard/GDN_USDG_Token_200x200.png",
+  },
+  {
+    address: NATIVE_TOKEN_SENTINEL,
+    symbol: "ETH",
+    name: "Ethereum",
+    decimals: 18,
+    logoURI: "https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/info/logo.png",
+    isNative: true,
+  },
+  {
+    address: "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73" as Address,
+    symbol: "WETH",
+    name: "Wrapped Ether",
+    decimals: 18,
+    logoURI: "https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/info/logo.png",
+  },
+];
+
 export const SWEEP_CHAINS: SweepChain[] = [
   {
     id: BASE_CHAIN_ID,
@@ -184,6 +215,21 @@ export const SWEEP_CHAINS: SweepChain[] = [
     paymasterEligible: false,
     approvalWaitTimeoutMs: 90_000, // ~3s blocks — Base-like cadence
   },
+  {
+    id: ROBINHOOD_CHAIN_ID,
+    key: "robinhood",
+    label: "Robinhood",
+    chain: robinhood, // nativeCurrency ETH — drives wallet_addEthereumChain + native symbol
+    weth: "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73" as Address,
+    usdc: "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168" as Address, // USDG, 6 decimals
+    outputTokens: ROBINHOOD_OUTPUT_TOKENS,
+    explorerUrl: "https://robinhoodchain.blockscout.com",
+    explorerName: "Blockscout",
+    routerV3Env: "NEXT_PUBLIC_DUST_SWEEP_ROUTER_V3_ADDRESS_4663",
+    selectLimitEnv: "NEXT_PUBLIC_DUST_SWEEP_AUTO_SELECT_LIMIT_4663",
+    paymasterEligible: false,
+    approvalWaitTimeoutMs: 90_000, // ~100ms blocks — Base-like cadence is more than enough
+  },
 ];
 
 // NEXT_PUBLIC_* envs are inlined at build time, so read them explicitly (not via a dynamic key).
@@ -193,7 +239,9 @@ function readSelectLimit(chainId: number): number | null {
       ? process.env.NEXT_PUBLIC_DUST_SWEEP_AUTO_SELECT_LIMIT_1
       : chainId === BSC_CHAIN_ID
         ? process.env.NEXT_PUBLIC_DUST_SWEEP_AUTO_SELECT_LIMIT_56
-        : process.env.NEXT_PUBLIC_DUST_SWEEP_AUTO_SELECT_LIMIT;
+        : chainId === ROBINHOOD_CHAIN_ID
+          ? process.env.NEXT_PUBLIC_DUST_SWEEP_AUTO_SELECT_LIMIT_4663
+          : process.env.NEXT_PUBLIC_DUST_SWEEP_AUTO_SELECT_LIMIT;
   const parsed = Number(raw);
   return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : null;
 }
@@ -204,7 +252,9 @@ function readRouterV3(chainId: number): Address | null {
       ? process.env.NEXT_PUBLIC_DUST_SWEEP_ROUTER_V3_ADDRESS_1
       : chainId === BSC_CHAIN_ID
         ? process.env.NEXT_PUBLIC_DUST_SWEEP_ROUTER_V3_ADDRESS_56
-        : process.env.NEXT_PUBLIC_DUST_SWEEP_ROUTER_V3_ADDRESS;
+        : chainId === ROBINHOOD_CHAIN_ID
+          ? process.env.NEXT_PUBLIC_DUST_SWEEP_ROUTER_V3_ADDRESS_4663
+          : process.env.NEXT_PUBLIC_DUST_SWEEP_ROUTER_V3_ADDRESS;
   return raw && /^0x[0-9a-fA-F]{40}$/.test(raw) ? (raw as Address) : null;
 }
 

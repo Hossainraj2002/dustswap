@@ -28,6 +28,7 @@ import { isAddress, type Address } from "viem";
 export const BASE_CHAIN_ID = 8453;
 export const ETHEREUM_CHAIN_ID = 1;
 export const BSC_CHAIN_ID = 56;
+export const ROBINHOOD_CHAIN_ID = 4663;
 
 /** Canonical Permit2 (same address on every chain). Verified live on Base. */
 export const PERMIT2_ADDRESS: Address = "0x000000000022D473030F116dDEE9F6B43aC78BA3";
@@ -43,6 +44,13 @@ export const ETHEREUM_WETH_ADDRESS: Address = "0xC02aaA39b223FE8D0A0e5C4F27eAD90
  * Verified live 2026-07-10 via eth_getCode + decimals()=18 + symbol()=WBNB on bsc-dataseed.
  */
 export const BSC_WBNB_ADDRESS: Address = "0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c";
+
+/**
+ * WETH on Robinhood Chain (native gas token IS ETH — no WBNB-style rename needed). Constructor
+ * arg for the Robinhood DustSwapSweepRouter. Verified live 2026-07-26 via eth_getCode (2202 bytes)
+ * + name()=WETH + symbol()=WETH + decimals()=18 on rpc.mainnet.chain.robinhood.com.
+ */
+export const ROBINHOOD_WETH_ADDRESS: Address = "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73";
 
 export type DustSweepV3SpenderModel = "permit2" | "self";
 
@@ -441,6 +449,111 @@ export const BSC_DUSTSWEEP_V3_TARGETS: DustSweepV3Target[] = [
   },
 ];
 
+/**
+ * Verified Robinhood Chain (chainId 4663) targets for DustSweep V3.
+ *
+ * DECOY WARNING — the canonical mainnet Uniswap addresses are FAKE on this chain: 0x1F98431c…
+ * ("UniswapV3Factory", but compiled with Solidity 0.4.26, 2109 bytes, getPool() returns empty)
+ * and 0x61fFE014… (identical 2109-byte stub); canonical SwapRouter02 0x68b34658… has NO code.
+ * NEVER wire canonical mainnet Uniswap addresses on 4663.
+ *
+ * The REAL Uniswap deployment (one deployer, 0x9701fb0a…, shipped factory+router+quoter+V2):
+ * V3 factory 0x1f7d7550…, SwapRouter02 0xCaf681a6…, QuoterV2 0x33e885eD…, V2 Router02
+ * 0x89e5DB8B…. All verified live 2026-07-26 via eth_getCode + factory()/WETH9() cross-links +
+ * functional quotes (QuoterV2 fee-100: 188.26 USDG / 0.1 WETH; V2 getAmountsOut: 188.15), and
+ * DexScreener labels the factory's WETH/USDG pools "uniswap v3" ($5.9M/$2.4M/$0.45M reserves).
+ *
+ * Uniswap V3+V2 hold effectively all real depth on this young chain, so the native ladder is
+ * Uniswap-only. PancakeSwap V3 deployed its SmartRouter/factory deterministically here but its
+ * QuoterV2 is NOT at the BSC address and could not be located/verified, and its top pool holds
+ * only ~$84K — Pancake plus every V3 fork (SwapHood, RobinSwap, Up, Sheriff, DyorSwap, …) is
+ * reached via the aggregator rescue path instead. Odos does NOT support 4663 at all
+ * (/info/contract-info/v2/4663 → "Invalid chain ID"), so there is no Odos entry to park.
+ * OpenOcean is PRE-ALLOWLISTED but PARKED (enabled: false) per the standard pattern. Re-verify
+ * every address via eth_getCode before the owner allowlist txs; see
+ * packages/contracts/remix/DustSwapSweepRouter-Robinhood-Deploy.md.
+ */
+export const ROBINHOOD_DUSTSWEEP_V3_TARGETS: DustSweepV3Target[] = [
+  {
+    id: "uniswap-v3-swaprouter02",
+    name: "Uniswap V3 SwapRouter02 (Robinhood)",
+    target: "0xCaf681a66D020601342297493863E78C959E5cb2",
+    spender: "0xCaf681a66D020601342297493863E78C959E5cb2",
+    spenderModel: "self",
+    calldataStyle: "uniswap_v3_swaprouter02",
+    feeTiers: [100, 500, 3000, 10000],
+    enabled: true,
+    source:
+      "Verified live 2026-07-26: eth_getCode ok (24497 B); factory()=0x1f7d7550…, WETH9()=WETH; " +
+      "official QuoterV2 0x33e885eD… quoted WETH→USDG fee 100 at ~188.26 USDG / 0.1 WETH.",
+  },
+  {
+    id: "uniswap-v2-router",
+    name: "Uniswap V2 Router02 (Robinhood)",
+    target: "0x89e5DB8B5aA49aA85AC63f691524311AEB649eba",
+    spender: "0x89e5DB8B5aA49aA85AC63f691524311AEB649eba",
+    spenderModel: "self",
+    calldataStyle: "baseswap_router", // UniV2 getAmountsOut/swapExactTokensForTokens shape
+    enabled: true,
+    source:
+      "Verified live 2026-07-26: eth_getCode ok; same official deployer as the V3 stack; WETH() " +
+      "correct; getAmountsOut(0.1 WETH→USDG) returned ~188.15 USDG.",
+  },
+  {
+    id: "kyber-meta-aggregation-router-v2",
+    name: "KyberSwap MetaAggregationRouterV2",
+    target: "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5",
+    spender: "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5",
+    spenderModel: "self",
+    calldataStyle: "uniswap_v3_swaprouter02", // GENERIC aggregator route; calldata is opaque
+    enabled: true,
+    source:
+      "Verified live 2026-07-26: Kyber /robinhood/api/v1/routes returned routerAddress == this " +
+      "address with a real WETH→USDG route; eth_getCode ok on 4663 (13724 B).",
+  },
+  {
+    id: "zerox-allowance-holder",
+    name: "0x AllowanceHolder",
+    target: "0x0000000000001fF3684f28c67538d4D072C22734",
+    spender: "0x0000000000001fF3684f28c67538d4D072C22734",
+    spenderModel: "self",
+    calldataStyle: "uniswap_v3_swaprouter02",
+    enabled: true,
+    source:
+      "Verified live 2026-07-26: eth_getCode ok on 4663 (1009 B). API-level chainId=4663 support " +
+      "needs a keyed quote test — app-side gated by DUST_SWEEP_ENABLE_ZEROX_4663 (default OFF).",
+  },
+  {
+    id: "lifi-diamond",
+    name: "LI.FI Diamond (Robinhood)",
+    // NOT the canonical LI.FI Diamond address — 0x1231DEB6… has NO code on 4663. LI.FI's real
+    // executor here is a Blockscout-VERIFIED "LiFiDiamond" at this chain-specific address; live
+    // /v1/quote responses return it as BOTH approvalAddress and transactionRequest.to (stable
+    // across amounts and both trade directions, tool "fly").
+    target: "0xB477751B76CF82d00a686A1232f5fCD772414Af3",
+    spender: "0xB477751B76CF82d00a686A1232f5fCD772414Af3",
+    spenderModel: "self",
+    calldataStyle: "uniswap_v3_swaprouter02",
+    enabled: true,
+    source:
+      "Verified live 2026-07-26: LI.FI /v1/quote fromChain=4663 returned approvalAddress + " +
+      "transactionRequest.to == this address; Blockscout-verified contract name 'LiFiDiamond'; " +
+      "eth_getCode ok on 4663.",
+  },
+  {
+    id: "openocean-exchange-proxy",
+    name: "OpenOcean Exchange Proxy",
+    target: "0x6352a56caadC4F1E25CD6c75970Fa768A3304e64",
+    spender: "0x6352a56caadC4F1E25CD6c75970Fa768A3304e64",
+    spenderModel: "self",
+    calldataStyle: "uniswap_v3_swaprouter02",
+    enabled: false, // PARKED — pre-allowlist on-chain, enable via DUST_SWEEP_ENABLE_OPENOCEAN_4663
+    source:
+      "Verified live 2026-07-26: eth_getCode ok on 4663 (2161 B); OpenOcean v4/robinhood/quote " +
+      "returned a real WETH→USDG quote. Parked pending enable + swap-payload verification.",
+  },
+];
+
 function unique(addresses: Address[]): Address[] {
   const seen = new Set<string>();
   const out: Address[] = [];
@@ -482,6 +595,7 @@ export function getDustSweepV3RouterAddress(): Address | null {
 export function getDustSweepV3TargetsForChain(chainId: number): DustSweepV3Target[] {
   if (chainId === ETHEREUM_CHAIN_ID) return ETHEREUM_DUSTSWEEP_V3_TARGETS;
   if (chainId === BSC_CHAIN_ID) return BSC_DUSTSWEEP_V3_TARGETS;
+  if (chainId === ROBINHOOD_CHAIN_ID) return ROBINHOOD_DUSTSWEEP_V3_TARGETS;
   return BASE_DUSTSWEEP_V3_TARGETS;
 }
 

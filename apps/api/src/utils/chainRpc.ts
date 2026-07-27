@@ -1,4 +1,4 @@
-import { createPublicClient, custom, type Chain } from "viem";
+import { createPublicClient, custom, defineChain, type Chain } from "viem";
 import { bsc, mainnet } from "viem/chains";
 import {
   alchemyRpcRequest,
@@ -27,7 +27,20 @@ import {
 
 export const ETHEREUM_CHAIN_ID = 1;
 export const BSC_CHAIN_ID = 56;
+export const ROBINHOOD_CHAIN_ID = 4663;
 const BASE_CHAIN_ID = 8453;
+
+// viem (2.46/2.52 in this workspace) ships no Robinhood Chain definition — define it locally.
+// Native currency IS ETH (Arbitrum-stack L2). Verified live 2026-07-26: eth_chainId=0x1237.
+const robinhoodChain: Chain = defineChain({
+  id: ROBINHOOD_CHAIN_ID,
+  name: "Robinhood",
+  nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
+  rpcUrls: { default: { http: ["https://rpc.mainnet.chain.robinhood.com"] } },
+  blockExplorers: {
+    default: { name: "Blockscout", url: "https://robinhoodchain.blockscout.com" },
+  },
+});
 
 const DEFAULT_ROTATION_CALLS = 100;
 const DEFAULT_ALCHEMY_ROTATION_CALLS = 1;
@@ -91,6 +104,29 @@ const CHAIN_RPC_SETTINGS: Record<number, ChainRpcSettings> = {
     rotationCallsEnv: "BSC_RPC_ROTATION_CALLS",
     publicFallbackEnv: "BSC_RPC_PUBLIC_FALLBACK",
     dedicatedOnlyEnv: "ALCHEMY_BSC_RPC_DEDICATED_ONLY",
+    blockscoutSupported: false,
+  },
+  [ROBINHOOD_CHAIN_ID]: {
+    chainId: ROBINHOOD_CHAIN_ID,
+    chain: robinhoodChain,
+    // Public RPC is rate-limited — discovery/quoting must lead with keyed Alchemy endpoints.
+    publicRpcUrl: "https://rpc.mainnet.chain.robinhood.com",
+    // Verified live 2026-07-26: the host exists (Alchemy edge answered the shared demo key with
+    // 429). NOTE the Alchemy app must have the Robinhood network enabled (dashboard → app →
+    // Networks) and alchemy_getTokenBalances confirmed before flipping the chain on.
+    alchemyHost: "robinhood-mainnet.g.alchemy.com",
+    // Same isolation rationale as Ethereum/BSC: a separate key set keeps CU burn attributable.
+    alchemyKeyEnvs: ["ALCHEMY_ROBINHOOD_RPC_KEYS", "ALCHEMY_ROBINHOOD_RPC_KEY"],
+    alchemyUrlEnvs: ["ALCHEMY_ROBINHOOD_RPC_URLS", "ALCHEMY_ROBINHOOD_RPC"],
+    rpcUrlEnvs: ["ROBINHOOD_RPC_URLS", "ROBINHOOD_RPC_URL"],
+    rotationCallsEnv: "ROBINHOOD_RPC_ROTATION_CALLS",
+    publicFallbackEnv: "ROBINHOOD_RPC_PUBLIC_FALLBACK",
+    dedicatedOnlyEnv: "ALCHEMY_ROBINHOOD_RPC_DEDICATED_ONLY",
+    // Hosted api.blockscout.com/4663 answered 402 "proceed with API key" (2026-07-26) — i.e. it
+    // ROUTES the chain (unlike BSC's flat "Network not supported") but could not be confirmed
+    // with a working key (local keys were stale). Ship false so no failover hop is burned; flip
+    // to true after one keyed eth_chainId test with the live Railway BLOCKSCOUT_API_KEYS (see
+    // the Robinhood deploy runbook).
     blockscoutSupported: false,
   },
 };

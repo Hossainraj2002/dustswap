@@ -3,6 +3,7 @@ import {
   BSC_WBNB_ADDRESS,
   ETHEREUM_WETH_ADDRESS,
   PERMIT2_ADDRESS,
+  ROBINHOOD_WETH_ADDRESS,
   WETH_ADDRESS as BASE_WETH_ADDRESS,
   getDustSweepV3TargetsForChain,
 } from "./dustsweepV3Sources";
@@ -22,6 +23,7 @@ import {
 export const BASE_CHAIN_ID = 8453;
 export const ETHEREUM_CHAIN_ID = 1;
 export const BSC_CHAIN_ID = 56;
+export const ROBINHOOD_CHAIN_ID = 4663;
 
 export const NATIVE_TOKEN_SENTINEL =
   "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE" as Address;
@@ -58,7 +60,7 @@ export type AggregatorEnableFlags = {
 
 export type SweepChainConfig = {
   chainId: number;
-  slug: "base" | "ethereum" | "bsc";
+  slug: "base" | "ethereum" | "bsc" | "robinhood";
   name: string;
   explorerUrl: string;
 
@@ -112,6 +114,16 @@ export type SweepChainConfig = {
   // ── native DEX quoting ──
   /** null → use the existing Base native task list in getNativeQuoteCandidates (unchanged). */
   nativeSources: NativeSourceSpec[] | null;
+
+  // ── discovery ──
+  /**
+   * Blockscout REST v2 base URL (…/api/v2) for the discovery balance-snapshot fallback on this
+   * chain. When set, the existing Blockscout lane (previously Base-only) can also serve this
+   * chain, reusing the SAME BLOCKSCOUT_API_KEYS / BLOCKSCOUT_API_KEY envs — no new key env.
+   * Unset → the chain stays Alchemy-only for discovery (Ethereum/BSC behavior unchanged);
+   * Base keeps resolving its URL from BLOCKSCOUT_BASE_API_V2_URL exactly as before.
+   */
+  blockscoutRestBaseUrl?: string;
 };
 
 function envAddress(name: string): Address {
@@ -351,6 +363,99 @@ function bscConfig(): SweepChainConfig {
   };
 }
 
+// ── Robinhood Chain (4663) ───────────────────────────────────────────────────
+// Arbitrum-stack L2, native gas token IS ETH (WETH-not-WBNB — no BSC-style rename anywhere).
+// Native ladder: Uniswap V3 + Uniswap V2 — the ONLY venues with real depth on this young chain
+// (GeckoTerminal 2026-07-26: Uniswap V3 USDG/WETH $48M 24h vol, $5.9M+$2.4M reserves; the next
+// non-Uniswap venue, Pancake V3, tops out at ~$84K and its QuoterV2 could not be verified on
+// this chain). Everything else — Pancake, SwapHood, RobinSwap, Up, Sheriff, DyorSwap, V4 pools —
+// is reached (and price-optimized across) by the aggregator rescue path (Kyber / LI.FI, 0x and
+// OpenOcean parked). Odos does not support 4663. All addresses verified live 2026-07-26 via
+// eth_getCode + functional quote probes on rpc.mainnet.chain.robinhood.com — never explorer
+// labels (the canonical mainnet Uniswap addresses on this chain are FAKE stubs; see
+// dustsweepV3Sources.ts).
+//
+// Robinhood gotchas encoded here:
+//   - NO USDC/USDT/DAI exist on this chain. The default USD stable/output is USDG ("Global
+//     Dollar", Paxos) 0x5fc5…d168 — 6 DECIMALS, 36k holders, $118M/day (the OTHER USDG-labeled
+//     token 0x0A3B…954F is a 2-holder test deploy — never use it). usdc points at USDG;
+//     usdt/dai/wbtc are zero-address sentinels (the $1-hint loop + core-token check no-op on 0x0).
+//   - Cheap L2 economics (gas ~0.1–0.4 gwei, ~100ms blocks): Base-like minValueUsd, generous
+//     route cap, small gas-model units.
+function robinhoodConfig(): SweepChainConfig {
+  const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000" as Address;
+  return {
+    chainId: ROBINHOOD_CHAIN_ID,
+    slug: "robinhood",
+    name: "Robinhood",
+    explorerUrl: "https://robinhoodchain.blockscout.com",
+    weth: ROBINHOOD_WETH_ADDRESS,
+    usdc: "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168" as Address, // USDG (Global Dollar), 6 dec
+    usdt: ZERO_ADDRESS, // no USDT on Robinhood Chain
+    dai: ZERO_ADDRESS, // no DAI on Robinhood Chain
+    wbtc: ZERO_ADDRESS, // no WBTC on Robinhood Chain
+    extraStables: [],
+    usdcDecimals: 6, // USDG decimals — verified on-chain via decimals()=6, 2026-07-26
+    routerV3Env: "DUST_SWEEP_ROUTER_V3_ADDRESS_4663",
+    supportsLegacyLanes: false,
+    // Robinhood deploys the UPGRADED V3 contract (same source family as Ethereum's) — WETH is a
+    // first-class sweepable input that unwraps to native ETH via the router passthrough leg.
+    supportsWethPassthrough: boolEnv("DUST_SWEEP_WETH_PASSTHROUGH_4663", true),
+    routeMaxCap: numberEnv("DUST_SWEEP_ROUTE_MAX_CAP_4663", 25, 1, 50),
+    minValueUsd: numberEnv("DUST_SWEEP_MIN_VALUE_USD_4663", 0.01, 0, 1_000),
+    gasModel: {
+      baseUnits: numberEnv("DUST_SWEEP_GAS_UNITS_BASE_4663", 120_000, 21_000, 5_000_000),
+      perRouteUnits: numberEnv("DUST_SWEEP_GAS_UNITS_PER_ROUTE_4663", 180_000, 21_000, 2_000_000),
+    },
+    kyberSlug: "robinhood", // live-verified 2026-07-26 (real WETH→USDG route)
+    openOceanSlug: "robinhood", // live-verified 2026-07-26 (real quote + dex list)
+    dexscreenerSlug: "robinhood", // live-verified 2026-07-26 (pairs resolve, dexId "uniswap")
+    openOceanGasPriceGwei: numberEnv("DUST_SWEEP_OPENOCEAN_GAS_PRICE_GWEI_4663", 0.05, 0.001, 500),
+    aggregators: {
+      kyber: boolEnv("DUST_SWEEP_ENABLE_KYBER_4663", true),
+      // 0x AllowanceHolder is deployed on-chain, but api.0x.org support for chainId=4663 needs a
+      // KEYED quote test before enabling — default OFF until that passes (unlike ETH/BSC, where
+      // the 0x quote was live-verified pre-merge).
+      zerox: boolEnv("DUST_SWEEP_ENABLE_ZEROX_4663", false),
+      lifi: boolEnv("DUST_SWEEP_ENABLE_LIFI_4663", true),
+      openocean: boolEnv("DUST_SWEEP_ENABLE_OPENOCEAN_4663", false),
+      odos: false, // Odos does not support chainId 4663 ("Invalid chain ID") — hard off
+    },
+    allowedAggregatorTargetsEnv: "DUST_SWEEP_ALLOWED_AGGREGATOR_TARGETS_4663",
+    nativeSources: [
+      {
+        kind: "uniswap_v3",
+        dexName: "Uniswap V3",
+        // Official Robinhood deployment (deployer 0x9701fb0a… shipped factory+router+quoter).
+        // NOT the canonical mainnet addresses — those are fake stubs on this chain.
+        router:
+          process.env.UNISWAP_V3_SWAP_ROUTER_ADDRESS_4663 &&
+          isAddress(process.env.UNISWAP_V3_SWAP_ROUTER_ADDRESS_4663)
+            ? (process.env.UNISWAP_V3_SWAP_ROUTER_ADDRESS_4663 as Address)
+            : ("0xCaf681a66D020601342297493863E78C959E5cb2" as Address),
+        quoter:
+          process.env.UNISWAP_V3_QUOTER_ADDRESS_4663 &&
+          isAddress(process.env.UNISWAP_V3_QUOTER_ADDRESS_4663)
+            ? (process.env.UNISWAP_V3_QUOTER_ADDRESS_4663 as Address)
+            : ("0x33e885eD0Ec9bF04EcfB19341582aADCb4c8A9E7" as Address),
+        factory: "0x1f7d7550B1b028f7571E69A784071F0205FD2EfA" as Address,
+        // Deepest WETH/USDG pool sits at fee 100 ($5.9M), then 500 ($2.4M), 3000 ($0.45M).
+        feeTiers: [100, 500, 3000, 10000],
+      },
+      {
+        kind: "univ2",
+        dexName: "Uniswap V2",
+        router: "0x89e5DB8B5aA49aA85AC63f691524311AEB649eba" as Address,
+        factory: "0x8bCEAA40b9ACdfAedf85ADf4Ff01F5AD6517937f" as Address,
+      },
+    ],
+    // Self-hosted Blockscout REST v2, live-verified 2026-07-26 (…/addresses/{addr}/token-balances
+    // returns real data). Serves as the discovery balance fallback because Alchemy's token API on
+    // robinhood-mainnet is unproven; keys resolve from the existing BLOCKSCOUT_API_KEYS envs.
+    blockscoutRestBaseUrl: "https://robinhoodchain.blockscout.com/api/v2",
+  };
+}
+
 // Router-from-env is read lazily (envAddress) so a SwapRouter override doesn't require a rebuild.
 // nativeSources.router for uniswap_v3 falls back to the literal when the *_1 override is 0x0.
 function withResolvedRouters(config: SweepChainConfig): SweepChainConfig {
@@ -369,6 +474,7 @@ const CHAIN_CONFIGS: Record<number, () => SweepChainConfig> = {
   [BASE_CHAIN_ID]: () => BASE_CONFIG,
   [ETHEREUM_CHAIN_ID]: () => withResolvedRouters(ethereumConfig()),
   [BSC_CHAIN_ID]: () => withResolvedRouters(bscConfig()),
+  [ROBINHOOD_CHAIN_ID]: () => withResolvedRouters(robinhoodConfig()),
 };
 
 /** Chains DustSweep will serve. Default: Base only. Flip DUST_SWEEP_ENABLED_CHAIN_IDS to open ETH. */

@@ -1,6 +1,7 @@
 import { http } from "wagmi";
 import { base, mainnet, arbitrum, optimism, polygon, bsc, avalanche } from "wagmi/chains";
 import type { Chain } from "wagmi/chains";
+import { robinhood } from "./robinhoodChain";
 
 export const DEFAULT_SOURCE_CHAIN_ID = base.id;
 const DEFAULT_RPC_ROTATION_CALLS = 100;
@@ -13,6 +14,7 @@ export const INITIAL_WAGMI_CHAINS = [
   polygon,
   bsc,
   avalanche,
+  robinhood,
 ] as const satisfies readonly [Chain, ...Chain[]];
 
 export const SUPPORTED_CHAINS = {
@@ -23,6 +25,7 @@ export const SUPPORTED_CHAINS = {
   polygon: polygon.id,
   bsc: bsc.id,
   avalanche: avalanche.id,
+  robinhood: robinhood.id,
 } as const;
 
 function splitEnv(value?: string) {
@@ -78,6 +81,11 @@ const rpcUrlsByChainId: Record<number, string[]> = {
   [polygon.id]: toRpcUrlList(process.env.NEXT_PUBLIC_POLYGON_RPC_URL),
   [bsc.id]: toRpcUrlList(process.env.NEXT_PUBLIC_BSC_RPC_URL),
   [avalanche.id]: toRpcUrlList(process.env.NEXT_PUBLIC_AVALANCHE_RPC_URL),
+  // Public RPC only in the NEXT_PUBLIC bundle — paid Alchemy Robinhood keys are server-side.
+  [robinhood.id]: unique([
+    ...splitEnv(process.env.NEXT_PUBLIC_ROBINHOOD_RPC_URLS),
+    ...toRpcUrlList(process.env.NEXT_PUBLIC_ROBINHOOD_RPC_URL),
+  ]),
 };
 
 export function getRpcUrlsForChain(chainId: number) {
