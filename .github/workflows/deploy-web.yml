@@ -6,6 +6,9 @@ on:
     paths:
       - 'apps/web/**'
       - '.github/workflows/deploy-web.yml'
+  # Manual redeploys from the Actions tab — needed when only the WEB_ENV_PRODUCTION secret
+  # changes (secret edits do not trigger a push).
+  workflow_dispatch:
 
 jobs:
   deploy:
@@ -39,11 +42,27 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build Next.js
-        run: pnpm run build
+      # NEXT_PUBLIC_* values are inlined into the client bundle at BUILD time, and no env file
+      # is committed — without this, CI would silently ship a Base-only bundle (no DustSweep
+      # multichain config, no router addresses). The WEB_ENV_PRODUCTION secret holds the full
+      # production .env content; the job-level secrets above still take precedence over the file.
+      - name: Write production env (NEXT_PUBLIC bundle values)
+        env:
+          WEB_ENV_PRODUCTION: ${{ secrets.WEB_ENV_PRODUCTION }}
+        run: |
+          if [ -z "$WEB_ENV_PRODUCTION" ]; then
+            echo "::error::WEB_ENV_PRODUCTION secret is empty — refusing to build a bundle without NEXT_PUBLIC config (it would ship Base-only and drop Ethereum/BSC/Robinhood from prod)."
+            exit 1
+          fi
+          printf '%s' "$WEB_ENV_PRODUCTION" > .env.production
 
-      - name: Build OpenNext Cloudflare bundle
-        run: pnpm exec opennextjs-cloudflare build --skipNextBuild
+      # Single-step build: the OpenNext CLI runs `pnpm build` itself (keeping the 4GB heap flag
+      # from package.json) with NEXT_PRIVATE_STANDALONE=true. Splitting this into a plain
+      # `next build` + `--skipNextBuild` breaks with ENOENT .next/standalone/... because
+      # next.config.js does not set `output: "standalone"` (root cause of every red deploy
+      # since 2026-07-11; runs before that failed for other reasons).
+      - name: Build (Next.js + OpenNext Cloudflare bundle)
+        run: pnpm exec opennextjs-cloudflare build
 
       - name: Deploy to Cloudflare
         run: pnpm exec opennextjs-cloudflare deploy -- --keep-vars
