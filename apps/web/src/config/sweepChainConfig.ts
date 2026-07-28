@@ -42,14 +42,9 @@ export type SweepChain = {
   approvalWaitTimeoutMs: number;
 };
 
+// ETH first = the DEFAULT output token on Base (the router swaps every input to WETH and unwraps
+// to native ETH on settle). USDC remains available immediately below it.
 const BASE_OUTPUT_TOKENS: Token[] = [
-  {
-    address: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" as Address,
-    symbol: "USDC",
-    name: "USD Coin",
-    decimals: 6,
-    logoURI: "https://basescan.org/token/images/centre-usdc_28.png",
-  },
   {
     address: NATIVE_TOKEN_SENTINEL,
     symbol: "ETH",
@@ -57,6 +52,13 @@ const BASE_OUTPUT_TOKENS: Token[] = [
     decimals: 18,
     logoURI: "https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/info/logo.png",
     isNative: true,
+  },
+  {
+    address: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" as Address,
+    symbol: "USDC",
+    name: "USD Coin",
+    decimals: 6,
+    logoURI: "https://basescan.org/token/images/centre-usdc_28.png",
   },
   {
     address: "0x4200000000000000000000000000000000000006" as Address,
