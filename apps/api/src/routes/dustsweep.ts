@@ -1235,7 +1235,13 @@ const GENERIC_DEX_DATA_PARAMETERS = [
 ] as const;
 
 type PriceConfidence = "HIGH" | "MEDIUM" | "LOW" | "NONE";
-type TokenMarketHintSource = "canonical" | "coingecko" | "dexscreener" | "blockscout" | "none";
+type TokenMarketHintSource =
+  | "canonical"
+  | "coingecko"
+  | "dexscreener"
+  | "blockscout"
+  | "alchemy"
+  | "none";
 
 type TokenBalanceMetadataHint = {
   symbol?: string;
@@ -2396,6 +2402,90 @@ async function fetchTokenMarketHintsDexScreener(
   return hints;
 }
 
+/**
+ * Alchemy network slug for the Prices API. Verified live 2026-07-28 against a production key:
+ * all four chains answer, including robinhood-mainnet (where DexScreener coverage is thinnest).
+ */
+function getAlchemyPricesNetwork(chain: SweepChainConfig) {
+  if (chain.chainId === BASE_CHAIN_ID) return "base-mainnet";
+  if (chain.chainId === ETHEREUM_CHAIN_ID) return "eth-mainnet";
+  if (chain.chainId === BSC_CHAIN_ID) return "bnb-mainnet";
+  if (chain.chainId === ROBINHOOD_CHAIN_ID) return "robinhood-mainnet";
+  return null;
+}
+
+function getAlchemyPricesApiKey() {
+  const keys = [
+    ...splitCsvEnv(process.env.ALCHEMY_PRICES_API_KEY),
+    ...splitCsvEnv(process.env.ALCHEMY_API_KEYS),
+    ...splitCsvEnv(process.env.ALCHEMY_API_KEY),
+  ];
+  return keys[0] || "";
+}
+
+/**
+ * THIRD price source, after DexScreener and CoinGecko. Discovery hides any token it cannot price
+ * (priceUSD <= 0 forces hiddenByDefault), so price coverage IS token visibility — and the
+ * whitelist can never cover the long tail. Alchemy prices a far wider universe by contract
+ * address and batches 25 per request. Fail-open: any error leaves earlier hints untouched.
+ */
+async function fetchAlchemyTokenPrices(
+  addresses: Address[],
+  chain: SweepChainConfig,
+): Promise<Record<string, number>> {
+  const prices: Record<string, number> = {};
+  const network = getAlchemyPricesNetwork(chain);
+  const apiKey = getAlchemyPricesApiKey();
+  if (!network || !apiKey || addresses.length === 0) return prices;
+  if (process.env.DUST_SWEEP_ENABLE_ALCHEMY_PRICES === "false") return prices;
+
+  const batchSize = 25; // Alchemy's documented per-request maximum
+  const batches: Address[][] = [];
+  for (let i = 0; i < addresses.length; i += batchSize) {
+    batches.push(addresses.slice(i, i + batchSize));
+  }
+
+  const results = await pLimit(
+    batches.map((batch) => async () => {
+      const out: Record<string, number> = {};
+      try {
+        const response = await fetch(
+          `https://api.g.alchemy.com/prices/v1/${apiKey}/tokens/by-address`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Accept: "application/json" },
+            body: JSON.stringify({
+              addresses: batch.map((address) => ({ network, address })),
+            }),
+            signal: AbortSignal.timeout(DISCOVERY_MARKET_HINT_TIMEOUT_MS),
+          },
+        );
+        if (!response.ok) return out;
+        const payload = (await response.json()) as {
+          data?: Array<{
+            address?: string;
+            prices?: Array<{ currency?: string; value?: string }>;
+            error?: unknown;
+          }>;
+        };
+        for (const row of payload.data || []) {
+          if (!row?.address) continue;
+          const usd = (row.prices || []).find((price) => price.currency === "usd");
+          const value = Number(usd?.value || 0);
+          if (Number.isFinite(value) && value > 0) out[row.address.toLowerCase()] = value;
+        }
+      } catch {
+        // Fail-open — discovery still works off the earlier sources.
+      }
+      return out;
+    }),
+    DISCOVERY_MARKET_HINT_CONCURRENCY,
+  );
+
+  for (const result of results) Object.assign(prices, result);
+  return prices;
+}
+
 function getCoinGeckoPlatform(chain: SweepChainConfig) {
   if (chain.chainId === BASE_CHAIN_ID) return "base";
   if (chain.chainId === ETHEREUM_CHAIN_ID) return "ethereum";
@@ -2539,6 +2629,24 @@ async function fetchTokenMarketHints(
 
   for (const [address, hint] of Object.entries(dexHints)) {
     setBestMarketHint(hints, address, hint);
+  }
+
+  // Third pass: anything DexScreener and CoinGecko could not price. An unpriced token is HIDDEN
+  // from the user regardless of how routable it is, so this pass is what lets the long tail be
+  // discovered live instead of depending on the whitelist.
+  const stillUnpriced = externalNeeded.filter(
+    (address) => (hints[address.toLowerCase()]?.priceUSD || 0) === 0,
+  );
+  if (stillUnpriced.length > 0) {
+    const alchemyPrices = await fetchAlchemyTokenPrices(stillUnpriced, chain);
+    for (const [address, priceUSD] of Object.entries(alchemyPrices)) {
+      setBestMarketHint(hints, address, {
+        ...emptyMarketHint(),
+        priceUSD,
+        source: "alchemy",
+        confidence: "MEDIUM",
+      });
+    }
   }
 
   return hints;
@@ -2731,11 +2839,26 @@ function getRiskClassification(args: {
     reasons.push("unverified_contract");
   }
 
-  if (
-    /airdrop|claim|reward|voucher|bonus|visit|http|www\.|\.com|\.xyz|\.top|\.vip|\.app|t\.me|telegram/.test(label)
-  ) {
+  // Spam names. This adds 80 => blockedFromSweep, so it must not fire on ordinary words: bare
+  // "reward"/"claim"/"bonus" matched real tokens ("Reward Token", "Claimswap") and marked them
+  // SPAM, permanently unsweepable. Spam airdrops advertise a DESTINATION or an ACTION+URL, so
+  // require either a URL/handle, or a claim phrase, rather than a single generic word.
+  const hasUrlLikeText =
+    /https?:\/\/|www\.|t\.me\/|telegram|[a-z0-9-]+\.(com|xyz|top|vip|app|io|net|org|fi|gift|claims?)\b/.test(
+      label,
+    );
+  const hasClaimPhrase =
+    /\b(claim|redeem|activate|unlock)\b[^a-z0-9]{0,12}\b(now|here|your|reward|airdrop|bonus|voucher|gift|prize)\b/.test(
+      label,
+    ) || /\b(free|get)\b[^a-z0-9]{0,6}\b(airdrop|reward|bonus|voucher|usdt|eth)\b/.test(label);
+
+  if (hasUrlLikeText || hasClaimPhrase) {
     riskScore += 80;
     reasons.push("spammy_name");
+  } else if (/\b(airdrop|voucher)\b/.test(label)) {
+    // Still suspicious on its own, but not proof — hide by default instead of hard-blocking.
+    riskScore += 45;
+    reasons.push("airdrop_wording");
   }
 
   if (args.symbol.length > 24 || args.name.length > 80) {
