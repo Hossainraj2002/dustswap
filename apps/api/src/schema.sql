@@ -917,9 +917,11 @@ AS $$
   LIMIT 1;
 $$;
 
+DROP FUNCTION IF EXISTS get_referral_leaderboard_page(INTEGER, INTEGER);
 CREATE OR REPLACE FUNCTION get_referral_leaderboard_page(
   p_offset INTEGER,
-  p_limit INTEGER
+  p_limit INTEGER,
+  p_sort TEXT DEFAULT 'pp'
 )
 RETURNS TABLE (
   rank BIGINT,
@@ -958,8 +960,10 @@ AS $$
     SELECT
       ROW_NUMBER() OVER (
         ORDER BY
-          COALESCE(referral_points.referral_points, 0) DESC,
-          eligible_users.referred_users DESC,
+          CASE WHEN p_sort = 'count' THEN eligible_users.referred_users END DESC,
+          CASE WHEN p_sort = 'count' THEN COALESCE(referral_points.referral_points, 0) END DESC,
+          CASE WHEN p_sort <> 'count' THEN COALESCE(referral_points.referral_points, 0) END DESC,
+          CASE WHEN p_sort <> 'count' THEN eligible_users.referred_users END DESC,
           eligible_users.total_points DESC,
           eligible_users.id ASC
       )::BIGINT AS rank,
@@ -1003,7 +1007,11 @@ AS $$
   WHERE referral_counts.referred_users > 0;
 $$;
 
-CREATE OR REPLACE FUNCTION get_referral_leaderboard_viewer(p_user_id INTEGER)
+DROP FUNCTION IF EXISTS get_referral_leaderboard_viewer(INTEGER);
+CREATE OR REPLACE FUNCTION get_referral_leaderboard_viewer(
+  p_user_id INTEGER,
+  p_sort TEXT DEFAULT 'pp'
+)
 RETURNS TABLE (
   rank BIGINT,
   user_id INTEGER,
@@ -1041,8 +1049,10 @@ AS $$
     SELECT
       ROW_NUMBER() OVER (
         ORDER BY
-          COALESCE(referral_points.referral_points, 0) DESC,
-          eligible_users.referred_users DESC,
+          CASE WHEN p_sort = 'count' THEN eligible_users.referred_users END DESC,
+          CASE WHEN p_sort = 'count' THEN COALESCE(referral_points.referral_points, 0) END DESC,
+          CASE WHEN p_sort <> 'count' THEN COALESCE(referral_points.referral_points, 0) END DESC,
+          CASE WHEN p_sort <> 'count' THEN eligible_users.referred_users END DESC,
           eligible_users.total_points DESC,
           eligible_users.id ASC
       )::BIGINT AS rank,
@@ -1068,6 +1078,7 @@ $$;
 
 CREATE TABLE IF NOT EXISTS referral_leaderboard_snapshot_entries (
   rank BIGINT PRIMARY KEY,
+  count_rank BIGINT,
   user_id INTEGER NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
   address VARCHAR(42) NOT NULL,
   total_points BIGINT NOT NULL DEFAULT 0,
@@ -1076,8 +1087,15 @@ CREATE TABLE IF NOT EXISTS referral_leaderboard_snapshot_entries (
   refreshed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- Existing databases: add the count-ordered rank column if missing.
+ALTER TABLE referral_leaderboard_snapshot_entries
+  ADD COLUMN IF NOT EXISTS count_rank BIGINT;
+
 CREATE INDEX IF NOT EXISTS idx_referral_leaderboard_snapshot_entries_user_id
   ON referral_leaderboard_snapshot_entries(user_id);
+
+CREATE INDEX IF NOT EXISTS idx_referral_leaderboard_snapshot_entries_count_rank
+  ON referral_leaderboard_snapshot_entries(count_rank);
 
 CREATE TABLE IF NOT EXISTS referral_leaderboard_snapshot_meta (
   singleton SMALLINT PRIMARY KEY DEFAULT 1 CHECK (singleton = 1),
@@ -1128,6 +1146,13 @@ BEGIN
           eligible_users.total_points DESC,
           eligible_users.id ASC
       )::BIGINT AS rank,
+      ROW_NUMBER() OVER (
+        ORDER BY
+          eligible_users.referred_users DESC,
+          COALESCE(referral_points.referral_points, 0) DESC,
+          eligible_users.total_points DESC,
+          eligible_users.id ASC
+      )::BIGINT AS count_rank,
       eligible_users.id AS user_id,
       eligible_users.address,
       eligible_users.total_points::BIGINT AS total_points,
@@ -1138,6 +1163,7 @@ BEGIN
   )
   SELECT
     ranked.rank,
+    ranked.count_rank,
     ranked.user_id,
     ranked.address,
     ranked.total_points,
@@ -1153,6 +1179,7 @@ BEGIN
 
   INSERT INTO referral_leaderboard_snapshot_entries (
     rank,
+    count_rank,
     user_id,
     address,
     total_points,
@@ -1162,6 +1189,7 @@ BEGIN
   )
   SELECT
     snapshot.rank,
+    snapshot.count_rank,
     snapshot.user_id,
     snapshot.address,
     snapshot.total_points,

@@ -13,6 +13,7 @@ import {
   type LeaderboardBoardType,
   type LeaderboardHubEntry,
   type LeaderboardHubResponse,
+  type ReferralLeaderboardSort,
 } from "@/lib/points";
 import { LeaderboardHistory } from "@/components/leaderboard/LeaderboardHistory";
 
@@ -52,6 +53,37 @@ function shortAddress(address: string) {
 
 function formatWhole(value: number) {
   return Math.round(Number(value || 0)).toLocaleString();
+}
+
+// Compact large scores (e.g. 10,610,217,922 -> "10.6B") so the Refs and PP
+// columns stay narrow and never visually collide. Values under 1M stay exact;
+// callers keep the full value available via a title tooltip.
+function formatCompactScore(value: number) {
+  const rounded = Math.max(0, Math.round(Number(value || 0)));
+
+  if (rounded < 1_000_000) {
+    return rounded.toLocaleString();
+  }
+
+  const units: Array<[number, string]> = [
+    [1_000_000_000_000, "T"],
+    [1_000_000_000, "B"],
+    [1_000_000, "M"],
+  ];
+
+  for (const [divisor, suffix] of units) {
+    if (rounded >= divisor) {
+      const scaled = rounded / divisor;
+      const digits = scaled >= 100 ? 0 : scaled >= 10 ? 1 : 2;
+      const fixed = scaled.toFixed(digits);
+      // Only strip trailing zeros when there is a decimal part; otherwise
+      // "250".replace(/\.?0+$/, "") would wrongly become "25".
+      const text = digits > 0 ? fixed.replace(/\.?0+$/, "") : fixed;
+      return `${text}${suffix}`;
+    }
+  }
+
+  return rounded.toLocaleString();
 }
 
 function formatUsd(value: number) {
@@ -121,7 +153,8 @@ function getInitials(label: string) {
 function getBoardColumns(type: LeaderboardBoardType): CSSProperties {
   if (type === "referral") {
     return {
-      gridTemplateColumns: "44px minmax(0,1fr) 44px 70px",
+      gridTemplateColumns: "40px minmax(0,1fr) 54px 68px",
+      columnGap: "12px",
     };
   }
 
@@ -292,18 +325,36 @@ function SkeletonTable({ type }: { type: LeaderboardBoardType }) {
 function TableCellValue({
   type,
   entry,
+  sort = "count",
 }: {
   type: LeaderboardBoardType;
   entry: LeaderboardHubEntry;
+  sort?: ReferralLeaderboardSort;
 }) {
   if (type === "referral") {
+    const countActive = sort === "count";
+
     return (
       <>
-        <div className="truncate text-right text-xs font-semibold leading-none text-slate-800">
+        <div
+          title={`${formatWhole(entry.referredUsers)} referrals`}
+          className={`truncate text-right text-xs font-semibold leading-none tabular-nums ${
+            countActive
+              ? "text-slate-950 dark:text-white"
+              : "text-slate-500 dark:text-slate-400"
+          }`}
+        >
           {formatWhole(entry.referredUsers)}
         </div>
-        <div className="truncate text-right text-xs font-semibold leading-none text-slate-950">
-          {formatWhole(entry.referralPoints)} PP
+        <div
+          title={`${formatWhole(entry.referralPoints)} PP`}
+          className={`truncate text-right text-xs font-semibold leading-none tabular-nums ${
+            countActive
+              ? "text-slate-500 dark:text-slate-400"
+              : "text-slate-950 dark:text-white"
+          }`}
+        >
+          {formatCompactScore(entry.referralPoints)}
         </div>
       </>
     );
@@ -333,6 +384,7 @@ function LeaderboardRow({
   isViewer,
   badge,
   animationDelayMs = 0,
+  sort = "count",
 }: {
   type: LeaderboardBoardType;
   entry: LeaderboardHubEntry;
@@ -342,6 +394,7 @@ function LeaderboardRow({
   isViewer?: boolean;
   badge?: string;
   animationDelayMs?: number;
+  sort?: ReferralLeaderboardSort;
 }) {
   return (
     <div
@@ -373,7 +426,7 @@ function LeaderboardRow({
           </span>
         ) : null}
       </div>
-      <TableCellValue type={type} entry={entry} />
+      <TableCellValue type={type} entry={entry} sort={sort} />
     </div>
   );
 }
@@ -381,6 +434,7 @@ function LeaderboardRow({
 export default function LeaderboardPage() {
   const { address } = useAccount();
   const [selectedBoard, setSelectedBoard] = useState<LeaderboardBoardType>("particle_points");
+  const [referralSort, setReferralSort] = useState<ReferralLeaderboardSort>("count");
   const [currentPage, setCurrentPage] = useState(1);
   const [leaderboard, setLeaderboard] = useState<LeaderboardHubResponse | null>(null);
   const [profile, setProfile] = useState<NeynarProfile | null>(null);
@@ -396,7 +450,9 @@ export default function LeaderboardPage() {
 
   const normalizedAddress = address?.toLowerCase();
   const visibleLeaderboard =
-    leaderboard?.type === selectedBoard && leaderboard?.page === currentPage
+    leaderboard?.type === selectedBoard &&
+    leaderboard?.page === currentPage &&
+    (selectedBoard !== "referral" || leaderboard?.sort === referralSort)
       ? leaderboard
       : null;
   const viewer = visibleLeaderboard?.viewer ?? null;
@@ -415,6 +471,18 @@ export default function LeaderboardPage() {
   const visiblePages = getVisiblePages(currentPage, totalPages);
   const shouldShowBoardSkeleton = hasLeaderboardAccess && isLoadingBoard && !visibleLeaderboard;
   const boardAutoRefreshEnabled = selectedBoard !== "referral";
+
+  const handleReferralSortChange = useCallback(
+    (nextSort: ReferralLeaderboardSort) => {
+      if (nextSort === referralSort) {
+        return;
+      }
+
+      setReferralSort(nextSort);
+      setCurrentPage(1);
+    },
+    [referralSort]
+  );
 
   useEffect(() => {
     if (!VISIBLE_BOARD_OPTIONS.some((option) => option.id === selectedBoard)) {
@@ -460,6 +528,7 @@ export default function LeaderboardPage() {
           page: currentPage,
           pageSize: BOARD_PAGE_SIZE,
           viewerAddress: normalizedAddress,
+          sort: selectedBoard === "referral" ? referralSort : undefined,
         });
 
         if (!response.success) {
@@ -497,7 +566,7 @@ export default function LeaderboardPage() {
         }
       }
     },
-    [currentPage, hasLeaderboardAccess, normalizedAddress, selectedBoard]
+    [currentPage, hasLeaderboardAccess, normalizedAddress, selectedBoard, referralSort]
   );
 
   useEffect(() => {
@@ -642,7 +711,9 @@ export default function LeaderboardPage() {
   const selectedBoardLabel =
     VISIBLE_BOARD_OPTIONS.find((option) => option.id === selectedBoard)?.label ?? "Particle Points";
   const selectedBoardSubtitle =
-    selectedBoard === "referral" ? REFERRAL_BOARD_REFRESH_LABEL : "Live rank and score";
+    selectedBoard === "referral"
+      ? `Ranked by ${referralSort === "count" ? "referrals" : "PP"} · ${REFERRAL_BOARD_REFRESH_LABEL}`
+      : "Live rank and score";
   const viewerRankLabel = viewer?.rank ? `#${formatWhole(viewer.rank)}` : "--";
   const viewerScoreDisplay = getViewerScoreDisplay(selectedBoard, viewer);
   const viewerScoreDetail = getViewerScoreDetail(selectedBoard, viewer);
@@ -804,16 +875,53 @@ export default function LeaderboardPage() {
                 className="leaderboard-table-header grid h-[30px] items-center border-y border-sky-100 bg-[linear-gradient(90deg,#eff6ff,#f0f9ff)] px-2 sm:px-3"
                 style={boardColumns}
               >
-                {boardHeaders.map((header, index) => (
-                  <div
-                    key={header}
-                    className={`truncate text-[11px] font-bold uppercase text-slate-500 ${
-                      index === 0 ? "" : index === 1 ? "" : "text-right"
-                    }`}
-                  >
-                    {header}
-                  </div>
-                ))}
+                {boardHeaders.map((header, index) => {
+                  const columnSort: ReferralLeaderboardSort | null =
+                    selectedBoard === "referral" && index === 2
+                      ? "count"
+                      : selectedBoard === "referral" && index === 3
+                        ? "pp"
+                        : null;
+
+                  if (columnSort) {
+                    const active = referralSort === columnSort;
+
+                    return (
+                      <button
+                        key={header}
+                        type="button"
+                        onClick={() => handleReferralSortChange(columnSort)}
+                        aria-pressed={active}
+                        title={
+                          columnSort === "count"
+                            ? "Sort by number of referrals"
+                            : "Sort by referral PP"
+                        }
+                        className={`flex min-w-0 items-center justify-end gap-0.5 truncate bg-transparent p-0 text-[11px] font-bold uppercase leading-none transition-colors ${
+                          active
+                            ? "text-[#0052ff] dark:text-sky-300"
+                            : "text-slate-400 hover:text-slate-600 dark:text-slate-400 dark:hover:text-slate-200"
+                        }`}
+                      >
+                        <span className="truncate">{header}</span>
+                        <span aria-hidden className={`shrink-0 text-[8px] ${active ? "opacity-100" : "opacity-30"}`}>
+                          ▼
+                        </span>
+                      </button>
+                    );
+                  }
+
+                  return (
+                    <div
+                      key={header}
+                      className={`truncate text-[11px] font-bold uppercase text-slate-500 ${
+                        index === 0 ? "" : index === 1 ? "" : "text-right"
+                      }`}
+                    >
+                      {header}
+                    </div>
+                  );
+                })}
               </div>
 
               <div className="p-2 sm:p-3">
@@ -862,6 +970,7 @@ export default function LeaderboardPage() {
                         avatarSrc={viewerAvatar || pinnedViewerEntry.profile?.pfpUrl || ""}
                         isViewer
                         badge="You"
+                        sort={referralSort}
                       />
                     ) : null}
 
@@ -881,6 +990,7 @@ export default function LeaderboardPage() {
                           isViewer={isViewer}
                           badge={isViewer ? "You" : undefined}
                           animationDelayMs={index * 40}
+                          sort={referralSort}
                         />
                       );
                     })}

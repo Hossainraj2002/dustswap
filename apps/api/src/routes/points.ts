@@ -91,12 +91,14 @@ pointsRoutes.get("/leaderboards", async (c) => {
     Math.max(1, parseInt(c.req.query("pageSize") ?? c.req.query("limit") ?? "10", 10))
   );
   const viewer = c.req.query("viewer") ?? undefined;
+  const sort = c.req.query("sort") ?? undefined;
 
   try {
     const data = await pointsEngine.getLeaderboardHub(type, {
       page,
       pageSize,
       viewerAddress: viewer,
+      sort,
     });
     return c.json({ success: true, ...data });
   } catch (e: unknown) {

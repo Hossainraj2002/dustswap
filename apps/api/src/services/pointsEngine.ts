@@ -507,6 +507,13 @@ function isMissingUserProfilesTable(error: { code?: string; message?: string } |
 }
 
 type LeaderboardKind = "particle_points" | "referral" | "volume";
+type ReferralLeaderboardSort = "count" | "pp";
+
+const DEFAULT_REFERRAL_SORT: ReferralLeaderboardSort = "count";
+
+function normalizeReferralSort(value?: string | null): ReferralLeaderboardSort {
+  return value === "pp" ? "pp" : "count";
+}
 
 type LeaderboardMetricRow = {
   userId: number;
@@ -524,6 +531,7 @@ type LeaderboardEntry = LeaderboardMetricRow & {
 
 type LeaderboardHubResponse = {
   type: LeaderboardKind;
+  sort: ReferralLeaderboardSort;
   limit: number;
   page: number;
   pageSize: number;
@@ -621,6 +629,7 @@ type PointsOverviewRow = {
 type ReferralLeaderboardRow = {
   address: string;
   rank: number | string;
+  count_rank?: number | string | null;
   referral_points: number | string | null;
   referred_users: number | string | null;
   total_points: number | string | null;
@@ -1353,9 +1362,12 @@ export class PointsEngine {
     type: LeaderboardKind,
     page: number,
     pageSize: number,
-    viewerAddress?: string
+    viewerAddress?: string,
+    sort?: ReferralLeaderboardSort
   ) {
-    return `leaderboard:${type}:${page}:${pageSize}:${(viewerAddress || "").toLowerCase()}`;
+    return `leaderboard:${type}:${sort ?? DEFAULT_REFERRAL_SORT}:${page}:${pageSize}:${(
+      viewerAddress || ""
+    ).toLowerCase()}`;
   }
 
   private getFootprintStatusCacheKey(address: string) {
@@ -2250,6 +2262,29 @@ export class PointsEngine {
     return error.code === "42P01" || error.code === "PGRST205";
   }
 
+  // True when a query references a column the DB does not have yet (e.g. the
+  // referral snapshot's count_rank before the dual-sort migration has been run).
+  // Lets snapshot reads degrade to the live ranking path instead of throwing.
+  private isMissingColumnError(
+    error: { code?: string; message?: string | null } | null
+  ) {
+    if (!error) {
+      return false;
+    }
+
+    if (error.code === "42703" || error.code === "PGRST204") {
+      return true;
+    }
+
+    const normalized = String(error.message || "").toLowerCase();
+    // count_rank is the only nullable/new column these reads request; any error
+    // naming it (missing column, unknown order target) means "not migrated yet".
+    return (
+      normalized.includes("count_rank") ||
+      (normalized.includes("column") && normalized.includes("does not exist"))
+    );
+  }
+
   private isReferralLeaderboardSnapshotStale(meta: ReferralLeaderboardSnapshotMetaRow | null) {
     if (!meta?.refreshed_at) {
       return true;
@@ -2342,15 +2377,24 @@ export class PointsEngine {
     return meta;
   }
 
-  private async getReferralLeaderboardSnapshotPage(offset: number, limit: number) {
+  private async getReferralLeaderboardSnapshotPage(
+    offset: number,
+    limit: number,
+    sort: ReferralLeaderboardSort = DEFAULT_REFERRAL_SORT
+  ) {
+    // count sort orders by the snapshot's count_rank column; pp sort keeps the
+    // legacy rank (referral-points ordering).
+    const orderColumn = sort === "count" ? "count_rank" : "rank";
     const { data, error } = await postgresDb
       .from("referral_leaderboard_snapshot_entries")
-      .select("rank, user_id, address, total_points, referral_points, referred_users")
-      .order("rank", { ascending: true })
+      .select("rank, count_rank, user_id, address, total_points, referral_points, referred_users")
+      .order(orderColumn, { ascending: true })
       .range(offset, offset + limit - 1);
 
     if (error) {
-      if (this.isMissingRelationError(error)) {
+      // Missing table OR the count_rank column not yet migrated => fall back to
+      // the live ranking path (returns null here).
+      if (this.isMissingRelationError(error) || this.isMissingColumnError(error)) {
         return null;
       }
 
@@ -2359,7 +2403,7 @@ export class PointsEngine {
 
     return ((data ?? []) as ReferralLeaderboardRow[])
       .map((row) => ({
-        rank: Number(row.rank || 0),
+        rank: this.resolveReferralRank(row, sort),
         userId: Number(row.user_id || 0),
         address: String(row.address),
         totalPoints: Number(row.total_points || 0),
@@ -2370,15 +2414,18 @@ export class PointsEngine {
       .filter((entry) => entry.referredUsers > 0);
   }
 
-  private async getReferralLeaderboardSnapshotViewer(userId: number) {
+  private async getReferralLeaderboardSnapshotViewer(
+    userId: number,
+    sort: ReferralLeaderboardSort = DEFAULT_REFERRAL_SORT
+  ) {
     const { data, error } = await postgresDb
       .from("referral_leaderboard_snapshot_entries")
-      .select("rank, user_id, address, total_points, referral_points, referred_users")
+      .select("rank, count_rank, user_id, address, total_points, referral_points, referred_users")
       .eq("user_id", userId)
       .maybeSingle();
 
     if (error) {
-      if (this.isMissingRelationError(error)) {
+      if (this.isMissingRelationError(error) || this.isMissingColumnError(error)) {
         return null;
       }
 
@@ -2391,7 +2438,7 @@ export class PointsEngine {
     }
 
     return {
-      rank: Number(row.rank || 0),
+      rank: this.resolveReferralRank(row, sort),
       userId: Number(row.user_id || 0),
       address: String(row.address),
       totalPoints: Number(row.total_points || 0),
@@ -2399,6 +2446,17 @@ export class PointsEngine {
       referredUsers: Number(row.referred_users || 0),
       swapVolume: 0,
     } satisfies Omit<LeaderboardEntry, "profile">;
+  }
+
+  private resolveReferralRank(row: ReferralLeaderboardRow, sort: ReferralLeaderboardSort) {
+    if (sort === "count") {
+      const countRank = Number(row.count_rank ?? 0);
+      if (countRank > 0) {
+        return countRank;
+      }
+    }
+
+    return Number(row.rank || 0);
   }
 
   private isFallbackLeaderboardEligibleUser(user: {
@@ -2494,7 +2552,9 @@ export class PointsEngine {
     } satisfies ParticlePointLeaderboardEntryRow;
   }
 
-  private async getFallbackReferralLeaderboardEntries() {
+  private async getFallbackReferralLeaderboardEntries(
+    sort: ReferralLeaderboardSort = DEFAULT_REFERRAL_SORT
+  ) {
     const referralRows = await this.fetchAllPages<ReferralReferrerRow>(
       async (from, to) =>
         postgresDb
@@ -2568,6 +2628,16 @@ export class PointsEngine {
         return Boolean(entry && entry.referredUsers > 0);
       })
       .sort((a, b) => {
+        // count sort ranks by referred users first, pp sort by referral points.
+        if (sort === "count") {
+          return (
+            b.referredUsers - a.referredUsers ||
+            b.referralPoints - a.referralPoints ||
+            b.totalPoints - a.totalPoints ||
+            a.userId - b.userId
+          );
+        }
+
         return (
           b.referralPoints - a.referralPoints ||
           b.referredUsers - a.referredUsers ||
@@ -2581,8 +2651,12 @@ export class PointsEngine {
       }));
   }
 
-  private async getFallbackReferralLeaderboardPage(offset: number, limit: number) {
-    const entries = await this.getFallbackReferralLeaderboardEntries();
+  private async getFallbackReferralLeaderboardPage(
+    offset: number,
+    limit: number,
+    sort: ReferralLeaderboardSort = DEFAULT_REFERRAL_SORT
+  ) {
+    const entries = await this.getFallbackReferralLeaderboardEntries(sort);
     return entries.slice(offset, offset + limit);
   }
 
@@ -2591,15 +2665,23 @@ export class PointsEngine {
     return entries.length;
   }
 
-  private async getFallbackReferralLeaderboardViewer(userId: number) {
-    const entries = await this.getFallbackReferralLeaderboardEntries();
+  private async getFallbackReferralLeaderboardViewer(
+    userId: number,
+    sort: ReferralLeaderboardSort = DEFAULT_REFERRAL_SORT
+  ) {
+    const entries = await this.getFallbackReferralLeaderboardEntries(sort);
     return entries.find((entry) => entry.userId === userId) ?? null;
   }
 
-  private async getLiveReferralLeaderboardPage(offset: number, limit: number) {
+  private async getLiveReferralLeaderboardPage(
+    offset: number,
+    limit: number,
+    sort: ReferralLeaderboardSort = DEFAULT_REFERRAL_SORT
+  ) {
     const { data, error } = await postgresDb.rpc("get_referral_leaderboard_page", {
       p_limit: limit,
       p_offset: offset,
+      p_sort: sort,
     });
 
     if (error) {
@@ -2607,7 +2689,7 @@ export class PointsEngine {
         this.isMissingRpcFunctionError(error, "get_referral_leaderboard_page") ||
         this.isStatementTimeoutError(error.message)
       ) {
-        return this.getFallbackReferralLeaderboardPage(offset, limit);
+        return this.getFallbackReferralLeaderboardPage(offset, limit, sort);
       }
 
       throw new Error(`Load referral leaderboard: ${error.message}`);
@@ -2644,9 +2726,13 @@ export class PointsEngine {
     return Number(row?.total_entries || 0);
   }
 
-  private async getLiveReferralLeaderboardViewer(userId: number) {
+  private async getLiveReferralLeaderboardViewer(
+    userId: number,
+    sort: ReferralLeaderboardSort = DEFAULT_REFERRAL_SORT
+  ) {
     const { data, error } = await postgresDb.rpc("get_referral_leaderboard_viewer", {
       p_user_id: userId,
+      p_sort: sort,
     });
 
     if (error) {
@@ -2654,7 +2740,7 @@ export class PointsEngine {
         this.isMissingRpcFunctionError(error, "get_referral_leaderboard_viewer") ||
         this.isStatementTimeoutError(error.message)
       ) {
-        return this.getFallbackReferralLeaderboardViewer(userId);
+        return this.getFallbackReferralLeaderboardViewer(userId, sort);
       }
 
       throw new Error(`Load referral leaderboard viewer: ${error.message}`);
@@ -5149,17 +5235,23 @@ export class PointsEngine {
       page?: number;
       pageSize?: number;
       viewerAddress?: string;
+      sort?: string | null;
     }
   ): Promise<LeaderboardHubResponse> {
     const requestedPageSize = options?.pageSize ?? 10;
     const viewerAddress = options?.viewerAddress;
     const safeLimit = Math.max(1, Math.min(50, requestedPageSize));
     const currentPageInput = Math.max(1, options?.page ?? 1);
+    // Sort only affects the referral board; other boards keep the default key so
+    // an ignored sort param never fragments their cache.
+    const sort: ReferralLeaderboardSort =
+      type === "referral" ? normalizeReferralSort(options?.sort) : DEFAULT_REFERRAL_SORT;
     const cacheKey = this.getLeaderboardCacheKey(
       type,
       currentPageInput,
       safeLimit,
-      viewerAddress
+      viewerAddress,
+      sort
     );
 
     return runtimeCache.getOrSet(cacheKey, LEADERBOARD_CACHE_TTL_MS, async () => {
@@ -5184,6 +5276,7 @@ export class PointsEngine {
 
         return {
           type,
+          sort,
           limit: safeLimit,
           page: currentPage,
           pageSize: safeLimit,
@@ -5211,18 +5304,19 @@ export class PointsEngine {
           const referralTotalEntries = await this.getLiveReferralLeaderboardCount();
           const { currentPage, offset, totalEntries, totalPages } =
             getPagination(referralTotalEntries);
-          const pageEntries = await this.getLiveReferralLeaderboardPage(offset, safeLimit);
+          const pageEntries = await this.getLiveReferralLeaderboardPage(offset, safeLimit, sort);
           const viewerUser = viewerAddress ? await this.findExistingUser(viewerAddress) : null;
           const [profiles, viewerRow, viewerProfiles] = await Promise.all([
             this.fetchCachedProfiles(pageEntries.map((entry) => entry.userId)),
             viewerUser
-              ? this.getLiveReferralLeaderboardViewer(viewerUser.id)
+              ? this.getLiveReferralLeaderboardViewer(viewerUser.id, sort)
               : Promise.resolve(null),
             viewerUser ? this.fetchCachedProfiles([viewerUser.id]) : Promise.resolve(new Map()),
           ]);
 
           return {
             type,
+            sort,
             limit: safeLimit,
             page: currentPage,
             pageSize: safeLimit,
@@ -5247,14 +5341,14 @@ export class PointsEngine {
         const { currentPage, offset, totalEntries, totalPages } =
           getPagination(referralTotalEntries);
         const pageEntries =
-          (await this.getReferralLeaderboardSnapshotPage(offset, safeLimit)) ??
-          (await this.getLiveReferralLeaderboardPage(offset, safeLimit));
+          (await this.getReferralLeaderboardSnapshotPage(offset, safeLimit, sort)) ??
+          (await this.getLiveReferralLeaderboardPage(offset, safeLimit, sort));
         const viewerUser = viewerAddress ? await this.findExistingUser(viewerAddress) : null;
         const [profiles, viewerRow, viewerProfiles] = await Promise.all([
           this.fetchCachedProfiles(pageEntries.map((entry) => entry.userId)),
           viewerUser
-            ? this.getReferralLeaderboardSnapshotViewer(viewerUser.id).then((entry) => {
-                return entry ?? this.getLiveReferralLeaderboardViewer(viewerUser.id);
+            ? this.getReferralLeaderboardSnapshotViewer(viewerUser.id, sort).then((entry) => {
+                return entry ?? this.getLiveReferralLeaderboardViewer(viewerUser.id, sort);
               })
             : Promise.resolve(null),
           viewerUser ? this.fetchCachedProfiles([viewerUser.id]) : Promise.resolve(new Map()),
@@ -5262,6 +5356,7 @@ export class PointsEngine {
 
         return {
           type,
+          sort,
           limit: safeLimit,
           page: currentPage,
           pageSize: safeLimit,
@@ -5294,6 +5389,7 @@ export class PointsEngine {
 
       return {
         type,
+        sort,
         limit: safeLimit,
         page: currentPage,
         pageSize: safeLimit,

@@ -122,6 +122,7 @@ export type LeaderboardResponse = {
 };
 
 export type LeaderboardBoardType = "particle_points" | "referral" | "volume";
+export type ReferralLeaderboardSort = "count" | "pp";
 
 export type CachedLeaderboardProfile = {
   fid: string | null;
@@ -145,6 +146,7 @@ export type LeaderboardHubEntry = {
 export type LeaderboardHubResponse = {
   success: boolean;
   type: LeaderboardBoardType;
+  sort: ReferralLeaderboardSort;
   limit: number;
   page: number;
   pageSize: number;
@@ -378,11 +380,13 @@ export async function fetchLeaderboardHub(
     page?: number;
     pageSize?: number;
     viewerAddress?: string;
+    sort?: ReferralLeaderboardSort;
   }
 ) {
   const page = options?.page ?? 1;
   const pageSize = options?.pageSize ?? 10;
   const viewerAddress = options?.viewerAddress;
+  const sort = options?.sort;
 
   const searchParams = new URLSearchParams({
     type,
@@ -392,6 +396,10 @@ export async function fetchLeaderboardHub(
 
   if (viewerAddress) {
     searchParams.set("viewer", viewerAddress);
+  }
+
+  if (sort) {
+    searchParams.set("sort", sort);
   }
 
   const response = await publicApiFetch(getPointsApiUrl(`/leaderboards?${searchParams.toString()}`), {
