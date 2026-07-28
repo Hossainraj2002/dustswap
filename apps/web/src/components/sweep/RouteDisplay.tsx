@@ -64,7 +64,6 @@ function getDexIcon(dexName: string) {
   if (name.includes("DACKIE")) return "/dex/dackieswap.png";
   if (name.includes("LI.FI") || name.includes("LIFI")) return "/dex/lifi.png";
   if (name.includes("OPENOCEAN")) return "/dex/openocean.png";
-  if (name.includes("ODOS")) return "/dex/odos.png";
   if (name.includes("KYBER")) return "/dex/kyberswap.png";
   if (name.includes("HYDREX")) return "/dex/hydrex.png";
   if (name.startsWith("0X")) return "/dex/zerox.png";
@@ -91,7 +90,6 @@ function formatDexName(dexName: string) {
   if (name.includes("DACKIE")) return "DackieSwap";
   if (name.includes("LI.FI") || name.includes("LIFI")) return "LI.FI";
   if (name.includes("OPENOCEAN")) return "OpenOcean";
-  if (name.includes("ODOS")) return "Odos";
   if (name.includes("KYBER")) return "KyberSwap";
   if (name.includes("HYDREX")) return "Hydrex";
   if (name.startsWith("0X")) return "0x";

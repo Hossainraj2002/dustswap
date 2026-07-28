@@ -232,6 +232,16 @@ export const SWEEP_CHAINS: SweepChain[] = [
   },
 ];
 
+/**
+ * Per-chain selection ceiling used when the chain's env is unset. Base/Ethereum/BSC keep their
+ * historical behavior (no code default → fall back to the lane cap), so only Robinhood declares
+ * one: a brand-new chain with thin liquidity, where 10 tokens per sweep keeps batches small and
+ * predictable. This is a HARD cap on Auto, "Select all" AND manual adds (see useDustSweep).
+ */
+const DEFAULT_SELECT_LIMIT_BY_CHAIN: Record<number, number> = {
+  [ROBINHOOD_CHAIN_ID]: 10,
+};
+
 // NEXT_PUBLIC_* envs are inlined at build time, so read them explicitly (not via a dynamic key).
 function readSelectLimit(chainId: number): number | null {
   const raw =
@@ -243,7 +253,8 @@ function readSelectLimit(chainId: number): number | null {
           ? process.env.NEXT_PUBLIC_DUST_SWEEP_AUTO_SELECT_LIMIT_4663
           : process.env.NEXT_PUBLIC_DUST_SWEEP_AUTO_SELECT_LIMIT;
   const parsed = Number(raw);
-  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : null;
+  if (Number.isFinite(parsed) && parsed > 0) return Math.floor(parsed);
+  return DEFAULT_SELECT_LIMIT_BY_CHAIN[chainId] ?? null;
 }
 
 function readRouterV3(chainId: number): Address | null {

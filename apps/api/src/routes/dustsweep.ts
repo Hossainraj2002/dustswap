@@ -2462,7 +2462,10 @@ async function fetchTokenMarketHints(
 
   if (uniqueAddresses.length === 0) return hints;
 
+  // Chains that simply do not have one of these stables declare it as the zero address (Robinhood
+  // has no USDT/DAI). Skip those — otherwise 0x000…000 would carry a canonical $1 price hint.
   for (const stable of [chain.usdc, chain.usdt, chain.dai, ...chain.extraStables]) {
+    if (!stable || stable.toLowerCase() === ZERO_ADDRESS.toLowerCase()) continue;
     hints[stable.toLowerCase()] = {
       priceUSD: 1,
       liquidityUSD: 50_000_000,
@@ -3355,117 +3358,10 @@ async function getOpenOceanQuoteCandidate(
   }
 }
 
-function odosEnabled() {
-  return (
-    process.env.DUST_SWEEP_ENABLE_AGGREGATORS !== "false" &&
-    process.env.DUST_SWEEP_ENABLE_ODOS === "true" &&
-    getAllowedAggregatorAddresses().size > 0
-  );
-}
-
-// Odos is a same-chain Base aggregator fallback (consulted last, only when no native / 0x / LI.FI
-// route exists). It is a TWO-step API: POST /sor/quote/v2 returns a pathId + outAmounts, then POST
-// /sor/assemble turns that pathId into executable calldata. We pin userAddr = the sweep router so
-// the input is pulled from msg.sender (== the router, which holds the approval) and the output is
-// sent to userAddr (== the router); reject any route needing native value; and gate the assembled
-// router (target == spender == the Odos router) against the aggregator allowlist exactly like 0x /
-// LI.FI. A public IP is aggressively rate-limited — set ODOS_API_KEY for reliable server-side use.
-async function getOdosQuoteCandidate(
-  tokenIn: Address,
-  tokenOut: Address,
-  amountIn: bigint,
-  slippageBps: number,
-  chain: SweepChainConfig = BASE_CONFIG,
-): Promise<QuoteCandidate | null> {
-  const taker = getSweepRouterForChain(chain);
-  const baseGate = chain.chainId !== BASE_CHAIN_ID || odosEnabled();
-  if (!baseGate || !isAddress(taker) || taker === ZERO_ADDRESS) return null;
-
-  try {
-    const headers: Record<string, string> = {
-      "Content-Type": "application/json",
-      Accept: "application/json",
-    };
-    const apiKey = process.env.ODOS_API_KEY;
-    if (apiKey) headers["x-api-key"] = apiKey.trim();
-
-    // Step 1 — quote. amount is in raw base units; slippageLimitPercent is a percent (1 = 1%).
-    const quoteResponse = await fetch("https://api.odos.xyz/sor/quote/v2", {
-      method: "POST",
-      headers,
-      body: JSON.stringify({
-        chainId: chain.chainId,
-        inputTokens: [{ tokenAddress: tokenIn, amount: amountIn.toString() }],
-        outputTokens: [{ tokenAddress: tokenOut, proportion: 1 }],
-        userAddr: taker,
-        slippageLimitPercent: Math.min(50, Math.max(0.05, slippageBps / 100)),
-        disableRFQs: true,
-        compact: true,
-      }),
-      signal: AbortSignal.timeout(8_000),
-    });
-    reportAggregatorHttpStatus("odos", quoteResponse.status, chain.chainId);
-    if (!quoteResponse.ok) return null;
-
-    const quote = (await quoteResponse.json()) as {
-      pathId?: string;
-      outAmounts?: string[];
-    };
-    if (!quote.pathId || !Array.isArray(quote.outAmounts) || !quote.outAmounts[0]) return null;
-
-    // Step 2 — assemble the pathId into executable calldata (output goes to userAddr == router).
-    const assembleResponse = await fetch("https://api.odos.xyz/sor/assemble", {
-      method: "POST",
-      headers,
-      body: JSON.stringify({ userAddr: taker, pathId: quote.pathId, simulate: false }),
-      signal: AbortSignal.timeout(8_000),
-    });
-    reportAggregatorHttpStatus("odos", assembleResponse.status, chain.chainId);
-    if (!assembleResponse.ok) return null;
-
-    const assembled = (await assembleResponse.json()) as {
-      transaction?: { to?: string; data?: string; value?: string; chainId?: number };
-    };
-    const tx = assembled.transaction;
-    if (!tx?.to || !tx?.data) return null;
-    if (!isAddress(tx.to) || !isHex(tx.data)) return null;
-    if (tx.chainId && Number(tx.chainId) !== chain.chainId) return null;
-    if (tx.value && BigInt(tx.value) > 0n) return null;
-
-    // Odos: the router contract IS the spender — approve + call the same address.
-    const target = normalizeAddress(tx.to);
-    const spender = target;
-    const allowedAggregatorAddresses = getAllowedAggregatorAddresses(chain);
-    if (
-      !allowedAggregatorAddresses.has(target.toLowerCase()) ||
-      !allowedAggregatorAddresses.has(spender.toLowerCase())
-    ) {
-      return null;
-    }
-
-    const amountOut = BigInt(quote.outAmounts[0]);
-    if (amountOut <= 0n) return null;
-
-    return {
-      tokenIn,
-      amountIn: amountIn.toString(),
-      amountOutMin: "0",
-      estimatedOut: amountOut.toString(),
-      dex: DEX.GENERIC,
-      dexName: "Odos Aggregator",
-      dexData: encodeAbiParameters(GENERIC_DEX_DATA_PARAMETERS, [
-        {
-          target,
-          spender,
-          data: tx.data as Hex,
-        },
-      ]),
-      amountOut,
-    };
-  } catch {
-    return null;
-  }
-}
+// ODOS REMOVED (2026-07-27) — Odos is no longer a routing provider on ANY chain. The quote
+// candidate, ladder entry, per-chain enable flags and allowlist registry entries were all
+// deleted, so DustSweep never calls api.odos.xyz and never routes through an Odos router.
+// DUST_SWEEP_ENABLE_ODOS* / ODOS_API_KEY envs are now inert and can be dropped from the hosts.
 
 function kyberEnabled() {
   return (
@@ -3483,7 +3379,7 @@ const KYBER_CLIENT_ID = process.env.DUST_SWEEP_KYBER_CLIENT_ID || "dustswap";
 // then POST /route/build turns the summary into executable calldata. We pin sender = recipient =
 // the sweep router, reject any route needing native value, and gate the returned router
 // (target == spender == Kyber MetaAggregationRouterV2) against the aggregator allowlist exactly
-// like 0x / LI.FI / OpenOcean / Odos.
+// like 0x / LI.FI / OpenOcean.
 async function getKyberQuoteCandidate(
   tokenIn: Address,
   tokenOut: Address,
@@ -4092,7 +3988,7 @@ const AGGREGATOR_LADDER: Array<{
   { provider: "zerox", enabled: aggregatorsEnabled, fetch: get0xQuoteCandidate },
   { provider: "lifi", enabled: lifiEnabled, fetch: getLifiQuoteCandidate },
   { provider: "openocean", enabled: openOceanEnabled, fetch: getOpenOceanQuoteCandidate },
-  { provider: "odos", enabled: odosEnabled, fetch: getOdosQuoteCandidate },
+  // Odos intentionally absent — removed as a provider on every chain (2026-07-27).
 ];
 
 // Whether a provider is live for a given chain. Base: exactly the existing module gate (so Base
@@ -4214,7 +4110,7 @@ async function getBestQuote(
   }
 
   // 2) Aggregator FALLBACK — only for tokens with no native quote. First executable quote wins,
-  //    in ladder order (KyberSwap → 0x → LI.FI → OpenOcean → Odos). Each is env-gated and
+  //    in ladder order (KyberSwap → 0x → LI.FI → OpenOcean). Each is env-gated and
   //    additive: later providers are only consulted when every earlier source returns nothing, so
   //    they strictly widen coverage of sweepable dust.
   let anyProviderSkipped = false;

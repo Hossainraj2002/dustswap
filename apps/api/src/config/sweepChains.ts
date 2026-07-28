@@ -55,7 +55,7 @@ export type AggregatorEnableFlags = {
   zerox: boolean;
   lifi: boolean;
   openocean: boolean;
-  odos: boolean;
+  // NOTE: no `odos` flag — Odos was removed as a routing provider on every chain (2026-07-27).
 };
 
 export type SweepChainConfig = {
@@ -175,7 +175,6 @@ export const BASE_CONFIG: SweepChainConfig = {
     zerox: false,
     lifi: false,
     openocean: false,
-    odos: false,
   },
   allowedAggregatorTargetsEnv: "DUST_SWEEP_ALLOWED_AGGREGATOR_TARGETS",
   nativeSources: null,
@@ -218,7 +217,6 @@ function ethereumConfig(): SweepChainConfig {
       zerox: boolEnv("DUST_SWEEP_ENABLE_ZEROX_1", true),
       lifi: boolEnv("DUST_SWEEP_ENABLE_LIFI_1", true),
       openocean: boolEnv("DUST_SWEEP_ENABLE_OPENOCEAN_1", false),
-      odos: boolEnv("DUST_SWEEP_ENABLE_ODOS_1", true),
     },
     allowedAggregatorTargetsEnv: "DUST_SWEEP_ALLOWED_AGGREGATOR_TARGETS_1",
     // Native ladder on Ethereum: Uniswap V3 (concentrated liquidity) + Uniswap V2 + SushiSwap
@@ -310,7 +308,6 @@ function bscConfig(): SweepChainConfig {
       zerox: boolEnv("DUST_SWEEP_ENABLE_ZEROX_56", true),
       lifi: boolEnv("DUST_SWEEP_ENABLE_LIFI_56", true),
       openocean: boolEnv("DUST_SWEEP_ENABLE_OPENOCEAN_56", false),
-      odos: boolEnv("DUST_SWEEP_ENABLE_ODOS_56", false),
     },
     allowedAggregatorTargetsEnv: "DUST_SWEEP_ALLOWED_AGGREGATOR_TARGETS_56",
     nativeSources: [
@@ -370,7 +367,7 @@ function bscConfig(): SweepChainConfig {
 // non-Uniswap venue, Pancake V3, tops out at ~$84K and its QuoterV2 could not be verified on
 // this chain). Everything else — Pancake, SwapHood, RobinSwap, Up, Sheriff, DyorSwap, V4 pools —
 // is reached (and price-optimized across) by the aggregator rescue path (Kyber / LI.FI, 0x and
-// OpenOcean parked). Odos does not support 4663. All addresses verified live 2026-07-26 via
+// OpenOcean parked; Odos is not a provider on any chain). All addresses verified live 2026-07-26 via
 // eth_getCode + functional quote probes on rpc.mainnet.chain.robinhood.com — never explorer
 // labels (the canonical mainnet Uniswap addresses on this chain are FAKE stubs; see
 // dustsweepV3Sources.ts).
@@ -401,7 +398,10 @@ function robinhoodConfig(): SweepChainConfig {
     // Robinhood deploys the UPGRADED V3 contract (same source family as Ethereum's) — WETH is a
     // first-class sweepable input that unwraps to native ETH via the router passthrough leg.
     supportsWethPassthrough: boolEnv("DUST_SWEEP_WETH_PASSTHROUGH_4663", true),
-    routeMaxCap: numberEnv("DUST_SWEEP_ROUTE_MAX_CAP_4663", 25, 1, 50),
+    // 10 tokens per sweep on this chain — matches the frontend's Robinhood selection cap
+    // (DEFAULT_SELECT_LIMIT_BY_CHAIN in apps/web/src/config/sweepChainConfig.ts). Keep the two
+    // in sync: the server value is the authoritative cap returned to the UI as quote.routeMaxCap.
+    routeMaxCap: numberEnv("DUST_SWEEP_ROUTE_MAX_CAP_4663", 10, 1, 50),
     minValueUsd: numberEnv("DUST_SWEEP_MIN_VALUE_USD_4663", 0.01, 0, 1_000),
     gasModel: {
       baseUnits: numberEnv("DUST_SWEEP_GAS_UNITS_BASE_4663", 120_000, 21_000, 5_000_000),
@@ -419,7 +419,6 @@ function robinhoodConfig(): SweepChainConfig {
       zerox: boolEnv("DUST_SWEEP_ENABLE_ZEROX_4663", false),
       lifi: boolEnv("DUST_SWEEP_ENABLE_LIFI_4663", true),
       openocean: boolEnv("DUST_SWEEP_ENABLE_OPENOCEAN_4663", false),
-      odos: false, // Odos does not support chainId 4663 ("Invalid chain ID") — hard off
     },
     allowedAggregatorTargetsEnv: "DUST_SWEEP_ALLOWED_AGGREGATOR_TARGETS_4663",
     nativeSources: [
@@ -462,7 +461,15 @@ function withResolvedRouters(config: SweepChainConfig): SweepChainConfig {
   if (!config.nativeSources) return config;
   const ZERO = "0x0000000000000000000000000000000000000000".toLowerCase();
   const nativeSources = config.nativeSources.map((source) => {
-    if (source.kind === "uniswap_v3" && source.router.toLowerCase() === ZERO) {
+    // The literal fallback is Uniswap's MAINNET SwapRouter02, so it may only be substituted on
+    // Ethereum. On BSC/Robinhood that address is a different (or non-existent) contract — a
+    // zeroed *_<chainId> router override there must leave the source alone rather than silently
+    // point sweeps at a foreign-chain address.
+    if (
+      config.chainId === ETHEREUM_CHAIN_ID &&
+      source.kind === "uniswap_v3" &&
+      source.router.toLowerCase() === ZERO
+    ) {
       return { ...source, router: "0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45" as Address };
     }
     return source;
@@ -521,7 +528,9 @@ export function getChainAllowedAggregatorAddresses(config: SweepChainConfig): Se
   // DUST_SWEEP_ALLOWED_AGGREGATOR_TARGETS_1 is omitted. Base keeps its env-only behavior.
   if (config.chainId === BASE_CHAIN_ID) return new Set();
 
-  const aggregatorIds = ["kyber", "zerox", "lifi", "openocean", "odos"];
+  // "odos" deliberately absent — Odos is not a routing provider on any chain, so its routers must
+  // never enter the default aggregator allowlist even if a stale registry entry reappears.
+  const aggregatorIds = ["kyber", "zerox", "lifi", "openocean"];
   const addresses = getDustSweepV3TargetsForChain(config.chainId)
     .filter((target) => aggregatorIds.some((id) => target.id.includes(id)))
     .flatMap((target) => [target.target, target.spender])

@@ -45,13 +45,18 @@ never trust explorer labels alone (prior Base lesson).
 | Permit2 (spender only) | `0x000000000022D473030F116dDEE9F6B43aC78BA3` | — |
 
 ### PARKED (pre-allowlist on-chain, keep app-side OFF)
-Allowlist these so they can be flipped on later without a new owner tx; they stay inert until
-`DUST_SWEEP_ENABLE_OPENOCEAN_1` / `DUST_SWEEP_ENABLE_ODOS_1` = true AND their addresses are added to
+Allowlist this so it can be flipped on later without a new owner tx; it stays inert until
+`DUST_SWEEP_ENABLE_OPENOCEAN_1` = true AND its address is added to
 `DUST_SWEEP_ALLOWED_AGGREGATOR_TARGETS_1`:
 | Aggregator | Address |
 |---|---|
 | OpenOcean Exchange Proxy | `0x6352a56caadC4F1E25CD6c75970Fa768A3304e64` |
-| Odos RouterV2 | `0xCf5540fFFCdC3d510B18bFcA6d2b9987b0772559` |
+
+> **Odos: do NOT allowlist.** Odos was removed as a routing provider on every chain
+> (2026-07-27) — the quote candidate and registry entries are deleted, so the app can never
+> build an Odos route. If `0xCf5540fFFCdC3d510B18bFcA6d2b9987b0772559` was allowlisted by an
+> earlier deploy it is inert; revoking it with
+> `setAllowedTarget(addr,false)` / `setAllowedSpender(addr,false)` is optional cleanup.
 
 ## 5. Post-deploy sanity
 - `feeBps() == 60`, `feeCollector()`, `owner()` correct.

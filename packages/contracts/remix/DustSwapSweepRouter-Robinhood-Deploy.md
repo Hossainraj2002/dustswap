@@ -57,8 +57,9 @@ immutable constructor `permit2_`, not the spender allowlist.
 |---|---|---|
 | OpenOcean Exchange Proxy | `0x6352a56caadC4F1E25CD6c75970Fa768A3304e64` | v4/robinhood/quote answers live; enable later via `DUST_SWEEP_ENABLE_OPENOCEAN_4663` + swap-payload verification |
 
-**No Odos entry** — Odos does not support chainId 4663 (`/info/contract-info/v2/4663` →
-"Invalid chain ID"). Do not allowlist a guessed address.
+**No Odos entry** — Odos was removed as a routing provider on every chain (2026-07-27), and it
+does not support chainId 4663 anyway (`/info/contract-info/v2/4663` → "Invalid chain ID"). Never
+allowlist an Odos address here.
 
 ## 5. Post-deploy sanity
 - `feeBps() == 60`, `feeCollector()`, `owner()`, `weth() == 0x0Bd7D308…`, `permit2() == 0x0000…BA3`.

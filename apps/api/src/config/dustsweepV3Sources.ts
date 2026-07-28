@@ -221,9 +221,11 @@ export const BASE_DUSTSWEEP_V3_TARGETS: DustSweepV3Target[] = [
  *
  * Native execution ships with Uniswap V3 + V2 + SushiSwap (deepest native liquidity); the
  * aggregator ladder (Kyber / 0x / LI.FI) covers Curve, Balancer, Pancake, Fluid, etc. via the
- * rescue path. OpenOcean + Odos are PRE-ALLOWLISTED but PARKED (enabled: false) — the on-chain
+ * rescue path. OpenOcean is PRE-ALLOWLISTED but PARKED (enabled: false) — the on-chain
  * allowlist is inert until DUST_SWEEP_ENABLE_*_1 + DUST_SWEEP_ALLOWED_AGGREGATOR_TARGETS_1 open
- * them. Every address must be re-verified live via eth_getCode before the owner allowlist txs;
+ * it. Odos was REMOVED as a provider entirely (2026-07-27); if its router is still allowlisted
+ * on-chain from an earlier deploy it is inert, because the app can no longer build an Odos route.
+ * Every address must be re-verified live via eth_getCode before the owner allowlist txs;
  * see packages/contracts/remix/DustSwapSweepRouter-Ethereum-Deploy.md.
  */
 export const ETHEREUM_DUSTSWEEP_V3_TARGETS: DustSweepV3Target[] = [
@@ -311,16 +313,8 @@ export const ETHEREUM_DUSTSWEEP_V3_TARGETS: DustSweepV3Target[] = [
     enabled: false, // PARKED — pre-allowlist on-chain, enable via DUST_SWEEP_ENABLE_OPENOCEAN_1
     source: "OpenOcean docs; parked pending enable + live quote verification",
   },
-  {
-    id: "odos-router-v2",
-    name: "Odos RouterV2",
-    target: "0xCf5540fFFCdC3d510B18bFcA6d2b9987b0772559",
-    spender: "0xCf5540fFFCdC3d510B18bFcA6d2b9987b0772559",
-    spenderModel: "self",
-    calldataStyle: "uniswap_v3_swaprouter02",
-    enabled: false, // PARKED — pre-allowlist on-chain, enable via DUST_SWEEP_ENABLE_ODOS_1
-    source: "Odos docs; parked pending enable + API key + live quote verification",
-  },
+  // Odos REMOVED (2026-07-27): no longer a routing provider on any chain. Its former RouterV2
+  // entry (0xCf5540fF…2559) is gone so it can never enter the default aggregator allowlist.
 ];
 
 /**
@@ -329,9 +323,11 @@ export const ETHEREUM_DUSTSWEEP_V3_TARGETS: DustSweepV3Target[] = [
  * Native execution ships with PancakeSwap V3 + V2, Uniswap V3 (BSC) and Biswap — the only venues
  * with meaningful 24h volume (DeFiLlama 2026-07-10: Pancake V3 $253M, Pancake V2 $30M, Uni V3
  * $24.7M; everything else <$3M). ApeSwap/BakerySwap/MDEX/THENA etc. are reached via the
- * aggregator rescue path (Kyber / 0x / LI.FI). OpenOcean + Odos are PRE-ALLOWLISTED but PARKED
+ * aggregator rescue path (Kyber / 0x / LI.FI). OpenOcean is PRE-ALLOWLISTED but PARKED
  * (enabled: false) — inert until DUST_SWEEP_ENABLE_*_56 + DUST_SWEEP_ALLOWED_AGGREGATOR_TARGETS_56
- * open them. Every address below was verified live on 2026-07-10 via eth_getCode on
+ * open it. Odos was REMOVED as a provider entirely (2026-07-27); any leftover on-chain allowlist
+ * entry is inert because the app can no longer build an Odos route.
+ * Every address below was verified live on 2026-07-10 via eth_getCode on
  * bsc-dataseed.bnbchain.org AND a functional probe (getAmountsOut / quoteExactInputSingle / live
  * aggregator API response) — never explorer labels. Re-verify via eth_getCode before the owner
  * allowlist txs; see packages/contracts/remix/DustSwapSweepRouter-BSC-Deploy.md.
@@ -434,19 +430,8 @@ export const BSC_DUSTSWEEP_V3_TARGETS: DustSweepV3Target[] = [
       "Verified live 2026-07-10: eth_getCode ok on BSC; OpenOcean v4/bsc/quote responds. Parked " +
       "pending enable + swap-payload verification.",
   },
-  {
-    id: "odos-router-v2",
-    name: "Odos RouterV2 (BSC)",
-    // NOTE: Odos routers are per-chain — this is NOT the mainnet address.
-    target: "0x89b8AA89FDd0507a99d334CBe3C808fAFC7d850E",
-    spender: "0x89b8AA89FDd0507a99d334CBe3C808fAFC7d850E",
-    spenderModel: "self",
-    calldataStyle: "uniswap_v3_swaprouter02",
-    enabled: false, // PARKED — pre-allowlist on-chain, enable via DUST_SWEEP_ENABLE_ODOS_56
-    source:
-      "Verified live 2026-07-10: Odos /info/contract-info/v2/56 returned this routerAddress; " +
-      "eth_getCode ok on BSC. Parked pending enable + live quote verification.",
-  },
+  // Odos REMOVED (2026-07-27): no longer a routing provider on any chain. Its former BSC
+  // RouterV2 entry (0x89b8AA89…850E) is gone so it can never enter the default allowlist.
 ];
 
 /**
@@ -467,8 +452,8 @@ export const BSC_DUSTSWEEP_V3_TARGETS: DustSweepV3Target[] = [
  * Uniswap-only. PancakeSwap V3 deployed its SmartRouter/factory deterministically here but its
  * QuoterV2 is NOT at the BSC address and could not be located/verified, and its top pool holds
  * only ~$84K — Pancake plus every V3 fork (SwapHood, RobinSwap, Up, Sheriff, DyorSwap, …) is
- * reached via the aggregator rescue path instead. Odos does NOT support 4663 at all
- * (/info/contract-info/v2/4663 → "Invalid chain ID"), so there is no Odos entry to park.
+ * reached via the aggregator rescue path instead. Odos is not a provider on any chain (removed
+ * 2026-07-27) and does not support 4663 anyway ("Invalid chain ID") — no Odos entry exists.
  * OpenOcean is PRE-ALLOWLISTED but PARKED (enabled: false) per the standard pattern. Re-verify
  * every address via eth_getCode before the owner allowlist txs; see
  * packages/contracts/remix/DustSwapSweepRouter-Robinhood-Deploy.md.

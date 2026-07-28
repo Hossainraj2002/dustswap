@@ -1,6 +1,6 @@
 /**
  * Aggregator API governor — shared pacing for external quote APIs (KyberSwap, 0x, LI.FI,
- * OpenOcean, Odos), which are all RPS-limited on free/low tiers.
+ * OpenOcean), which are all RPS-limited on free/low tiers.
  *
  * ADDITIVE + STANDALONE: quote candidate functions keep their own fetch/validation logic; this
  * module only decides WHEN a call may run and remembers recent results:
@@ -16,14 +16,16 @@
  *     cache instead of the API. The key uses the EXACT amount because aggregator calldata embeds it.
  */
 
-export type AggregatorProviderId = "kyber" | "zerox" | "lifi" | "openocean" | "odos";
+// NOTE: Odos was removed as a routing provider on EVERY chain (2026-07-27) — DustSweep never
+// calls the Odos API and never allowlists its routers. Do not re-add the id here without also
+// restoring the quote candidate + ladder entry in dustsweep.ts.
+export type AggregatorProviderId = "kyber" | "zerox" | "lifi" | "openocean";
 
 const DEFAULT_MIN_INTERVAL_MS: Record<AggregatorProviderId, number> = {
   kyber: 250, // keyless public tier is comparatively generous
   zerox: 250, // keyed tier; the pre-governor code called it fully parallel without issues
   lifi: 250,
   openocean: 1_100, // public tier is ~1 rps
-  odos: 1_100, // public tier is aggressively limited without an API key
 };
 
 const BREAKER_COOL_OFF_MS = 60_000;
