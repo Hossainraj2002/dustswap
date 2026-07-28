@@ -2273,6 +2273,21 @@ function isNativeTokenAddress(address: string) {
   return address.toLowerCase() === NATIVE_TOKEN_SENTINEL.toLowerCase();
 }
 
+/**
+ * Whether a whitelist row's `decimals` came from a source that actually READ decimals() on chain.
+ *
+ * The DexScreener pair payload carries no decimals field, so the pool-event / dexscreener /
+ * token-list importers historically stored a hardcoded 18. A wrong decimals value silently
+ * destroys discovery: a 6-decimal token (USDT, USDbC, syrupUSDC, TRX, …) formatted as 18 decimals
+ * renders ~1e-12 of its real balance, so its USD value lands under minValueUsd and the token is
+ * bucketed HIDDEN/BELOW_THRESHOLD instead of swappable. Rows from these sources therefore get a
+ * real on-chain metadata read (cached 24h, multicall-batched) which wins over the stored value.
+ */
+function isDecimalsVerifiedSource(source?: string | null) {
+  const value = String(source || "").toLowerCase();
+  return value.startsWith("onchain") || value === "default" || value === "seed";
+}
+
 function isOutputAssetAddress(address: string, chain: SweepChainConfig = BASE_CONFIG) {
   const key = address.toLowerCase();
   return (
@@ -6434,6 +6449,32 @@ export async function syncWhitelistFromPoolEventsDexScreener(args: {
     .sort((a, b) => Number(b.liquidity_usd || 0) - Number(a.liquidity_usd || 0))
     .slice(0, args.maxTokens);
 
+  // The DexScreener pair payload carries NO decimals field, so the loop above can only assume 18.
+  // Persisting that assumption is what hid every 6/8/9-decimal token (USDT, USDbC, syrupUSDC,
+  // TRX, OHM, …) from discovery: the balance formats ~1e-12 too small and falls under
+  // minValueUsd. Read the real decimals on chain before writing.
+  const decimalsResults = await pLimit(
+    rows.map((row) => async () => {
+      const metadata = await readErc20Metadata(row.address as Address, BASE_CHAIN_ID).catch(() => null);
+      return { address: row.address.toLowerCase(), decimals: metadata?.decimals };
+    }),
+    DISCOVERY_METADATA_CONCURRENCY,
+  );
+  let verifiedDecimalsCount = 0;
+  const verifiedDecimals = new Map<string, number>();
+  for (const result of decimalsResults) {
+    if (result.decimals !== undefined && Number.isFinite(result.decimals)) {
+      verifiedDecimals.set(result.address, result.decimals);
+    }
+  }
+  for (const row of rows) {
+    const decimals = verifiedDecimals.get(row.address.toLowerCase());
+    if (decimals !== undefined) {
+      row.decimals = decimals;
+      verifiedDecimalsCount += 1;
+    }
+  }
+
   if (args.replaceActive) {
     const { error } = await postgresDb
       .from("tokens")
@@ -6483,6 +6524,9 @@ export async function syncWhitelistFromPoolEventsDexScreener(args: {
     tokensUpserted: rows.length,
     tokensWritten,
     tokensSkipped,
+    // Rows carrying an on-chain-verified decimals value (vs the unavoidable 18 fallback when
+    // decimals() could not be read). A large gap means tokens will under-report their balance.
+    decimalsVerified: verifiedDecimalsCount,
     upsertErrors: upsertErrors.slice(0, 12),
   };
 }
@@ -6865,7 +6909,12 @@ async function loadDiscoveryMetadata(
 
     const tokenAddress = normalizeAddress(balance.contractAddress);
     const key = tokenAddress.toLowerCase();
-    if (seen.has(key) || whitelist.has(key)) continue;
+    if (seen.has(key)) continue;
+    // Whitelisted tokens normally skip the on-chain read — EXCEPT when the row's decimals were
+    // never verified on chain (pool-events/dexscreener/token-list wrote a hardcoded 18). Those
+    // must be re-read or every 6/8/9-decimal token silently disappears from discovery.
+    const whitelistRowForMetadata = whitelist.get(key);
+    if (whitelistRowForMetadata && isDecimalsVerifiedSource(whitelistRowForMetadata.source)) continue;
     seen.add(key);
 
     const metadataHint = normalizeTokenMetadataHint(tokenAddress, balance.metadata);
@@ -7010,6 +7059,17 @@ async function handleDustSweepTokensRequest(c: Context, rawAddress?: string) {
           liquidityUSD = Number(whitelistRow.liquidity_usd || 0);
           bestDex = bestDexFromSource(whitelistRow.source);
           hasMetadata = true;
+
+          // Decimals correctness beats the cached whitelist value: rows whose source never read
+          // decimals() on chain can carry a hardcoded 18, which under-reports the balance by
+          // orders of magnitude and hides the token entirely. Prefer the on-chain read when the
+          // stored value is unverified (loadDiscoveryMetadata fetches these deliberately).
+          if (!isDecimalsVerifiedSource(whitelistRow.source)) {
+            const verified = metadataByAddress.get(key);
+            if (verified && Number.isFinite(verified.decimals) && verified.decimals !== decimals) {
+              decimals = verified.decimals;
+            }
+          }
         } else {
           const meta = metadataByAddress.get(key);
           if (meta) {
