@@ -166,7 +166,8 @@ export type UseDustSweepReturn = {
   executionNotice: string | null;
   quoteError: string | null;
   autoMode: boolean;
-  autoSelectionUsd: number;
+  /** null = no USD ceiling on Auto selection (the field is blank until the user sets one). */
+  autoSelectionUsd: number | null;
   batchMode: boolean;
   smartRouting: boolean;
   removeFailedTokens: boolean;
@@ -184,7 +185,7 @@ export type UseDustSweepReturn = {
   setTokenOut: (token: Token | null) => void;
   setSlippageBps: (value: number) => void;
   setAutoMode: (value: boolean) => void;
-  setAutoSelectionUsd: (value: number) => void;
+  setAutoSelectionUsd: (value: number | null) => void;
   setBatchMode: (value: boolean) => void;
   setSmartRouting: (value: boolean) => void;
   setRemoveFailedTokens: (value: boolean) => void;
@@ -745,7 +746,9 @@ export function useDustSweep(options?: { chainId?: number }): UseDustSweepReturn
   const [quote, setQuote] = useState<DustSweepQuoteResponse | null>(null);
   const [slippageBps, setSlippageBps] = useState(50);
   const [autoMode, setAutoMode] = useState(false);
-  const [autoSelectionUsd, setAutoSelectionUsd] = useState(100);
+  // null = NO value cap: Auto adds every swappable token (still bounded by selectionCap).
+  // The field starts blank and only filters once the user types an amount.
+  const [autoSelectionUsd, setAutoSelectionUsd] = useState<number | null>(null);
   const [batchMode, setBatchMode] = useState(true);
   const [smartRouting, setSmartRouting] = useState(true);
   const [removeFailedTokens, setRemoveFailedTokens] = useState(false);
@@ -952,7 +955,7 @@ export function useDustSweep(options?: { chainId?: number }): UseDustSweepReturn
     if (!autoMode) return;
     setSelectedTokens(
       swappableTokens
-        .filter((token) => (token.valueUSD ?? 0) <= autoSelectionUsd)
+        .filter((token) => autoSelectionUsd === null || (token.valueUSD ?? 0) <= autoSelectionUsd)
         .slice(0, selectionCap),
     );
   }, [autoMode, autoSelectionUsd, selectionCap, swappableTokens]);

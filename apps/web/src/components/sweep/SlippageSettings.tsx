@@ -95,21 +95,24 @@ export function SlippageSettings({
   onBatchModeChange: (value: boolean) => void;
   smartRouting: boolean;
   onSmartRoutingChange: (value: boolean) => void;
-  autoSelectionUsd: number;
-  onAutoSelectionUsdChange: (value: number) => void;
+  /** null = no ceiling; the field renders blank until the user types an amount. */
+  autoSelectionUsd: number | null;
+  onAutoSelectionUsdChange: (value: number | null) => void;
   removeFailedTokens: boolean;
   onRemoveFailedTokensChange: (value: boolean) => void;
   onClose: () => void;
 }) {
   const [customValue, setCustomValue] = useState((slippageBps / 100).toString());
-  const [autoValue, setAutoValue] = useState(`$${autoSelectionUsd}`);
+  const [autoValue, setAutoValue] = useState(
+    autoSelectionUsd === null ? "" : `$${autoSelectionUsd}`,
+  );
 
   useEffect(() => {
     setCustomValue((slippageBps / 100).toString());
   }, [slippageBps]);
 
   useEffect(() => {
-    setAutoValue(`$${autoSelectionUsd}`);
+    setAutoValue(autoSelectionUsd === null ? "" : `$${autoSelectionUsd}`);
   }, [autoSelectionUsd]);
 
   if (!isOpen) return null;
@@ -171,13 +174,25 @@ export function SlippageSettings({
             <Toggle value={smartRouting} onChange={onSmartRoutingChange} />
           </SettingRow>
 
-          <SettingRow label="Auto selection" info="Auto adds assets with a wallet value at or below this amount.">
+          <SettingRow
+            label="Auto selection"
+            info="Auto adds assets with a wallet value at or below this amount. Leave blank for no limit."
+          >
             <input
               value={autoValue}
+              placeholder="No limit"
+              inputMode="decimal"
               onChange={(event) => {
                 const next = event.target.value;
                 setAutoValue(next);
-                const parsed = Number(next.replace(/[^\d.]/g, ""));
+                const digits = next.replace(/[^\d.]/g, "");
+                // Empty (or just "$") clears the ceiling instead of collapsing to 0, which would
+                // otherwise make Auto select nothing.
+                if (digits === "") {
+                  onAutoSelectionUsdChange(null);
+                  return;
+                }
+                const parsed = Number(digits);
                 if (Number.isFinite(parsed) && parsed >= 0) {
                   onAutoSelectionUsdChange(parsed);
                 }
