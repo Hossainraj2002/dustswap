@@ -20,6 +20,7 @@ import {
   baseRpcRequest,
   getBaseRpcEndpoints,
   getRotatingBaseRpcEndpoint,
+  DEFAULT_VERIFICATION_RPC_URLS,
   type BaseRpcEndpoint,
 } from "../utils/baseRpc";
 import {
@@ -216,6 +217,59 @@ function isAlchemyEndpoint(endpoint: BaseRpcEndpoint) {
   return endpoint.url.includes("alchemy");
 }
 
+// Free public nodes, each verified live on 2026-08-02 against the EXACT three methods this lane
+// needs (eth_getTransactionByHash / eth_getTransactionReceipt / eth_getBlockByNumber): every one
+// scored 30/30 sequential and 10/10 burst and retains >=24h of history, which is all
+// ensureTransactionMinedToday ever looks back. Combined measured headroom was ~95 req/s against
+// an observed verification load well under 1 req/s, so this pool carries spin / check-in /
+// streak-save on its own and Alchemy is reached only if ALL of them fail.
+//
+// SCOPED TO THIS LANE ONLY. /dustsweep and /swap keep their existing Alchemy-first pools
+// untouched — those are latency-critical and fee-earning; this one is neither.
+// The list itself lives in baseRpc.ts so the points lane and the shared verification lane can
+// never drift apart.
+const DEFAULT_POINTS_TX_RPC_URLS = DEFAULT_VERIFICATION_RPC_URLS;
+
+// base-rpc.publicnode.com serves eth_getTransactionByHash but answers eth_getTransactionReceipt
+// with HTTP 403 "Archive requests require a personal token" — measured 0/30. It sat at the front
+// of this chain, so it burned one guaranteed-failed hop on every single verification.
+// Blockscout is dropped from THIS lane too: 81 of its 83 keys are revoked (401) and the two live
+// ones cap at 5 req/s with ~570ms latency, so it added failure hops rather than capacity. Its
+// keys stay configured — the Footprint Drop counters API still uses them.
+const POINTS_TX_EXCLUDED_URL_FRAGMENTS = ["base-rpc.publicnode.com", "blockscout"];
+
+function isExcludedFromTxReads(endpoint: BaseRpcEndpoint) {
+  return POINTS_TX_EXCLUDED_URL_FRAGMENTS.some((fragment) =>
+    endpoint.url.includes(fragment)
+  );
+}
+
+function getPointsTxRpcUrls() {
+  const configured = String(process.env.POINTS_TX_RPC_URLS || "")
+    .split(",")
+    .map((url) => url.trim())
+    .filter(Boolean);
+
+  return configured.length > 0 ? configured : DEFAULT_POINTS_TX_RPC_URLS;
+}
+
+// Rotate which verified public node leads, so load spreads across the pool instead of pinning
+// every verification onto the first entry.
+let pointsTxRotationIndex = 0;
+
+function getRotatedPointsTxEndpoints(): BaseRpcEndpoint[] {
+  const urls = getPointsTxRpcUrls();
+  if (urls.length === 0) return [];
+
+  const offset = pointsTxRotationIndex % urls.length;
+  pointsTxRotationIndex = (pointsTxRotationIndex + 1) % urls.length;
+
+  return [...urls.slice(offset), ...urls.slice(0, offset)].map((url) => ({
+    url,
+    label: "points-public",
+  }));
+}
+
 function getOrderedBaseRpcEndpoints() {
   const firstEndpoint = getRotatingBaseRpcEndpoint();
   const ordered = [
@@ -225,10 +279,61 @@ function getOrderedBaseRpcEndpoints() {
     ),
   ];
   if (!preferFreeEndpointsForTxReads()) return ordered;
+
+  const verifiedPublic = getRotatedPointsTxEndpoints();
+  const shared = ordered.filter(
+    (endpoint) =>
+      !isExcludedFromTxReads(endpoint) &&
+      !verifiedPublic.some((candidate) => candidate.url === endpoint.url)
+  );
+
+  // Verified free pool first, then whatever else the shared pool offers, then Alchemy as the
+  // final backstop so a total free-tier outage still cannot break points.
   return [
-    ...ordered.filter((endpoint) => !isAlchemyEndpoint(endpoint)),
-    ...ordered.filter((endpoint) => isAlchemyEndpoint(endpoint)),
+    ...verifiedPublic,
+    ...shared.filter((endpoint) => !isAlchemyEndpoint(endpoint)),
+    ...shared.filter((endpoint) => isAlchemyEndpoint(endpoint)),
   ];
+}
+
+// A "not found" reply is a CONSENSUS ANSWER, not a transport failure — the transaction simply
+// is not mined yet, and every other endpoint will say the same thing. The old code caught it in
+// the same `catch` as a dead socket and walked the WHOLE chain (~7 endpoints), so one unmined
+// tx cost 7 upstream calls; and because preferFreeEndpointsForTxReads() pins Alchemy to the END
+// of the chain, a miss was the one case GUARANTEED to reach the paid key. resolveSubmittedBaseTransaction
+// then retried the whole thing 8x — up to ~112 calls for a single pending claim.
+//
+// We still ask a couple of endpoints for a second opinion (a single node can lag the chain head
+// by a few blocks — Blockscout's indexer runs 1-4 blocks behind), but we stop well before the
+// Alchemy entries and let the caller's retry loop do the waiting instead.
+const NOT_FOUND_ENDPOINT_ATTEMPTS = (() => {
+  const parsed = Number.parseInt(process.env.POINTS_TX_NOT_FOUND_ATTEMPTS || "3", 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 3;
+})();
+
+export class TransactionNotYetAvailableError extends Error {
+  override name = "TransactionNotYetAvailableError" as const;
+}
+
+function isNotFoundRpcError(error: unknown) {
+  // Names verified live against viem on 2026-08-02 (see the points-lane test): a missing receipt
+  // throws TransactionReceiptNotFoundError, a missing tx TransactionNotFoundError, a missing block
+  // BlockNotFoundError. Transport failures surface as HttpRequestError and must NOT match here, or
+  // failover would stop and real verifications would be lost.
+  const name = String((error as { name?: string } | null)?.name || "");
+  if (
+    name === "TransactionNotFoundError" ||
+    name === "TransactionReceiptNotFoundError" ||
+    name === "BlockNotFoundError"
+  ) {
+    return true;
+  }
+  const message = String((error as { message?: string } | null)?.message || "").toLowerCase();
+  return (
+    message.includes("could not be found") ||
+    message.includes("transaction not found") ||
+    message.includes("receipt not found")
+  );
 }
 
 async function readFromBaseRpc<T>(
@@ -236,6 +341,7 @@ async function readFromBaseRpc<T>(
   description: string
 ) {
   let lastError: Error | null = null;
+  let notFoundAttempts = 0;
 
   for (const endpoint of getOrderedBaseRpcEndpoints()) {
     const client = createBaseReadClient(endpoint);
@@ -243,31 +349,64 @@ async function readFromBaseRpc<T>(
     try {
       return await operation(client);
     } catch (error) {
+      if (isNotFoundRpcError(error)) {
+        notFoundAttempts += 1;
+        if (notFoundAttempts >= NOT_FOUND_ENDPOINT_ATTEMPTS) {
+          throw new TransactionNotYetAvailableError(`${description}: not available yet`);
+        }
+        continue;
+      }
+      // Genuine transport/server failure — keep the original full-chain failover.
       lastError = error instanceof Error ? error : new Error(String(error));
     }
+  }
+
+  // Ran out of endpoints. If the only thing we ever saw was "not found" (pool shorter than the
+  // attempt cap), report it as pending rather than as an RPC failure.
+  if (notFoundAttempts > 0 && !lastError) {
+    throw new TransactionNotYetAvailableError(`${description}: not available yet`);
   }
 
   throw new Error(`${description}: ${lastError?.message || "Base RPC request failed"}`);
 }
 
+// Once a transaction is mined its tx body and receipt are immutable, so a repeat lookup is pure
+// waste. Repeats are common: a user double-taps "claim", the quest engine and the points engine
+// both verify the same hash, a request is retried after a slow response. Only SUCCESSFUL loads
+// are cached (getOrSet caches the resolved value; a throw propagates uncached), so a not-yet-mined
+// tx is never pinned. The TTL is deliberately short — long enough to absorb a retry storm and a
+// double-click, short enough that a reorg cannot outlive it.
+const TX_LOOKUP_CACHE_TTL_MS = 60_000;
+const BLOCK_TIMESTAMP_CACHE_TTL_MS = 10 * 60_000;
+
 function getBaseTransaction(hash: `0x${string}`) {
-  return readFromBaseRpc(
-    (client) => client.getTransaction({ hash }),
-    "Load Base transaction"
+  return runtimeCache.getOrSet(`base:tx:${hash.toLowerCase()}`, TX_LOOKUP_CACHE_TTL_MS, () =>
+    readFromBaseRpc((client) => client.getTransaction({ hash }), "Load Base transaction")
   );
 }
 
 function getBaseTransactionReceipt(hash: `0x${string}`) {
-  return readFromBaseRpc(
-    (client) => client.getTransactionReceipt({ hash }),
-    "Load Base transaction receipt"
+  return runtimeCache.getOrSet(`base:receipt:${hash.toLowerCase()}`, TX_LOOKUP_CACHE_TTL_MS, () =>
+    readFromBaseRpc(
+      (client) => client.getTransactionReceipt({ hash }),
+      "Load Base transaction receipt"
+    )
   );
 }
 
-function getBaseBlock(blockNumber: bigint) {
-  return readFromBaseRpc(
-    (client) => client.getBlock({ blockNumber }),
-    "Load Base block"
+// Only the timestamp is cached, never the whole block — a Base block carries hundreds of tx
+// hashes and the callers only ever read `timestamp`.
+function getBaseBlockTimestampMs(blockNumber: bigint) {
+  return runtimeCache.getOrSet(
+    `base:block-ts:${blockNumber.toString()}`,
+    BLOCK_TIMESTAMP_CACHE_TTL_MS,
+    async () => {
+      const block = await readFromBaseRpc(
+        (client) => client.getBlock({ blockNumber }),
+        "Load Base block"
+      );
+      return Number(block.timestamp) * 1000;
+    }
   );
 }
 
@@ -285,10 +424,12 @@ function sleep(ms: number) {
 }
 
 async function getBaseTransactionContext(txHash: string) {
-  const [transaction, receipt] = await Promise.all([
-    getBaseTransaction(txHash as `0x${string}`),
-    getBaseTransactionReceipt(txHash as `0x${string}`),
-  ]);
+  // Receipt FIRST and on its own. The receipt is the gate for "is this mined yet?" — it is the
+  // call that keeps failing while a tx is pending, whereas getTransaction starts succeeding the
+  // moment the tx hits the mempool. Fetching both in parallel therefore doubled the cost of every
+  // unsuccessful poll for no benefit. Sequential costs one extra round-trip on the happy path.
+  const receipt = await getBaseTransactionReceipt(txHash as `0x${string}`);
+  const transaction = await getBaseTransaction(txHash as `0x${string}`);
 
   return { transaction, receipt };
 }
@@ -4020,8 +4161,7 @@ export class PointsEngine {
 
   private async ensureTransactionMinedToday(txHash: string, now = new Date()) {
     const receipt = await getBaseTransactionReceipt(txHash as `0x${string}`);
-    const block = await getBaseBlock(receipt.blockNumber);
-    const minedAtMs = Number(block.timestamp) * 1000;
+    const minedAtMs = await getBaseBlockTimestampMs(receipt.blockNumber);
 
     if (!Number.isFinite(minedAtMs)) {
       throw new Error("Could not resolve the check-in transaction timestamp");

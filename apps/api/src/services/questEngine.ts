@@ -8,7 +8,7 @@ import { base } from "viem/chains";
 import { pointsEngine } from "./pointsEngine";
 import { recordSwap } from "./swapRecorder";
 import { postgresDb } from "./postgres";
-import { alchemyRpcRequest, createBasePublicClient } from "../utils/baseRpc";
+import { alchemyRpcRequest, createBaseVerificationClient } from "../utils/baseRpc";
 import { runtimeCache } from "../utils/runtimeCache";
 import { isAllowedAppDomain, isAllowedAppOrigin } from "../config/appOrigins";
 import {
@@ -262,7 +262,7 @@ const SWAP_SYNC_DEDUPE_TTL_MS = 25_000;
 const MANUAL_X_USERNAME_DEDUPE_TTL_MS = 15_000;
 const START_DELAY_QUEST_DEDUPE_TTL_MS = 15_000;
 
-const publicClient = createBasePublicClient();
+const publicClient = createBaseVerificationClient();
 
 function toNumber(value: unknown, fallback = 0): number {
   const parsed = Number(value);

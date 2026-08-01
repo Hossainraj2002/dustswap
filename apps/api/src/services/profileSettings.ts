@@ -5,7 +5,7 @@ import { getAddress, isAddress, type Hex } from "viem";
 import { pointsEngine } from "./pointsEngine";
 import { postgresDb } from "./postgres";
 import { isAllowedAppDomain } from "../config/appOrigins";
-import { createBasePublicClient } from "../utils/baseRpc";
+import { createBaseVerificationClient } from "../utils/baseRpc";
 import { runtimeCache } from "../utils/runtimeCache";
 import {
   isConnectedXAccount,
@@ -147,7 +147,7 @@ export class ProfileSettingsError extends Error {
   }
 }
 
-const publicClient = createBasePublicClient();
+const publicClient = createBaseVerificationClient();
 
 function normalizeAddress(address: string) {
   if (!isAddress(address)) {

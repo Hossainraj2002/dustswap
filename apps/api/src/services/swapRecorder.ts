@@ -14,6 +14,7 @@ import {
   getSwapChainConfig,
   isSupportedSwapChainId,
 } from "../config/swapChains";
+import { createBaseVerificationClient } from "../utils/baseRpc";
 import { getSwapOwnRouterAddress } from "../config/swapownSources";
 import { pointsEngine } from "./pointsEngine";
 import { postgresDb } from "./postgres";
@@ -687,6 +688,17 @@ async function getUserByAddress(address: string) {
   return account ? ({ id: account.id } as UserRow) : null;
 }
 
+// Confirming an already-broadcast swap is bookkeeping: it awards points and volume after the
+// fact, and no user is waiting on the response. So on Base these reads run on the free
+// verification pool with Alchemy as the backstop. This does NOT touch swap EXECUTION or the
+// DustSweep quote path — both keep their existing Alchemy-first client.
+// Other chains have no verified free pool yet, so they keep the client they always used.
+const baseVerificationClient = createBaseVerificationClient();
+
+function getSwapReadClient(client: SwapPublicClient, chainId: number): SwapPublicClient {
+  return chainId === base.id ? (baseVerificationClient as SwapPublicClient) : client;
+}
+
 async function getTransactionContextByHash(client: SwapPublicClient, txHash: Hex) {
   const [transaction, receipt] = await Promise.all([
     client.getTransaction({ hash: txHash }),
@@ -723,15 +735,19 @@ async function resolveUserOperationTransactionHash(
   }
 }
 
+// `readClient` serves the plain chain reads (tx / receipt) and is the free lane on Base.
+// `bundlerClient` stays on the original Alchemy-backed client because eth_getUserOperationReceipt
+// is a bundler API — every public Base node answers it with -32601 method not found.
 async function waitForResolvedTransaction(
-  client: SwapPublicClient,
+  readClient: SwapPublicClient,
+  bundlerClient: SwapPublicClient,
   submittedHash: Hex
 ): Promise<ResolvedSubmittedTransaction> {
   let lastError: Error | null = null;
 
   for (let attempt = 0; attempt < RECEIPT_MAX_ATTEMPTS; attempt += 1) {
     try {
-      const direct = await getTransactionContextByHash(client, submittedHash);
+      const direct = await getTransactionContextByHash(readClient, submittedHash);
       return {
         submittedHash,
         submittedKind: "transaction",
@@ -745,13 +761,13 @@ async function waitForResolvedTransaction(
     }
 
     const resolvedUserOperationHash = await resolveUserOperationTransactionHash(
-      client,
+      bundlerClient,
       submittedHash
     );
     if (resolvedUserOperationHash) {
       try {
         const resolved = await getTransactionContextByHash(
-          client,
+          readClient,
           resolvedUserOperationHash as Hex
         );
         return {
@@ -2036,7 +2052,12 @@ export async function recordSwap(input: {
   }
 
   const user = await pointsEngine.getOrCreate(normalizedAddress);
-  const resolvedTransaction = await waitForResolvedTransaction(client, normalizedTxHash as Hex);
+  const readClient = getSwapReadClient(client, resolvedChainId);
+  const resolvedTransaction = await waitForResolvedTransaction(
+    readClient,
+    client,
+    normalizedTxHash as Hex
+  );
   const existingResolvedSwap =
     resolvedTransaction.resolvedTxHash !== normalizedTxHash
       ? await getExistingSwap(resolvedTransaction.resolvedTxHash, resolvedChainId)
@@ -2058,7 +2079,7 @@ export async function recordSwap(input: {
   }
 
   const transaction = resolvedTransaction.transaction;
-  const block = await client.getBlock({ blockNumber: receipt.blockNumber });
+  const block = await readClient.getBlock({ blockNumber: receipt.blockNumber });
 
   const dustSwapAggregatorEvents = decodeDustSwapAggregatorEvents(receipt, resolvedChainId);
   if (dustSwapAggregatorEvents.length > 0) {

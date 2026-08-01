@@ -3,7 +3,7 @@ import { getAddress, isAddress } from "viem";
 import { postgresDb } from "./postgres";
 import { pointsEngine } from "./pointsEngine";
 import { isAllowedAppDomain, getAllowedAppOrigins } from "../config/appOrigins";
-import { createBasePublicClient } from "../utils/baseRpc";
+import { createBaseVerificationClient } from "../utils/baseRpc";
 import { runtimeCache } from "../utils/runtimeCache";
 
 const WALLET_LINK_STATEMENT = "DustSwap Wallet Linking";
@@ -23,7 +23,7 @@ const GET_REQUEST_IP_LIMIT = 60;
 const LINK_TOKEN_TTL_MS = 30 * 60 * 1000;
 const MAX_WALLETS_PER_ACCOUNT = 2;
 
-const publicClient = createBasePublicClient();
+const publicClient = createBaseVerificationClient();
 
 export type WalletLinkAction =
   | "create-link-request"

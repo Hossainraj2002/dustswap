@@ -4,7 +4,7 @@ import { getAddress, isAddress, type Hex } from "viem";
 import { isAllowedAppDomain } from "../config/appOrigins";
 import { dbQuery, getDbPool } from "../lib/db";
 import { runtimeCache } from "../utils/runtimeCache";
-import { createBasePublicClient } from "../utils/baseRpc";
+import { createBaseVerificationClient } from "../utils/baseRpc";
 import { pointsEngine } from "./pointsEngine";
 import { postgresDb } from "./postgres";
 import { isConnectedXAccount, type XSocialAccountRecord } from "./xVerification";
@@ -110,7 +110,7 @@ export class ProfileCompletionError extends Error {
   }
 }
 
-const publicClient = createBasePublicClient();
+const publicClient = createBaseVerificationClient();
 
 function normalizeAddress(address: string) {
   if (!isAddress(address)) {

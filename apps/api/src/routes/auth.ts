@@ -4,7 +4,7 @@ import { getAddress } from "viem";
 import { generateSiweNonce, parseSiweMessage } from "viem/siwe";
 import { isAllowedAppDomain } from "../config/appOrigins";
 import { runtimeCache } from "../utils/runtimeCache";
-import { createBasePublicClient } from "../utils/baseRpc";
+import { createBaseVerificationClient } from "../utils/baseRpc";
 import { issueSessionToken } from "../utils/sessionToken";
 
 const authRoutes = new Hono();
@@ -30,7 +30,7 @@ type VerifyResponse = {
   expiresAt: string;
 };
 
-const publicClient = createBasePublicClient();
+const publicClient = createBaseVerificationClient();
 
 function clearExpiredNonces() {
   const now = Date.now();

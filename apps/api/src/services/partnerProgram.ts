@@ -9,7 +9,7 @@ import {
 import { isAllowedAppDomain } from "../config/appOrigins";
 import { dbQuery } from "../lib/db";
 import { runtimeCache } from "../utils/runtimeCache";
-import { createBasePublicClient } from "../utils/baseRpc";
+import { createBaseVerificationClient } from "../utils/baseRpc";
 import { pointsEngine } from "./pointsEngine";
 import { postgresDb } from "./postgres";
 import { isConnectedXAccount, type XSocialAccountRecord } from "./xVerification";
@@ -31,7 +31,7 @@ const USDC_BASE_TOKEN_ADDRESS = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913";
 const PARTNER_PAYOUT_RECEIPT_MAX_ATTEMPTS = 6;
 const PARTNER_PAYOUT_RECEIPT_RETRY_DELAY_MS = 2500;
 
-const publicClient = createBasePublicClient();
+const publicClient = createBaseVerificationClient();
 
 type PartnerProgramState = "not_whitelisted" | "pending_join" | "joined";
 

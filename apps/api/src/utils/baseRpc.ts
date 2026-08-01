@@ -389,6 +389,158 @@ export function createBasePublicClient(timeoutMs = 20_000): any {
   });
 }
 
+// ---------------------------------------------------------------------------
+// FREE VERIFICATION LANE
+// ---------------------------------------------------------------------------
+// For server-side reads that confirm something already on-chain (tx, receipt, block, signature
+// checks). They earn no fee, nobody is waiting on them, and they are low volume — so they run on
+// free public nodes and only reach Alchemy if every one of those fails.
+//
+// This is NOT for the DustSweep quote firehose or swap execution. Those stay on their existing
+// Alchemy-first pool: moving HIGH-volume latency-critical traffic onto free nodes is what caused
+// the 2026-07-04 outage.
+//
+// Defaults live in code on purpose — no env var has to be set for this to work. Each URL was
+// verified live on 2026-08-02 against eth_getTransactionByHash / eth_getTransactionReceipt /
+// eth_getBlockByNumber: 30/30 sequential, 10/10 burst, >=24h of history, ~95 req/s combined.
+export const DEFAULT_VERIFICATION_RPC_URLS = [
+  "https://mainnet.base.org",
+  "https://base-mainnet.public.blastapi.io",
+  "https://base-pokt.nodies.app",
+  "https://base.gateway.tenderly.co",
+];
+
+// base-rpc.publicnode.com answers eth_getTransactionByHash but returns HTTP 403 "Archive requests
+// require a personal token" for eth_getTransactionReceipt (measured 0/30), and Blockscout's keys
+// are 401 or capped at 5 req/s. Both sit in front of Alchemy in the shared pool, so a leader miss
+// fell straight through to the paid key — that fall-through is the bulk of the Alchemy bill.
+const VERIFICATION_EXCLUDED_URL_FRAGMENTS = ["base-rpc.publicnode.com", "blockscout"];
+
+let verificationRotationIndex = 0;
+
+function getVerificationRpcUrls() {
+  const configured = splitEnv(process.env.BASE_VERIFICATION_RPC_URLS);
+  return configured.length > 0 ? configured : DEFAULT_VERIFICATION_RPC_URLS;
+}
+
+export function getVerificationRpcEndpoints(): BaseRpcEndpoint[] {
+  const urls = unique(getVerificationRpcUrls().filter(isHttpsUrl));
+
+  let free: BaseRpcEndpoint[] = [];
+  if (urls.length > 0) {
+    const offset = verificationRotationIndex % urls.length;
+    verificationRotationIndex = (verificationRotationIndex + 1) % urls.length;
+    free = [...urls.slice(offset), ...urls.slice(0, offset)].map((url) => ({
+      url,
+      label: "verification-public",
+    }));
+  }
+
+  const shared = getBaseRpcEndpoints().filter(
+    (endpoint) =>
+      !VERIFICATION_EXCLUDED_URL_FRAGMENTS.some((fragment) =>
+        endpoint.url.includes(fragment),
+      ) && !free.some((candidate) => candidate.url === endpoint.url),
+  );
+
+  return [
+    ...free,
+    ...shared.filter((endpoint) => !endpoint.url.includes("alchemy")),
+    ...shared.filter((endpoint) => endpoint.url.includes("alchemy")),
+  ];
+}
+
+// In THIS lane an "unsupported method" must NOT short-circuit. Public nodes do not implement
+// every RPC (eth_getUserOperationReceipt is the obvious one), and the entire point of the lane is
+// to fall through to the Alchemy backstop when a free node cannot answer. Only a real execution
+// result counts as deterministic here — unlike isDeterministicRpcError, which also treats
+// "method not found" as final and would strand us on a node that simply lacks the method.
+function isDeterministicVerificationError(error?: { code?: number; message?: string }) {
+  const msg = String(error?.message || "").toLowerCase();
+  return msg.includes("execution reverted") || msg.includes("revert") || error?.code === 3;
+}
+
+export async function baseVerificationRequest<T>(
+  method: string,
+  params: RpcParams = [],
+  opts: RpcRequestOptions = {},
+): Promise<T> {
+  let lastTransport: Error | null = null;
+
+  for (const endpoint of getVerificationRpcEndpoints()) {
+    const controller = new AbortController();
+    const timeoutMs = opts.timeoutMs ?? 10_000;
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    const combinedSignal = opts.signal
+      ? AbortSignal.any([opts.signal, controller.signal])
+      : controller.signal;
+
+    try {
+      const response = await fetch(endpoint.url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...endpoint.headers },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: requestId++,
+          method,
+          params: normalizeRpcParams(params),
+        }),
+        signal: combinedSignal,
+      });
+
+      if (!response.ok) {
+        throw new RpcTransportError(
+          `Verification RPC ${response.status} from ${endpoint.label || endpoint.url}`,
+        );
+      }
+
+      const payload = (await response.json()) as {
+        result?: T;
+        error?: { code?: number; message?: string };
+      };
+
+      if (payload.error) {
+        if (isDeterministicVerificationError(payload.error)) {
+          throw new RpcDeterministicError(payload.error.message || "deterministic rpc error");
+        }
+        throw new RpcTransportError(payload.error.message || "rpc error");
+      }
+
+      return payload.result as T;
+    } catch (err) {
+      if (err instanceof RpcDeterministicError) throw err;
+      if (opts.signal?.aborted) throw err;
+
+      lastTransport = err instanceof Error ? err : new Error(String(err));
+      continue;
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  throw lastTransport ?? new Error("Base verification RPC request failed");
+}
+
+// Drop-in replacement for createBasePublicClient for confirmation-style reads.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function createBaseVerificationClient(timeoutMs = 20_000): any {
+  return createPublicClient({
+    chain: base,
+    transport: custom(
+      {
+        async request({ method, params }: { method: string; params?: RpcParams }) {
+          return baseVerificationRequest(method, normalizeRpcParams(params), { timeoutMs });
+        },
+      },
+      {
+        key: "base-verification-rpc",
+        name: "Base Verification RPC",
+        retryCount: 0,
+      },
+    ),
+  });
+}
+
 export async function alchemyRpcRequest<T>(
   method: string,
   params: RpcParams = [],
