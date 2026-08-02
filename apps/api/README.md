@@ -175,3 +175,25 @@ Backfill behavior:
 - Scans historical messages in the submit channel oldest-first.
 - Reconstructs missing `CLAIM_SUCCESS` log entries for valid past submissions.
 - Adds the role only for members who still do not have it.
+
+## Footprint Drop Allowlist (private data — not in git)
+
+`apps/api/data/all_time_user_totals.json` holds the saved-leaderboard allowlist: real
+user wallet addresses paired with each one's all-time USDC sweep volume. It is **user
+data**, so it is gitignored and must never be committed. Keep your local copy and ship
+it to the API host out-of-band.
+
+`FootprintAirdropService` looks for the file in this order:
+
+1. `FOOTPRINT_ALLOWLIST_PATH` (absolute path — use this on the host)
+2. `<cwd>/data/all_time_user_totals.json`
+3. `<cwd>/apps/api/data/all_time_user_totals.json`
+4. `<cwd>/../data/all_time_user_totals.json`
+
+If none exist the API **still boots**. It logs a `[footprint-drop]` warning and every
+lookup falls back to the Blockscout on-chain-activity tiers — the same path
+non-allowlisted addresses already take. Saved-leaderboard tiers stay dormant until the
+file is present, so watch for that warning after a deploy if you expect them to work.
+
+To restore the tiers in production, mount the file on a Railway volume (for example
+`/data/all_time_user_totals.json`) and set `FOOTPRINT_ALLOWLIST_PATH` to that path.

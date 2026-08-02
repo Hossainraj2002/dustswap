@@ -90,36 +90,57 @@ function getFallbackRewardRange(totalActivity: number): RewardRange | null {
   return null;
 }
 
+// The allowlist holds real wallet addresses and per-user volume, so it is not
+// committed to the repo. Deploy it to the API host out-of-band (Railway volume,
+// object storage, or FOOTPRINT_ALLOWLIST_PATH) — see apps/api/README.md.
 function resolveAllowlistPath() {
   const candidates = [
+    process.env.FOOTPRINT_ALLOWLIST_PATH,
     path.resolve(process.cwd(), "data", "all_time_user_totals.json"),
     path.resolve(process.cwd(), "apps", "api", "data", "all_time_user_totals.json"),
     path.resolve(process.cwd(), "..", "data", "all_time_user_totals.json"),
-  ];
+  ].filter((candidate): candidate is string => Boolean(candidate));
 
-  const match = candidates.find((candidate) => existsSync(candidate));
-  if (!match) {
-    throw new Error(
-      "Could not locate all_time_user_totals.json for the Footprint Drop service"
+  return candidates.find((candidate) => existsSync(candidate)) ?? null;
+}
+
+// A missing or unreadable allowlist must not take the whole API down at import
+// time. Lookups then fall back to the Blockscout on-chain activity path, which
+// is exactly what non-allowlisted addresses already get.
+function loadAllowlistTotals() {
+  const totals = new Map<string, number>();
+  const allowlistPath = resolveAllowlistPath();
+
+  if (!allowlistPath) {
+    console.warn(
+      "[footprint-drop] all_time_user_totals.json not found — saved-leaderboard tiers are disabled and every lookup falls back to on-chain activity. Set FOOTPRINT_ALLOWLIST_PATH or place the file in apps/api/data/."
     );
+    return totals;
   }
 
-  return match;
-}
-
-const allowlistPath = resolveAllowlistPath();
-const allowlistRows = JSON.parse(
-  readFileSync(allowlistPath, "utf8")
-) as AllowlistRow[];
-const allowlistTotals = new Map<string, number>();
-
-for (const row of allowlistRows) {
+  let rows: AllowlistRow[];
   try {
-    allowlistTotals.set(normalizeAddress(row.userAddress), Number(row.totalUsdc || 0));
-  } catch {
-    // Ignore malformed rows and keep the lookup map resilient.
+    rows = JSON.parse(readFileSync(allowlistPath, "utf8")) as AllowlistRow[];
+  } catch (error) {
+    console.error(
+      `[footprint-drop] failed to read allowlist at ${allowlistPath} — falling back to on-chain activity for every lookup.`,
+      error
+    );
+    return totals;
   }
+
+  for (const row of rows) {
+    try {
+      totals.set(normalizeAddress(row.userAddress), Number(row.totalUsdc || 0));
+    } catch {
+      // Ignore malformed rows and keep the lookup map resilient.
+    }
+  }
+
+  return totals;
 }
+
+const allowlistTotals = loadAllowlistTotals();
 
 export class FootprintAirdropService {
   async lookupReward(address: string): Promise<FootprintLookupResult> {

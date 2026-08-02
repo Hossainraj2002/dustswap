@@ -1,20 +1,20 @@
 ---
 description: >-
   Security audit of the DustSwapSweepRouter (DustSweep V3) smart contract.
-  Audited by Fable 5.
+  Automated-tooling-assisted review with manual analysis.
 ---
 
 # DustSwap V3 — Smart Contract Security Audit
 
 {% hint style="info" %}
-**Audited by:** Fable 5 · **Date:** 13 June 2026 · **Chain:** Base (chainId 8453)
+**Review type:** Automated tooling with manual analysis · **Date:** 13 June 2026 · **Chain:** Base (chainId 8453)
 **Contract:** `DustSwapSweepRouter` (DustSweep V3)
 **Tools used:** Slither · Solhint · Surya · Mythril · solc `0.8.24`
 {% endhint %}
 
 ## About this audit
 
-This report documents a security review of the `DustSwapSweepRouter` smart contract, performed by **Fable 5** using an industry-standard auditing toolchain combined with manual, function-by-function analysis.
+This report documents an internal security review of the `DustSwapSweepRouter` smart contract, performed using an industry-standard auditing toolchain combined with manual, function-by-function analysis.
 
 The review used the following tools:
 
@@ -265,6 +265,6 @@ A user setting `minAmountOut` as "the least I'll accept" can actually receive `m
 
 ## Disclaimer
 
-This report was produced by **Fable 5** using the tools listed above together with manual analysis, and reflects the state of the reviewed source at the time of review. It is an automated-tooling-assisted security review, **not** a third-party professional audit, and **not** a guarantee of the absence of vulnerabilities. It did not include dynamic fuzzing, invariant testing, or fork testing.
+This report was produced internally using the tools listed above together with manual analysis, and reflects the state of the reviewed source at the time of review. It is an automated-tooling-assisted security review, **not** a third-party professional audit, and **not** a guarantee of the absence of vulnerabilities. It did not include dynamic fuzzing, invariant testing, or fork testing.
 
 Smart-contract security is an ongoing process. Re-review after any change, complete the dynamic-analysis coverage noted above, consider a full third-party audit and a bug bounty, and operate with a timelock/multisig in production. Use of this contract is at your own risk.

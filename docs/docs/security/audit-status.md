@@ -10,7 +10,7 @@ DustSwap has completed an automated-tooling-assisted security review of the `Dus
 
 ## Summary
 
-- **Auditor:** Fable 5 · **Date:** 13 June 2026 · **Chain:** Base (chainId 8453)
+- **Review type:** Automated tooling with manual function-by-function analysis · **Date:** 13 June 2026 · **Chain:** Base (chainId 8453)
 - **Contract:** `DustSwapSweepRouter` (DustSweep V3)
 - **Tools used:** Slither, Solhint, Surya, Mythril, solc 0.8.24, plus manual function-by-function review
 - **Result:** No Critical or High severity issues identified — only Medium, Low, and Informational findings. These are centralization/trust and integration/operational items inherent to a router of this design, plus minor hardening suggestions.

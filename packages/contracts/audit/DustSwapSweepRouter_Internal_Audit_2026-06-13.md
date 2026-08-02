@@ -1,6 +1,6 @@
 # Internal Security Audit — DustSwapSweepRouter (DustSweep V3)
 
-**Auditor:** Internal pre-audit review (Claude, Fable 5) for Akbar / DustSwap
+**Auditor:** DustSwap internal pre-audit review — automated tooling with manual function-by-function analysis
 **Date:** 2026-06-13
 **Scope:** `packages/contracts/remix/DustSwapSweepRouter_Remix.sol` — the `DustSwapSweepRouter` contract (flattened, `forge flatten` output)
 **Compiler:** solc `0.8.24+commit.e11b9ed9`, EVM `cancun`, optimizer enabled (200 runs)
