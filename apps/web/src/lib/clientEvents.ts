@@ -4,7 +4,8 @@ export type DataInvalidationScope =
   | "leaderboard"
   | "points"
   | "profile"
-  | "quests";
+  | "quests"
+  | "sweep-campaign";
 
 export type DataInvalidationDetail = {
   reason?: string;

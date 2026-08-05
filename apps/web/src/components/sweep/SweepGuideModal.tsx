@@ -82,8 +82,8 @@ function GuideStepOne() {
         Sweep your dust in one click
       </h2>
       <p className="mt-1.5 text-[12px] leading-snug text-slate-500 sm:mt-2 sm:text-sm sm:leading-relaxed">
-        DustSweep turns the small leftover tokens in your wallet into one token you actually want
-        &mdash; all on Base, all in a single flow.
+        DustSweep turns the small leftover tokens in your wallet into one token you actually want.
+        All on Base, all in a single flow.
       </p>
       <div className="mt-3.5 space-y-1.5 sm:mt-5 sm:space-y-2.5">
         <StepRow
@@ -136,7 +136,7 @@ function GuideStepTwo() {
         ))}
       </div>
       <p className="mt-2 text-[11px] leading-relaxed text-slate-400 sm:mt-3 sm:text-xs">
-        Other wallets work too &mdash; they simply use the Sign &amp; Sweep flow with a couple of
+        Other wallets work too. They simply use the Sign &amp; Sweep flow with a couple of
         extra confirmations.
       </p>
     </div>

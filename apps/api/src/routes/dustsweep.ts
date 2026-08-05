@@ -23,6 +23,7 @@ import {
 import { postgresDb } from "../services/postgres";
 import { pointsEngine } from "../services/pointsEngine";
 import { questEngine } from "../services/questEngine";
+import { sweepCampaignService } from "../services/sweepCampaign";
 import { runtimeCache } from "../utils/runtimeCache";
 import { baseRpcRequest, alchemyRpcRequest, RpcDeterministicError, RpcTransportError } from "../utils/baseRpc";
 import { isMaintenanceBlocking, maintenanceUnavailable } from "../utils/maintenance";
@@ -8358,6 +8359,21 @@ dustsweepRoutes.post("/record-sweep", async (c) => {
       completedQuests = questSync.completedQuests;
     } catch (error) {
       console.error("[dustsweep/record-sweep] quest error:", error);
+    }
+  }
+
+  // Rewards-campaign intake. The client-reported valueUSD is deliberately NOT
+  // passed: campaign volume is re-derived from the on-chain DustSwept event.
+  // enqueueCandidate is failure-isolated — it can never break record-sweep.
+  if (rewardsEligible) {
+    try {
+      await sweepCampaignService.enqueueCandidate({
+        txHash: body.txHash,
+        userAddress,
+        chainId: chain.chainId,
+      });
+    } catch (error) {
+      console.error("[dustsweep/record-sweep] campaign error:", error);
     }
   }
 

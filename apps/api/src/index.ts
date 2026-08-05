@@ -29,8 +29,10 @@ import { monitorRoutes } from "./routes/monitor";
 import { swapsRoutes } from "./routes/swaps";
 import { swapownRoutes } from "./routes/swapown";
 import { dustsweepRoutes } from "./routes/dustsweep";
+import { sweepCampaignRoutes } from "./routes/sweepCampaign";
 import { walletLinkRoutes } from "./routes/walletLink";
 import { pointsEngine } from "./services/pointsEngine";
+import { sweepCampaignService } from "./services/sweepCampaign";
 import { repostQuestRewardScheduler } from "./services/repostQuestRewards";
 import tokens from "./routes/tokens";
 import { getAllowedAppOrigins, isAllowedAppOrigin } from "./config/appOrigins";
@@ -96,6 +98,7 @@ const RATE_LIMITED_READ_PREFIXES = [
   "/api/profile-completion",
   "/api/partner/",
   "/api/wallet-link/",
+  "/api/dustsweep/campaign/",
 ];
 
 app.use("/api/*", async (c, next) => {
@@ -132,11 +135,14 @@ app.route("/api/quests", questsRoutes);
 app.route("/api/monitor", monitorRoutes);
 app.route("/api/swaps", swapsRoutes);
 app.route("/api/swapown", swapownRoutes);
+// Mounted before /api/dustsweep so the sub-path always resolves here.
+app.route("/api/dustsweep/campaign", sweepCampaignRoutes);
 app.route("/api/dustsweep", dustsweepRoutes);
 app.route("/api/wallet-link", walletLinkRoutes);
 
 pointsEngine.startReferralLeaderboardSnapshotScheduler();
 repostQuestRewardScheduler.start();
+sweepCampaignService.startSweepCampaignSchedulers();
 runtimeCache.startEvictionLoop();
 
 app.get("/health/db", async (c) => {

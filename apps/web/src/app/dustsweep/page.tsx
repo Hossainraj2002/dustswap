@@ -16,6 +16,9 @@ import { WalletConnectButton } from "@/components/wallet/WalletConnectButton";
 import { RouteDisplay } from "@/components/sweep/RouteDisplay";
 import { SlippageSettings } from "@/components/sweep/SlippageSettings";
 import { SweepButton } from "@/components/sweep/SweepButton";
+import { SweepCampaignBar } from "@/components/sweep/SweepCampaignBar";
+import { SweepCampaignLeaderboard } from "@/components/sweep/SweepCampaignLeaderboard";
+import { SweepCampaignModal } from "@/components/sweep/SweepCampaignModal";
 import { SweepDetails } from "@/components/sweep/SweepDetails";
 import { SweepGuideModal } from "@/components/sweep/SweepGuideModal";
 import { SweepStepper } from "@/components/sweep/SweepStepper";
@@ -28,6 +31,7 @@ import { UnavailablePanel } from "@/components/sweep/UnavailablePanel";
 import { WalletGateNotice } from "@/components/sweep/WalletGateModal";
 import { WalletRouteStatus } from "@/components/sweep/WalletRouteStatus";
 import { useDustSweep } from "@/hooks/useDustSweep";
+import { useSweepCampaign } from "@/hooks/useSweepCampaign";
 import {
   BASE_CHAIN_ID,
   getEnabledSweepChains,
@@ -310,6 +314,18 @@ export default function DustSweepPage() {
   const [tokenModalMode, setTokenModalMode] = useState<"multi" | "single" | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [routeBContinued, setRouteBContinued] = useState(false);
+
+  // Rewards campaign (flag-gated; renders nothing when disabled or inactive).
+  const campaign = useSweepCampaign(address);
+  const [campaignOpen, setCampaignOpen] = useState(false);
+  const { refreshAfterSweep } = campaign;
+  useEffect(() => {
+    // Campaign volume is verified on-chain asynchronously — after a completed
+    // sweep, poll the campaign status a few times so progress updates live.
+    if (sweep.completionSummary) {
+      refreshAfterSweep();
+    }
+  }, [sweep.completionSummary, refreshAfterSweep]);
   // Price-impact UI (row, banners, confirm gate) is parked for now — the server still computes
   // impact and uses it for aggregator rescue routing. Revisit later.
 
@@ -515,6 +531,16 @@ export default function DustSweepPage() {
         onClose={sweep.dismissCompletionSummary}
       />
 
+      {campaign.enabled ? (
+        <SweepCampaignModal
+          open={campaignOpen}
+          status={campaign.status}
+          address={address}
+          onClose={() => setCampaignOpen(false)}
+          onRefresh={() => void campaign.refresh({ force: true })}
+        />
+      ) : null}
+
       <div className="relative z-10 mx-auto flex w-full max-w-[600px] flex-1 flex-col pb-[calc(69px+var(--safe-area-bottom))] sm:pb-8">
         {/* ── Header ── */}
         <div className="mb-5 flex items-center justify-between gap-3">
@@ -538,6 +564,15 @@ export default function DustSweepPage() {
             className="rounded-full border-slate-200/80 bg-white/80 px-3.5 py-2 text-[13px] font-semibold text-slate-700 shadow-[0_1px_2px_rgba(16,24,40,0.05)] backdrop-blur hover:border-slate-300 hover:bg-white dark:border-white/10 dark:bg-white/[0.06] dark:text-slate-200 dark:hover:bg-white/10"
           />
         </div>
+
+        {campaign.enabled ? (
+          <SweepCampaignBar
+            status={campaign.status}
+            isLoading={campaign.isLoading}
+            isConnected={isConnected}
+            onOpen={() => setCampaignOpen(true)}
+          />
+        ) : null}
 
         {/* ── Main card ── */}
         <div className="my-auto w-full space-y-3">
@@ -606,7 +641,7 @@ export default function DustSweepPage() {
             <div className="flex items-center justify-between border-t border-slate-100/80 px-2 pb-1 pt-3 dark:border-white/5">
               <span className="text-[12.5px] text-slate-400 dark:text-slate-500">Receiver</span>
               <span className="inline-flex items-center gap-1.5 font-mono text-[12.5px] font-semibold tabular-nums text-slate-600 dark:text-slate-300">
-                {address ? shortAddress(address) : "—"}
+                {address ? shortAddress(address) : "Not connected"}
               </span>
             </div>
           </div>
@@ -735,6 +770,13 @@ export default function DustSweepPage() {
             chainId={sweep.chainId}
           />
         </div>
+
+        {campaign.enabled ? (
+          <SweepCampaignLeaderboard
+            leaderboard={campaign.leaderboard}
+            isLoading={campaign.isLoading}
+          />
+        ) : null}
       </div>
     </div>
   );
