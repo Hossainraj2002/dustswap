@@ -244,10 +244,21 @@ export async function claimCampaignTier(input: {
   return data;
 }
 
+/**
+ * Format a campaign USD amount, always rounding DOWN.
+ *
+ * Progress must never read higher than what the user actually earned: showing
+ * $99.99 as "$100" next to a $100 tier that is still locked looks broken and
+ * feels like a cheat. Truncating guarantees the number on screen is a floor of
+ * the real value, never a ceiling.
+ */
 export function formatCampaignUsd(value: number) {
-  return `$${value.toLocaleString(undefined, {
-    minimumFractionDigits: value >= 1000 ? 0 : 2,
-    maximumFractionDigits: value >= 1000 ? 0 : 2,
+  const decimals = value >= 1000 ? 0 : 2;
+  const factor = 10 ** decimals;
+  const floored = Math.floor(value * factor) / factor;
+  return `$${floored.toLocaleString(undefined, {
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals,
   })}`;
 }
 

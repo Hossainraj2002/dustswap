@@ -501,12 +501,14 @@ function decodeSweepEvent(receipt: ResolvedSweepTx["receipt"], routers: Set<stri
         outputToken: string;
         grossAmountOut: bigint;
         feeAmount: bigint;
+        netAmountOut: bigint;
       };
 
       return {
         user: normalizeAddress(args.user),
         outputToken: normalizeAddress(args.outputToken),
         grossAmountOut: args.grossAmountOut,
+        netAmountOut: args.netAmountOut,
         feeAmount: args.feeAmount,
       };
     } catch {
@@ -587,8 +589,14 @@ async function verifyCredit(creditId: number): Promise<void> {
       return;
     }
 
-    const grossValueMicro = await valueOutputToken(event.outputToken, event.grossAmountOut);
-    if (grossValueMicro === null) {
+    // Count what the user ACTUALLY RECEIVED (net of the protocol fee), not the
+    // gross output. Two reasons:
+    //  1. Honesty: a user who receives $81.40 should see $81.40 of progress.
+    //  2. Margin: reaching $500 net requires ~$510 gross, so the fee collected
+    //     ($10.20) exceeds the $10 reward. Counting gross would break even
+    //     exactly, leaving no room for price drift between quote and fill.
+    const netValueMicro = await valueOutputToken(event.outputToken, event.netAmountOut);
+    if (netValueMicro === null) {
       await rejectCredit(credit.id, "untrusted_output_token");
       return;
     }
@@ -604,8 +612,8 @@ async function verifyCredit(creditId: number): Promise<void> {
     }
 
     const perSweepCap = toBigInt(campaign.per_sweep_cap_usd_micro);
-    const flagged = grossValueMicro > perSweepCap;
-    const valueMicro = flagged ? perSweepCap : grossValueMicro;
+    const flagged = netValueMicro > perSweepCap;
+    const valueMicro = flagged ? perSweepCap : netValueMicro;
 
     const user = await pointsEngine.getOrCreate(sweeperAddress);
 
@@ -619,6 +627,7 @@ async function verifyCredit(creditId: number): Promise<void> {
         user_id: user.id,
         output_token: event.outputToken,
         gross_amount_out: event.grossAmountOut.toString(),
+        net_amount_out: event.netAmountOut.toString(),
         fee_amount: event.feeAmount.toString(),
         value_usd_micro: valueMicro.toString(),
         fee_usd_micro: feeValueMicro.toString(),

@@ -57,12 +57,13 @@ export function SweepCampaignBar({
     </span>
   ) : claimableUsdc > 0 ? (
     <span className="inline-flex shrink-0 animate-pulse items-center gap-1 rounded-full bg-emerald-500 px-2.5 py-1 text-[11px] font-black text-white shadow-[0_4px_12px_rgba(16,185,129,0.45)]">
-      Claim ${claimableUsdc.toFixed(0)}
+      Claim ${Math.floor(claimableUsdc)}
     </span>
   ) : (
     <span className="shrink-0 font-mono text-[12px] font-bold tabular-nums text-slate-700 dark:text-slate-200">
-      ${cappedVolume.toFixed(0)}
-      <span className="text-slate-400 dark:text-slate-500">/${capUsd.toFixed(0)}</span>
+      {/* Floor, never round: progress must not read higher than it really is. */}
+      ${Math.floor(cappedVolume)}
+      <span className="text-slate-400 dark:text-slate-500">/${Math.floor(capUsd)}</span>
     </span>
   );
 

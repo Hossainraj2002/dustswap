@@ -48,6 +48,9 @@ CREATE TABLE IF NOT EXISTS sweep_campaign_credits (
   reject_reason     TEXT,
   output_token      TEXT,
   gross_amount_out  NUMERIC,
+  -- What the user actually received after the protocol fee. This is what
+  -- value_usd_micro is derived from; gross is kept for audit only.
+  net_amount_out    NUMERIC,
   fee_amount        NUMERIC,
   value_usd_micro   BIGINT NOT NULL DEFAULT 0,
   fee_usd_micro     BIGINT NOT NULL DEFAULT 0,
