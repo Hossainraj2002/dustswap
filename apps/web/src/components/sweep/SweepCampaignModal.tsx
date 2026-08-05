@@ -40,6 +40,23 @@ function CheckIcon() {
   );
 }
 
+/**
+ * Campaign times are always shown in UTC, never the viewer's local timezone.
+ * The campaign window is a single global deadline, so every user must read the
+ * same clock: a local rendering would show different dates in different
+ * countries for the same instant.
+ */
+function formatUtc(iso: string) {
+  return `${new Date(iso).toLocaleString("en-GB", {
+    timeZone: "UTC",
+    day: "numeric",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  })} UTC`;
+}
+
 function CloseIcon() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true" className="h-4 w-4">
@@ -278,10 +295,7 @@ export function SweepCampaignModal({
         </h2>
         <p className="mt-1.5 text-[13px] font-medium leading-snug text-slate-500 dark:text-slate-400">
           {phase === "upcoming"
-            ? `Opens ${new Date(campaign.startsAt).toLocaleDateString(undefined, {
-                month: "short",
-                day: "numeric",
-              })}. Sweeps before that date do not count.`
+            ? `Opens ${formatUtc(campaign.startsAt)}. Sweeps before this time do not count.`
             : phase === "grace"
               ? "The sweep window has closed. Unlocked rewards can still be claimed."
               : `${daysLeft} day${daysLeft === 1 ? "" : "s"} left. Every verified sweep on Base counts.`}
@@ -376,6 +390,7 @@ export function SweepCampaignModal({
         <div className="mt-4 space-y-1 border-t border-slate-100 pt-3 dark:border-white/10">
           {[
             "Base network sweeps only. Volume is verified on-chain.",
+            `Challenge runs ${formatUtc(campaign.startsAt)} to ${formatUtc(campaign.endsAt)}.`,
             "Tier rewards are sent automatically in USDC on Base.",
             "Leaderboard prizes are paid after the 2 week challenge ends.",
             `Claims stay open ${campaign.claimGraceDays} days after the campaign ends.`,
