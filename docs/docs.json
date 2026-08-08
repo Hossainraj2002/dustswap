@@ -28,6 +28,12 @@
         ]
       },
       {
+        "group": "Tokenomics",
+        "pages": [
+          "tokenomics"
+        ]
+      },
+      {
         "group": "DustSweep",
         "pages": [
           {

@@ -54,6 +54,7 @@ docs/*
 !docs/docs/
 !docs/docs.json
 !docs/favicon.svg
+!docs/tokenomics.md
 docs/site/
 docs/.cache/
 
