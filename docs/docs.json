@@ -28,12 +28,6 @@
         ]
       },
       {
-        "group": "Tokenomics",
-        "pages": [
-          "tokenomics"
-        ]
-      },
-      {
         "group": "DustSweep",
         "pages": [
           {
@@ -172,6 +166,12 @@
           "docs/resources/troubleshooting",
           "docs/resources/roadmap",
           "docs/resources/official-links"
+        ]
+      },
+      {
+        "group": "Tokenomics",
+        "pages": [
+          "tokenomics"
         ]
       }
     ]
