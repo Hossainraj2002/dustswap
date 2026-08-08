@@ -62,19 +62,6 @@ Each allocation unlocks on its own schedule. Percentages in the TGE Unlock colum
 
 The Ecosystem allocation, the single largest share of supply, releases nothing at TGE and vests linearly over three years. Team & Investor tokens are the only allocation behind a cliff, and begin releasing two months after TGE.
 
-## Supply position at TGE
-
-| Allocation | Unlocked at TGE | Still locked | Locked share of allocation |
-|---|---|---|---|
-| Ecosystem | 0 | 30,000,000 | 100% |
-| Liquidity & CEX | 10,000,000 | 10,000,000 | 50% |
-| Community & Airdrop | 4,000,000 | 16,000,000 | 80% |
-| Team & Investor | 2,000,000 | 18,000,000 | 90% |
-| Marketing | 2,000,000 | 8,000,000 | 80% |
-| **Total** | **18,000,000** | **82,000,000** | **82%** |
-
-Of the 18,000,000 tokens released at TGE, 10,000,000 (56% of the TGE release) goes to liquidity rather than to any discretionary holder.
-
 ## Release profile after TGE
 
 The following rates follow directly from the schedule above.
