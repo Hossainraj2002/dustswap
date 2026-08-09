@@ -1,5 +1,5 @@
 import { createPublicClient, custom, defineChain, type Chain } from "viem";
-import { bsc, mainnet } from "viem/chains";
+import { arbitrum, bsc, mainnet } from "viem/chains";
 import {
   alchemyRpcRequest,
   baseRpcRequest,
@@ -28,6 +28,7 @@ import {
 export const ETHEREUM_CHAIN_ID = 1;
 export const BSC_CHAIN_ID = 56;
 export const ROBINHOOD_CHAIN_ID = 4663;
+export const ARBITRUM_CHAIN_ID = 42161;
 const BASE_CHAIN_ID = 8453;
 
 // viem (2.46/2.52 in this workspace) ships no Robinhood Chain definition — define it locally.
@@ -127,6 +128,31 @@ const CHAIN_RPC_SETTINGS: Record<number, ChainRpcSettings> = {
     // with a working key (local keys were stale). Ship false so no failover hop is burned; flip
     // to true after one keyed eth_chainId test with the live Railway BLOCKSCOUT_API_KEYS (see
     // the Robinhood deploy runbook).
+    blockscoutSupported: false,
+  },
+  [ARBITRUM_CHAIN_ID]: {
+    chainId: ARBITRUM_CHAIN_ID,
+    // viem ships Arbitrum One natively (unlike Robinhood) — use it directly, no defineChain().
+    chain: arbitrum,
+    publicRpcUrl: "https://arb1.arbitrum.io/rpc",
+    // Long-established Alchemy network. NOTE the Alchemy app must have Arbitrum enabled
+    // (dashboard → app → Networks) or every call fails; confirm alchemy_getTokenBalances answers
+    // before flipping the chain on. Unlike Ethereum/BSC, a failure here degrades to the public
+    // Arbitrum Blockscout REST lane (see sweepChains.ts blockscoutRestBaseUrl), not a stale cache.
+    alchemyHost: "arb-mainnet.g.alchemy.com",
+    // Same isolation rationale as Ethereum/BSC/Robinhood: a separate key set keeps CU burn
+    // attributable per chain.
+    alchemyKeyEnvs: ["ALCHEMY_ARBITRUM_RPC_KEYS", "ALCHEMY_ARBITRUM_RPC_KEY"],
+    alchemyUrlEnvs: ["ALCHEMY_ARBITRUM_RPC_URLS", "ALCHEMY_ARBITRUM_RPC"],
+    rpcUrlEnvs: ["ARBITRUM_RPC_URLS", "ARBITRUM_RPC_URL"],
+    rotationCallsEnv: "ARBITRUM_RPC_ROTATION_CALLS",
+    publicFallbackEnv: "ARBITRUM_RPC_PUBLIC_FALLBACK",
+    dedicatedOnlyEnv: "ALCHEMY_ARBITRUM_RPC_DEDICATED_ONLY",
+    // Hosted api.blockscout.com/42161 could not be confirmed working without a key (same
+    // key-gated non-answer as Robinhood's 402). Ship false so no failover hop is burned; flip to
+    // true only after one keyed eth_chainId test with the live Railway BLOCKSCOUT_API_KEYS.
+    // NOTE this is the hosted JSON-RPC only — it is unrelated to the (working, keyless)
+    // arbitrum.blockscout.com REST v2 discovery lane configured in sweepChains.ts.
     blockscoutSupported: false,
   },
 };

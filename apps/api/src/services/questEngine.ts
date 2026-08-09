@@ -288,7 +288,13 @@ function normalizeNumberList(value: unknown) {
   ];
 }
 
-function getQuestChainIds(rules: QuestRules) {
+/**
+ * Chains a quest counts. An explicit `rules.chainIds` (or legacy singular `rules.chainId`)
+ * restricts to that list; an omitted/empty/garbage-only list returns [] meaning NO chain filter,
+ * i.e. every chain. Shared by the swap AND sweep progress paths so they cannot diverge.
+ * Exported for verifySweepQuestChainScope.ts.
+ */
+export function getQuestChainIds(rules: QuestRules) {
   return normalizeNumberList(rules.chainIds?.length ? rules.chainIds : rules.chainId);
 }
 
@@ -3595,6 +3601,11 @@ export class QuestEngine {
     const now = referenceDate;
     const cycleKey = getCycleKey(quest.progress_window, now);
     const occurredBounds = getQuestSwapOccurredBounds(quest, now);
+    const rules = safeRules(quest.rules);
+    // Same chain scoping as the swap path (syncSwapProgressForQuest): an explicit rules.chainIds
+    // list restricts the query to those chains, and omitting it counts EVERY chain. Keep the two
+    // paths structurally identical so they cannot drift apart again.
+    const chainIds = getQuestChainIds(rules);
 
     let rows: Array<{
       value_usd: number | string | null;
@@ -3611,12 +3622,14 @@ export class QuestEngine {
         .from("sweeps")
         .select("value_usd, tokens_swapped")
         .eq("user_address", address.toLowerCase())
-        // Sweep quests are Base-only: never count sweeps from other chains (multichain guard).
-        .eq("chain_id", 8453)
         .gte("created_at", occurredBounds.start.toISOString());
 
       if (occurredBounds.end) {
         query = query.lt("created_at", occurredBounds.end.toISOString());
+      }
+
+      if (chainIds.length > 0) {
+        query = query.in("chain_id", chainIds);
       }
 
       const result = await query;
@@ -3697,6 +3710,9 @@ export class QuestEngine {
           tokensTotal,
           progressValue,
           source: "dustsweep",
+          // Recorded like the swap path does, so a completion is auditable back to the exact
+          // chain scope that produced it ([] == counted every chain).
+          chainIds,
         }
       );
 

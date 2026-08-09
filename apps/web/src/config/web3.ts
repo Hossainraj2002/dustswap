@@ -76,7 +76,11 @@ function getEthereumRpcUrls() {
 const rpcUrlsByChainId: Record<number, string[]> = {
   [base.id]: getBaseRpcUrls(),
   [mainnet.id]: getEthereumRpcUrls(),
-  [arbitrum.id]: toRpcUrlList(process.env.NEXT_PUBLIC_ARBITRUM_RPC_URL),
+  // Public RPC only in the NEXT_PUBLIC bundle — paid Alchemy Arbitrum keys are server-side.
+  [arbitrum.id]: unique([
+    ...splitEnv(process.env.NEXT_PUBLIC_ARBITRUM_RPC_URLS),
+    ...toRpcUrlList(process.env.NEXT_PUBLIC_ARBITRUM_RPC_URL),
+  ]),
   [optimism.id]: toRpcUrlList(process.env.NEXT_PUBLIC_OPTIMISM_RPC_URL),
   [polygon.id]: toRpcUrlList(process.env.NEXT_PUBLIC_POLYGON_RPC_URL),
   [bsc.id]: toRpcUrlList(process.env.NEXT_PUBLIC_BSC_RPC_URL),

@@ -1,14 +1,15 @@
 /**
  * Read-only EIP-7702 delegate verification across chains.
  *
- * For each known wallet-brand delegate, reads eth_getCode on Base (8453) and Ethereum (1) and
- * reports whether the implementation contract is present and whether the code hash matches across
- * chains (CREATE2-deterministic delegates deploy to the same address with identical code).
+ * For each known wallet-brand delegate, reads eth_getCode on Base (8453), Ethereum (1) and
+ * Arbitrum One (42161) and reports whether the implementation contract is present and whether the
+ * code hash matches across chains (CREATE2-deterministic delegates deploy to the same address with
+ * identical code).
  *
  * Run:  pnpm --filter @dustswap/api exec tsx src/scripts/verifyDelegatesOnChain.ts
  *   (or) npx tsx apps/api/src/scripts/verifyDelegatesOnChain.ts
  *
- * Optional env overrides:  BASE_MAINNET_RPC_URL, ETHEREUM_MAINNET_RPC_URL
+ * Optional env overrides:  BASE_MAINNET_RPC_URL, ETHEREUM_MAINNET_RPC_URL, ARBITRUM_MAINNET_RPC_URL
  *
  * NEVER wire this into CI — it makes live RPC calls. Paste its output into the multichain PR so
  * the KNOWN_DELEGATES mainnet coverage is auditable. Keep the list below in sync with
@@ -16,9 +17,12 @@
  */
 
 import { createPublicClient, http, keccak256, type Address } from "viem";
-import { base, mainnet } from "viem/chains";
+import { arbitrum, base, mainnet } from "viem/chains";
 
 // Wallet-brand delegates worth verifying on mainnet (labels only — mirror of KNOWN_DELEGATES).
+// Reconciled 2026-08-07 against apps/web/src/lib/eip7702.ts: this list now covers every
+// wallet-brand entry there, including the two that were previously missing (base_account is the
+// same implementation Coinbase Wallet uses, and both Bitget rows were already present).
 const DELEGATES: Array<{ wallet: string; address: Address }> = [
   { wallet: "metamask", address: "0x63c0c19a282a1b52b07dd5a65b58948a07dae32b" },
   { wallet: "okx (base)", address: "0xe40ccb2d94975c51bff0c004efdfd9b3a5796fa4" },
@@ -35,6 +39,17 @@ const DELEGATES: Array<{ wallet: string; address: Address }> = [
   { wallet: "rainbow", address: "0x612373d7003d694220f7800eeaf8e3924c0951d3" },
 ];
 
+// Arbitrum's Blockscout reports the Rainbow delegate as verified `CaliburEntry` — the SAME
+// contract name as Uniswap's delegate. If that is an honest bytecode auto-match, the two code
+// hashes below will be identical; if they differ, the Blockscout label is a mislabel. Either way
+// it is label-only and gates nothing, but the answer belongs in the PR.
+const RAINBOW = "0x612373d7003d694220f7800eeaf8e3924c0951d3";
+const UNISWAP_CALIBUR = "0x000000009b1d0af20d8c6d0a44e162d11f9b8f00";
+
+function short(hash?: string) {
+  return hash ? `${hash.slice(0, 10)}…` : "—";
+}
+
 async function main() {
   const baseClient = createPublicClient({
     chain: base,
@@ -44,26 +59,68 @@ async function main() {
     chain: mainnet,
     transport: http(process.env.ETHEREUM_MAINNET_RPC_URL || "https://ethereum-rpc.publicnode.com"),
   });
+  const arbClient = createPublicClient({
+    chain: arbitrum,
+    transport: http(process.env.ARBITRUM_MAINNET_RPC_URL || "https://arb1.arbitrum.io/rpc"),
+  });
 
-  console.log("wallet".padEnd(18), "present@8453", "present@1", "codeHashEqual");
-  console.log("-".repeat(60));
+  const codeHashes = new Map<string, string | undefined>();
+
+  console.log(
+    "wallet".padEnd(18),
+    "present@8453".padEnd(13),
+    "present@1".padEnd(10),
+    "present@42161".padEnd(14),
+    "codeHashEqual".padEnd(14),
+    "hash@42161",
+  );
+  console.log("-".repeat(100));
 
   for (const { wallet, address } of DELEGATES) {
-    const [baseCode, ethCode] = await Promise.all([
+    const [baseCode, ethCode, arbCode] = await Promise.all([
       baseClient.getCode({ address }).catch(() => undefined),
       ethClient.getCode({ address }).catch(() => undefined),
+      arbClient.getCode({ address }).catch(() => undefined),
     ]);
     const basePresent = Boolean(baseCode && baseCode !== "0x");
     const ethPresent = Boolean(ethCode && ethCode !== "0x");
-    const equal =
-      basePresent && ethPresent ? keccak256(baseCode!) === keccak256(ethCode!) : false;
+    const arbPresent = Boolean(arbCode && arbCode !== "0x");
+
+    const hashes = [
+      basePresent ? keccak256(baseCode!) : null,
+      ethPresent ? keccak256(ethCode!) : null,
+      arbPresent ? keccak256(arbCode!) : null,
+    ].filter((hash): hash is `0x${string}` => hash !== null);
+
+    // Equal across every chain where the contract is actually present (>= 2 to be meaningful).
+    const equal = hashes.length >= 2 && hashes.every((hash) => hash === hashes[0]);
+    const arbHash = arbPresent ? keccak256(arbCode!) : undefined;
+    codeHashes.set(address.toLowerCase(), arbHash);
+
     console.log(
       wallet.padEnd(18),
-      String(basePresent).padEnd(12),
-      String(ethPresent).padEnd(9),
-      String(equal),
+      String(basePresent).padEnd(13),
+      String(ethPresent).padEnd(10),
+      String(arbPresent).padEnd(14),
+      String(equal).padEnd(14),
+      short(arbHash),
     );
   }
+
+  const rainbowHash = codeHashes.get(RAINBOW);
+  const caliburHash = codeHashes.get(UNISWAP_CALIBUR);
+  console.log("");
+  console.log("Rainbow vs Uniswap Calibur @42161:");
+  console.log("  rainbow        ", rainbowHash ?? "—");
+  console.log("  uniswap-calibur", caliburHash ?? "—");
+  console.log(
+    "  =>",
+    rainbowHash && caliburHash
+      ? rainbowHash === caliburHash
+        ? "IDENTICAL bytecode — Blockscout's shared 'CaliburEntry' name is an honest auto-match."
+        : "DIFFERENT bytecode — Blockscout's shared 'CaliburEntry' name is a mislabel. Labels only; nothing is gated by it."
+      : "inconclusive (one side absent)",
+  );
 }
 
 main().catch((err) => {

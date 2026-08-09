@@ -33,6 +33,7 @@ import {
   getDustSweepV3AllowlistForChain,
 } from "../config/dustsweepV3Sources";
 import {
+  ARBITRUM_CHAIN_ID,
   BASE_CONFIG,
   BSC_CHAIN_ID,
   ETHEREUM_CHAIN_ID,
@@ -245,11 +246,18 @@ function boundedEnvNumber(key: string, fallback: number, min: number, max: numbe
   return Math.max(min, Math.min(max, Math.floor(parsed)));
 }
 
+// null == "no cap" (unlimited). Used ONLY for the four discovery caps, where truncating a large
+// dust wallet is silent — the user just stops seeing balances. "0" is a non-empty string, so
+// without the guard below it parsed as a real value and clamped UP to `min`, meaning
+// DUST_SWEEP_DISCOVERY_MAX_ERC20_BALANCES=0 capped discovery at 50 balances and
+// DUST_SWEEP_ALCHEMY_MAX_PAGES=0 capped it at 1 page — the exact opposite of the "0 = unlimited"
+// an operator reasonably expects from the "must stay unset" runbook. Treat <= 0 as unlimited.
 function optionalBoundedEnvNumber(key: string, min: number, max: number) {
   const raw = process.env[key]?.trim();
   if (!raw) return null;
   const parsed = Number(raw);
   if (!Number.isFinite(parsed)) return null;
+  if (parsed <= 0) return null;
   return Math.max(min, Math.min(max, Math.floor(parsed)));
 }
 
@@ -2317,6 +2325,7 @@ const DETERMINISTIC_LOGO_CHAIN_IDS = new Set<number>([
   ETHEREUM_CHAIN_ID,
   BSC_CHAIN_ID,
   ROBINHOOD_CHAIN_ID, // verified 2026-07-26: llamao serves 4663 (HTTP 200 for WETH + USDG)
+  ARBITRUM_CHAIN_ID, // 42161 — confirm llamao returns HTTP 200 for WETH from Railway pre-flip
 ]);
 
 function deterministicTokenLogo(address: Address, chain: SweepChainConfig): string | undefined {
@@ -2412,6 +2421,7 @@ function getAlchemyPricesNetwork(chain: SweepChainConfig) {
   if (chain.chainId === ETHEREUM_CHAIN_ID) return "eth-mainnet";
   if (chain.chainId === BSC_CHAIN_ID) return "bnb-mainnet";
   if (chain.chainId === ROBINHOOD_CHAIN_ID) return "robinhood-mainnet";
+  if (chain.chainId === ARBITRUM_CHAIN_ID) return "arb-mainnet";
   return null;
 }
 
@@ -2493,6 +2503,9 @@ function getCoinGeckoPlatform(chain: SweepChainConfig) {
   if (chain.chainId === BSC_CHAIN_ID) return "binance-smart-chain";
   // Verified 2026-07-26: /api/v3/asset_platforms lists id "robinhood" with chain_identifier 4663.
   if (chain.chainId === ROBINHOOD_CHAIN_ID) return "robinhood";
+  // CoinGecko's asset-platform id for Arbitrum One. NOTE this also arms reconcileThinPoolPrices,
+  // which early-returns without a platform — confirm from Railway alongside COINGECKO_API_KEY.
+  if (chain.chainId === ARBITRUM_CHAIN_ID) return "arbitrum-one";
   return null;
 }
 
@@ -4719,6 +4732,12 @@ const BSC_UNISWAP_V3_SWAP_ROUTER = (process.env.UNISWAP_V3_SWAP_ROUTER_ADDRESS_5
 // via eth_getCode + factory()/WETH9() + a functional QuoterV2 probe (see dustsweepV3Sources.ts).
 const ROBINHOOD_UNISWAP_V3_SWAP_ROUTER = (process.env.UNISWAP_V3_SWAP_ROUTER_ADDRESS_4663 ||
   "0xCaf681a66D020601342297493863E78C959E5cb2") as Address;
+// Arbitrum uses the CANONICAL mainnet SwapRouter02 — genuine here (verified live 2026-08-07:
+// verified name 'SwapRouter02', deployer 0x6C9FC64A… shared with QuoterV2 and the V3 factory).
+// Kept as its own constant rather than reusing ETH_UNISWAP_V3_SWAP_ROUTER so the *_42161 override
+// works and the two chains stay independently auditable.
+const ARBITRUM_UNISWAP_V3_SWAP_ROUTER = (process.env.UNISWAP_V3_SWAP_ROUTER_ADDRESS_42161 ||
+  "0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45") as Address;
 
 function buildV2Route(
   route: DustSweepRoute,
@@ -4771,7 +4790,9 @@ function buildV2Route(
           ? BSC_UNISWAP_V3_SWAP_ROUTER
           : chain.chainId === ROBINHOOD_CHAIN_ID
             ? ROBINHOOD_UNISWAP_V3_SWAP_ROUTER
-            : UNISWAP_V3_SWAP_ROUTER_ADDRESS;
+            : chain.chainId === ARBITRUM_CHAIN_ID
+              ? ARBITRUM_UNISWAP_V3_SWAP_ROUTER
+              : UNISWAP_V3_SWAP_ROUTER_ADDRESS;
     const v3 = decodeV3DexData(route.dexData as Hex);
     const data = v3.isMultiHop
       ? encodeFunctionData({
@@ -7465,14 +7486,35 @@ dustsweepRoutes.post("/quote", async (c) => {
   const whitelist = await loadWhitelist(chain);
   const userAddress = normalizeAddress(body.userAddress);
 
-  // Resolve output token decimals from whitelist; the USDC fallback is per-chain (BSC's
-  // Binance-Peg USDC is 18 decimals, not the usual 6).
+  // Resolve output token decimals: DB whitelist hint -> per-chain USDC literal (BSC's Binance-Peg
+  // USDC is 18 decimals, not the usual 6) -> live on-chain decimals().
+  //
+  // The final literal 18 used to be the only fallback, which silently mis-scaled every USD figure
+  // derived from it by 1e12 whenever a 6-decimal output had no whitelist row — Arbitrum's USD₮0
+  // and Ethereum's USDT are both offered outputs and neither is chain.usdc. That is reachable
+  // without any DB corruption: loadWhitelist() fails OPEN (its catch swallows errors) and then
+  // caches the empty map for WHITELIST_CACHE_TTL_MS, so one Postgres blip mis-prices the output
+  // for minutes. The on-chain read is cached per (chainId, address) for 24h, so this costs at most
+  // one eth_call per output token per day.
+  //
+  // Native output keeps the 18 literal deliberately: the sentinel has no ERC-20 to read, and the
+  // native gas token is 18 decimals on all five chains (ETH / BNB).
   const outputWhitelistRow = whitelist.get(tokenOut.toLowerCase());
-  const outputDecimals = outputWhitelistRow
-    ? Number(outputWhitelistRow.decimals ?? 18)
-    : tokenOut.toLowerCase() === chain.usdc.toLowerCase()
-      ? chain.usdcDecimals
-      : 18;
+  const whitelistOutputDecimals = Number(outputWhitelistRow?.decimals);
+  let outputDecimals: number;
+  if (outputWhitelistRow && Number.isFinite(whitelistOutputDecimals)) {
+    outputDecimals = whitelistOutputDecimals;
+  } else if (tokenOut.toLowerCase() === chain.usdc.toLowerCase()) {
+    outputDecimals = chain.usdcDecimals;
+  } else if (isNativeOutput) {
+    outputDecimals = 18;
+  } else {
+    try {
+      outputDecimals = (await readErc20Metadata(actualTokenOut, chain.chainId)).decimals;
+    } catch {
+      outputDecimals = 18;
+    }
+  }
 
   // ── Step 1: validate and parse all inputs (no whitelist gating) ─────────────
   type PendingToken = {
@@ -8293,10 +8335,17 @@ dustsweepRoutes.post("/record-sweep", async (c) => {
   const resolved = resolveSweepChain(c, body.chainId);
   if (!resolved.ok) return resolved.response;
   const chain = resolved.chain;
-  // SWEEP-ONLY multichain scope: sweeps on every enabled chain are RECORDED (chain-keyed rows),
-  // but points/quests/rewards remain Base-only for now. This isolates the rewards economy while
-  // still tracking ETH volume in the DB.
-  const rewardsEligible = chain.chainId === BASE_CHAIN_ID;
+  // MULTICHAIN rewards. Sweeps are recorded on every enabled chain (chain-keyed rows), and points
+  // + quest progress now follow the QUEST's own scope rather than a hardcoded chain here: a quest
+  // declares "chainIds": [8453] to stay Base-only, ["chainIds": [8453,1,56,42161]] to span a set,
+  // or omits it to count every chain (see questEngine.getQuestChainIds — same rule swap quests
+  // have always used). Relaxing this gate is what lets syncRecordedSweepProgress actually run
+  // off-Base; leaving it Base-only would compute quest progress that never fires.
+  //
+  // Kill switch: DUST_SWEEP_MULTICHAIN_REWARDS=false restores the previous Base-only behavior
+  // without a redeploy, since this is a live rewards-economy change.
+  const multichainRewards = process.env.DUST_SWEEP_MULTICHAIN_REWARDS !== "false";
+  const rewardsEligible = multichainRewards || chain.chainId === BASE_CHAIN_ID;
 
   if (!body.txHash || !body.userAddress || body.tokensSwapped == null) {
     return c.json(errorJson("txHash, userAddress, and tokensSwapped are required"), 400);
@@ -8347,7 +8396,8 @@ dustsweepRoutes.post("/record-sweep", async (c) => {
     }
   }
 
-  // Advance admin-created sweep quests now that the sweep row is persisted (Base only).
+  // Advance admin-created sweep quests now that the sweep row is persisted. Which chains each
+  // quest counts is decided inside questEngine from rules.chainIds, not here.
   let completedQuests: Array<{
     questId: string;
     slug: string;
@@ -8365,7 +8415,12 @@ dustsweepRoutes.post("/record-sweep", async (c) => {
   // Rewards-campaign intake. The client-reported valueUSD is deliberately NOT
   // passed: campaign volume is re-derived from the on-chain DustSwept event.
   // enqueueCandidate is failure-isolated — it can never break record-sweep.
-  if (rewardsEligible) {
+  //
+  // Deliberately still BASE-ONLY, and NOT widened alongside points/quests above: the campaign
+  // verifier reads receipts through createBaseVerificationClient() (sweepCampaign.ts:86), so a
+  // non-Base credit would be enqueued and then rejected for a missing receipt. enqueueCandidate
+  // also self-gates on campaign.chain_id, making this a second, explicit guard.
+  if (chain.chainId === BASE_CHAIN_ID) {
     try {
       await sweepCampaignService.enqueueCandidate({
         txHash: body.txHash,
@@ -8382,7 +8437,8 @@ dustsweepRoutes.post("/record-sweep", async (c) => {
     chainId: chain.chainId,
     rewardsEligible,
     completedQuests,
-    // Quest progress is a Base-only concept for now; non-Base sweeps report no progress.
+    // sweepCount is already per-chain (the count query filters on chain.chainId), so these
+    // legacy client-side milestone flags stay scoped to the chain the sweep happened on.
     questProgress: rewardsEligible
       ? {
           FIRST_SWEEP: sweepCount === 1 || tokensSwapped > 0,

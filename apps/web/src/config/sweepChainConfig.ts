@@ -1,4 +1,4 @@
-import { base, bsc, mainnet } from "wagmi/chains";
+import { arbitrum, base, bsc, mainnet } from "wagmi/chains";
 import type { Chain } from "wagmi/chains";
 import { type Address } from "viem";
 import { type Token } from "@/types/dustsweep";
@@ -17,12 +17,13 @@ export const BASE_CHAIN_ID = 8453;
 export const ETHEREUM_CHAIN_ID = 1;
 export const BSC_CHAIN_ID = 56;
 export const ROBINHOOD_CHAIN_ID = 4663;
+export const ARBITRUM_CHAIN_ID = 42161;
 
 const NATIVE_TOKEN_SENTINEL = "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE" as Address;
 
 export type SweepChain = {
   id: number;
-  key: "base" | "ethereum" | "bsc" | "robinhood";
+  key: "base" | "ethereum" | "bsc" | "robinhood" | "arbitrum";
   label: string;
   chain: Chain;
   weth: Address;
@@ -171,6 +172,45 @@ const ROBINHOOD_OUTPUT_TOKENS: Token[] = [
   },
 ];
 
+// Arbitrum One gotchas: native gas token IS ETH (so ETH is first = the DEFAULT output, mirroring
+// Base — the closest analogue: cheap L2, ETH gas, WETH passthrough). chain.usdc is NATIVE Circle
+// USDC 0xaf88…5831 (6 dec), NOT the legacy bridged USDC.e 0xFF97…5CC8 — USDC.e is still fully
+// sweepable as an ordinary token, it is just never a default output. The USDT slot reports
+// symbol() = "USD₮0" on-chain (Tether migrated Arbitrum USDT to the USDT0 standard at the SAME
+// address, still 6 decimals) — labelled here exactly as symbol() returns it so the UI never
+// disagrees with what the API reads on-chain. All verified live 2026-08-07.
+const ARBITRUM_OUTPUT_TOKENS: Token[] = [
+  {
+    address: NATIVE_TOKEN_SENTINEL,
+    symbol: "ETH",
+    name: "Ethereum",
+    decimals: 18,
+    logoURI: "https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/info/logo.png",
+    isNative: true,
+  },
+  {
+    address: "0xaf88d065e77c8cC2239327C5EDb3A432268e5831" as Address,
+    symbol: "USDC",
+    name: "USD Coin",
+    decimals: 6,
+    logoURI: "https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/assets/0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48/logo.png",
+  },
+  {
+    address: "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1" as Address,
+    symbol: "WETH",
+    name: "Wrapped Ether",
+    decimals: 18,
+    logoURI: "https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/info/logo.png",
+  },
+  {
+    address: "0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9" as Address,
+    symbol: "USD₮0",
+    name: "USDT0",
+    decimals: 6,
+    logoURI: "https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/assets/0xdAC17F958D2ee523a2206206994597C13D831ec7/logo.png",
+  },
+];
+
 export const SWEEP_CHAINS: SweepChain[] = [
   {
     id: BASE_CHAIN_ID,
@@ -232,6 +272,21 @@ export const SWEEP_CHAINS: SweepChain[] = [
     paymasterEligible: false,
     approvalWaitTimeoutMs: 90_000, // ~100ms blocks — Base-like cadence is more than enough
   },
+  {
+    id: ARBITRUM_CHAIN_ID,
+    key: "arbitrum",
+    label: "Arbitrum",
+    chain: arbitrum, // nativeCurrency ETH — drives wallet_addEthereumChain + native symbol
+    weth: "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1" as Address,
+    usdc: "0xaf88d065e77c8cC2239327C5EDb3A432268e5831" as Address, // native Circle USDC, 6 dec
+    outputTokens: ARBITRUM_OUTPUT_TOKENS,
+    explorerUrl: "https://arbiscan.io",
+    explorerName: "Arbiscan",
+    routerV3Env: "NEXT_PUBLIC_DUST_SWEEP_ROUTER_V3_ADDRESS_42161",
+    selectLimitEnv: "NEXT_PUBLIC_DUST_SWEEP_AUTO_SELECT_LIMIT_42161",
+    paymasterEligible: false,
+    approvalWaitTimeoutMs: 90_000, // ~250ms blocks — Base-like cadence
+  },
 ];
 
 /**
@@ -239,9 +294,15 @@ export const SWEEP_CHAINS: SweepChain[] = [
  * historical behavior (no code default → fall back to the lane cap), so only Robinhood declares
  * one: a brand-new chain with thin liquidity, where 10 tokens per sweep keeps batches small and
  * predictable. This is a HARD cap on Auto, "Select all" AND manual adds (see useDustSweep).
+ *
+ * Arbitrum declares 10 for the same reason as Robinhood: small, predictable 7702 batches. This
+ * MUST stay in sync with routeMaxCap in apps/api/src/config/sweepChains.ts (also 10) — the server
+ * value is the authoritative cap returned to the UI as quote.routeMaxCap, and a mismatch would let
+ * the UI offer more tokens than a sweep can actually carry.
  */
 const DEFAULT_SELECT_LIMIT_BY_CHAIN: Record<number, number> = {
   [ROBINHOOD_CHAIN_ID]: 10,
+  [ARBITRUM_CHAIN_ID]: 10,
 };
 
 // NEXT_PUBLIC_* envs are inlined at build time, so read them explicitly (not via a dynamic key).
@@ -253,7 +314,9 @@ function readSelectLimit(chainId: number): number | null {
         ? process.env.NEXT_PUBLIC_DUST_SWEEP_AUTO_SELECT_LIMIT_56
         : chainId === ROBINHOOD_CHAIN_ID
           ? process.env.NEXT_PUBLIC_DUST_SWEEP_AUTO_SELECT_LIMIT_4663
-          : process.env.NEXT_PUBLIC_DUST_SWEEP_AUTO_SELECT_LIMIT;
+          : chainId === ARBITRUM_CHAIN_ID
+            ? process.env.NEXT_PUBLIC_DUST_SWEEP_AUTO_SELECT_LIMIT_42161
+            : process.env.NEXT_PUBLIC_DUST_SWEEP_AUTO_SELECT_LIMIT;
   const parsed = Number(raw);
   if (Number.isFinite(parsed) && parsed > 0) return Math.floor(parsed);
   return DEFAULT_SELECT_LIMIT_BY_CHAIN[chainId] ?? null;
@@ -267,7 +330,9 @@ function readRouterV3(chainId: number): Address | null {
         ? process.env.NEXT_PUBLIC_DUST_SWEEP_ROUTER_V3_ADDRESS_56
         : chainId === ROBINHOOD_CHAIN_ID
           ? process.env.NEXT_PUBLIC_DUST_SWEEP_ROUTER_V3_ADDRESS_4663
-          : process.env.NEXT_PUBLIC_DUST_SWEEP_ROUTER_V3_ADDRESS;
+          : chainId === ARBITRUM_CHAIN_ID
+            ? process.env.NEXT_PUBLIC_DUST_SWEEP_ROUTER_V3_ADDRESS_42161
+            : process.env.NEXT_PUBLIC_DUST_SWEEP_ROUTER_V3_ADDRESS;
   return raw && /^0x[0-9a-fA-F]{40}$/.test(raw) ? (raw as Address) : null;
 }
 

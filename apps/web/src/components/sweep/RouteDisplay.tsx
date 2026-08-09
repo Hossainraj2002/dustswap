@@ -56,6 +56,9 @@ function getDexIcon(dexName: string) {
   // QuickSwap (Algebra) must be matched before any generic "SWAP"/aggregator fallthrough.
   if (name.includes("QUICKSWAP") || name.includes("ALGEBRA")) return "/dex/quickswap.png";
   if (name.includes("UNISWAP") || name.includes("UNI ")) return "/dex/uniswap.png";
+  // SushiSwap is a native source on BOTH Ethereum and Arbitrum ("SushiSwap", "SushiSwap via WETH").
+  // Without this it fell through to the generic icon on every Sushi route.
+  if (name.includes("SUSHI")) return "/dex/sushiswap.png";
   if (name.includes("AERODROME") || name.includes("AERO ")) return "/dex/aerodrome.png";
   if (name.includes("PANCAKE") || name.includes("CAKE")) return "/dex/pancakeswap.png";
   if (name.includes("BISWAP")) return "/dex/biswap.png";
@@ -67,6 +70,12 @@ function getDexIcon(dexName: string) {
   if (name.includes("KYBER")) return "/dex/kyberswap.png";
   if (name.includes("HYDREX")) return "/dex/hydrex.png";
   if (name.startsWith("0X")) return "/dex/zerox.png";
+  // Wrapped-native passthrough legs ("WBNB → BNB", "WETH → ETH"). These run LAST so a branded
+  // route that merely hops through the wrapped native ("Aerodrome via WETH", "Uniswap V3 via WETH")
+  // is already resolved to its own DEX logo above and never reaches here. Matching on the arrow
+  // keeps it to genuine passthrough legs. Covers Ethereum, Robinhood and Arbitrum, which all
+  // settle native ETH — previously only BSC's leg had a real mark.
+  if (name.includes("→ ETH")) return "/dex/eth.png";
   // BSC passthrough leg ("WBNB → BNB") — real BNB mark instead of the generic icon.
   if (name.includes("WBNB") || name.includes("BNB")) return "/dex/bnb.png";
   return GENERIC_DEX_ICON;

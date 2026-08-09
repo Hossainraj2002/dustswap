@@ -1,5 +1,6 @@
 import { isAddress, type Address } from "viem";
 import {
+  ARBITRUM_WETH_ADDRESS,
   BSC_WBNB_ADDRESS,
   ETHEREUM_WETH_ADDRESS,
   PERMIT2_ADDRESS,
@@ -24,6 +25,7 @@ export const BASE_CHAIN_ID = 8453;
 export const ETHEREUM_CHAIN_ID = 1;
 export const BSC_CHAIN_ID = 56;
 export const ROBINHOOD_CHAIN_ID = 4663;
+export const ARBITRUM_CHAIN_ID = 42161;
 
 export const NATIVE_TOKEN_SENTINEL =
   "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE" as Address;
@@ -60,7 +62,7 @@ export type AggregatorEnableFlags = {
 
 export type SweepChainConfig = {
   chainId: number;
-  slug: "base" | "ethereum" | "bsc" | "robinhood";
+  slug: "base" | "ethereum" | "bsc" | "robinhood" | "arbitrum";
   name: string;
   explorerUrl: string;
 
@@ -455,6 +457,117 @@ function robinhoodConfig(): SweepChainConfig {
   };
 }
 
+// ── Arbitrum One (42161) ─────────────────────────────────────────────────────
+// Mature top-TVL L2 whose native gas token IS ETH — weth/IWETH9 naming everywhere (Ethereum /
+// Robinhood precedent, the OPPOSITE of BSC's wbnb/IWBNB rename). ArbOS 106 (verified live via the
+// ArbSys precompile), far past the ArbOS 40 Pectra floor, so EIP-7702 type-4 txs and EIP-5792
+// atomic batching behave exactly as on Base. All 13 wallet-brand 7702 delegates in
+// apps/web/src/lib/eip7702.ts are deployed here at the same CREATE2 addresses.
+//
+// Native ladder: Uniswap V3 (canonical mainnet addresses are GENUINE here — no Robinhood-style
+// decoys) + SushiSwap V2. Everything else — Camelot, GMX V2, Ramses, TraderJoe, Fluid, Pendle,
+// Maverick, Curve, Uniswap V4, +60 more — is reached via the aggregator rescue path, where
+// OpenOcean is enabled at launch specifically for that long-tail reach (see dustsweepV3Sources.ts).
+//
+// Arbitrum gotchas encoded here:
+//   - chain.usdc is NATIVE Circle USDC 0xaf88…5831 (6 dec), NOT the legacy bridged USDC.e
+//     0xFF97…5CC8. USDC.e stays a first-class sweepable token via extraStables, never a default.
+//   - usdt 0xFd08…Cbb9 now reports symbol() = "USD₮0" (Tether migrated Arbitrum USDT to the USDT0
+//     standard at the SAME address; still 6 decimals). Verified live 2026-08-07.
+//   - Cheap L2 economics: BASE-PARITY minValueUsd (0.01) and routeMaxCap (50). Anything stricter
+//     hides real dust — discovery hides any balance under minValueUsd, and routeMaxCap is a hard
+//     per-sweep token cap, so a large dust wallet would need multiple sweeps to be fully cleared.
+//   - blockscoutRestBaseUrl is the PUBLIC, KEYLESS Arbitrum Blockscout instance, verified live to
+//     return a complete unpaginated token-balance snapshot. It gives Arbitrum a genuine second
+//     discovery lane (Ethereum/BSC have none), so an Alchemy outage degrades to a COMPLETE source
+//     rather than a stale cache.
+function arbitrumConfig(): SweepChainConfig {
+  return {
+    chainId: ARBITRUM_CHAIN_ID,
+    slug: "arbitrum",
+    name: "Arbitrum One",
+    explorerUrl: "https://arbiscan.io",
+    weth: ARBITRUM_WETH_ADDRESS,
+    usdc: "0xaf88d065e77c8cC2239327C5EDb3A432268e5831" as Address, // native Circle USDC, 6 dec
+    usdt: "0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9" as Address, // USD₮0 (was USDT), 6 dec
+    dai: "0xDA10009cBd5D07dd0CeCc66161FC93D7c9000da1" as Address, // 18 dec
+    wbtc: "0x2f2a2543B76A4166549F7aaB2e75Bef0aefC5B0f" as Address, // 8 dec
+    // Legacy bridged USDC.e — safe output/whitelist, but never the default (see note above).
+    extraStables: ["0xFF970A61A04b1cA14834A43f5dE4533eBDDB5CC8" as Address],
+    usdcDecimals: 6, // native USDC is 6 — Base/Ethereum-like, NOT BSC's 18
+    routerV3Env: "DUST_SWEEP_ROUTER_V3_ADDRESS_42161",
+    supportsLegacyLanes: false,
+    // Arbitrum deploys the UPGRADED V3 contract — WETH is a first-class sweepable input that
+    // unwraps to native ETH via the router passthrough leg.
+    supportsWethPassthrough: boolEnv("DUST_SWEEP_WETH_PASSTHROUGH_42161", true),
+    // 10 tokens per sweep — same cap as BSC/Robinhood. Keeps 7702 batch calldata small and the
+    // wallet's gas estimation predictable. Keep in sync with DEFAULT_SELECT_LIMIT_BY_CHAIN in
+    // apps/web/src/config/sweepChainConfig.ts: the server value is authoritative and is returned
+    // to the UI as quote.routeMaxCap. A wallet with more than 10 dust tokens clears across
+    // multiple sweeps; raise via DUST_SWEEP_ROUTE_MAX_CAP_42161 (max 50) if you want fewer, bigger
+    // batches.
+    routeMaxCap: numberEnv("DUST_SWEEP_ROUTE_MAX_CAP_42161", 10, 1, 50),
+    // BASE PARITY (0.01). Raising this HIDES sub-threshold dust from discovery.
+    minValueUsd: numberEnv("DUST_SWEEP_MIN_VALUE_USD_42161", 0.01, 0, 1_000),
+    gasModel: {
+      baseUnits: numberEnv("DUST_SWEEP_GAS_UNITS_BASE_42161", 120_000, 21_000, 5_000_000),
+      perRouteUnits: numberEnv("DUST_SWEEP_GAS_UNITS_PER_ROUTE_42161", 180_000, 21_000, 2_000_000),
+    },
+    kyberSlug: "arbitrum", // live-verified 2026-08-07 (real WETH→USDC route). NOT "arb".
+    openOceanSlug: "arbitrum", // live-verified 2026-08-07 (dexList returns 66 DEXes)
+    dexscreenerSlug: "arbitrum", // live-verified 2026-08-07 (tokens/v1/arbitrum resolves pairs)
+    openOceanGasPriceGwei: numberEnv("DUST_SWEEP_OPENOCEAN_GAS_PRICE_GWEI_42161", 0.02, 0.001, 500),
+    aggregators: {
+      kyber: boolEnv("DUST_SWEEP_ENABLE_KYBER_42161", true),
+      // 0x AllowanceHolder is deployed at the canonical address, but api.0x.org support for
+      // chainId=42161 needs a KEYED quote test (header auth) before enabling — Robinhood precedent.
+      zerox: boolEnv("DUST_SWEEP_ENABLE_ZEROX_42161", false),
+      lifi: boolEnv("DUST_SWEEP_ENABLE_LIFI_42161", true),
+      // ARBITRUM-ONLY: enabled at launch (parked on every other chain). This is the widest
+      // long-tail router on this chain and is what covers Camelot/GMX/Fluid/Pendle while a native
+      // Camelot (Algebra V1.9) adapter is deferred. Flip to false to kill it without a redeploy.
+      openocean: boolEnv("DUST_SWEEP_ENABLE_OPENOCEAN_42161", true),
+    },
+    allowedAggregatorTargetsEnv: "DUST_SWEEP_ALLOWED_AGGREGATOR_TARGETS_42161",
+    nativeSources: [
+      {
+        kind: "uniswap_v3",
+        dexName: "Uniswap V3",
+        // Canonical mainnet addresses — GENUINE on Arbitrum (verified: shared deployer
+        // 0x6C9FC64A… across router/quoter/factory, all with verified contract names).
+        router:
+          process.env.UNISWAP_V3_SWAP_ROUTER_ADDRESS_42161 &&
+          isAddress(process.env.UNISWAP_V3_SWAP_ROUTER_ADDRESS_42161)
+            ? (process.env.UNISWAP_V3_SWAP_ROUTER_ADDRESS_42161 as Address)
+            : ("0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45" as Address),
+        quoter:
+          process.env.UNISWAP_V3_QUOTER_ADDRESS_42161 &&
+          isAddress(process.env.UNISWAP_V3_QUOTER_ADDRESS_42161)
+            ? (process.env.UNISWAP_V3_QUOTER_ADDRESS_42161 as Address)
+            : ("0x61fFE014bA17989E743c5F6cB21bF9697530B21e" as Address),
+        factory:
+          process.env.UNISWAP_V3_FACTORY_ADDRESS_42161 &&
+          isAddress(process.env.UNISWAP_V3_FACTORY_ADDRESS_42161)
+            ? (process.env.UNISWAP_V3_FACTORY_ADDRESS_42161 as Address)
+            : ("0x1F98431c8aD98523631AE4a59f267346ea31F984" as Address),
+        // 500 first — the deepest WETH/stable tier on Arbitrum.
+        feeTiers: [500, 3000, 100, 10000],
+      },
+      {
+        kind: "univ2",
+        dexName: "SushiSwap",
+        router: "0x1b02dA8Cb0d097eB8D57A175b88c7D8b47997506" as Address,
+        // factory() read live off the router 2026-08-07.
+        factory: "0xc35DADB65012eC5796536bD9864eD8773aBc74C4" as Address,
+      },
+    ],
+    // Public, KEYLESS Arbitrum Blockscout — verified live 2026-08-07 to return a complete,
+    // unpaginated token-balance snapshot. Second discovery lane; keys (when present) still resolve
+    // from the existing BLOCKSCOUT_API_KEYS envs.
+    blockscoutRestBaseUrl: "https://arbitrum.blockscout.com/api/v2",
+  };
+}
+
 // Router-from-env is read lazily (envAddress) so a SwapRouter override doesn't require a rebuild.
 // nativeSources.router for uniswap_v3 falls back to the literal when the *_1 override is 0x0.
 function withResolvedRouters(config: SweepChainConfig): SweepChainConfig {
@@ -464,7 +577,9 @@ function withResolvedRouters(config: SweepChainConfig): SweepChainConfig {
     // The literal fallback is Uniswap's MAINNET SwapRouter02, so it may only be substituted on
     // Ethereum. On BSC/Robinhood that address is a different (or non-existent) contract — a
     // zeroed *_<chainId> router override there must leave the source alone rather than silently
-    // point sweeps at a foreign-chain address.
+    // point sweeps at a foreign-chain address. (Arbitrum happens to share the canonical address,
+    // but it is deliberately NOT added here: its own entry already carries the correct literal,
+    // so it never needs — or relies on — this substitution.)
     if (
       config.chainId === ETHEREUM_CHAIN_ID &&
       source.kind === "uniswap_v3" &&
@@ -482,6 +597,7 @@ const CHAIN_CONFIGS: Record<number, () => SweepChainConfig> = {
   [ETHEREUM_CHAIN_ID]: () => withResolvedRouters(ethereumConfig()),
   [BSC_CHAIN_ID]: () => withResolvedRouters(bscConfig()),
   [ROBINHOOD_CHAIN_ID]: () => withResolvedRouters(robinhoodConfig()),
+  [ARBITRUM_CHAIN_ID]: () => withResolvedRouters(arbitrumConfig()),
 };
 
 /** Chains DustSweep will serve. Default: Base only. Flip DUST_SWEEP_ENABLED_CHAIN_IDS to open ETH. */

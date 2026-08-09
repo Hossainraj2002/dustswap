@@ -29,6 +29,7 @@ export const BASE_CHAIN_ID = 8453;
 export const ETHEREUM_CHAIN_ID = 1;
 export const BSC_CHAIN_ID = 56;
 export const ROBINHOOD_CHAIN_ID = 4663;
+export const ARBITRUM_CHAIN_ID = 42161;
 
 /** Canonical Permit2 (same address on every chain). Verified live on Base. */
 export const PERMIT2_ADDRESS: Address = "0x000000000022D473030F116dDEE9F6B43aC78BA3";
@@ -51,6 +52,14 @@ export const BSC_WBNB_ADDRESS: Address = "0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc
  * + name()=WETH + symbol()=WETH + decimals()=18 on rpc.mainnet.chain.robinhood.com.
  */
 export const ROBINHOOD_WETH_ADDRESS: Address = "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73";
+
+/**
+ * WETH on Arbitrum One (native gas token IS ETH — same reasoning as Robinhood/Ethereum, so no
+ * WBNB-style rename anywhere). Constructor arg for the Arbitrum DustSwapSweepRouter.
+ * Verified live 2026-08-07: contract present, symbol()=WETH, decimals()=18, name="Arbitrum Bridged
+ * WETH (Arbitrum One)", 411k holders.
+ */
+export const ARBITRUM_WETH_ADDRESS: Address = "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1";
 
 export type DustSweepV3SpenderModel = "permit2" | "self";
 
@@ -539,6 +548,150 @@ export const ROBINHOOD_DUSTSWEEP_V3_TARGETS: DustSweepV3Target[] = [
   },
 ];
 
+/**
+ * Verified Arbitrum One (chainId 42161) targets for DustSweep V3.
+ *
+ * Unlike Robinhood, there is NO decoy problem here: the canonical mainnet Uniswap addresses are
+ * GENUINE on Arbitrum. SwapRouter02 0x68b34658…, QuoterV2 0x61fFE014… and the V3 factory
+ * 0x1F98431c… all share deployer 0x6C9FC64A… and carry verified contract names. Every
+ * Permit2/Multicall3/aggregator dependency also sits at its canonical cross-chain address.
+ *
+ * Native execution ships with Uniswap V3 + SushiSwap V2. Everything else on Arbitrum — Camelot,
+ * GMX V2, Ramses, TraderJoe, Fluid, Pendle, Maverick, Curve, Uniswap V4, +60 more — is reached
+ * (and price-optimized across) by the aggregator rescue path.
+ *
+ * ARBITRUM-ONLY DEVIATION: OpenOcean ships ENABLED here rather than parked. Its live
+ * v4/arbitrum/dexList (2026-08-07) indexes 66 DEXes including CamelotV3, Camelot, GMXV2, FluidDex,
+ * Pendle, RamsesCL, TraderJoeV2.2, MaverickV2, SolidlyV3 and UniswapV4 — materially wider long-tail
+ * coverage than Uniswap V3 + Sushi + Kyber + LI.FI combined, and it is what recovers the long-tail
+ * reach lost by deferring a native Camelot adapter. Gated by DUST_SWEEP_ENABLE_OPENOCEAN_42161,
+ * which is the kill switch if the end-to-end swap-payload test fails. OpenOcean stays PARKED on
+ * Base/Ethereum/BSC/Robinhood — this deviation does not touch them.
+ *
+ * CAMELOT IS PRE-ALLOWLISTED BUT NOT EXECUTABLE — see the entry's comment. Odos is not a provider
+ * on any chain (removed 2026-07-27), so no Odos entry exists.
+ *
+ * Every address below was verified live 2026-08-07 via eth_getCode / Blockscout is_contract +
+ * verified contract name, plus a functional probe (factory() call or live aggregator response) —
+ * never explorer labels alone. Re-verify via eth_getCode before the owner allowlist txs; see
+ * packages/contracts/remix/DustSwapSweepRouter-Arbitrum-Deploy.md.
+ */
+export const ARBITRUM_DUSTSWEEP_V3_TARGETS: DustSweepV3Target[] = [
+  {
+    id: "uniswap-v3-swaprouter02",
+    name: "Uniswap V3 SwapRouter02 (Arbitrum)",
+    target: "0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45",
+    spender: "0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45",
+    spenderModel: "self",
+    calldataStyle: "uniswap_v3_swaprouter02",
+    feeTiers: [500, 3000, 100, 10000],
+    enabled: true,
+    source:
+      "Verified live 2026-08-07: contract present, verified name 'SwapRouter02', deployer " +
+      "0x6C9FC64A… shared with QuoterV2 0x61fFE014… ('QuoterV2') and factory 0x1F98431c… " +
+      "('UniswapV3Factory') — canonical mainnet addresses are GENUINE on Arbitrum.",
+  },
+  {
+    id: "sushiswap-v2-router",
+    name: "SushiSwap Router (UniV2)",
+    target: "0x1b02dA8Cb0d097eB8D57A175b88c7D8b47997506",
+    spender: "0x1b02dA8Cb0d097eB8D57A175b88c7D8b47997506",
+    spenderModel: "self",
+    calldataStyle: "baseswap_router", // UniV2 getAmountsOut/swapExactTokensForTokens shape
+    enabled: true,
+    source:
+      "Verified live 2026-08-07: contract present, verified name 'UniswapV2Router02'; " +
+      "factory() returned 0xc35DADB65012eC5796536bD9864eD8773aBc74C4.",
+  },
+  {
+    id: "kyber-meta-aggregation-router-v2",
+    name: "KyberSwap MetaAggregationRouterV2",
+    target: "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5",
+    spender: "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5",
+    spenderModel: "self",
+    calldataStyle: "uniswap_v3_swaprouter02", // GENERIC aggregator route; calldata is opaque
+    enabled: true,
+    source:
+      "Verified live 2026-08-07: /arbitrum/api/v1/routes returned routerAddress == this address " +
+      "with a real WETH→USDC route (0.1 WETH → 191.408468 USDC); verified name " +
+      "'MetaAggregationRouterV2'. Slug is 'arbitrum', NOT 'arb'.",
+  },
+  {
+    id: "lifi-diamond",
+    name: "LI.FI Diamond (Arbitrum)",
+    target: "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE",
+    spender: "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE",
+    spenderModel: "self",
+    calldataStyle: "uniswap_v3_swaprouter02",
+    enabled: true,
+    source:
+      "Verified live 2026-08-07: /v1/quote fromChain=42161 returned approvalAddress AND " +
+      "transactionRequest.to == this address; verified name 'LiFiDiamond' (EIP-2535 diamond with " +
+      "GenericSwapFacetV3 present). CANONICAL address — unlike Robinhood, where it was absent.",
+  },
+  {
+    id: "zerox-allowance-holder",
+    name: "0x AllowanceHolder",
+    target: "0x0000000000001fF3684f28c67538d4D072C22734",
+    spender: "0x0000000000001fF3684f28c67538d4D072C22734",
+    spenderModel: "self",
+    calldataStyle: "uniswap_v3_swaprouter02",
+    enabled: true,
+    source:
+      "Verified live 2026-08-07: contract present at the canonical address, verified name " +
+      "'AllowanceHolder'. API-level chainId=42161 support needs a KEYED quote test (the v2 API " +
+      "authenticates via an 0x-api-key header) — app-side gated by DUST_SWEEP_ENABLE_ZEROX_42161 " +
+      "(default OFF), same staging as Robinhood.",
+  },
+  {
+    id: "openocean-exchange-proxy",
+    name: "OpenOcean Exchange Proxy",
+    target: "0x6352a56caadC4F1E25CD6c75970Fa768A3304e64",
+    spender: "0x6352a56caadC4F1E25CD6c75970Fa768A3304e64",
+    spenderModel: "self",
+    calldataStyle: "uniswap_v3_swaprouter02",
+    // LIVE on Arbitrum (deliberate, chain-scoped deviation from the parked-everywhere default).
+    enabled: true,
+    source:
+      "Verified live 2026-08-07: contract present at the canonical address, verified name " +
+      "'OpenOceanExchangeProxy' (EIP-1967 → OpenOceanExchange); v4/arbitrum/dexList returned 66 " +
+      "indexed DEXes incl. CamelotV3, Camelot, GMXV2, FluidDex, Pendle, RamsesCL, TraderJoeV2.2, " +
+      "MaverickV2, SolidlyV3, UniswapV4. ENABLED at launch for long-tail coverage; kill switch is " +
+      "DUST_SWEEP_ENABLE_OPENOCEAN_42161=false.",
+  },
+  {
+    // PARKED AND NOT FLIP-ABLE: Camelot V3 is Algebra V1.9, a DIFFERENT interface generation from
+    // the Algebra INTEGRAL wiring this codebase already has for QuickSwap/Hydrex on Base.
+    // Verified live 2026-08-07 from the on-chain verified ABIs:
+    //   router.exactInputSingle((tokenIn,tokenOut,recipient,deadline,amountIn,amountOutMinimum,
+    //     limitSqrtPrice))                                    -> selector 0xbc651188  (NO deployer)
+    //   vs Base's Integral shape (…,deployer,…)               -> selector 0x1679c792
+    //   quoter.quoteExactInputSingle(address,address,uint256,uint160) -> selector 0x2d9ebd1d
+    //     returning (uint256 amountOut, uint16 fee)
+    //   vs Base's Integral struct quoter                      -> selector 0xe94764c4
+    // So ALGEBRA_SWAP_ROUTER_ABI / ALGEBRA_QUOTER_ABI / getAlgebraQuoteCandidates CANNOT be
+    // parameterized onto it — enabling this needs a NEW calldata builder + DEX enum, not a flag.
+    // Allowlisted on-chain now so that future work needs no owner tx. Camelot liquidity is
+    // reachable today through OpenOcean (CamelotV3 + Camelot), Kyber and LI.FI.
+    // Router/quoter/factory all share deployer 0x6c0db7c0…; factory 0x1a3c9B1d… is 'AlgebraFactory'.
+    id: "camelot-v3-swaprouter",
+    name: "Camelot V3 SwapRouter (Algebra V1.9) — allowlist only",
+    target: "0x1F721E2E82F6676FCE4eA07A5958cF098D339e18",
+    spender: "0x1F721E2E82F6676FCE4eA07A5958cF098D339e18",
+    spenderModel: "self",
+    // Placeholder only — the app can NOT build valid Camelot calldata with this style. See above.
+    calldataStyle: "uniswap_v3_swaprouter02",
+    enabled: false,
+    source:
+      "Verified live 2026-08-07: contract present, verified name 'SwapRouter', factory() = " +
+      "0x1a3c9B1d2F0529D97f2afC5136Cc23e58f1FD35B ('AlgebraFactory'), quoter " +
+      "0x0Fc73040b26E9bC8514fA028D998E73A254Fa76E ('Quoter'). Algebra V1.9 — NOT Integral; " +
+      "requires a new calldata builder before it can be enabled.",
+  },
+  // Odos REMOVED (2026-07-27): not a routing provider on any chain. No entry exists here, so its
+  // routers can never enter the default aggregator allowlist.
+];
+
 function unique(addresses: Address[]): Address[] {
   const seen = new Set<string>();
   const out: Address[] = [];
@@ -581,6 +734,7 @@ export function getDustSweepV3TargetsForChain(chainId: number): DustSweepV3Targe
   if (chainId === ETHEREUM_CHAIN_ID) return ETHEREUM_DUSTSWEEP_V3_TARGETS;
   if (chainId === BSC_CHAIN_ID) return BSC_DUSTSWEEP_V3_TARGETS;
   if (chainId === ROBINHOOD_CHAIN_ID) return ROBINHOOD_DUSTSWEEP_V3_TARGETS;
+  if (chainId === ARBITRUM_CHAIN_ID) return ARBITRUM_DUSTSWEEP_V3_TARGETS;
   return BASE_DUSTSWEEP_V3_TARGETS;
 }
 

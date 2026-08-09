@@ -102,6 +102,7 @@ const CHAIN_ICON: Record<string, string> = {
     "https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/info/logo.png",
   bsc: "/dex/bnb.png", // local asset (same BNB mark used for route pills) — no remote dependency
   robinhood: "/dex/robinhood.png", // local asset — no remote dependency
+  arbitrum: "/dex/arbitrum.png", // local asset — no remote dependency
 };
 
 function NetworkRow({
