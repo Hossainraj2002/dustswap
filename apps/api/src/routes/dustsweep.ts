@@ -284,6 +284,26 @@ const DISCOVERY_THIN_POOL_LIQUIDITY_USD = boundedEnvNumber(
   0,
   1_000_000,
 );
+// ── On-chain routability probe ──────────────────────────────────────────────
+// Discovery hides anything it cannot price (priceUSD <= 0 forces hiddenByDefault), so a real,
+// tradeable token that no off-chain index covers is invisible — and the whitelist can never cover
+// the long tail. This probe asks the only question that actually matters for a sweep: does the
+// token quote on chain RIGHT NOW for the user's exact balance? If it does, it is sweepable and the
+// quote itself yields the price. If it does not, hiding it stays correct (the sweep would fail).
+// Bounded per scan and killable via DUST_SWEEP_ONCHAIN_PRICE_PROBE=false.
+const DISCOVERY_ONCHAIN_PROBE_ENABLED = process.env.DUST_SWEEP_ONCHAIN_PRICE_PROBE !== "false";
+const DISCOVERY_ONCHAIN_PROBE_MAX_TOKENS = boundedEnvNumber(
+  "DUST_SWEEP_ONCHAIN_PROBE_MAX_TOKENS",
+  60,
+  0,
+  400,
+);
+const DISCOVERY_ONCHAIN_PROBE_CONCURRENCY = boundedEnvNumber(
+  "DUST_SWEEP_ONCHAIN_PROBE_CONCURRENCY",
+  8,
+  1,
+  25,
+);
 // Only cross-check a suspect whose thin-pool price implies at least this displayed USD value — the
 // distortions users actually notice (a broken pool inflating a dust token to hundreds of dollars).
 const DISCOVERY_PRICE_SANITY_MIN_VALUE_USD = boundedEnvNumber(
@@ -1250,6 +1270,7 @@ type TokenMarketHintSource =
   | "dexscreener"
   | "blockscout"
   | "alchemy"
+  | "onchain"
   | "none";
 
 type TokenBalanceMetadataHint = {
@@ -2675,6 +2696,125 @@ async function fetchTokenMarketHints(
 // single-address lookups) and fail-open: any CoinGecko hiccup leaves the DexScreener price untouched,
 // and correct thin-pool prices (stablecoins in shallow pools, etc.) are confirmed and left as-is.
 // Mutates `marketHints` in place so the downstream discovery builder picks up the corrected price.
+/**
+ * Prices tokens that NO off-chain source could price, by quoting them on chain against the
+ * chain's wrapped native through the same Uniswap-V3-style quoters the sweep itself executes
+ * against. Routability is the ground truth for a dust sweeper: if the quoter returns an amount
+ * for the user's exact balance, that token can be swept and we now know what it is worth; if it
+ * returns nothing, it stays hidden — which is correct, because sweeping it would revert anyway.
+ *
+ * This is what removes the whitelist as a prerequisite for visibility. Mutates `marketHints`.
+ * Strictly additive: only touches tokens whose price is still 0 after every other source.
+ */
+async function probeOnchainPricesForUnpriced(
+  balances: AlchemyBalance[],
+  marketHints: Record<string, TokenMarketHint>,
+  metadataByAddress: Map<string, Erc20Metadata>,
+  whitelist: Map<string, TokenWhitelistRow>,
+  chain: SweepChainConfig,
+): Promise<{ probed: number; priced: number }> {
+  if (!DISCOVERY_ONCHAIN_PROBE_ENABLED || DISCOVERY_ONCHAIN_PROBE_MAX_TOKENS === 0) {
+    return { probed: 0, priced: 0 };
+  }
+
+  // Which quoters can we ask on this chain? Base keeps its module-level Uniswap V3 quoter;
+  // other chains declare theirs in nativeSources (Robinhood's is the verified 0x33e885eD…).
+  type ProbeVenue = { quoter: Address; feeTiers: readonly number[] };
+  const venues: ProbeVenue[] = [];
+  if (chain.nativeSources) {
+    for (const source of chain.nativeSources) {
+      if ((source.kind === "uniswap_v3" || source.kind === "pancake_v3") && source.quoter) {
+        venues.push({ quoter: source.quoter, feeTiers: source.feeTiers ?? UNISWAP_FEE_TIERS });
+      }
+    }
+  } else if (chain.chainId === BASE_CHAIN_ID) {
+    venues.push({ quoter: UNISWAP_V3_QUOTER_ADDRESS, feeTiers: UNISWAP_FEE_TIERS });
+    venues.push({ quoter: PANCAKE_V3_QUOTER_ADDRESS, feeTiers: PANCAKE_FEE_TIERS });
+  }
+  if (venues.length === 0) return { probed: 0, priced: 0 };
+
+  const wethKey = chain.weth.toLowerCase();
+  const candidates: Array<{ address: Address; amountIn: bigint; decimals: number }> = [];
+  for (const balance of balances) {
+    if (candidates.length >= DISCOVERY_ONCHAIN_PROBE_MAX_TOKENS) break;
+    if (!isAddress(balance.contractAddress)) continue;
+    const address = normalizeAddress(balance.contractAddress);
+    const key = address.toLowerCase();
+    if (key === wethKey || isNativeTokenAddress(key)) continue;
+    if ((marketHints[key]?.priceUSD || 0) > 0) continue; // already priced — skip
+
+    let amountIn: bigint;
+    try {
+      amountIn = BigInt(balance.tokenBalance || "0");
+    } catch {
+      continue;
+    }
+    if (amountIn <= 0n) continue;
+
+    const decimalsRaw = Number(
+      whitelist.get(key)?.decimals ?? metadataByAddress.get(key)?.decimals ?? 18,
+    );
+    candidates.push({
+      address,
+      amountIn,
+      decimals: Number.isFinite(decimalsRaw) ? decimalsRaw : 18,
+    });
+  }
+  if (candidates.length === 0) return { probed: 0, priced: 0 };
+
+  const nativeUsd = await fetchNativeUsdPrice(chain).catch(() => 0);
+  if (!Number.isFinite(nativeUsd) || nativeUsd <= 0) return { probed: 0, priced: 0 };
+
+  let priced = 0;
+  await pLimit(
+    candidates.map((candidate) => async () => {
+      // Probe EVERY tier/venue and keep the BEST output. Taking the first non-zero quote is
+      // wrong: a token often has a near-empty pool at one fee tier alongside its real pool at
+      // another, and the shallow one quotes catastrophically low (measured: cbBTC -100%, AERO
+      // -92% against market). The best quote is both the true price basis and what the sweep
+      // would actually route through.
+      let bestOut = 0n;
+      for (const venue of venues) {
+        for (const fee of venue.feeTiers) {
+          const amountOut = await tryQuoteV3Single(
+            venue.quoter,
+            candidate.address,
+            chain.weth,
+            candidate.amountIn,
+            fee,
+            chain.chainId,
+          ).catch(() => null);
+          if (amountOut && amountOut > bestOut) bestOut = amountOut;
+        }
+      }
+      if (bestOut <= 0n) return;
+
+      // bestOut is wrapped-native (18 decimals). Value the WHOLE balance, then divide back out
+      // to a unit price so downstream valueUSD math is unchanged.
+      const balanceUnits = Number(formatUnits(candidate.amountIn, candidate.decimals));
+      if (!Number.isFinite(balanceUnits) || balanceUnits <= 0) return;
+      const valueUsd = Number(formatUnits(bestOut, 18)) * nativeUsd;
+      const priceUSD = valueUsd / balanceUnits;
+      if (!Number.isFinite(priceUSD) || priceUSD <= 0) return;
+
+      marketHints[candidate.address.toLowerCase()] = {
+        ...emptyMarketHint(),
+        priceUSD,
+        // Liquidity is unknown from a single quote; leave it 0 rather than inventing a number.
+        // The token becomes visible because it now has a real, execution-backed price.
+        liquidityUSD: 0,
+        bestDex: "UNISWAP_V3",
+        source: "onchain",
+        confidence: "MEDIUM",
+      };
+      priced += 1;
+    }),
+    DISCOVERY_ONCHAIN_PROBE_CONCURRENCY,
+  );
+
+  return { probed: candidates.length, priced };
+}
+
 async function reconcileThinPoolPrices(
   balances: AlchemyBalance[],
   marketHints: Record<string, TokenMarketHint>,
@@ -7173,6 +7313,17 @@ async function handleDustSweepTokensRequest(c: Context, rawAddress?: string) {
       // split both use the sane price. Bounded + fail-open; no-op for wallets without such outliers.
       await reconcileThinPoolPrices(nonZero, marketHints, metadataByAddress, whitelist, chain);
 
+      // LAST price resort: ask the chain itself. Anything still unpriced here is invisible to
+      // every off-chain index, so quote it against wrapped native — a token that quotes is
+      // sweepable and now has a price; one that does not stays hidden, correctly.
+      const onchainProbe = await probeOnchainPricesForUnpriced(
+        nonZero,
+        marketHints,
+        metadataByAddress,
+        whitelist,
+        chain,
+      ).catch(() => ({ probed: 0, priced: 0 }));
+
       const swappable: DiscoveryTokenResult[] = [];
       const unavailable: DiscoveryTokenResult[] = [];
       const hidden: DiscoveryTokenResult[] = [];
@@ -7355,6 +7506,9 @@ async function handleDustSweepTokensRequest(c: Context, rawAddress?: string) {
           providerMarketHintCount,
           maxExternalMarketHints,
           marketHintCount: Object.keys(marketHints).length,
+          // Tokens rescued by the on-chain routability probe (no off-chain index priced them).
+          onchainProbed: onchainProbe.probed,
+          onchainPriced: onchainProbe.priced,
           metadataReadCount: metadataByAddress.size,
           elapsedMs: Date.now() - startedAt,
         },
