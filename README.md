@@ -1,206 +1,80 @@
 # DustSwap
 
-**Trade on Base. Earn progress for the activity you already do.**
+**A Base consumer app that turns everyday onchain activity into one progress account.**
 
-DustSwap is a Base-first app that combines swapping, quests, daily check-ins, referrals, spin rewards, and leaderboard progress in one product experience.
+Swap, clear leftover dust into USDC, check in daily, finish quests, invite friends, and climb one shared leaderboard. Base's own app dashboard has ranked DustSwap in the top 3 apps on Base, and in June 2026 it was ranked #1 out of more than 17,000 Builder Code apps by daily transacting addresses.
 
-It is built for users who are already active on Base and want something more useful than a simple points page. You use the app, complete actions, track your account, and build momentum over time.
+| | |
+| --- | --- |
+| App | https://app.dustswap.wtf |
+| Inside Base App | https://base.app/app/app.dustswap.wtf |
+| Docs | [`docs/docs`](docs/docs) in this repo |
+| Rank on Base | https://dashboard.base.org/share/c/app.dustswap.wtf |
+| Builder Code | `bc_tpolfjho`, tracked at https://dune.com/base_ds/base-builder-codes |
+| X | https://x.com/DustswapOnBase and https://x.com/akbarX402 |
 
-This README is for users and visitors. It covers the live public app only.
+## What DustSwap is
 
-## Open DustSwap
+Most reward apps ask you to do something artificial to earn points. DustSwap adds progression around activity people already do on Base, so the app has a reason to be open every day rather than only during one campaign.
 
-**App**  
-`https://app.dustswap.wtf`
+The public surfaces are Footprint Drop, Profile, Dust Sweep, Swap, Quests, Spin and Leaderboard. Every action feeds one account: PP, rank, streak, referral progress and volume all live in the same place.
 
-**Inside Base App**  
-`https://base.app/app/app.dustswap.wtf`
+## DustSweep
 
-**X**  
-`https://x.com/DustswapOnBase`  
-`https://x.com/akbarX402`
+DustSweep is the part of the product we built from scratch, and it is the reason the app has its own contracts on Base.
 
-## What DustSwap offers
+A normal wallet ends up holding dozens of small token balances. Selling them one by one costs more in gas and approvals than the tokens are worth, so the dust sits there forever. DustSweep sells all of it in a single transaction and returns one token, normally USDC or ETH.
 
-DustSwap brings the public user experience into a few clear surfaces:
+### How a sweep works
 
-- Footprint Drop
-- Profile
-- Swap
-- Quests
-- Spin
-- Leaderboard
+**Find.** Every token balance the wallet holds is read directly from the chain. The user never pastes a token address.
 
-The goal is simple.
+**Price.** Dust is the hardest thing in crypto to price, because pools are thin and many of these tokens are worthless or hostile. Real liquidity behind each token is checked rather than trusting a price feed, and tokens that cannot be sold are marked instead of silently failing later.
 
-Instead of trading in one place, tracking rewards in another place, and checking campaign progress somewhere else, DustSwap connects those actions inside one Base-focused flow.
+**Route.** Every token is quoted across direct pools and multiple aggregators. That is roughly 35 probe calls per token, packed into single Multicall3 reads so the whole scan stays fast and cheap.
 
-## Why people use DustSwap
+**Send.** The router pulls the selected tokens, sells each one along its own best route, takes a 2% protocol fee on the output, and returns one clean balance. Anything that cannot be sold is left untouched in the wallet.
 
-Users come to DustSwap to:
+### Wallet compatibility
 
-- swap through a live Base-first interface
-- claim eligible Footprint Drop rewards
-- check in daily and build streaks
-- complete quests
-- use spin tickets
-- invite friends through referrals
-- track rank and progress over time
+Wallets on Base no longer sign the same way, and getting this wrong means a failed transaction and a user who assumes the app is broken. DustSweep resolves the account before asking for anything.
 
-DustSwap adds a progression layer around normal user activity so the app feels active every day, not just during one campaign.
+**EIP-7702.** A delegated EOA stores a designator, `0xef0100` followed by the delegate address. Reading the code at the user's address on Base tells us whether the account is delegated and to which implementation. There is no public registry of delegate contracts, so this repo maintains its own, covering the major wallet brands as well as infrastructure providers such as Biconomy, ZeroDev, Gelato and Pimlico. See [`apps/web/src/lib/eip7702.ts`](apps/web/src/lib/eip7702.ts).
 
-## Public app flow
+**EIP-5792.** The connected wallet is asked whether it can execute a batch atomically. If it can, approvals and the sweep are sent together as one `wallet_sendCalls` batch and the user confirms once.
 
-### 1. Footprint Drop
+**The registry never gates anything.** The wallet's own reported capability decides the execution path; the registry only decides what the route is called on screen. An unknown delegate degrades to the safe path, never to a block, and is logged so the registry grows.
 
-The landing flow lets you check whether a wallet is eligible for a PP airdrop.
+**Delegated to a different wallet.** Only one wallet can manage a smart account at a time, so an address set up in one wallet cannot batch through another. Rather than failing, the app names the wallet that owns the account, offers a switch for one click, and offers a signature path to continue in place.
 
-You can paste an address to preview eligibility. Claiming is tied to the connected wallet.
+### What the user signs
 
-This is the main entry point for new users who want to see whether they already qualify before exploring the rest of the app.
+The fallback path uses Permit2 with a witness that binds the fee and the recipient into the signature itself, so the user signs the exact fee and the exact destination and neither can be changed afterwards. DustSwap never holds user funds and never writes a delegation on a user's behalf.
 
-### 2. Profile
+## Contracts on Base
 
-Profile is your main account hub.
+| Contract | Address |
+| --- | --- |
+| DustSweep Router V3 | `0x06e6BAa61A5Da1E4469FCa5dEa3EB68324255E20` |
+| DustSweep Router V2 | `0x6d3C31E4a2b8e1Fe9De0d260D142183E82cbE1E3` |
+| Spin and rewards | `0xCf10Edbc886C60086e49061c807a14E7009F9A22` |
 
-This is where you can see your current standing inside DustSwap, including things like:
+All are verified on BaseScan. The routers are written in house rather than forked. DustSweep also runs on Ethereum, BNB Chain and Arbitrum so dust stranded on those chains can be cleared, but Base carries effectively all of the volume and is the only chain with the full app.
 
-- total PP
-- rank
-- all-time swap volume
-- referral progress
-- daily streak status
-- personal referral link
+## Security
 
-If you want to understand your account at a glance, this is the page that matters most.
+Written audit reports are public in [`packages/contracts/audit`](packages/contracts/audit). Raw static analysis output is deliberately kept out of this repo, because publishing unfiltered scanner findings for a live router hands attackers a prepared map. Deployment and verification records live in [`packages/contracts/remix`](packages/contracts/remix) and [`packages/contracts/verification`](packages/contracts/verification).
 
-### 3. Daily check-in
+## Repo layout
 
-DustSwap rewards consistency through daily check-ins.
-
-A successful check-in currently gives users:
-
-- 100 base PP
-- 3 spin tickets
-- a 10% boost step on self-earned PP, up to the in-app cap
-
-There is also a very small anti-abuse fee attached to check-in.
-
-For regular users, this is one of the easiest daily actions to keep account progress moving.
-
-### 4. Swap
-
-Swap is one of the core public surfaces of the app.
-
-DustSwap uses OpenOcean in the backend for routing, while DustSwap adds the user-facing product layer around it through quests, points, streaks, referrals, and leaderboard progression.
-
-For users, the flow is straightforward:
-
-- connect wallet
-- open Swap
-- trade on Base
-- let activity feed into the rest of the app experience
-
-### 5. Quests
-
-Quests turn activity into structured progress.
-
-Depending on what is live, quests can include onchain actions, social tasks, campaign goals, and progression milestones. Completing them helps users earn PP and move forward in the app.
-
-The coFounder Pass path also lives here.
-
-### 6. Spin
-
-Spin tickets are earned through daily check-in.
-
-On the Spin page, users can spend tickets on the reward wheel. This adds a light daily reward loop on top of the main product usage.
-
-Spin is not the core of DustSwap. It works best as a companion to the rest of the app.
-
-### 7. Leaderboard
-
-The leaderboard shows how users rank across the app.
-
-The public experience is centered around performance across areas such as:
-
-- total PP
-- referrals
-- volume-related progress
-
-This is where users can compare their standing with the wider community.
-
-## How PP works
-
-PP is the main progression unit inside DustSwap.
-
-In the live app, PP can come from multiple sources, including:
-
-- Footprint Drop claims
-- daily check-ins
-- quests
-- referrals
-- spin rewards
-
-PP is used to reflect account participation across the DustSwap experience.
-
-Because campaign mechanics can change, the live app and official X accounts should always be treated as the current source of truth.
-
-## Referrals
-
-DustSwap includes a built-in referral system.
-
-If a new user joins with a valid referral code, both sides receive the signup reward shown in the app. After that, inviters can continue earning according to the live referral rules.
-
-Each user can access their referral link directly from Profile.
-
-## coFounder Pass
-
-DustSwap also includes a coFounder Pass path for early users.
-
-This appears in the public app through a dedicated quest track. Users complete the required tasks, and the app tracks completion against the live requirements.
-
-If you care about early user positioning, Quests is the place to watch.
-
-## Public navigation summary
-
-For most users, the product is easy to understand:
-
-**Landing**  
-Check Footprint Drop eligibility and enter from the official app.
-
-**Profile**  
-Track your account, rank, streak, referrals, and PP.
-
-**Swap**  
-Use the live swap experience on Base.
-
-**Quests**  
-Complete social and onchain tasks.
-
-**Spin**  
-Use daily tickets.
-
-**Leaderboard**  
-Track rankings and community progress.
-
-This README intentionally leaves out non-public and experimental areas.
+| Path | What it is |
+| --- | --- |
+| `apps/web` | The app at app.dustswap.wtf. Next.js, wagmi and viem. |
+| `apps/api` | Hono API: points engine, quests, referrals, token discovery, sweep routing and campaign verification. |
+| `apps/site` | The public marketing site. |
+| `packages/contracts` | Foundry workspace for the routers, plus audits and deployment records. |
+| `docs` | Mintlify source for the public documentation. |
 
 ## Trust and safety
 
-Always use the official links listed above.
-
-Before connecting your wallet, verify the domain and review transaction details carefully. As with any onchain app, users should pay attention to network selection, token approvals, wallet prompts, and transaction confirmations.
-
-## Stay updated
-
-For launches, campaign changes, and public product updates, follow:
-
-**DustSwap on X**  
-`https://x.com/DustswapOnBase`
-
-**Founder updates**  
-`https://x.com/akbarX402`
-
-## One-line version
-
-DustSwap is a Base-first app that turns swapping, quests, check-ins, referrals, and account progress into one connected user experience.
+Only use the official links at the top of this file. Before connecting a wallet, check the domain, and read every transaction and signature prompt. Pay attention to the network you are on, which tokens an approval covers, and what a signature actually authorises. Campaign mechanics change, so the live app and the official X accounts are the source of truth.
