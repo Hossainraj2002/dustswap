@@ -5,6 +5,8 @@ import { useSignMessage } from "wagmi";
 import type { Hex } from "viem";
 import {
   buildCampaignClaimMessage,
+  buildPrizeClaimMessage,
+  claimCampaignPrize,
   claimCampaignTier,
   formatCampaignPp,
   formatCampaignUsd,
@@ -196,6 +198,7 @@ export function SweepCampaignModal({
 }) {
   const { signMessageAsync } = useSignMessage();
   const [claimingTier, setClaimingTier] = useState<number | null>(null);
+  const [claimingPrize, setClaimingPrize] = useState(false);
   const [claimError, setClaimError] = useState<string | null>(null);
   const timersRef = useRef<Array<ReturnType<typeof setTimeout>>>([]);
 
@@ -219,6 +222,7 @@ export function SweepCampaignModal({
 
   const campaign = status.campaign;
   const viewer = status.viewer;
+  const prize = viewer?.prize ?? null;
   const phase = status.phase ?? "closed";
   const capUsd = campaign.volumeCapUsd || 500;
   const cappedVolume = Math.min(viewer?.cappedVolumeUsd ?? 0, capUsd);
@@ -231,6 +235,29 @@ export function SweepCampaignModal({
     (tier) => tier.status === "claimable" || tier.status === "processing"
   );
 
+
+  const handleClaimPrize = async () => {
+    if (!address || claimingPrize || !prize) return;
+    setClaimError(null);
+    setClaimingPrize(true);
+    try {
+      const message = buildPrizeClaimMessage(address, campaign.slug, prize.rank);
+      const signature = (await signMessageAsync({ message })) as Hex;
+      await claimCampaignPrize({ address, message, signature });
+      onRefresh();
+      for (const delay of [6_000, 18_000, 40_000]) {
+        timersRef.current.push(setTimeout(onRefresh, delay));
+      }
+    } catch (error) {
+      const message =
+        error instanceof Error && error.message && !/user rejected/i.test(error.message)
+          ? error.message
+          : null;
+      if (message) setClaimError(message);
+    } finally {
+      setClaimingPrize(false);
+    }
+  };
   const handleClaim = async (tier: number) => {
     if (!address || claimingTier !== null) return;
     setClaimError(null);
@@ -297,7 +324,7 @@ export function SweepCampaignModal({
           {phase === "upcoming"
             ? `Opens ${formatUtc(campaign.startsAt)}. Sweeps before this time do not count.`
             : phase === "grace"
-              ? "The sweep window has closed. Unlocked rewards can still be claimed."
+              ? `The sweep window has closed. Rewards can be claimed until ${formatUtc(campaign.claimsCloseAt)}.`
               : `${daysLeft} day${daysLeft === 1 ? "" : "s"} left. Every verified sweep on Base counts.`}
         </p>
 
@@ -352,6 +379,61 @@ export function SweepCampaignModal({
           </p>
         ) : null}
 
+        {prize ? (
+          <div className="mt-4 rounded-[16px] border border-amber-300/70 bg-gradient-to-br from-amber-50 to-orange-50 p-4 dark:border-amber-400/30 dark:from-amber-400/[0.10] dark:to-orange-400/[0.06]">
+            <p className="text-[10px] font-black uppercase tracking-[0.24em] text-amber-700 dark:text-amber-400">
+              Leaderboard prize
+            </p>
+            <div className="mt-1.5 flex items-end justify-between gap-3">
+              <div>
+                <p className="text-[22px] font-bold leading-none text-slate-950 dark:text-white">
+                  Rank #{prize.rank}
+                </p>
+                <p className="mt-1.5 text-[13px] font-semibold text-slate-600 dark:text-slate-300">
+                  {formatCampaignUsd(prize.amountUsdc)} USDC
+                  {prize.prizePp > 0 ? ` plus ${formatCampaignPp(prize.prizePp)}` : ""}
+                </p>
+              </div>
+              {prize.status === "paid" ? (
+                prize.payoutTxHash ? (
+                  <a
+                    href={`https://basescan.org/tx/${prize.payoutTxHash}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="shrink-0 rounded-full bg-emerald-100 px-3 py-1.5 text-[12px] font-bold text-emerald-700 hover:bg-emerald-200 dark:bg-emerald-400/15 dark:text-emerald-300"
+                  >
+                    Paid
+                  </a>
+                ) : (
+                  <span className="shrink-0 rounded-full bg-emerald-100 px-3 py-1.5 text-[12px] font-bold text-emerald-700 dark:bg-emerald-400/15 dark:text-emerald-300">
+                    Paid
+                  </span>
+                )
+              ) : prize.claimable ? (
+                <button
+                  type="button"
+                  disabled={claimingPrize}
+                  onClick={() => void handleClaimPrize()}
+                  className="sweep-cta inline-flex min-h-[38px] shrink-0 items-center justify-center gap-1.5 rounded-[11px] px-4 text-[13px] font-bold disabled:opacity-60"
+                >
+                  {claimingPrize ? <Spinner /> : null}
+                  {claimingPrize ? "Signing" : "Claim prize"}
+                </button>
+              ) : prize.status === "awaiting_claim" ? (
+                <span className="shrink-0 rounded-full bg-amber-100 px-3 py-1.5 text-center text-[12px] font-bold leading-tight text-amber-700 dark:bg-amber-400/15 dark:text-amber-400">
+                  {campaign.prizeClaimsOpenAt
+                    ? `Opens ${formatUtc(campaign.prizeClaimsOpenAt)}`
+                    : "Opens soon"}
+                </span>
+              ) : (
+                <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-sky-100 px-3 py-1.5 text-[12px] font-bold text-sky-700 dark:bg-sky-400/15 dark:text-sky-300">
+                  <Spinner />
+                  Sending
+                </span>
+              )}
+            </div>
+          </div>
+        ) : null}
         {/* Tier tracker */}
         <div className="mt-4 space-y-2">
           {(viewer?.tiers ?? campaign.tiers.map((tier) => ({
@@ -393,7 +475,7 @@ export function SweepCampaignModal({
             `Challenge runs ${formatUtc(campaign.startsAt)} to ${formatUtc(campaign.endsAt)}.`,
             "Tier rewards are sent automatically in USDC on Base.",
             "Leaderboard prizes are paid after the 2 week challenge ends.",
-            `Claims stay open ${campaign.claimGraceDays} days after the campaign ends.`,
+            `Claims close ${formatUtc(campaign.claimsCloseAt)}.`,
           ].map((rule) => (
             <p
               key={rule}

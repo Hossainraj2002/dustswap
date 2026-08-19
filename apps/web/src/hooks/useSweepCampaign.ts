@@ -21,6 +21,9 @@ export function useSweepCampaign(address?: string | null) {
   const [leaderboard, setLeaderboard] = useState<CampaignLeaderboard | null>(null);
   const [isLoading, setIsLoading] = useState(SWEEP_CAMPAIGN_ENABLED);
   const isMountedRef = useRef(true);
+  // Set once the API confirms the campaign is over. Stops the poll so a
+  // finished campaign leaves no DOM and no background network chatter.
+  const finishedRef = useRef(false);
   const requestIdRef = useRef(0);
   const timersRef = useRef<Array<ReturnType<typeof setTimeout>>>([]);
 
@@ -48,6 +51,13 @@ export function useSweepCampaign(address?: string | null) {
         if (!isMountedRef.current || requestId !== requestIdRef.current) return;
         setStatus(nextStatus);
 
+        // A successful response with no campaign means it has closed for good.
+        if (nextStatus.success && !nextStatus.campaign) {
+          finishedRef.current = true;
+          setLeaderboard(null);
+          return;
+        }
+
         if (nextStatus.campaign) {
           const nextLeaderboard = await fetchCampaignLeaderboard({
             viewerAddress: address,
@@ -69,7 +79,7 @@ export function useSweepCampaign(address?: string | null) {
 
   // Post-sweep: verification lands asynchronously — schedule delayed refetches.
   const refreshAfterSweep = useCallback(() => {
-    if (!SWEEP_CAMPAIGN_ENABLED) return;
+    if (!SWEEP_CAMPAIGN_ENABLED || finishedRef.current) return;
     for (const delay of POST_SWEEP_REFRESH_DELAYS_MS) {
       const timer = setTimeout(() => {
         void refresh({ force: true });
@@ -90,6 +100,7 @@ export function useSweepCampaign(address?: string | null) {
       void refresh({ force: true });
     });
     const interval = setInterval(() => {
+      if (finishedRef.current) return;
       if (typeof document !== "undefined" && document.visibilityState !== "visible") {
         return;
       }

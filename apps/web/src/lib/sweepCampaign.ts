@@ -10,6 +10,7 @@ export const SWEEP_CAMPAIGN_ENABLED =
   process.env.NEXT_PUBLIC_SWEEP_CAMPAIGN_ENABLED === "true";
 
 const CLAIM_STATEMENT = "DustSwap Sweep Campaign Claim";
+const PRIZE_CLAIM_STATEMENT = "DustSwap Sweep Campaign Prize Claim";
 const STATUS_CACHE_TTL_MS = 30 * 1000;
 
 export type CampaignPhase = "upcoming" | "live" | "grace" | "closed";
@@ -39,6 +40,15 @@ export type CampaignTierState = CampaignTier & {
   payoutTxHash: string | null;
 };
 
+export type CampaignPrizeState = {
+  rank: number;
+  amountUsdc: number;
+  prizePp: number;
+  status: string;
+  claimable: boolean;
+  payoutTxHash: string | null;
+};
+
 export type CampaignMeta = {
   slug: string;
   name: string;
@@ -46,6 +56,11 @@ export type CampaignMeta = {
   startsAt: string;
   endsAt: string;
   claimGraceDays: number;
+  /** The moment every claim window shuts and all campaign UI disappears. */
+  claimsCloseAt: string;
+  finalized: boolean;
+  prizeClaimsOpenAt: string | null;
+  prizeClaimsOpen: boolean;
   volumeCapUsd: number;
   tiers: CampaignTier[];
   prizes: CampaignPrize[];
@@ -60,6 +75,8 @@ export type CampaignViewer = {
   tiers: CampaignTierState[];
   totalClaimableUsdc: number;
   totalPaidUsdc: number;
+  /** Only present for wallets that actually placed in the final top 50. */
+  prize?: CampaignPrizeState | null;
 };
 
 export type CampaignStatus = {
@@ -252,6 +269,50 @@ export async function claimCampaignTier(input: {
  * feels like a cheat. Truncating guarantees the number on screen is a floor of
  * the real value, never a ceiling.
  */
+
+export function buildPrizeClaimMessage(
+  address: string,
+  campaignSlug: string,
+  rank: number
+) {
+  const domain =
+    typeof window !== "undefined" ? window.location.host : "localhost:3000";
+
+  return [
+    PRIZE_CLAIM_STATEMENT,
+    `Address: ${address}`,
+    `Campaign: ${campaignSlug}`,
+    `Rank: ${rank}`,
+    `Timestamp: ${new Date().toISOString()}`,
+    `Nonce: ${createNonce()}`,
+    `Domain: ${domain}`,
+  ].join("\n");
+}
+
+export async function claimCampaignPrize(input: {
+  address: string;
+  message: string;
+  signature: Hex;
+}): Promise<CampaignClaimResult> {
+  const response = await publicApiFetch(
+    buildPublicApiUrl("/api/dustsweep/campaign/claim-prize"),
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    }
+  );
+
+  const data = await parseJson<CampaignClaimResult>(response);
+  if (!response.ok || !data.success) {
+    const claimError = new Error(data.error || "Failed to claim the prize.");
+    Object.assign(claimError, { payload: data, status: response.status });
+    throw claimError;
+  }
+
+  invalidateCampaignCache();
+  return data;
+}
 export function formatCampaignUsd(value: number) {
   const decimals = value >= 1000 ? 0 : 2;
   const factor = 10 ** decimals;

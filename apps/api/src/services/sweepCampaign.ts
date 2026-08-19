@@ -63,6 +63,7 @@ const SWEEP_EVENT_ABI = parseAbi([
 ]);
 
 const CLAIM_STATEMENT = "DustSwap Sweep Campaign Claim";
+const PRIZE_CLAIM_STATEMENT = "DustSwap Sweep Campaign Prize Claim";
 const CLAIM_SIGNATURE_TTL_MS = 10 * 60 * 1000;
 const CLAIM_FUTURE_SKEW_MS = 60 * 1000;
 const CLAIM_RATE_LIMIT = 12;
@@ -110,6 +111,8 @@ type CampaignRow = {
   per_sweep_cap_usd_micro: string | number;
   is_active: boolean;
   finalized_at: string | null;
+  prize_claims_open_at: string | null;
+  claims_close_at: string | null;
 };
 
 type TierConfig = {
@@ -269,15 +272,41 @@ function findPrizeForRank(bands: PrizeBand[], rank: number): PrizeBand | null {
   return bands.find((band) => rank >= band.rankFrom && rank <= band.rankTo) || null;
 }
 
+/**
+ * The single moment every claim window shuts. Configured per campaign; falls
+ * back to the legacy grace period when unset so older rows keep working.
+ */
+function getClaimsCloseAt(campaign: CampaignRow): number {
+  if (campaign.claims_close_at) {
+    const parsed = Date.parse(campaign.claims_close_at);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return Date.parse(campaign.ends_at) + CLAIM_GRACE_DAYS * 24 * 60 * 60 * 1000;
+}
+
 function getCampaignPhase(campaign: CampaignRow, now = Date.now()): CampaignPhase {
   const startsAt = Date.parse(campaign.starts_at);
   const endsAt = Date.parse(campaign.ends_at);
-  const graceEndsAt = endsAt + CLAIM_GRACE_DAYS * 24 * 60 * 60 * 1000;
 
   if (now < startsAt) return "upcoming";
   if (now <= endsAt) return "live";
-  if (now <= graceEndsAt) return "grace";
+  if (now <= getClaimsCloseAt(campaign)) return "grace";
   return "closed";
+}
+
+/**
+ * Prize claiming is shut until the operator opens it. Both conditions are
+ * required: the winners must be finalized (so the rows exist and are frozen),
+ * and the configured open time must have passed.
+ */
+function arePrizeClaimsOpen(campaign: CampaignRow) {
+  if (!campaign.finalized_at) return false;
+  if (!campaign.prize_claims_open_at) return false;
+  const now = Date.now();
+  if (now < Date.parse(campaign.prize_claims_open_at)) return false;
+  // Hard stop: the window shuts with the rest of the campaign.
+  if (now > getClaimsCloseAt(campaign)) return false;
+  return true;
 }
 
 async function loadCampaignBySlug(slug: string): Promise<CampaignRow | null> {
@@ -399,6 +428,9 @@ async function enqueueCandidate(input: {
   try {
     const campaign = await getIntakeCampaign();
     if (!campaign) return;
+    // Once the standings are frozen, new credits could only ever disagree with
+    // the snapshot the prizes were computed from. Stop taking them.
+    if (campaign.finalized_at) return;
     if (Number(input.chainId) !== campaign.chain_id) return;
     if (!input.txHash || !isTxHash(input.txHash)) return;
     if (!input.userAddress || !isAddress(input.userAddress)) return;
@@ -699,6 +731,10 @@ function serializeCampaign(campaign: CampaignRow) {
     startsAt: campaign.starts_at,
     endsAt: campaign.ends_at,
     claimGraceDays: CLAIM_GRACE_DAYS,
+    claimsCloseAt: new Date(getClaimsCloseAt(campaign)).toISOString(),
+    finalized: Boolean(campaign.finalized_at),
+    prizeClaimsOpenAt: campaign.prize_claims_open_at,
+    prizeClaimsOpen: arePrizeClaimsOpen(campaign),
     volumeCapUsd: microToUsd(toBigInt(campaign.volume_cap_usd_micro)),
     tiers: tiers.map((tier) => ({
       tier: tier.tier,
@@ -729,9 +765,14 @@ async function getStatusForAddress(address?: string | null) {
   }
 
   const phase = getCampaignPhase(campaign);
+  // Past the close time nothing can be claimed any more, so the campaign stops
+  // being reported at all. Every campaign surface keys off this and unmounts
+  // together, leaving the sweep page exactly as it was before the campaign.
   if (phase === "closed") {
     return { success: true as const, active: false as const };
   }
+  // Tier rewards follow the campaign window; prizes have their own gate.
+  const tierClaimsOpen = phase === "live" || phase === "grace";
 
   const payload: Record<string, unknown> = {
     success: true,
@@ -812,7 +853,7 @@ async function getStatusForAddress(address?: string | null) {
       } else {
         status = "processing";
       }
-    } else if (cappedMicro >= BigInt(tier.thresholdUsdMicro)) {
+    } else if (tierClaimsOpen && cappedMicro >= BigInt(tier.thresholdUsdMicro)) {
       status = "claimable";
       totalClaimableMicro += BigInt(tier.rewardUsdcMicro);
     }
@@ -826,6 +867,41 @@ async function getStatusForAddress(address?: string | null) {
     };
   });
 
+  // Leaderboard prize, only present once the campaign is finalized and only
+  // for wallets that actually placed. Absence here IS the answer for everyone
+  // else: no row, no prize, nothing to render.
+  let prize: {
+    rank: number;
+    amountUsdc: number;
+    prizePp: number;
+    status: string;
+    claimable: boolean;
+    payoutTxHash: string | null;
+  } | null = null;
+
+  if (userId !== null && campaign.finalized_at) {
+    const { data: prizeData } = await postgresDb
+      .from("sweep_campaign_claims")
+      .select("*")
+      .eq("campaign_id", campaign.id)
+      .eq("user_id", userId)
+      .eq("kind", "prize")
+      .maybeSingle();
+    const prizeRow = (prizeData as ClaimRow | null) ?? null;
+    if (prizeRow && normalizeAddress(prizeRow.recipient_address) === normalized) {
+      const rank = Number(prizeRow.tier);
+      const band = findPrizeForRank(parsePrizeBands(campaign.leaderboard_prizes), rank);
+      prize = {
+        rank,
+        amountUsdc: microToUsd(toBigInt(prizeRow.amount_usdc_micro)),
+        prizePp: band ? band.prizePp : 0,
+        status: prizeRow.status,
+        claimable:
+          prizeRow.status === "awaiting_claim" && arePrizeClaimsOpen(campaign),
+        payoutTxHash: prizeRow.payout_tx_hash,
+      };
+    }
+  }
   payload.viewer = {
     address: normalized,
     volumeUsd: microToUsd(volumeMicro),
@@ -835,6 +911,7 @@ async function getStatusForAddress(address?: string | null) {
     tiers: tierStates,
     totalClaimableUsdc: microToUsd(totalClaimableMicro),
     totalPaidUsdc: microToUsd(totalPaidMicro),
+    prize,
   };
 
   return payload;
@@ -846,14 +923,18 @@ type ParsedClaimMessage = {
   address: string;
   campaign: string;
   tier: number;
+  rank: number | null;
   timestamp: string;
   nonce: string;
   domain: string;
 };
 
-function parseClaimMessage(message: string): ParsedClaimMessage {
+function parseClaimMessage(
+  message: string,
+  expectedStatement: string = CLAIM_STATEMENT
+): ParsedClaimMessage {
   const lines = message.split("\n").map((line) => line.trim());
-  if (lines[0] !== CLAIM_STATEMENT) {
+  if (lines[0] !== expectedStatement) {
     throw new SweepCampaignError("Invalid claim message.", 401);
   }
 
@@ -867,15 +948,19 @@ function parseClaimMessage(message: string): ParsedClaimMessage {
   const address = fields.get("address") || "";
   const campaign = fields.get("campaign") || "";
   const tier = Number.parseInt(fields.get("tier") || "", 10);
+  const rawRank = fields.get("rank");
+  const parsedRank = rawRank === undefined ? NaN : Number.parseInt(rawRank, 10);
+  const rank = Number.isFinite(parsedRank) ? parsedRank : null;
   const timestamp = fields.get("timestamp") || "";
   const nonce = fields.get("nonce") || "";
   const domain = fields.get("domain") || "";
 
-  if (!isAddress(address) || !campaign || !Number.isFinite(tier) || !timestamp || !nonce || !domain) {
+  // Prize messages carry Rank rather than Tier, so tier may be NaN here.
+  if (!isAddress(address) || !campaign || !timestamp || !nonce || !domain) {
     throw new SweepCampaignError("Malformed claim message.", 401);
   }
 
-  return { address, campaign, tier, timestamp, nonce, domain };
+  return { address, campaign, tier, rank, timestamp, nonce, domain };
 }
 
 async function claimTier(input: {
@@ -942,6 +1027,9 @@ async function claimTier(input: {
     throw new SweepCampaignError("The claim window for this campaign has closed.", 400);
   }
 
+  if (!Number.isFinite(parsed.tier)) {
+    throw new SweepCampaignError("Claim message is missing a valid tier.", 401);
+  }
   const tiers = parseTierConfig(campaign.tier_config);
   const tierConfig = tiers.find((tier) => tier.tier === parsed.tier);
   if (!tierConfig) {
@@ -1044,11 +1132,213 @@ async function claimTier(input: {
   };
 }
 
+
+/**
+ * Release a leaderboard prize to the wallet that won it.
+ *
+ * SECURITY MODEL. This endpoint can only RELEASE an entitlement that
+ * finalizeCampaign already computed from the leaderboard RPC. It can never
+ * create one. Concretely:
+ *   1. No row means not a winner, so 403. A wallet outside the top 50 has
+ *      nothing to claim and no request shape can conjure a row into being.
+ *   2. Amount and recipient are read from the stored row, never from the
+ *      request, so a claimer cannot inflate or redirect their prize.
+ *   3. The signer must BE the winning wallet, so knowing another wallet
+ *      placed on the board is useless without its key.
+ *   4. Release is a conditional UPDATE on status = awaiting_claim, so a
+ *      double submit cannot pay twice even under a race.
+ *   5. Everything stays shut until the operator opens the window.
+ */
+async function claimPrize(input: {
+  address?: string;
+  message?: string;
+  signature?: string;
+  requestIp: string;
+}) {
+  if (!input.address || !input.message || !input.signature) {
+    throw new SweepCampaignError("address, message, and signature are required", 400);
+  }
+  if (!isAddress(input.address)) {
+    throw new SweepCampaignError("Invalid address", 400);
+  }
+  const normalized = normalizeAddress(input.address);
+  const parsed = parseClaimMessage(input.message, PRIZE_CLAIM_STATEMENT);
+
+  if (normalizeAddress(parsed.address) !== normalized) {
+    throw new SweepCampaignError("Claim address mismatch.", 401);
+  }
+  if (!isAllowedAppDomain(parsed.domain)) {
+    throw new SweepCampaignError("Unexpected claim domain.", 401);
+  }
+  if (parsed.nonce.length < 8 || parsed.nonce.length > 128) {
+    throw new SweepCampaignError("Invalid claim nonce.", 401);
+  }
+
+  const timestampMs = Date.parse(parsed.timestamp);
+  const now = Date.now();
+  if (!Number.isFinite(timestampMs)) {
+    throw new SweepCampaignError("Invalid claim timestamp.", 401);
+  }
+  if (now - timestampMs > CLAIM_SIGNATURE_TTL_MS) {
+    throw new SweepCampaignError("Expired claim signature.", 401);
+  }
+  if (timestampMs - now > CLAIM_FUTURE_SKEW_MS) {
+    throw new SweepCampaignError("Invalid claim timestamp.", 401);
+  }
+
+  const rateLimit = runtimeCache.consumeRateLimit(
+    `sweep-campaign:prize:rate:${normalized}:${input.requestIp}`,
+    CLAIM_RATE_LIMIT,
+    CLAIM_RATE_WINDOW_MS
+  );
+  if (!rateLimit.allowed) {
+    throw new SweepCampaignError("Too many claim attempts. Please wait.", 429);
+  }
+
+  const campaign = await getCampaign();
+  if (!campaign || parsed.campaign !== campaign.slug) {
+    throw new SweepCampaignError("Campaign not found.", 404);
+  }
+  if (!campaign.finalized_at) {
+    throw new SweepCampaignError("Final standings are not published yet.", 400);
+  }
+  if (!arePrizeClaimsOpen(campaign)) {
+    throw new SweepCampaignError("Prize claims are not open yet.", 400);
+  }
+  if (!arePayoutsAvailable()) {
+    throw new SweepCampaignError(
+      "Prize claims are opening again shortly. Your prize is saved, please try again soon.",
+      503
+    );
+  }
+
+  const signatureHash = createHash("sha256")
+    .update(`${input.message}|${input.signature.toLowerCase()}`)
+    .digest("hex");
+  if (runtimeCache.get(`sweep-campaign:prize:replay:${signatureHash}`)) {
+    throw new SweepCampaignError("Claim signature was already used.", 401);
+  }
+
+  const valid = await publicClient.verifyMessage({
+    address: input.address as `0x${string}`,
+    message: input.message,
+    signature: input.signature as Hex,
+  });
+  if (!valid) {
+    throw new SweepCampaignError("Invalid claim signature.", 401);
+  }
+  runtimeCache.set(`sweep-campaign:prize:replay:${signatureHash}`, true, CLAIM_SIGNATURE_TTL_MS);
+
+  // Deliberately NOT getOrCreate: a wallet with no account cannot be a winner,
+  // and we must not create rows for arbitrary claimers.
+  const userId = await resolveExistingUserId(normalized);
+  if (userId === null) {
+    throw new SweepCampaignError("This wallet is not on the final leaderboard.", 403);
+  }
+
+  const { data: claimData, error: claimError } = await postgresDb
+    .from("sweep_campaign_claims")
+    .select("*")
+    .eq("campaign_id", campaign.id)
+    .eq("user_id", userId)
+    .eq("kind", "prize")
+    .maybeSingle();
+  if (claimError) {
+    throw new Error(`Load prize claim: ${claimError.message}`);
+  }
+
+  const claim = (claimData as ClaimRow | null) ?? null;
+  if (!claim) {
+    throw new SweepCampaignError("This wallet is not on the final leaderboard.", 403);
+  }
+  if (normalizeAddress(claim.recipient_address) !== normalized) {
+    throw new SweepCampaignError(
+      "This prize belongs to a different wallet. Connect the wallet that placed on the leaderboard.",
+      403
+    );
+  }
+  if (claim.status !== "awaiting_claim") {
+    throw new SweepCampaignError("This prize has already been claimed.", 409);
+  }
+  // The signature must name the rank it is releasing.
+  if (parsed.rank === null || parsed.rank !== Number(claim.tier)) {
+    throw new SweepCampaignError("Claim rank mismatch.", 401);
+  }
+
+  // Conditional release: only one request can win this transition.
+  const released = await dbQuery<{ id: number; amount_usdc_micro: string }>(
+    `
+      UPDATE sweep_campaign_claims
+      SET status = 'pending_payout',
+          approved_at = NOW(),
+          claim_signature_hash = $2,
+          updated_at = NOW()
+      WHERE id = $1 AND status = 'awaiting_claim'
+      RETURNING id, amount_usdc_micro
+    `,
+    [claim.id, signatureHash]
+  );
+  if (!released.rows[0]) {
+    throw new SweepCampaignError("This prize has already been claimed.", 409);
+  }
+
+  void processPayouts().catch(() => null);
+
+  return {
+    success: true as const,
+    claim: {
+      rank: Number(claim.tier),
+      amountUsdc: microToUsd(toBigInt(released.rows[0].amount_usdc_micro)),
+      status: "pending_payout",
+    },
+  };
+}
+
+/** Admin gate: opens prize claiming at a chosen time. */
+async function openPrizeClaims(input: { openAt?: string | null }) {
+  const campaign = await getCampaign();
+  if (!campaign) {
+    throw new SweepCampaignError("Campaign not found.", 404);
+  }
+  // Scheduling ahead of finalize is fine: arePrizeClaimsOpen still requires
+  // finalized_at, so nothing becomes claimable early.
+  let openAtIso: string;
+  if (input.openAt) {
+    const parsedOpen = Date.parse(input.openAt);
+    if (!Number.isFinite(parsedOpen)) {
+      throw new SweepCampaignError("openAt must be an ISO timestamp.", 400);
+    }
+    openAtIso = new Date(parsedOpen).toISOString();
+  } else {
+    openAtIso = new Date().toISOString();
+  }
+
+  // A window that opens after everything shuts can never be used.
+  if (Date.parse(openAtIso) >= getClaimsCloseAt(campaign)) {
+    throw new SweepCampaignError(
+      "Prize claims would open after the campaign closes. Move claims_close_at first.",
+      400
+    );
+  }
+
+  const { error } = await postgresDb
+    .from("sweep_campaigns")
+    .update({ prize_claims_open_at: openAtIso })
+    .eq("id", campaign.id);
+  if (error) {
+    throw new Error(`Open prize claims: ${error.message}`);
+  }
+
+  runtimeCache.invalidate(`sweep-campaign:config:${campaign.slug}`);
+  return { success: true as const, prizeClaimsOpenAt: openAtIso };
+}
+
 // ── Leaderboard ─────────────────────────────────────────────────────────────
 
 async function getLeaderboard(input: { page?: number; pageSize?: number; viewerAddress?: string | null }) {
   const campaign = await getCampaign();
-  if (!campaign) {
+  // Same teardown rule as the status endpoint: once closed there is no board.
+  if (!campaign || getCampaignPhase(campaign) === "closed") {
     return { success: true as const, active: false as const, entries: [], viewer: null };
   }
 
@@ -1622,7 +1912,7 @@ async function approveClaims(input: { claimIds?: number[] }) {
     `
       UPDATE sweep_campaign_claims
       SET status = 'pending_payout', approved_at = NOW(), updated_at = NOW()
-      WHERE id = ANY($1) AND status = 'pending_approval'
+      WHERE id = ANY($1) AND status IN ('pending_approval', 'awaiting_claim')
       RETURNING id
     `,
     [ids]
@@ -1741,7 +2031,7 @@ async function settleClaimsManually(input: {
  * claims (all pending_approval — a human approves before money moves) and
  * awards PP prizes. Guarded by finalized_at so it can only ever run once.
  */
-async function finalizeCampaign() {
+async function finalizeCampaign(input?: { force?: boolean }) {
   const campaign = await getCampaign();
   if (!campaign) {
     throw new SweepCampaignError("Campaign not found.", 404);
@@ -1750,18 +2040,31 @@ async function finalizeCampaign() {
     throw new SweepCampaignError("Campaign has not ended yet.", 400);
   }
 
-  const guard = await dbQuery<{ id: number }>(
-    `
-      UPDATE sweep_campaigns
-      SET finalized_at = NOW()
-      WHERE id = $1 AND finalized_at IS NULL
-      RETURNING id
-    `,
+  // Sweeps from the closing minutes can still be mid-verification. Snapshotting
+  // now would freeze a leaderboard that is about to change, so refuse until it
+  // settles. `force` exists for a credit that can never resolve.
+  const stillVerifying = await dbQuery<{ n: string }>(
+    `SELECT COUNT(*) AS n FROM sweep_campaign_credits
+     WHERE campaign_id = $1 AND status = 'pending'`,
     [campaign.id]
   );
-  if (!guard.rows[0]) {
-    throw new SweepCampaignError("Campaign was already finalized.", 409);
+  const pendingCount = Number(stillVerifying.rows[0]?.n || 0);
+  if (pendingCount > 0 && !input?.force) {
+    throw new SweepCampaignError(
+      `${pendingCount} sweep(s) are still being verified. Wait for them to settle, then finalize again (or pass force: true to snapshot anyway).`,
+      409
+    );
   }
+
+  // Resumable on purpose. finalize creates 50 rows in a loop; if the process
+  // dies partway, the old "already finalized" guard would refuse to run again
+  // and permanently strand every winner who had no row yet. Row creation is
+  // idempotent (see below), so re-running only fills the gaps. The timestamp is
+  // preserved with COALESCE so the original finalize time is never rewritten.
+  await dbQuery(
+    `UPDATE sweep_campaigns SET finalized_at = COALESCE(finalized_at, NOW()) WHERE id = $1`,
+    [campaign.id]
+  );
 
   const { data, error } = await postgresDb.rpc("get_sweep_campaign_leaderboard_page", {
     p_campaign_id: campaign.id,
@@ -1787,8 +2090,12 @@ async function finalizeCampaign() {
     const prize = findPrizeForRank(prizes, rank);
     if (!prize) continue;
 
+    // The prize row doubles as the idempotency marker. ON CONFLICT DO NOTHING
+    // returns zero rows when the row already existed, which is precisely how we
+    // know this rank was handled by an earlier pass.
+    let isNewWinnerRow = false;
     if (prize.prizeUsdcMicro > 0) {
-      const { error: insertError } = await postgresDb
+      const { data: inserted, error: insertError } = await postgresDb
         .from("sweep_campaign_claims")
         .upsert(
           {
@@ -1798,16 +2105,23 @@ async function finalizeCampaign() {
             tier: rank,
             amount_usdc_micro: String(prize.prizeUsdcMicro),
             recipient_address: normalizeAddress(row.wallet_address),
-            status: "pending_approval",
+            // The winner must claim it. Nothing moves until they sign.
+            status: "awaiting_claim",
           },
           { onConflict: "campaign_id,user_id,kind,tier", ignoreDuplicates: true }
-        );
+        )
+        .select("id");
       if (insertError) {
         console.error(`[sweep-campaign] prize claim for rank ${rank} failed:`, insertError.message);
+        continue;
       }
+      isNewWinnerRow = Array.isArray(inserted) && inserted.length > 0;
     }
 
-    if (prize.prizePp > 0) {
+    // Points have no idempotency key of their own, so they are awarded ONLY on
+    // the pass that actually created the row. Without this a resumed finalize
+    // would hand out the entire PP pool a second time.
+    if (prize.prizePp > 0 && isNewWinnerRow) {
       try {
         await pointsEngine.awardCustomPoints(row.wallet_address, prize.prizePp, "sweep_campaign_prize", {
           campaign: campaign.slug,
@@ -1860,6 +2174,8 @@ export const sweepCampaignService = {
   enqueueCandidate,
   getStatusForAddress,
   claimTier,
+  claimPrize,
+  openPrizeClaims,
   getLeaderboard,
   listClaims,
   listCredits,

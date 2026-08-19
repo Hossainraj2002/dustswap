@@ -111,6 +111,26 @@ sweepCampaignRoutes.post("/claim", async (c) => {
   }
 });
 
+sweepCampaignRoutes.post("/claim-prize", async (c) => {
+  try {
+    const body = await c.req.json<{
+      address?: string;
+      message?: string;
+      signature?: string;
+    }>();
+
+    const data = await sweepCampaignService.claimPrize({
+      address: body.address,
+      message: body.message,
+      signature: body.signature,
+      requestIp: getRequestIp(c),
+    });
+    return c.json(data);
+  } catch (error) {
+    const payload = getErrorPayload(error);
+    return c.json(payload.body, payload.status as ErrorStatus);
+  }
+});
 // ── Admin ───────────────────────────────────────────────────────────────────
 
 sweepCampaignRoutes.get("/admin/claims", async (c) => {
@@ -195,7 +215,8 @@ sweepCampaignRoutes.post("/admin/finalize", async (c) => {
   if (unauthorized) return unauthorized;
 
   try {
-    const data = await sweepCampaignService.finalizeCampaign();
+    const body = await c.req.json<{ force?: boolean }>().catch(() => ({}));
+    const data = await sweepCampaignService.finalizeCampaign(body);
     return c.json(data);
   } catch (error) {
     const payload = getErrorPayload(error);
@@ -225,6 +246,21 @@ sweepCampaignRoutes.post("/admin/payouts/resume", async (c) => {
   sweepCampaignService.resumePayouts();
   void sweepCampaignService.processPayouts().catch(() => null);
   return c.json({ success: true, payout: sweepCampaignService.getPayoutState() });
+});
+
+
+sweepCampaignRoutes.post("/admin/prizes/open", async (c) => {
+  const unauthorized = assertAdmin(c);
+  if (unauthorized) return unauthorized;
+
+  try {
+    const body = await c.req.json<{ openAt?: string | null }>().catch(() => ({}));
+    const data = await sweepCampaignService.openPrizeClaims(body);
+    return c.json(data);
+  } catch (error) {
+    const payload = getErrorPayload(error);
+    return c.json(payload.body, payload.status as ErrorStatus);
+  }
 });
 
 export { sweepCampaignRoutes };
