@@ -26,3 +26,12 @@ ALTER TABLE sweep_campaign_claims
 CREATE INDEX IF NOT EXISTS idx_scclaims_prize_awaiting
   ON sweep_campaign_claims (campaign_id, user_id)
   WHERE kind = 'prize' AND status = 'awaiting_claim';
+
+-- A wallet can win at most ONE leaderboard prize per campaign. The table's
+-- natural key includes `tier` (which holds the RANK for prize rows), so a
+-- reshuffle between a finalize and a resumed finalize could otherwise insert
+-- the same winner twice at two different ranks and double-pay them. It would
+-- also break the claim lookup, which expects at most one row per winner.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_scclaims_one_prize_per_user
+  ON sweep_campaign_claims (campaign_id, user_id)
+  WHERE kind = 'prize';
