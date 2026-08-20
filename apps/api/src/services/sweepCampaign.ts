@@ -2123,10 +2123,23 @@ async function finalizeCampaign(input?: { force?: boolean }) {
     // would hand out the entire PP pool a second time.
     if (prize.prizePp > 0 && isNewWinnerRow) {
       try {
-        await pointsEngine.awardCustomPoints(row.wallet_address, prize.prizePp, "sweep_campaign_prize", {
-          campaign: campaign.slug,
-          rank,
-          volumeUsd: microToUsd(toBigInt(row.volume_usd_micro)),
+        // MUST use the one-time campaign path, not awardCustomPoints.
+        // awardCustomPoints routes through addPoints with default options,
+        // which applies the user's streak multiplier (up to 4x) AND pays
+        // referral commission to their referrer. An advertised prize has to
+        // land at exactly the advertised number, and a multiplier would also
+        // scramble the ranking: a rank-2 winner on a long streak would end up
+        // with more PP than rank 1. This path disables both and carries its
+        // own per-action idempotency on top of the row gate above.
+        await pointsEngine.awardOneTimeCampaignPoints({
+          address: row.wallet_address,
+          points: prize.prizePp,
+          action: "sweep_campaign_prize",
+          metadata: {
+            campaign: campaign.slug,
+            rank,
+            volumeUsd: microToUsd(toBigInt(row.volume_usd_micro)),
+          },
         });
       } catch (ppError) {
         console.error(`[sweep-campaign] PP prize for rank ${rank} failed:`, ppError);
