@@ -26,6 +26,7 @@ import { profileCompletionRoutes } from "./routes/profileCompletion";
 import { profileSettingsRoutes } from "./routes/profileSettings";
 import { questsRoutes } from "./routes/quests";
 import { monitorRoutes } from "./routes/monitor";
+import { notificationsRoutes } from "./routes/notifications";
 import { swapsRoutes } from "./routes/swaps";
 import { swapownRoutes } from "./routes/swapown";
 import { dustsweepRoutes } from "./routes/dustsweep";
@@ -34,6 +35,7 @@ import { walletLinkRoutes } from "./routes/walletLink";
 import { pointsEngine } from "./services/pointsEngine";
 import { sweepCampaignService } from "./services/sweepCampaign";
 import { repostQuestRewardScheduler } from "./services/repostQuestRewards";
+import { notificationScheduler } from "./services/notificationScheduler";
 import tokens from "./routes/tokens";
 import { getAllowedAppOrigins, isAllowedAppOrigin } from "./config/appOrigins";
 import { getDatabaseDiagnostics } from "./services/postgres";
@@ -139,10 +141,12 @@ app.route("/api/swapown", swapownRoutes);
 app.route("/api/dustsweep/campaign", sweepCampaignRoutes);
 app.route("/api/dustsweep", dustsweepRoutes);
 app.route("/api/wallet-link", walletLinkRoutes);
+app.route("/api/notifications", notificationsRoutes);
 
 pointsEngine.startReferralLeaderboardSnapshotScheduler();
 repostQuestRewardScheduler.start();
 sweepCampaignService.startSweepCampaignSchedulers();
+notificationScheduler.start();
 runtimeCache.startEvictionLoop();
 
 app.get("/health/db", async (c) => {

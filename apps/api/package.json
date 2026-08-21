@@ -22,7 +22,8 @@
     "sync-dustsweep-whitelist:pool-events": "ts-node src/scripts/syncDustSweepWhitelistPoolEvents.ts",
     "reverify-x-follow-quests": "ts-node src/scripts/reverifyXFollowQuests.ts",
     "award-pending-repost-quests": "ts-node src/scripts/awardPendingRepostQuests.ts",
-    "migrate": "ts-node src/scripts/runMigration.ts"
+    "migrate": "ts-node src/scripts/runMigration.ts",
+    "notifications": "ts-node src/scripts/baseNotifications.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1037.0",

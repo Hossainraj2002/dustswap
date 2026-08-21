@@ -22,6 +22,7 @@ import {
   SpinIcon,
   SwapIcon,
 } from '@/components/NavIcons';
+import { BaseAppPinPrompt } from '@/components/notifications/BaseAppPinPrompt';
 import { ReferralOnboardingModal } from '@/components/referrals/ReferralOnboardingModal';
 import { ThemeLongLogo } from '@/components/ThemeLongLogo';
 import { useTheme } from '@/components/theme/ThemeProvider';
@@ -377,6 +378,10 @@ export function AppShell({ children }: AppShellProps) {
           onDismiss={handleReferralDismiss}
         />
       )}
+
+      {/* Never stacked on the referral modal, and never on a shell-less page.
+          The prompt gates itself to Base App; these are only about timing. */}
+      {!showReferralModal && !isShelllessPage && <BaseAppPinPrompt />}
     </div>
   );
 }

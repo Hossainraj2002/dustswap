@@ -84,6 +84,9 @@ skills-lock.json
 *.tsbuildinfo
 
 # One-off scratch, probe and codemod scripts. Useful locally, not production code.
+# .tmp-* covers ad-hoc monitors and probes: they hardcode wallet addresses and
+# absolute machine paths, so they must never reach a public repo.
+.tmp-*
 scratch.*
 test_date.js
 test-wagmi-config.ts

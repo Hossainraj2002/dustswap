@@ -35,7 +35,7 @@ function isEnabledFlag(value: string | undefined) {
   return ["1", "true", "yes", "on"].includes(String(value || "").trim().toLowerCase());
 }
 
-const CFG = {
+export const CFG = {
   CHECK_IN: 100,
   SWAP: 50,
   SWEEP_PER_TOKEN: 50,

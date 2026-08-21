@@ -13,7 +13,30 @@ if (!databaseUrl) {
   process.exit(1);
 }
 
-const sqlPath = path.join(__dirname, "../../sql/dustsweep_schema.sql");
+// Optional first argument picks a migration file: either a bare name inside
+// apps/api/sql (e.g. "base_notifications") or a path. Defaults to the full
+// schema so existing usage is unchanged.
+const requested = process.argv[2];
+
+function resolveSqlPath(input?: string) {
+  if (!input) {
+    return path.join(__dirname, "../../sql/dustsweep_schema.sql");
+  }
+
+  if (fs.existsSync(input)) {
+    return path.resolve(input);
+  }
+
+  const withExtension = input.endsWith(".sql") ? input : `${input}.sql`;
+  return path.join(__dirname, "../../sql", withExtension);
+}
+
+const sqlPath = resolveSqlPath(requested);
+
+if (!fs.existsSync(sqlPath)) {
+  console.error(`❌ Migration file not found: ${sqlPath}`);
+  process.exit(1);
+}
 
 async function runMigration() {
   const client = new Client({
@@ -42,6 +65,7 @@ async function runMigration() {
   } catch (err) {
     console.error("❌ Migration failed:");
     console.error(err);
+    process.exitCode = 1;
   } finally {
     await client.end();
   }
