@@ -54,10 +54,21 @@ function isEnabled(value: string, fallback: boolean) {
 }
 
 function boundedInt(name: string, fallback: number, min: number, max: number) {
-  const value = Number(readEnv(name));
+  // readEnv returns "" for an unset variable, and Number("") is 0, not NaN.
+  // Without this guard every default silently clamped to its minimum: the
+  // watchdog came up polling every 15s with a 2s timeout and alerting after a
+  // single failure, which would have produced false alarms on any request that
+  // took longer than two seconds.
+  const raw = readEnv(name);
+  if (!raw) {
+    return fallback;
+  }
+
+  const value = Number(raw);
   if (!Number.isFinite(value)) {
     return fallback;
   }
+
   return Math.min(max, Math.max(min, Math.floor(value)));
 }
 
