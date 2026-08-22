@@ -27,6 +27,7 @@ import {
   type AntiScamFilterConfig,
 } from "./antiScamLinkFilter";
 import { loadBoosterOgConfig, startBoosterOgRoleWatcher } from "./boosterOgRole";
+import { startApiWatchdog } from "./apiWatchdog";
 
 const DEBUG_LOGGING_ENABLED = /^(1|true|yes|on)$/i.test(
   process.env.EARLY_CONTRIBUTOR_BOT_DEBUG?.trim() || ""
@@ -310,6 +311,14 @@ async function main() {
         logWarn(
           `Bot cannot assign role ${runtimeState.role.id}. Move the bot role above "${runtimeState.role.name}" in Discord.`
         );
+      }
+
+      // Started last and deliberately outside the try/exit path above: a
+      // watchdog failing to start must never take the bot down with it.
+      try {
+        startApiWatchdog(readyClient);
+      } catch (error) {
+        console.error("[Early Contributor Bot] API watchdog failed to start:", error);
       }
     } catch (error) {
       console.error("[Early Contributor Bot] Startup failed:", error);

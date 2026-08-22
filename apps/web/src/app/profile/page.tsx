@@ -1842,9 +1842,18 @@ function ProfilePageContent() {
           </div>
 
           <div className="mt-3 grid grid-cols-2 gap-2 xl:grid-cols-4">
+            {/*
+              These fall back to "--" rather than 0 when the data never
+              arrived. During the 2026-08-22 API outage they rendered "0 PP"
+              and "$0", and users with six-figure balances opened support
+              tickets convinced their points had been wiped. Nothing was ever
+              lost: the request failed and the placeholder was showing through.
+              A real zero still reads as 0, because the object is present.
+              Rank already did this correctly, which is why it showed "#--".
+            */}
             <MiniMetric
               label="Total PP"
-              value={`${formatNumber(balance?.totalPoints || 0)} PP`}
+              value={balance ? `${formatNumber(balance.totalPoints || 0)} PP` : "--"}
               accent="sky"
               isLoading={isLoading}
             />
@@ -1856,16 +1865,20 @@ function ProfilePageContent() {
             />
             <MiniMetric
               label="All-Time Volume"
-              value={`$${(stats?.swapVolume || 0).toLocaleString(undefined, {
-                minimumFractionDigits: 0,
-                maximumFractionDigits: 0,
-              })}`}
+              value={
+                stats
+                  ? `$${(stats.swapVolume || 0).toLocaleString(undefined, {
+                      minimumFractionDigits: 0,
+                      maximumFractionDigits: 0,
+                    })}`
+                  : "--"
+              }
               accent="sky"
               isLoading={isLoading}
             />
             <MiniMetric
               label="Total Referrals"
-              value={String(referral?.friendsJoined || 0)}
+              value={referral ? String(referral.friendsJoined || 0) : "--"}
               accent="emerald"
               isLoading={isLoading}
             />

@@ -149,6 +149,24 @@ sweepCampaignService.startSweepCampaignSchedulers();
 notificationScheduler.start();
 runtimeCache.startEvictionLoop();
 
+/**
+ * Liveness only. Deliberately touches nothing: no database, no cache, no RPC.
+ *
+ * This is what Railway's healthcheck points at. Pointing a deploy gate at
+ * /health/db instead would mean a transient database blip fails the deploy and
+ * rolls back a release that was never broken. Database health is a separate
+ * question, answered by /health/db and watched by the ops watchdog.
+ */
+app.get("/health", (c) => {
+  c.header("Cache-Control", "no-store, max-age=0");
+  return c.json({
+    status: "ok",
+    service: "dustsweep-api",
+    timestamp: new Date().toISOString(),
+    uptimeSeconds: Math.round(process.uptime()),
+  });
+});
+
 app.get("/health/db", async (c) => {
   const startedAt = Date.now();
   try {
