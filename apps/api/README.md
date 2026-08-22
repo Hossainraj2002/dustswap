@@ -431,3 +431,98 @@ inside a rolled-back transaction, rather than by reading the code:
 | `resolved` ordered by `is_primary` only | After a merge the Base App wallet is often the linked secondary; the segment kept addressing an unreachable EOA and ignoring the wallet Base had already confirmed. |
 | Pin prompt advertised "Dust alerts" | `dust_detected` ships disabled, so the sheet promised a notification the backend never sends. Benefits are now derived server-side from the campaigns that are actually on. |
 | Pin sheet action buttons rendered under the mobile nav | Measured at y=778-824 against a nav at y=774-844. Both buttons were unreachable. |
+
+## Operations: outage runbook
+
+### The 2026-08-22 incident
+
+Roughly three hours of degraded service, found through Discord support tickets
+rather than monitoring. Worth reading before changing any of the settings below.
+
+**Cause.** The pg pool was capped at `max: 10`. Every failing request died at
+exactly 10s, which is `connectionTimeoutMillis`, not a slow query. Postgres
+itself was idle throughout: 9 of 100 connections, no locks, no long-running
+statements, only routine checkpoints. The database had 90% of its capacity
+free and the app was refusing to use it. Ten slots could not absorb the morning
+check-in rush, so requests queued for a connection and timed out.
+
+**What it was not.** It was not the notification system, which deployed 12h43m
+earlier and ran clean through the evening peak. The 06:00 audience sync was a
+victim, failing on the same pool timeout 27 minutes before the first
+user-facing error. `/api/notifications/pin-status` returned 200 in 150-300ms
+throughout, because it is the one endpoint that never touches the database.
+
+**Why users panicked.** `Total PP`, `All-Time Volume` and `Total Referrals`
+defaulted to `0` when their data never loaded, so a failed request rendered as
+"0 PP" and "$0". Users with six-figure balances opened tickets believing their
+points were gone. No data was ever lost or at risk. Those tiles now fall back
+to `--`, which is what `Rank` already did correctly.
+
+### Diagnosing a repeat
+
+The signature to look for is **every failing request taking the same duration**.
+That is a pool timeout, not a slow query. Check in this order:
+
+1. `GET /health` — liveness. If this fails the process is down, not the database.
+2. `GET /health/db` — the real signal. Fails while `/health` passes means the
+   process is up but cannot reach Postgres.
+3. Connections vs capacity. If `used` is far below `max_conn` while the app is
+   timing out, the bottleneck is the pool, not the database:
+
+```sql
+SELECT (SELECT setting::int FROM pg_settings WHERE name='max_connections') AS max_conn,
+       (SELECT COUNT(*)::int FROM pg_stat_activity) AS used;
+
+SELECT pid, state, now() - query_start AS runtime, left(query, 120)
+FROM pg_stat_activity
+WHERE datname = current_database() AND state <> 'idle'
+ORDER BY query_start ASC LIMIT 10;
+```
+
+4. If the pool is the bottleneck, raise `DB_POOL_MAX` in Railway. It takes
+   effect on restart and needs no build.
+
+### Settings that must stay this way
+
+| Setting | Value | Why |
+| --- | --- | --- |
+| `DB_POOL_MAX` | `30` | 10 caused the outage. One replica against a 100-connection Postgres, so 30 leaves headroom for admin sessions and a second replica. |
+| `DB_POOL_CONNECT_TIMEOUT_MS` | `10000` | How long a request waits for a free connection before giving up. |
+| Railway `sleepApplication` | **off** | Was on. An overnight idle plus a morning burst meant a cold start and a rebuilding pool hitting peak traffic together. |
+| Railway `healthcheckPath` | `/health` | There was none, so Railway treated a database-starved instance as healthy. Deliberately **not** `/health/db`: a transient database blip must not fail an otherwise good deploy. |
+| Railway `restartPolicy` | `ON_FAILURE`, 10 retries | Recover from a crash without an infinite loop. |
+
+### The watchdog
+
+`src/bots/apiWatchdog.ts`, running inside the **Discord bot** process, not the
+API. That placement is the whole point: during the outage the API was alive and
+answering `/health`, so anything self-hosted would have reported all clear. The
+watchdog polls the public URL from a separate process, exactly as a user would.
+
+- Polls `/health/db` every 60s, alerts after 3 consecutive failures
+- Posts to `WATCHDOG_CHANNEL_ID`, falling back to `MOD_LOG_CHANNEL_ID`
+- Alerts on state change only, so a flapping endpoint cannot spam the channel
+  into being muted
+- Reports outage duration on recovery
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `WATCHDOG_ENABLED` | on if a channel is configured | Master switch. |
+| `WATCHDOG_CHANNEL_ID` | `MOD_LOG_CHANNEL_ID` | Where alerts land. |
+| `WATCHDOG_API_BASE` | production URL | Target to poll. |
+| `WATCHDOG_INTERVAL_MS` | `60000` | Poll interval, min 15000. |
+| `WATCHDOG_FAIL_THRESHOLD` | `3` | Consecutive failures before alerting. |
+| `WATCHDOG_TIMEOUT_MS` | `25000` | Per-request timeout. |
+
+One trap worth remembering, because it shipped and had to be fixed: helpers that
+read env vars must guard the **empty string** before `Number()`. `Number("")` is
+`0`, not `NaN`, so a `Number.isFinite` check passes and every default silently
+clamps to its minimum. The first watchdog build came up polling every 15s with a
+2s timeout, alerting after a single failure, which would have produced false
+alarms during normal traffic and been muted before it ever caught a real outage.
+
+### Still worth doing
+
+- **A second replica.** 209k users on one instance in `us-west2`. Two replicas at
+  `DB_POOL_MAX=30` is 60 of 100 connections, still safe, and removes the single
+  point of failure.
