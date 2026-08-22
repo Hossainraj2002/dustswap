@@ -64,6 +64,14 @@ function shouldUseSsl(databaseUrl: string) {
   }
 }
 
+function boundedEnvInt(name: string, fallback: number, min: number, max: number) {
+  const value = Number(process.env[name]);
+  if (!Number.isFinite(value)) {
+    return fallback;
+  }
+  return Math.min(max, Math.max(min, Math.floor(value)));
+}
+
 export function getDbPool() {
   if (pool) {
     return pool;
@@ -74,11 +82,22 @@ export function getDbPool() {
     throw new Error("DATABASE_URL is required for PostgreSQL access");
   }
 
+  // Pool sizing.
+  //
+  // This was max: 10, which is what caused the 2026-08-22 outage. Every failing
+  // request died at exactly 10s, which is connectionTimeoutMillis, not a slow
+  // query: Postgres itself was idle throughout (9 of 100 connections, no locks,
+  // no long-running statements). Ten slots simply could not absorb the morning
+  // check-in rush, so requests queued for a connection and timed out.
+  //
+  // Postgres allows 100 and the service runs a single replica, so 30 leaves
+  // ample headroom for the psql/admin connections and for a second replica.
+  // Tune with DB_POOL_MAX rather than editing this file.
   const config: PoolConfig = {
     connectionString,
-    max: 10,
+    max: boundedEnvInt("DB_POOL_MAX", 30, 2, 80),
     idleTimeoutMillis: 20_000,
-    connectionTimeoutMillis: 10_000,
+    connectionTimeoutMillis: boundedEnvInt("DB_POOL_CONNECT_TIMEOUT_MS", 10_000, 1_000, 60_000),
   };
 
   if (shouldUseSsl(connectionString)) {
