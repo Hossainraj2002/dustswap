@@ -482,6 +482,23 @@ export const ROBINHOOD_DUSTSWEEP_V3_TARGETS: DustSweepV3Target[] = [
       "official QuoterV2 0x33e885eD… quoted WETH→USDG fee 100 at ~188.26 USDG / 0.1 WETH.",
   },
   {
+    // Uniswap V4 executes through the Universal Router with PERMIT2 as the spender (not self).
+    // NOT the canonical mainnet/Base UR address — those exist on 4663 but are unused decoys
+    // (21 and 17 txs). This is the production UR: 8.2M txs / 29.6M transfers, and the V4
+    // PoolManager it serves (0x8366a39C…) holds 56M transfers. Verified live 2026-08-13.
+    id: "uniswap-v4-universal-router",
+    name: "Uniswap Universal Router (V4)",
+    target: "0x8876789976dEcBfCbBbe364623C63652db8C0904",
+    spender: PERMIT2_ADDRESS,
+    spenderModel: "permit2",
+    calldataStyle: "uniswap_universal_router",
+    feeTiers: [100, 500, 3000, 10000],
+    enabled: true,
+    source:
+      "Verified live 2026-08-13: real UR by activity (8.2M txs) vs canonical-address decoys; " +
+      "V4Quoter 0x5c3db48cFd… (poolManager()==0x8366a39C…) quoted 0.1 WETH -> 246.51 USDG at fee 500.",
+  },
+  {
     id: "uniswap-v2-router",
     name: "Uniswap V2 Router02 (Robinhood)",
     target: "0x89e5DB8B5aA49aA85AC63f691524311AEB649eba",

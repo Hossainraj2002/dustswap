@@ -3833,6 +3833,8 @@ async function tryQuoteV4Single(
   amountIn: bigint,
   fee: number,
   tickSpacing: number,
+  quoter: Address = UNISWAP_V4_QUOTER_ADDRESS,
+  chainId: number = BASE_CHAIN_ID,
 ): Promise<bigint | null> {
   // V4 requires currency0 < currency1 (sorted numerically)
   const sorted = BigInt(tokenIn) < BigInt(tokenOut);
@@ -3860,7 +3862,7 @@ async function tryQuoteV4Single(
   });
 
   try {
-    const result = await callContract(UNISWAP_V4_QUOTER_ADDRESS, data);
+    const result = await callContract(quoter, data, undefined, chainId);
     if (!result || result === "0x") return null;
     const decoded = decodeFunctionResult({
       abi: V4_QUOTER_ABI,
@@ -3878,12 +3880,28 @@ async function getV4QuoteCandidates(
   tokenIn: Address,
   tokenOut: Address,
   amountIn: bigint,
+  quoter: Address = UNISWAP_V4_QUOTER_ADDRESS,
+  chainId: number = BASE_CHAIN_ID,
+  feeTiers?: readonly number[],
 ): Promise<QuoteCandidate[]> {
   const candidates: QuoteCandidate[] = [];
 
-  for (const { fee, tickSpacing } of V4_FEE_TICK_SPACING) {
+  // Restrict to the chain's configured tiers when provided; otherwise probe the V4 defaults.
+  const tiers = feeTiers
+    ? V4_FEE_TICK_SPACING.filter((t) => feeTiers.includes(t.fee))
+    : V4_FEE_TICK_SPACING;
+
+  for (const { fee, tickSpacing } of tiers) {
     try {
-      const amountOut = await tryQuoteV4Single(tokenIn, tokenOut, amountIn, fee, tickSpacing);
+      const amountOut = await tryQuoteV4Single(
+        tokenIn,
+        tokenOut,
+        amountIn,
+        fee,
+        tickSpacing,
+        quoter,
+        chainId,
+      );
       if (!amountOut) continue;
       // V4 uses DEX.UNISWAP_V4 = 1 — encode dexData with fee + tickSpacing
       candidates.push({
@@ -4176,6 +4194,19 @@ async function getNativeQuoteCandidates(
             weth: chain.weth,
             usdc: chain.usdc,
           }),
+        );
+      } else if (source.kind === "uniswap_v4" && source.quoter) {
+        // Uniswap V4: quoted off the chain's V4Quoter (PoolKey shape), executed through that
+        // chain's Universal Router with Permit2 as spender (see buildV2Route DEX.UNISWAP_V4).
+        tasks.push(
+          getV4QuoteCandidates(
+            tokenIn,
+            tokenOut,
+            amountIn,
+            source.quoter,
+            chain.chainId,
+            source.feeTiers,
+          ),
         );
       } else if (source.kind === "univ2") {
         // Native UniswapV2-style router (Ethereum: Uniswap V2, SushiSwap). Router embedded in
@@ -4879,6 +4910,12 @@ const ROBINHOOD_UNISWAP_V3_SWAP_ROUTER = (process.env.UNISWAP_V3_SWAP_ROUTER_ADD
 const ARBITRUM_UNISWAP_V3_SWAP_ROUTER = (process.env.UNISWAP_V3_SWAP_ROUTER_ADDRESS_42161 ||
   "0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45") as Address;
 
+/** The Universal Router that executes V4 routes on a chain (Base keeps the module constant). */
+function getV4UniversalRouterForChain(chain: SweepChainConfig): Address {
+  const v4 = chain.nativeSources?.find((source) => source.kind === "uniswap_v4");
+  return v4?.router ?? UNISWAP_V4_UNIVERSAL_ROUTER_ADDRESS;
+}
+
 function buildV2Route(
   route: DustSweepRoute,
   tokenOut: Address,
@@ -5018,7 +5055,9 @@ function buildV2Route(
     return {
       tokenIn: route.tokenIn,
       amountIn,
-      target: UNISWAP_V4_UNIVERSAL_ROUTER_ADDRESS,
+      // Universal Router per chain: Base keeps its historical constant; other chains use the
+      // UR declared in their nativeSources V4 entry (Robinhood's is NOT the canonical address).
+      target: getV4UniversalRouterForChain(chain),
       spender: PERMIT2_ADDRESS,
       value: 0n,
       data,

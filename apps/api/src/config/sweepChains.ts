@@ -34,6 +34,7 @@ export const NATIVE_TOKEN_SENTINEL =
 export type NativeSourceKind =
   | "uniswap_v3" // exactInput/exactInputSingle via QuoterV2
   | "pancake_v3" // same QuoterV2 quote shape, but routes build against the Pancake SmartRouter ABI
+  | "uniswap_v4" // V4Quoter.quoteExactInputSingle(PoolKey); executes via Universal Router + Permit2
   | "univ2"; // getAmountsOut via a UniswapV2Router02-compatible router
 
 export type NativeSourceSpec = {
@@ -441,6 +442,28 @@ function robinhoodConfig(): SweepChainConfig {
             : ("0x33e885eD0Ec9bF04EcfB19341582aADCb4c8A9E7" as Address),
         factory: "0x1f7d7550B1b028f7571E69A784071F0205FD2EfA" as Address,
         // Deepest WETH/USDG pool sits at fee 100 ($5.9M), then 500 ($2.4M), 3000 ($0.45M).
+        feeTiers: [100, 500, 3000, 10000],
+      },
+      {
+        // Uniswap V4 — the #2 venue on this chain (~$36M/24h). Found by ACTIVITY, not labels: the
+        // canonical V4 PoolManager has NO code here, and the canonical mainnet/Base Universal
+        // Router addresses DO exist but are unused decoys (21 and 17 txs). The real PoolManager
+        // 0x8366a39C… holds 56M transfers; the real Universal Router 0x8876789976… has 8.2M txs.
+        // Verified live 2026-08-13: this quoter answers quoteExactInputSingle for WETH/USDG at
+        // fee 500 / tickSpacing 10 (0.1 WETH -> 246.51 USDG) and its poolManager() == 0x8366a39C….
+        kind: "uniswap_v4",
+        dexName: "Uniswap V4",
+        router:
+          process.env.UNISWAP_V4_UNIVERSAL_ROUTER_ADDRESS_4663 &&
+          isAddress(process.env.UNISWAP_V4_UNIVERSAL_ROUTER_ADDRESS_4663)
+            ? (process.env.UNISWAP_V4_UNIVERSAL_ROUTER_ADDRESS_4663 as Address)
+            : ("0x8876789976dEcBfCbBbe364623C63652db8C0904" as Address),
+        quoter:
+          process.env.UNISWAP_V4_QUOTER_ADDRESS_4663 &&
+          isAddress(process.env.UNISWAP_V4_QUOTER_ADDRESS_4663)
+            ? (process.env.UNISWAP_V4_QUOTER_ADDRESS_4663 as Address)
+            : ("0x5c3db48cFd8352D845fac70009d714F0Ce1d7914" as Address),
+        factory: "0x8366a39CC670B4001A1121B8F6A443A643e40951" as Address, // PoolManager singleton
         feeTiers: [100, 500, 3000, 10000],
       },
       {
