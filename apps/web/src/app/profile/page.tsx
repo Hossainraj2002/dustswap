@@ -54,6 +54,13 @@ import {
   normalizeReferralCode,
   storePendingReferralCode,
 } from "@/lib/referrals";
+import {
+  clearPendingPayment,
+  isSettledPaymentError,
+  readPendingPayment,
+  rememberPendingPayment,
+  type PendingCheckInPayment,
+} from "@/lib/pendingCheckInPayment";
 import { BASE_CHAIN_ID, USDC_ADDRESS } from "@/lib/tokens";
 import { DATA_SUFFIX } from "@/lib/builderCode";
 import {
@@ -1034,7 +1041,13 @@ function ProfilePageContent() {
   }, [switchToBase]);
 
   const sendFeeTransaction = useCallback(
-    async (config: FeeConfig, asset: "eth" | "usdc") => {
+    async (
+      config: FeeConfig,
+      asset: "eth" | "usdc",
+      // Fires the instant a hash exists, before the receipt is awaited, so the caller can write
+      // the hash down while the money is already in flight.
+      onHash?: (hash: `0x${string}`) => void
+    ) => {
       if (!walletClient || !publicClient) {
         throw new Error("Wallet is not ready");
       }
@@ -1060,6 +1073,7 @@ function ProfilePageContent() {
         account?: { address?: `0x${string}` };
         request?: (args: { method: string; params?: unknown[] }) => Promise<unknown>;
       };
+      let sponsoredHash: `0x${string}` | undefined;
 
       if (isPaymasterEnabled() && supportsBaseAccountFeatures) {
         try {
@@ -1109,21 +1123,22 @@ function ProfilePageContent() {
             throwOnFailure: true,
             timeout: 120_000,
           });
-          const hash = status.receipts?.find((receipt) => isTxHash(receipt?.transactionHash))
+          sponsoredHash = status.receipts?.find((receipt) => isTxHash(receipt?.transactionHash))
             ?.transactionHash;
 
-          if (!hash) {
+          if (!sponsoredHash) {
             throw new Error("Sponsored transaction finished without a transaction hash");
           }
 
-          const receipt = await publicClient.waitForTransactionReceipt({ hash });
-          if (receipt.status !== "success") {
-            throw new Error("Transaction reverted");
-          }
-
-          return hash;
+          onHash?.(sponsoredHash);
         } catch (error) {
           if (isUserRejectedRequest(error)) {
+            throw error;
+          }
+
+          // Only fall back while nothing has been broadcast. Past that point the sponsored payment
+          // is already on-chain, and retrying through sendTransaction would charge the user twice.
+          if (sponsoredHash) {
             throw error;
           }
 
@@ -1131,12 +1146,18 @@ function ProfilePageContent() {
         }
       }
 
-      const hash = await walletClient.sendTransaction({
-        to: targetAddress,
-        data: txData,
-        dataSuffix: DATA_SUFFIX,
-        value: txValue,
-      } as any);
+      const hash =
+        sponsoredHash ??
+        (await walletClient.sendTransaction({
+          to: targetAddress,
+          data: txData,
+          dataSuffix: DATA_SUFFIX,
+          value: txValue,
+        } as any));
+
+      if (!sponsoredHash) {
+        onHash?.(hash);
+      }
 
       const receipt = await publicClient.waitForTransactionReceipt({ hash });
       if (receipt.status !== "success") {
@@ -1164,16 +1185,20 @@ function ProfilePageContent() {
   }, []);
 
   const sendCheckInPayment = useCallback(
-    async (config: FeeConfig) => {
+    async (config: FeeConfig, onHash?: (hash: `0x${string}`, asset: "eth" | "usdc") => void) => {
       if (usesBasePayForCheckIn) {
+        const hash = await sendBasePayTransaction(config);
+        onHash?.(hash, "usdc");
         return {
-          hash: await sendBasePayTransaction(config),
+          hash,
           asset: "usdc" as const,
         };
       }
 
       return {
-        hash: await sendFeeTransaction(config, preferredCheckInAsset),
+        hash: await sendFeeTransaction(config, preferredCheckInAsset, (hash) =>
+          onHash?.(hash, preferredCheckInAsset)
+        ),
         asset: preferredCheckInAsset,
       };
     },
@@ -1186,20 +1211,87 @@ function ProfilePageContent() {
   );
 
   const sendSavePayment = useCallback(
-    async (config: FeeConfig) => {
+    async (config: FeeConfig, onHash?: (hash: `0x${string}`, asset: "eth" | "usdc") => void) => {
       if (usesBasePayForSave) {
+        const hash = await sendBasePayTransaction(config);
+        onHash?.(hash, "usdc");
         return {
-          hash: await sendBasePayTransaction(config),
+          hash,
           asset: "usdc" as const,
         };
       }
 
       return {
-        hash: await sendFeeTransaction(config, preferredSaveAsset),
+        hash: await sendFeeTransaction(config, preferredSaveAsset, (hash) =>
+          onHash?.(hash, preferredSaveAsset)
+        ),
         asset: preferredSaveAsset,
       };
     },
     [preferredSaveAsset, sendBasePayTransaction, sendFeeTransaction, usesBasePayForSave]
+  );
+
+  // Claims a hash for exactly one redemption attempt per page load. A live payment flow can sit in
+  // waitForTransactionReceipt for half a minute, and any balance refresh during that wait re-runs
+  // the resume effect below, which would otherwise redeem the same hash a second time in parallel.
+  const redeemedPaymentRef = useRef<string | null>(null);
+
+  // Redemption is split out from the pay-then-tell flow so that a payment which was interrupted
+  // between the wallet and the API can be finished later through exactly the same code path.
+  const redeemSavePayment = useCallback(
+    async (payment: PendingCheckInPayment) => {
+      const result = await saveBrokenStreak({
+        address: payment.address,
+        txHash: payment.txHash,
+        asset: payment.asset,
+      });
+
+      if (!result.success) {
+        // Only a verdict the server will never revise retires the hash. Anything else (a stalled
+        // RPC, a database blip, a tx that is not mined yet) leaves it on disk to retry.
+        if (isSettledPaymentError(result.error)) {
+          clearPendingPayment("streak-save", payment.address);
+        }
+
+        throw new Error(result.error || "Failed to restore streak");
+      }
+
+      clearPendingPayment("streak-save", payment.address);
+      updateBalanceAndStats(result);
+      clearPointsSummaryCache(payment.address);
+      setCelebration({ kind: "save", id: Date.now() });
+      emitDataInvalidation(["leaderboard", "points"], "save-streak");
+
+      return result;
+    },
+    [updateBalanceAndStats]
+  );
+
+  const redeemCheckInPayment = useCallback(
+    async (payment: PendingCheckInPayment) => {
+      const result = await performDailyCheckIn({
+        address: payment.address,
+        txHash: payment.txHash,
+        asset: payment.asset,
+      });
+
+      if (!result.success) {
+        if (isSettledPaymentError(result.error)) {
+          clearPendingPayment("check-in", payment.address);
+        }
+
+        throw new Error(result.error || "Onchain check-in failed");
+      }
+
+      clearPendingPayment("check-in", payment.address);
+      updateBalanceAndStats(result);
+      clearPointsSummaryCache(payment.address);
+      setCelebration({ kind: "checkin", id: Date.now() });
+      emitDataInvalidation(["leaderboard", "points"], "check-in");
+
+      return result;
+    },
+    [updateBalanceAndStats]
   );
 
   const handleCheckIn = useCallback(async () => {
@@ -1220,19 +1312,31 @@ function ProfilePageContent() {
     setIsCheckingIn(true);
     setCheckInStage("wallet");
 
+    const normalizedAddress = address.toLowerCase();
+
     try {
-      const { asset, hash } = await sendCheckInPayment(balance.checkInConfig);
+      const { asset, hash } = await sendCheckInPayment(
+        balance.checkInConfig,
+        (txHash, paidAsset) => {
+          redeemedPaymentRef.current = `check-in:${txHash}`;
+          rememberPendingPayment({
+            kind: "check-in",
+            address: normalizedAddress,
+            txHash,
+            asset: paidAsset,
+            createdAt: Date.now(),
+          });
+        }
+      );
       setCheckInStage("verifying");
 
-      const result = await performDailyCheckIn({
-        address,
+      await redeemCheckInPayment({
+        kind: "check-in",
+        address: normalizedAddress,
         txHash: hash,
         asset,
+        createdAt: Date.now(),
       });
-
-      if (!result.success) {
-        throw new Error(result.error || "Onchain check-in failed");
-      }
 
       const baseSuccessMessage =
         balance.checkInConfig.usdTarget <= 0
@@ -1240,11 +1344,6 @@ function ProfilePageContent() {
           : asset === "usdc"
             ? `Onchain check-in complete with ${balance.checkInConfig.usdcAmount} USDC.`
             : `Onchain check-in complete with $${balance.checkInConfig.usdTarget.toFixed(2)} in ETH.`;
-
-      updateBalanceAndStats(result);
-      clearPointsSummaryCache(address);
-      setCelebration({ kind: "checkin", id: Date.now() });
-      emitDataInvalidation(["leaderboard", "points"], "check-in");
 
       let successMessage = baseSuccessMessage;
 
@@ -1302,10 +1401,10 @@ function ProfilePageContent() {
     isSwitchingToBase,
     pendingReferralCode,
     promptSwitchToBase,
+    redeemCheckInPayment,
     referral?.hasReferrer,
     refreshProfileDataSilently,
     sendCheckInPayment,
-    updateBalanceAndStats,
     usesBasePayForCheckIn,
   ]);
 
@@ -1371,34 +1470,44 @@ function ProfilePageContent() {
     setIsSaving(true);
     setRecoveryStage("wallet");
 
+    const normalizedAddress = address.toLowerCase();
+
     try {
-      const { asset, hash } = await sendSavePayment(balance.saveConfig);
+      const { asset, hash } = await sendSavePayment(balance.saveConfig, (txHash, paidAsset) => {
+        redeemedPaymentRef.current = `streak-save:${txHash}`;
+        rememberPendingPayment({
+          kind: "streak-save",
+          address: normalizedAddress,
+          txHash,
+          asset: paidAsset,
+          createdAt: Date.now(),
+        });
+      });
       setRecoveryStage("verifying");
 
-      const result = await saveBrokenStreak({
-        address,
+      await redeemSavePayment({
+        kind: "streak-save",
+        address: normalizedAddress,
         txHash: hash,
         asset,
+        createdAt: Date.now(),
       });
 
-      if (!result.success) {
-        throw new Error(result.error || "Failed to restore streak");
-      }
-
-      updateBalanceAndStats(result);
-      clearPointsSummaryCache(address);
-      setCelebration({ kind: "save", id: Date.now() });
       setToast({
         kind: "success",
         message: "Streak Saved!",
       });
-      emitDataInvalidation(["leaderboard", "points"], "save-streak");
     } catch (error) {
       console.error(error);
       const message = getErrorMessage(error);
+      // A record still on disk means the payment was broadcast but not yet credited, and the next
+      // load will redeem it. Say that, instead of implying the dollar was lost.
+      const paymentStillPending = Boolean(readPendingPayment("streak-save", normalizedAddress));
       setToast({
         kind: "error",
-        message: message || "Transaction failed. Try again to save your streak.",
+        message: paymentStillPending
+          ? "Your payment went through. We could not confirm it yet, but it will be applied automatically. Do not pay again."
+          : message || "Transaction failed. Try again to save your streak.",
       });
     } finally {
       setRecoveryStage("idle");
@@ -1410,9 +1519,49 @@ function ProfilePageContent() {
     isOnBase,
     isSwitchingToBase,
     promptSwitchToBase,
+    redeemSavePayment,
     sendSavePayment,
-    updateBalanceAndStats,
   ]);
+
+  // A payment can outlive the page that made it: the tab reloads, the wallet steals focus, or the
+  // receipt poll stalls, and the redemption call never goes out. The hash was written down before
+  // the wait, so finish the job here on the next load.
+  useEffect(() => {
+    if (!address || !balance) {
+      return;
+    }
+
+    const normalizedAddress = address.toLowerCase();
+    const pending =
+      readPendingPayment("streak-save", normalizedAddress) ??
+      readPendingPayment("check-in", normalizedAddress);
+
+    if (!pending) {
+      return;
+    }
+
+    const attemptKey = `${pending.kind}:${pending.txHash}`;
+    if (redeemedPaymentRef.current === attemptKey) {
+      return;
+    }
+    redeemedPaymentRef.current = attemptKey;
+
+    void (async () => {
+      try {
+        if (pending.kind === "streak-save") {
+          await redeemSavePayment(pending);
+          setToast({ kind: "success", message: "Streak Saved!" });
+        } else {
+          await redeemCheckInPayment(pending);
+          setToast({ kind: "success", message: "Onchain check-in complete." });
+        }
+      } catch (error) {
+        // A hash the server has settled is already cleared; one that is still stored gets another
+        // attempt on the next load. Either way this is not worth interrupting the user over.
+        console.error("Could not redeem an interrupted payment", error);
+      }
+    })();
+  }, [address, balance, redeemCheckInPayment, redeemSavePayment]);
 
   const handleDismissProfileCompletionModal = useCallback(() => {
     setIsProfileCompletionModalOpen(false);

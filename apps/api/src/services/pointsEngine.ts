@@ -69,6 +69,16 @@ const EVM_ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
 
 const STREAK_RECOVERY_ENABLED = isEnabledFlag(process.env.STREAK_RECOVERY_ENABLED);
 
+// How far back a restore payment may have been mined. Wide enough that a payment orphaned by a
+// browser reload can still be redeemed on the user's next visit, narrow enough that an unrelated
+// historical transfer to the same receive address cannot be replayed as a restore fee.
+// A NaN here would compare false against every age and silently remove the cap, so an unusable
+// value falls back to the default instead of being trusted.
+const STREAK_RECOVERY_MAX_TX_AGE_MS = (() => {
+  const parsed = Number.parseInt(process.env.STREAK_RECOVERY_MAX_TX_AGE_HOURS || "48", 10);
+  return (Number.isFinite(parsed) && parsed > 0 ? parsed : 48) * 60 * 60 * 1000;
+})();
+
 const REFERRAL_FOUNDER_PASS_CONTRACT =
   process.env.REFERRAL_FOUNDER_PASS_CONTRACT || "";
 const REFERRAL_FOUNDER_PASS_BONUS_PCT = Number(
@@ -749,6 +759,10 @@ type PaymentVerificationTarget = {
   allowBasePay?: boolean;
   recipient: string;
   usdcAddress: string;
+  // UTC day key the payer was quoted on. A payment redeemed after midnight was priced against a
+  // different ETH snapshot than today's, and without this it would be rejected for being a few
+  // hundred wei short of a price it was never quoted.
+  quotedOn?: string;
 };
 
 type UserSweepStatsRow = {
@@ -1657,6 +1671,24 @@ export class PointsEngine {
 
     if (error) {
       throw new Error(`Failed to load latest ETH snapshot: ${error.message}`);
+    }
+
+    return data ? normalizeDailyPriceRow(data) : null;
+  }
+
+  // Read-only sibling of getDailyEthPriceSnapshot. That one backfills a missing row from the live
+  // feed, which is right for today and wrong for a past date, where it would stamp today's price
+  // onto an older day. A missing past snapshot simply means we cannot price against it.
+  private async getStoredEthPriceSnapshot(dateKey: string) {
+    const { data, error } = await postgresDb
+      .from("daily_asset_prices")
+      .select("*")
+      .eq("asset_symbol", "ETH")
+      .eq("price_date", dateKey)
+      .maybeSingle();
+
+    if (error) {
+      throw new Error(`Failed to load ETH price snapshot: ${error.message}`);
     }
 
     return data ? normalizeDailyPriceRow(data) : null;
@@ -3967,7 +3999,22 @@ export class PointsEngine {
       usdcAddress: STREAK_SAVE_USDC_ADDRESS,
     }
   ): Promise<VerifiedPayment> {
-    const priceSnapshot = await this.getDailyEthPriceSnapshot();
+    const todaySnapshot = await this.getDailyEthPriceSnapshot();
+    const quotedSnapshot =
+      target.quotedOn && target.quotedOn !== todaySnapshot.price_date
+        ? await this.getStoredEthPriceSnapshot(target.quotedOn)
+        : null;
+
+    // The payer was quoted on exactly one of these two days, and we cannot tell which from the
+    // transaction alone. Take whichever asks for less: rejecting a correct payment over overnight
+    // price drift costs the user real money, while the gap it opens is a fraction of a cent.
+    const priceSnapshot =
+      quotedSnapshot &&
+      calculateEthWeiFromUsd(usdTarget, quotedSnapshot.price_usd) <
+        calculateEthWeiFromUsd(usdTarget, todaySnapshot.price_usd)
+        ? quotedSnapshot
+        : todaySnapshot;
+
     const ethRequiredWei = calculateEthWeiFromUsd(usdTarget, priceSnapshot.price_usd);
     const usdcRequiredUnits = getUsdcUnitsForUsd(usdTarget);
 
@@ -4159,13 +4206,19 @@ export class PointsEngine {
     }
   }
 
-  private async ensureTransactionMinedToday(txHash: string, now = new Date()) {
+  private async resolveTransactionMinedAt(txHash: string) {
     const receipt = await getBaseTransactionReceipt(txHash as `0x${string}`);
     const minedAtMs = await getBaseBlockTimestampMs(receipt.blockNumber);
 
     if (!Number.isFinite(minedAtMs)) {
       throw new Error("Could not resolve the check-in transaction timestamp");
     }
+
+    return minedAtMs;
+  }
+
+  private async ensureTransactionMinedToday(txHash: string, now = new Date()) {
+    const minedAtMs = await this.resolveTransactionMinedAt(txHash);
 
     if (minedAtMs < getUtcStartOfDay(now).getTime()) {
       throw new Error("Check-in transaction must be mined today");
@@ -4580,21 +4633,41 @@ export class PointsEngine {
       throw new Error("No broken streak is available to restore");
     }
 
-    const { data: existingRecovery } = await postgresDb
+    const { data: existingRecovery, error: existingRecoveryError } = await postgresDb
       .from("streak_recovery_events")
       .select("id")
       .eq("tx_hash", txHash)
       .maybeSingle();
 
+    if (existingRecoveryError) {
+      // Failing open here would let one paid transaction restore a streak more than once.
+      throw new Error(`Recovery transaction reuse lookup failed: ${existingRecoveryError.message}`);
+    }
+
     if (existingRecovery) {
       throw new Error("That recovery transaction has already been used");
+    }
+
+    // A payment can arrive late: the page that made it reloaded, or the wallet stalled, and the
+    // browser only redeems the hash on a later visit. Pricing it against the snapshot of the day
+    // it was mined keeps that payment valid instead of failing it on overnight ETH drift, and the
+    // age cap stops an unrelated historical transfer from being replayed as a restore fee.
+    const minedAt = await this.resolveTransactionMinedAt(txHash);
+    if (Date.now() - minedAt > STREAK_RECOVERY_MAX_TX_AGE_MS) {
+      throw new Error("That payment is too old to restore a streak");
     }
 
     const payment = await this.verifyFeeTransaction(
       normalizedAddress,
       txHash,
       CFG.STREAK_RESTORE_FEE_USD,
-      asset
+      asset,
+      {
+        allowBasePay: true,
+        recipient: STREAK_SAVE_RECIPIENT,
+        usdcAddress: STREAK_SAVE_USDC_ADDRESS,
+        quotedOn: getUtcDayKey(new Date(minedAt)) ?? undefined,
+      }
     );
 
     const restoredStreak = snapshot.recoverableStreak + 1;
@@ -4602,17 +4675,29 @@ export class PointsEngine {
     const restoredLastCheckIn = getYesterdayUtcDate(new Date());
     restoredLastCheckIn.setUTCHours(23, 59, 59, 999);
 
-    await postgresDb.from("streak_recovery_events").insert({
-      user_id: user.id,
-      tx_hash: txHash,
-      asset_symbol: payment.asset.toUpperCase(),
-      asset_address: payment.asset === "usdc" ? STREAK_SAVE_USDC_ADDRESS : null,
-      amount: payment.amount,
-      amount_usd: payment.amountUsd,
-      previous_streak: snapshot.recoverableStreak,
-      restored_streak: restoredStreak,
-      status: "confirmed",
-    });
+    // This row is what stops the same paid transaction being redeemed twice, so a write that
+    // fails must fail the whole restore rather than being waved through.
+    const { error: recoveryInsertError } = await postgresDb
+      .from("streak_recovery_events")
+      .insert({
+        user_id: user.id,
+        tx_hash: txHash,
+        asset_symbol: payment.asset.toUpperCase(),
+        asset_address: payment.asset === "usdc" ? STREAK_SAVE_USDC_ADDRESS : null,
+        amount: payment.amount,
+        amount_usd: payment.amountUsd,
+        previous_streak: snapshot.recoverableStreak,
+        restored_streak: restoredStreak,
+        status: "confirmed",
+      });
+
+    if (recoveryInsertError) {
+      if (isPostgresUniqueViolation(recoveryInsertError)) {
+        throw new Error("That recovery transaction has already been used");
+      }
+
+      throw new Error(`Record streak recovery: ${recoveryInsertError.message}`);
+    }
 
     const nowIso = new Date().toISOString();
     const nextUser = {
@@ -4623,7 +4708,7 @@ export class PointsEngine {
     } as UserRecord;
 
     if (restoredCheckInDate) {
-      await postgresDb.from("check_ins").upsert(
+      const { error: restoredCheckInError } = await postgresDb.from("check_ins").upsert(
         {
           user_id: user.id,
           check_in_date: restoredCheckInDate,
@@ -4639,9 +4724,15 @@ export class PointsEngine {
           onConflict: "user_id,check_in_date",
         }
       );
+
+      if (restoredCheckInError) {
+        throw new Error(`Record restored check-in: ${restoredCheckInError.message}`);
+      }
     }
 
-    await postgresDb
+    // Without this update nothing the caller sees is real, so reporting `restored: true` after a
+    // failed write would tell the user their streak is back while the database still says broken.
+    const { error: restoredUserError } = await postgresDb
       .from("users")
       .update({
         current_streak: nextUser.current_streak,
@@ -4650,6 +4741,10 @@ export class PointsEngine {
         updated_at: nowIso,
       })
       .eq("id", user.id);
+
+    if (restoredUserError) {
+      throw new Error(`Update restored streak: ${restoredUserError.message}`);
+    }
 
     this.invalidateSummaryCache(normalizedAddress);
 
