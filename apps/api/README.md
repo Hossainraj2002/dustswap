@@ -526,3 +526,47 @@ alarms during normal traffic and been muted before it ever caught a real outage.
 - **A second replica.** 209k users on one instance in `us-west2`. Two replicas at
   `DB_POOL_MAX=30` is 60 of 100 connections, still safe, and removes the single
   point of failure.
+
+### Campaign results, first three days live (2026-08-22 to 08-24)
+
+432 notifications delivered. Every failure was `user has not saved this app`;
+not one `notifications disabled`, so nobody has opted out.
+
+| Campaign | Delivered | Acted afterwards | Rate |
+| --- | --- | --- | --- |
+| `streak_at_risk` | 82 | 19 checked in | **23.2%** |
+| `daily_check_in` | 312 | 1 checked in | 0.3% |
+| `unspent_tickets` | 38 | 1 spun | 2.6% |
+
+Baseline for comparison: confirmed Base App users who were never notified
+checked in at **18.9%** over the same days. This is follow-through, not a
+randomised test, so treat the gap as a signal rather than proven lift.
+
+**`daily_check_in` was disabled on the strength of this.** It was the campaign
+the whole system was designed around and it performed at 0.3%, far below the
+un-notified baseline. It targets accounts with no streak and no check-in today,
+which is a definition of dormancy: dormant accounts stay dormant, and reminding
+them does not change that. It was also consuming the entire send budget, 1,998
+wasted probes on 2026-08-24 to reach 2 people.
+
+`streak_at_risk` is the one that works. It only ever fires at someone whose
+streak is genuinely alive and expiring tonight, so it reaches people with
+something to lose rather than something to start.
+
+### Discovery mode was turned off after it stopped paying for itself
+
+It classified 6,543 wallets as `not_pinned` at a cost of 10,718 failed sends,
+and returned **zero** `notifications disabled` responses. That second number is
+the important one: the entire justification for probing beyond Base's own list
+was to find Base App users who had notifications switched off, and that
+population turned out to be empty here.
+
+Everything discovery was needed for is already covered by the daily audience
+sync, which pulls the authoritative opted-in list straight from Base and picks
+up new pinners automatically. Discovery is worth re-enabling only if the
+confirmed audience ever stops growing while the app is clearly gaining Base App
+users.
+
+Note that with discovery off and `NOTIFICATIONS_MAX_PER_RUN` unset there is no
+recipient cap, which is intentional: confirmed-only segments are tens of people,
+not thousands. The cap exists to bound discovery probing, not real sends.
