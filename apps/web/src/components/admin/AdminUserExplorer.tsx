@@ -15,39 +15,45 @@ import {
 // for the rest of the browser session.
 const TOKEN_SESSION_KEY = "quest-admin-token";
 
-const SORTS: Array<{ value: string; label: string }> = [
-  { value: "pp_points", label: "PP" },
-  { value: "total_fees_paid_usd", label: "Total fees" },
-  { value: "swap_fees_paid_usd", label: "Swap fees" },
-  { value: "sweep_fees_paid_usd", label: "Sweep fees" },
-  { value: "streak_save_fees_paid_usd", label: "Streak Save" },
-  { value: "net_after_all_rewards_usd", label: "Net after rewards" },
-  { value: "swap_volume_usd", label: "Swap volume" },
-  { value: "swap_count", label: "Swap count" },
-  { value: "sweep_count", label: "Sweep count" },
-];
-
-const COLUMNS: Array<{ key: keyof AdminUserRow; label: string; kind: "text" | "int" | "usd" }> = [
-  { key: "user_id", label: "ID", kind: "int" },
-  { key: "wallet", label: "Wallet", kind: "text" },
-  { key: "x_name", label: "X", kind: "text" },
-  { key: "discord_name", label: "Discord", kind: "text" },
-  { key: "pp_points", label: "PP", kind: "int" },
-  { key: "swap_count", label: "Swaps", kind: "int" },
-  { key: "swap_volume_usd", label: "Swap vol $", kind: "usd" },
-  { key: "swap_fees_paid_usd", label: "Swap fees $", kind: "usd" },
-  { key: "sweep_count", label: "Sweeps", kind: "int" },
-  { key: "sweep_fees_paid_usd", label: "Sweep fees $", kind: "usd" },
-  { key: "sweep_rewards_received_usd", label: "Sweep reward $", kind: "usd" },
-  { key: "sweep_fees_net_of_rewards_usd", label: "Sweep net $", kind: "usd" },
-  { key: "streak_save_count", label: "Saves", kind: "int" },
-  { key: "streak_save_fees_paid_usd", label: "Streak Save $", kind: "usd" },
-  { key: "checkin_count", label: "Check-ins", kind: "int" },
-  { key: "spin_count", label: "Spins", kind: "int" },
-  { key: "total_fees_paid_usd", label: "Total fees $", kind: "usd" },
-  { key: "net_after_all_rewards_usd", label: "Net $", kind: "usd" },
+// Total fees and net fees sit right after PP rather than at the far right, because they are
+// the two figures the page exists to answer and the table is wider than most screens.
+const COLUMNS: Array<{
+  key: keyof AdminUserRow;
+  label: string;
+  kind: "text" | "int" | "usd" | "date";
+  /** Omitted when the column cannot be ordered server-side. */
+  sort?: string;
+  strong?: boolean;
+}> = [
+  { key: "user_id", label: "ID", kind: "int", sort: "user_id" },
+  { key: "wallet", label: "Wallet", kind: "text", sort: "wallet" },
+  { key: "x_name", label: "X", kind: "text", sort: "x_name" },
+  { key: "discord_name", label: "Discord", kind: "text", sort: "discord_name" },
+  { key: "pp_points", label: "PP", kind: "int", sort: "pp_points" },
+  { key: "total_fees_paid_usd", label: "Total fees $", kind: "usd", sort: "total_fees_paid_usd", strong: true },
+  { key: "net_after_all_rewards_usd", label: "Total net fees $", kind: "usd", sort: "net_after_all_rewards_usd", strong: true },
+  { key: "total_rewards_received_usd", label: "Rewards $", kind: "usd", sort: "total_rewards_received_usd" },
+  { key: "swap_count", label: "Swaps", kind: "int", sort: "swap_count" },
+  { key: "swap_volume_usd", label: "Swap vol $", kind: "usd", sort: "swap_volume_usd" },
+  { key: "swap_fees_paid_usd", label: "Swap fees $", kind: "usd", sort: "swap_fees_paid_usd" },
+  { key: "sweep_count", label: "Sweeps", kind: "int", sort: "sweep_count" },
+  { key: "sweep_gross_usd", label: "Sweep gross $", kind: "usd", sort: "sweep_gross_usd" },
+  { key: "sweep_fees_paid_usd", label: "Sweep fees $", kind: "usd", sort: "sweep_fees_paid_usd" },
+  { key: "sweep_rewards_received_usd", label: "Sweep reward $", kind: "usd", sort: "sweep_rewards_received_usd" },
+  { key: "sweep_fees_net_of_rewards_usd", label: "Sweep net $", kind: "usd", sort: "sweep_fees_net_of_rewards_usd" },
+  { key: "streak_save_count", label: "Saves", kind: "int", sort: "streak_save_count" },
+  { key: "streak_save_fees_paid_usd", label: "Streak Save $", kind: "usd", sort: "streak_save_fees_paid_usd" },
+  { key: "checkin_count", label: "Check-ins", kind: "int", sort: "checkin_count" },
+  { key: "checkin_fees_paid_usd", label: "Check-in $", kind: "usd", sort: "checkin_fees_paid_usd" },
+  { key: "spin_count", label: "Spins", kind: "int", sort: "spin_count" },
+  { key: "spin_points_won", label: "Spin PP", kind: "int", sort: "spin_points_won" },
+  { key: "partner_rewards_received_usd", label: "Partner $", kind: "usd", sort: "partner_rewards_received_usd" },
+  { key: "current_streak", label: "Streak", kind: "int", sort: "current_streak" },
+  { key: "last_check_in", label: "Last check-in", kind: "date", sort: "last_check_in" },
   { key: "last_activity", label: "Last active", kind: "text" },
 ];
+
+const SORTS = COLUMNS.filter((c) => c.sort).map((c) => ({ value: c.sort as string, label: c.label }));
 
 const EMPTY_QUERY: AdminUserQuery = {
   identifiers: "",
@@ -135,6 +141,17 @@ export function AdminUserExplorer() {
       void runSearch(adminToken.trim(), next);
     },
     [adminToken, query, runSearch]
+  );
+
+  /** Click a header: same column flips direction, a new column starts high to low. */
+  const toggleSort = useCallback(
+    (sortKey: string) => {
+      const sameColumn = query.sort === sortKey;
+      const direction: "asc" | "desc" =
+        sameColumn && query.direction === "desc" ? "asc" : sameColumn ? "desc" : "desc";
+      search({ sort: sortKey, direction, offset: 0 });
+    },
+    [query.sort, query.direction, search]
   );
 
   const exportCsv = useCallback(async () => {
@@ -428,19 +445,41 @@ export function AdminUserExplorer() {
           </div>
 
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[1400px] border-collapse text-sm">
+            <table className="w-full min-w-[2100px] border-collapse text-sm">
               <thead>
                 <tr>
-                  {COLUMNS.map((col) => (
-                    <th
-                      key={String(col.key)}
-                      className={`whitespace-nowrap border-b border-gray-200 px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-gray-500 ${
-                        col.kind === "text" ? "text-left" : "text-right"
-                      }`}
-                    >
-                      {col.label}
-                    </th>
-                  ))}
+                  {COLUMNS.map((col) => {
+                    const active = col.sort && query.sort === col.sort;
+                    const arrow = active ? (query.direction === "asc" ? "▲" : "▼") : "";
+                    return (
+                      <th
+                        key={String(col.key)}
+                        aria-sort={
+                          active ? (query.direction === "asc" ? "ascending" : "descending") : "none"
+                        }
+                        className={`whitespace-nowrap border-b border-gray-200 px-3 py-2 text-[11px] font-semibold uppercase tracking-wide ${
+                          col.kind === "text" ? "text-left" : "text-right"
+                        } ${active ? "text-sky-600" : "text-gray-500"}`}
+                      >
+                        {col.sort ? (
+                          <button
+                            type="button"
+                            onClick={() => toggleSort(col.sort as string)}
+                            disabled={isLoading}
+                            title={`Sort by ${col.label}`}
+                            className={`inline-flex items-center gap-1 uppercase tracking-wide transition hover:text-sky-600 disabled:opacity-60 ${
+                              col.kind === "text" ? "" : "flex-row-reverse"
+                            }`}
+                          >
+                            <span>{col.label}</span>
+                            <span className="w-2 text-[9px] leading-none">{arrow}</span>
+                          </button>
+                        ) : (
+                          col.label
+                        )}
+                      </th>
+                    );
+                  })}
                 </tr>
               </thead>
               <tbody>
@@ -452,6 +491,7 @@ export function AdminUserExplorer() {
                       if (col.key === "wallet") content = shortWallet(String(raw ?? ""));
                       else if (col.kind === "usd") content = fmtUsd(raw);
                       else if (col.kind === "int") content = fmtInt(raw);
+                      else if (col.kind === "date") content = raw ? String(raw).slice(0, 10) : "—";
                       else content = raw == null || raw === "" ? "—" : String(raw);
                       return (
                         <td
@@ -459,7 +499,7 @@ export function AdminUserExplorer() {
                           title={col.key === "wallet" ? String(raw ?? "") : undefined}
                           className={`whitespace-nowrap border-b border-gray-100 px-3 py-2 tabular-nums ${
                             col.kind === "text" ? "text-left" : "text-right"
-                          } ${col.key === "wallet" ? "font-mono text-xs" : ""}`}
+                          } ${col.key === "wallet" ? "font-mono text-xs" : ""} ${col.strong ? "font-semibold" : ""}`}
                         >
                           {content}
                         </td>
@@ -500,7 +540,7 @@ export function AdminUserExplorer() {
       ) : null}
 
       <p className="px-1 text-xs leading-5 text-gray-500">
-        Fees are derived, not stored. Swap uses the on-chain referrer rate (20.0 bps to
+        Click any column heading to sort by it; click again to flip the direction. Fees are derived, not stored. Swap uses the on-chain referrer rate (20.0 bps to
         2026-06-21, 22.5 bps after), sweep uses the chain-verified credit where one exists and
         200 bps of gross otherwise, and Streak Save is the $1 recorded per payment. Every amount
         is the value on the day of the transaction. Spins and check-ins are counts, not charges.

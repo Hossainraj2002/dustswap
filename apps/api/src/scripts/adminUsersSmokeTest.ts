@@ -151,6 +151,60 @@ function check(name: string, ok: boolean, detail = "") {
     `rows=${bulkLines.length - 1} ${(bulk.ms / 1000).toFixed(1)}s`
   );
 
+  // 8c. every sortable column must work in both directions and come back ordered
+  const SORTS = [
+    "user_id", "wallet", "x_name", "discord_name", "pp_points", "current_streak", "last_check_in",
+    "swap_count", "swap_volume_usd", "swap_fees_paid_usd",
+    "sweep_count", "sweep_gross_usd", "sweep_fees_paid_usd", "sweep_rewards_received_usd",
+    "sweep_fees_net_of_rewards_usd", "streak_save_count", "streak_save_fees_paid_usd",
+    "checkin_count", "checkin_fees_paid_usd", "spin_count", "spin_points_won",
+    "partner_rewards_received_usd", "total_fees_paid_usd", "total_rewards_received_usd",
+    "net_after_all_rewards_usd",
+  ];
+  // Text columns are ordered by Postgres collation, which disagrees with JS localeCompare on
+  // punctuation ("007411." vs ".00foadn"). Replicating the server's collation here would only
+  // test the replica, so those columns are checked by the direction flip below instead.
+  const TEXT_SORTS = new Set(["wallet", "x_name", "discord_name"]);
+  const numeric = (v: any) => (v === null || v === undefined ? null : Number(v));
+  const sortFailures: string[] = [];
+  const timings: Array<[string, number]> = [];
+  for (const sort of SORTS) {
+    const firstRowPerDirection: Record<string, unknown> = {};
+    for (const direction of ["desc", "asc"] as const) {
+      const res = await call("/api/admin/users/search", { sort, direction, limit: 6 });
+      if (res.status !== 200) { sortFailures.push(`${sort}/${direction}: HTTP ${res.status}`); continue; }
+      const rs = res.json?.data?.rows ?? [];
+      if (rs.length === 0) { sortFailures.push(`${sort}/${direction}: no rows`); continue; }
+      timings.push([`${sort}/${direction}`, res.ms]);
+      firstRowPerDirection[direction] = rs[0]?.[sort];
+      if (TEXT_SORTS.has(sort)) continue;
+      for (let i = 1; i < rs.length; i++) {
+        const a = rs[i - 1][sort], b = rs[i][sort];
+        if (a == null || b == null) continue;
+        const an = numeric(a), bn = numeric(b);
+        const bothNumeric = an !== null && bn !== null && !Number.isNaN(an) && !Number.isNaN(bn);
+        const cmp = bothNumeric ? an! - bn! : String(a).localeCompare(String(b));
+        if (direction === "desc" ? cmp < 0 : cmp > 0) {
+          sortFailures.push(`${sort}/${direction}: out of order (${a} then ${b})`);
+          break;
+        }
+      }
+    }
+    // Flipping the direction must change what lands at the top; that catches an ignored
+    // sort key without assuming anything about collation.
+    if (
+      firstRowPerDirection.desc !== undefined &&
+      firstRowPerDirection.asc !== undefined &&
+      String(firstRowPerDirection.desc) === String(firstRowPerDirection.asc)
+    ) {
+      sortFailures.push(`${sort}: asc and desc returned the same top row`);
+    }
+  }
+  check(`all ${SORTS.length} columns sort correctly both ways`, sortFailures.length === 0,
+    sortFailures.length ? sortFailures.slice(0, 4).join(" | ") : `${SORTS.length * 2} queries`);
+  const slowest = timings.sort((a, b) => b[1] - a[1]).slice(0, 3);
+  console.log("   slowest sorts:", slowest.map(([k, v]) => `${k} ${v}ms`).join(", "));
+
   // 9. summary
   const sum = await call("/api/admin/users/summary");
   check("summary returns totals", sum.status === 200 && Number(sum.json?.data?.accounts) > 0,

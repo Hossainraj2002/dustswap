@@ -67,30 +67,59 @@ const MAX_PAGE = 200;
 const MAX_EXPORT = 100_000;
 const MAX_IDENTIFIERS = 5_000;
 
-// Sorting is limited to PP plus the fee/volume columns on purpose. Ordering the whole user
-// table by spin or check-in count would mean aggregating millions of rows per request; those
-// two ship as display columns, and the CSV export can be sorted on them offline.
-type SortKey =
-  | "pp_points"
-  | "total_fees_paid_usd"
-  | "swap_fees_paid_usd"
-  | "sweep_fees_paid_usd"
-  | "streak_save_fees_paid_usd"
-  | "net_after_all_rewards_usd"
-  | "swap_volume_usd"
-  | "swap_count"
-  | "sweep_count";
+// Every displayed column is sortable. How a sort is satisfied depends on where the value
+// lives, which is what the three maps below encode:
+//
+//  - USER_SORTS      the value is a column on `users`, so the page of accounts can be picked
+//                    and ordered before anything is aggregated. Cheapest path.
+//  - SOCIAL_SORTS    the value lives in social_accounts. Candidates are restricted to accounts
+//                    that actually have that handle, which both uses the (user_id, platform)
+//                    index and matches intent: sorting by name to look at rows with no name
+//                    is not useful.
+//  - PRERANK_SORTS   the value is a count over one big table. A single grouped pass over that
+//                    table picks the page, then only those accounts get fully aggregated.
+//
+// Anything else is a fee or volume figure and takes the wide path.
+const SORT_COLUMNS = [
+  "user_id", "wallet", "x_name", "discord_name", "pp_points", "current_streak", "last_check_in",
+  "swap_count", "swap_volume_usd", "swap_fees_paid_usd",
+  "sweep_count", "sweep_gross_usd", "sweep_fees_paid_usd", "sweep_rewards_received_usd",
+  "sweep_fees_net_of_rewards_usd",
+  "streak_save_count", "streak_save_fees_paid_usd",
+  "checkin_count", "checkin_fees_paid_usd",
+  "spin_count", "spin_points_won",
+  "partner_rewards_received_usd",
+  "total_fees_paid_usd", "total_rewards_received_usd", "net_after_all_rewards_usd",
+] as const;
 
-const SORTABLE: Record<SortKey, string> = {
-  pp_points: "pp_points",
-  total_fees_paid_usd: "total_fees_paid_usd",
-  swap_fees_paid_usd: "swap_fees_paid_usd",
-  sweep_fees_paid_usd: "sweep_fees_paid_usd",
-  streak_save_fees_paid_usd: "streak_save_fees_paid_usd",
-  net_after_all_rewards_usd: "net_after_all_rewards_usd",
-  swap_volume_usd: "swap_volume_usd",
-  swap_count: "swap_count",
-  sweep_count: "sweep_count",
+type SortKey = (typeof SORT_COLUMNS)[number];
+
+const SORTABLE = Object.fromEntries(SORT_COLUMNS.map((c) => [c, c])) as Record<SortKey, string>;
+
+/** Sort key -> expression over `users u`, orderable before aggregation. */
+const USER_SORTS: Partial<Record<SortKey, string>> = {
+  user_id: "u.id",
+  wallet: "u.address",
+  pp_points: "COALESCE(u.total_points,0)",
+  current_streak: "COALESCE(u.current_streak,0)",
+  last_check_in: "u.last_check_in",
+};
+
+/** Sort key -> the social platform whose username orders it. */
+const SOCIAL_SORTS: Partial<Record<SortKey, "x" | "discord">> = {
+  x_name: "x",
+  discord_name: "discord",
+};
+
+/** Sort key -> [table, timestamp column, value expression] for a single grouped pre-rank. */
+const PRERANK_SORTS: Partial<Record<SortKey, { table: string; tsCol: string; value: string }>> = {
+  checkin_count: { table: "check_ins", tsCol: "created_at", value: "count(*)" },
+  spin_count: { table: "spin_history", tsCol: "created_at", value: "count(*)" },
+  spin_points_won: {
+    table: "spin_history",
+    tsCol: "created_at",
+    value: "COALESCE(sum(reward_points) FILTER (WHERE status='confirmed'),0)",
+  },
 };
 
 export type AdminUserFilters = {
@@ -201,27 +230,30 @@ function normalizeFilters(body: any): AdminUserFilters {
   };
 }
 
-/** True when the request needs fees computed across the population, not just one page. */
-function needsFeeWideScan(f: AdminUserFilters) {
-  const feeSorts: SortKey[] = [
-    "total_fees_paid_usd",
-    "swap_fees_paid_usd",
-    "sweep_fees_paid_usd",
-    "streak_save_fees_paid_usd",
-    "net_after_all_rewards_usd",
-    "swap_volume_usd",
-    "swap_count",
-    "sweep_count",
-  ];
+/** A fee threshold is set, so fees must be computed across the population, not just one page. */
+function hasFeeFilter(f: AdminUserFilters) {
   return (
     (f.minTotalFees ?? 0) > 0 ||
     (f.minSwapFees ?? 0) > 0 ||
     (f.minSweepFees ?? 0) > 0 ||
     (f.minStreakSaves ?? 0) > 0 ||
     (f.minSwapCount ?? 0) > 0 ||
-    (f.minSweepCount ?? 0) > 0 ||
-    feeSorts.includes(f.sort ?? "pp_points")
+    (f.minSweepCount ?? 0) > 0
   );
+}
+
+/**
+ * Which strategy picks the candidate accounts. A fee threshold always wins, because a value
+ * the filter tests has to exist for every candidate before the page can be chosen.
+ */
+function candidateMode(f: AdminUserFilters): "ids" | "wide" | "social" | "prerank" | "users" {
+  if ((f.identifiers?.length ?? 0) > 0) return "ids";
+  if (hasFeeFilter(f)) return "wide";
+  const sort = f.sort ?? "pp_points";
+  if (SOCIAL_SORTS[sort]) return "social";
+  if (PRERANK_SORTS[sort]) return "prerank";
+  if (USER_SORTS[sort]) return "users";
+  return "wide";
 }
 
 /**
@@ -278,10 +310,14 @@ function buildQuery(f: AdminUserFilters, rowLimit: number, rowOffset: number) {
     id_roots AS (SELECT DISTINCT c.root AS uid FROM id_hits h JOIN canon c ON c.uid = h.uid WHERE h.uid IS NOT NULL),`
     : "";
 
-  const wide = needsFeeWideScan(f);
-  // Fast path: plain PP browsing with no fee predicate. Pick the page of accounts first and
-  // aggregate only those, instead of costing out fees for all 209k accounts to return 50 rows.
-  const pageFirst = !hasIds && !wide;
+  const sortKey: SortKey = (f.sort ?? "pp_points") as SortKey;
+  const candMode = candidateMode(f);
+  const wide = candMode === "wide";
+  // In these modes `cand` is already exactly one page: it was picked and ordered before any
+  // aggregation, so the outer query must not offset a second time and the row total has to
+  // come from its own count.
+  const pageFirst = candMode === "users" || candMode === "social" || candMode === "prerank";
+  const dirSql = f.direction === "asc" ? "ASC" : "DESC";
 
   // Built twice, against two different parameter arrays: the count query is a separate
   // statement and Postgres rejects a bind that supplies more parameters than it references.
@@ -300,9 +336,22 @@ function buildQuery(f: AdminUserFilters, rowLimit: number, rowOffset: number) {
 
   const countParams: unknown[] = [];
   const addCount = (v: unknown) => `$${countParams.push(v)}`;
-  const countSql = pageFirst
-    ? `SELECT count(*)::bigint AS total FROM users u WHERE ${buildCheapPredicate(addCount)}`
-    : null;
+  const socialPlatform = SOCIAL_SORTS[sortKey];
+  const prerank = PRERANK_SORTS[sortKey];
+
+  let countSql: string | null = null;
+  if (candMode === "users") {
+    countSql = `SELECT count(*)::bigint AS total FROM users u WHERE ${buildCheapPredicate(addCount)}`;
+  } else if (candMode === "social") {
+    countSql = `SELECT count(*)::bigint AS total FROM users u
+      WHERE ${buildCheapPredicate(addCount)}
+        AND EXISTS (SELECT 1 FROM social_accounts s
+                     WHERE s.user_id = u.id AND s.platform = ${addCount(socialPlatform)}
+                       AND COALESCE(s.username,'') <> '')`;
+  } else if (candMode === "prerank" && prerank) {
+    countSql = `SELECT count(DISTINCT user_id)::bigint AS total FROM ${prerank.table}
+      WHERE ${prerank.tsCol} < (${addCount(cutoff)}::timestamptz AT TIME ZONE 'UTC')`;
+  }
 
   // Candidate accounts. With identifiers we use exactly those. Otherwise, when a fee filter or
   // fee sort is in play we restrict to accounts that ever touched a paid product, because an
@@ -327,10 +376,37 @@ function buildQuery(f: AdminUserFilters, rowLimit: number, rowOffset: number) {
               WHERE COALESCE(ci.payment_amount_usd,0) > 0 AND ci.created_at < ${naiveCut}
           ) z
         )`
-      : `cand AS (
+      : candMode === "social"
+        ? // Ordering by a handle only makes sense for accounts that have one, and restricting
+          // to those lets the (user_id, platform) index carry the join.
+          `cand AS (
+          SELECT u.id AS uid FROM users u
+          JOIN LATERAL (
+            SELECT s.username FROM social_accounts s
+             WHERE s.user_id = u.id AND s.platform = ${add(socialPlatform)}
+               AND COALESCE(s.username,'') <> ''
+             ORDER BY s.id DESC LIMIT 1
+          ) sn ON true
+          WHERE ${cheapPredicate}
+          ORDER BY lower(sn.username) ${dirSql}, u.id ASC
+          LIMIT ${add(rowLimit)} OFFSET ${add(rowOffset)}
+        )`
+        : candMode === "prerank" && prerank
+          ? // One grouped pass over the single big table picks the page; only those accounts
+            // are then aggregated in full.
+            `cand AS (
+          SELECT c.root AS uid, ${prerank.value} AS rank_value
+          FROM ${prerank.table} pr
+          JOIN canon c ON c.uid = pr.user_id
+          WHERE pr.${prerank.tsCol} < ${naiveCut}
+          GROUP BY 1
+          ORDER BY rank_value ${dirSql}, c.root ASC
+          LIMIT ${add(rowLimit)} OFFSET ${add(rowOffset)}
+        )`
+          : `cand AS (
           SELECT u.id AS uid FROM users u
           WHERE ${cheapPredicate}
-          ORDER BY COALESCE(u.total_points,0) ${f.direction === "asc" ? "ASC" : "DESC"}, u.id ASC
+          ORDER BY ${USER_SORTS[sortKey] ?? "COALESCE(u.total_points,0)"} ${dirSql} NULLS LAST, u.id ASC
           LIMIT ${add(rowLimit)} OFFSET ${add(rowOffset)}
         )`;
 
@@ -353,8 +429,10 @@ function buildQuery(f: AdminUserFilters, rowLimit: number, rowOffset: number) {
   if (f.minSwapCount != null) having.push(`swap_count >= ${add(f.minSwapCount)}`);
   if (f.minSweepCount != null) having.push(`sweep_count >= ${add(f.minSweepCount)}`);
 
-  const sortCol = SORTABLE[f.sort ?? "pp_points"];
-  const dir = f.direction === "asc" ? "ASC" : "DESC";
+  // Text columns sort case-insensitively, matching how the social pre-rank ordered them.
+  const TEXT_SORTS = new Set<SortKey>(["wallet", "x_name", "discord_name"]);
+  const sortCol = TEXT_SORTS.has(sortKey) ? `lower(${SORTABLE[sortKey]})` : SORTABLE[sortKey];
+  const dir = dirSql;
   const pLimit = add(rowLimit);
   const pOffset = add(pageFirst ? 0 : rowOffset);
 
