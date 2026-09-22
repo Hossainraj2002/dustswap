@@ -26,6 +26,7 @@ import { profileCompletionRoutes } from "./routes/profileCompletion";
 import { profileSettingsRoutes } from "./routes/profileSettings";
 import { questsRoutes } from "./routes/quests";
 import { monitorRoutes } from "./routes/monitor";
+import { adminUsersRoutes } from "./routes/adminUsers";
 import { notificationsRoutes } from "./routes/notifications";
 import { swapsRoutes } from "./routes/swaps";
 import { swapownRoutes } from "./routes/swapown";
@@ -135,6 +136,7 @@ app.route("/api/profile-completion", profileCompletionRoutes);
 app.route("/api/profile-settings", profileSettingsRoutes);
 app.route("/api/quests", questsRoutes);
 app.route("/api/monitor", monitorRoutes);
+app.route("/api/admin/users", adminUsersRoutes);
 app.route("/api/swaps", swapsRoutes);
 app.route("/api/swapown", swapownRoutes);
 // Mounted before /api/dustsweep so the sub-path always resolves here.
