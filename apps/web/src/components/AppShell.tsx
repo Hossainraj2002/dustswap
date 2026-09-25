@@ -192,7 +192,9 @@ export function AppShell({ children }: AppShellProps) {
   const isLightShell = resolvedTheme === 'light';
   const isLandingPage = pathname === '/';
   const isMaintenancePage = pathname === '/maintenance';
-  const isShelllessPage = isMaintenancePage;
+  // The airdrop claim page is a dedicated destination, not part of the app. No nav, no chrome.
+  const isClaimPage = pathname === '/claim';
+  const isShelllessPage = isMaintenancePage || isClaimPage;
   const { address, isConnected } = useAccount();
   const [showReferralModal, setShowReferralModal] = useState(false);
   const checkedRef = useRef<string | null>(null);

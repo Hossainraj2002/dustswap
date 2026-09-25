@@ -106,3 +106,7 @@ apps/web/test_contract.mjs
 # (Railway volume / object storage); the service degrades gracefully without it.
 apps/api/data/all_time_user_totals.json
 apps/api/data/
+
+# Airdrop allocation data. Served locally for testing the claim page; in production it is
+# uploaded to the CDN, never committed. The repo is public and this maps wallets to payouts.
+apps/web/public/claim-data/
