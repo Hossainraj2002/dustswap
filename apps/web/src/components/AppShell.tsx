@@ -16,9 +16,7 @@ import {
 import { useAccount } from 'wagmi';
 import {
   DustSweepIcon,
-  LeaderboardIcon,
   ProfileIcon,
-  QuestsIcon,
   SpinIcon,
   SwapIcon,
 } from '@/components/NavIcons';
@@ -46,13 +44,15 @@ interface NavItem {
   brand?: boolean;
 }
 
+// Quests and Leaderboard are hidden from navigation for now. Their pages, routes and data are
+// untouched and still reachable at /quests and /leaderboard; only the nav entries are gone.
+// To restore, re-add the two lines below with QuestsIcon and LeaderboardIcon. Both bars size
+// themselves from this array, so nothing else needs changing.
 const NAV_ITEMS = [
   { icon: ProfileIcon, label: 'Profile', route: '/profile' },
   { icon: SpinIcon, label: 'Spin', route: '/spin' },
   { icon: DustSweepIcon, label: 'Dust Sweep', route: '/dustsweep', brand: true },
   { icon: SwapIcon, label: 'Swap', route: '/swap' },
-  { icon: QuestsIcon, label: 'Quests', route: '/quests' },
-  { icon: LeaderboardIcon, label: 'Leaderboard', route: '/leaderboard' },
 ] satisfies NavItem[];
 
 function isActiveRoute(pathname: string, route: string) {
@@ -123,14 +123,18 @@ function MobileShellNav({
       : 'border-white/10 bg-[rgba(6,10,18,0.9)]'
   }`;
   const navStyle: CSSProperties = { paddingBottom: 'var(--safe-area-bottom)' };
-  const navRowClassName =
-    'grid h-[69px] w-full grid-cols-6 items-start gap-0.5 px-1 pt-[7px]';
+  const navRowClassName = 'grid h-[69px] w-full items-start gap-0.5 px-1 pt-[7px]';
+  // Column count follows NAV_ITEMS instead of being hardcoded, so hiding a tab re-spaces the bar
+  // evenly rather than leaving a gap where it used to be.
+  const navRowStyle: CSSProperties = {
+    gridTemplateColumns: `repeat(${NAV_ITEMS.length}, minmax(0, 1fr))`,
+  };
   const navLinkClassName =
     'group flex min-w-0 flex-col items-center justify-start gap-1 transition-transform active:scale-95';
 
   return (
     <nav className={navClassName} style={navStyle} aria-label="Primary navigation">
-      <div className={navRowClassName}>
+      <div className={navRowClassName} style={navRowStyle}>
         {NAV_ITEMS.map((item) => {
           const active = isActiveRoute(pathname, item.route);
           const Icon = item.icon;
