@@ -152,8 +152,17 @@ let indexVersion = "";
  * root the CONTRACT reports. Without that, republishing the list would leave browsers holding
  * proofs that no longer verify, and the claim would revert with the user paying the gas.
  */
+/**
+ * Data revision, bumped by hand whenever the published files change WITHOUT the root changing
+ * (for example adding display fields to the proof files). The root alone is not enough: the
+ * uploads are served immutable for a year, so re-publishing the same root with different content
+ * would otherwise leave every existing visitor on the old copy.
+ */
+const CLAIM_DATA_REV = process.env.NEXT_PUBLIC_CLAIM_DATA_REV || "1";
+
 function versioned(path: string, version?: string) {
-  return version ? `${CLAIM_DATA_URL}${path}?v=${version.slice(2, 18)}` : `${CLAIM_DATA_URL}${path}`;
+  const v = version ? `${version.slice(2, 18)}-${CLAIM_DATA_REV}` : CLAIM_DATA_REV;
+  return `${CLAIM_DATA_URL}${path}?v=${v}`;
 }
 
 export function loadEligibilityIndex(version?: string): Promise<EligibilityIndex> {

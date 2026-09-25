@@ -1,7 +1,11 @@
 "use client";
 
 import Image from "next/image";
+import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { ThemeLongLogo } from "@/components/ThemeLongLogo";
+import { WalletConnectButton } from "@/components/wallet/WalletConnectButton";
+import { fetchProfileSettings } from "@/lib/profileSettings";
 import { useAccount, usePublicClient, useWalletClient } from "wagmi";
 import { encodeFunctionData, type Address, type Hex } from "viem";
 import { useBaseChainSwitch } from "@/hooks/useBaseChainSwitch";
@@ -304,6 +308,9 @@ export function ClaimPanel() {
   }, [address, allocation, isOnBase, preview, publicClient, switchToBase, walletClient]);
 
   const stats = allocation ? allocation.stats : PREVIEW_STATS;
+  // The breakdown is only meaningful once the person has their own numbers.
+  const showAnyStats =
+    phase === "eligible" || phase === "claiming" || phase === "claimed";
 
   return (
     <div className="relative flex min-h-[100dvh] flex-col items-center justify-center overflow-hidden bg-[#f4f7fc] px-5 py-12 dark:bg-[#070d1a]">
@@ -312,6 +319,8 @@ export function ClaimPanel() {
       {preview ? <PreviewPills scenario={scenario} onChange={setScenario} /> : null}
 
       <div className="relative w-full max-w-[400px]">
+        <ClaimHeader address={connected ? shownAddress ?? null : null} />
+
         <div className="rounded-[26px] border border-slate-200/80 bg-white/90 p-7 text-center shadow-[0_24px_70px_rgba(15,23,42,0.10)] backdrop-blur-xl dark:border-white/10 dark:bg-white/[0.04] dark:shadow-[0_24px_70px_rgba(0,0,0,0.5)]">
           <Coin />
 
@@ -331,7 +340,6 @@ export function ClaimPanel() {
             ) : phase === "eligible" || phase === "claiming" ? (
               <>
                 <Amount value={allocation?.amount ?? PREVIEW_AMOUNT} />
-                {stats ? <Totals stats={stats} /> : null}
                 <Action
                   label="Claim"
                   busyLabel="Claiming"
@@ -349,7 +357,6 @@ export function ClaimPanel() {
                 <p className="mb-5 text-[15px] font-semibold text-emerald-600 dark:text-emerald-400">
                   Claimed
                 </p>
-                {stats ? <Totals stats={stats} /> : null}
                 {claimTx ? (
                   <a
                     href={explorerTxUrl(claimTx)}
@@ -386,6 +393,10 @@ export function ClaimPanel() {
             ) : null}
           </div>
         </div>
+
+        {/* Eligibility breakdown lives below the claim card: the payout is the headline, the
+            numbers behind it are the explanation. */}
+        {stats && showAnyStats ? <EligibilityBreakdown stats={stats} /> : null}
       </div>
     </div>
   );
@@ -488,15 +499,96 @@ function Amount({ value }: { value: bigint }) {
   );
 }
 
-function Totals({ stats }: { stats: ClaimStats }) {
+/**
+ * Page header: DustSwap wordmark on the left, the connected identity on the right. The wallet
+ * button doubles as connect and, once connected, opens the disconnect menu, so the whole flow is
+ * reachable without leaving this page.
+ */
+function ClaimHeader({ address }: { address: string | null }) {
+  const [pfp, setPfp] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!address) {
+      setPfp(null);
+      return;
+    }
+    let cancelled = false;
+    void fetchProfileSettings(address)
+      .then((res) => {
+        if (!cancelled) setPfp(res?.profile?.pfpUrl ?? null);
+      })
+      .catch(() => {
+        // A missing avatar is not worth surfacing; the initial stands in.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [address]);
+
+  const initial = address ? address.slice(2, 3).toUpperCase() : "";
+
   return (
-    <div className="mb-6 rounded-2xl bg-slate-50 px-4 py-3.5 text-left dark:bg-white/[0.05]">
-      {/* The fourth criterion. Shown only to accounts that qualified under it, never on the
-          not-eligible screen, so nobody learns about a route they cannot take. */}
-      {stats.cm === 1 ? <CommunityBadge /> : null}
-      <Row label="Your total sweep volume" value={`$${formatUsdTotal(stats.sv)}`} />
-      <Row label="Your total swap volume" value={`$${formatUsdTotal(stats.wv)}`} />
-      <Row label="Your total Streak Save" value={String(stats.ss)} last />
+    <div className="mb-5 flex items-center justify-between gap-3">
+      <Link href="/profile" aria-label="DustSwap">
+        <ThemeLongLogo
+          alt="DustSwap"
+          width={178}
+          height={42}
+          priority
+          className="h-auto w-[124px] sm:w-[150px]"
+        />
+      </Link>
+
+      <div className="flex items-center gap-2">
+        {address ? (
+          pfp ? (
+            <Image
+              src={pfp}
+              alt=""
+              width={32}
+              height={32}
+              unoptimized
+              className="h-8 w-8 rounded-full border border-slate-200 object-cover dark:border-white/15"
+            />
+          ) : (
+            <span className="flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 bg-slate-100 text-[12px] font-semibold text-slate-600 dark:border-white/15 dark:bg-white/10 dark:text-white/70">
+              {initial}
+            </span>
+          )
+        ) : null}
+
+        <WalletConnectButton showDisconnect connectLabel="Connect" />
+      </div>
+    </div>
+  );
+}
+
+function EligibilityBreakdown({ stats }: { stats: ClaimStats }) {
+  return (
+    <div className="mt-4 rounded-[22px] border border-slate-200/80 bg-white/90 p-5 shadow-[0_18px_50px_rgba(15,23,42,0.08)] backdrop-blur-xl dark:border-white/10 dark:bg-white/[0.04]">
+      <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400 dark:text-white/45">
+        Why you qualified
+      </p>
+
+      <div className="mt-3">
+        {stats.cm === 1 ? <CommunityBadge /> : null}
+        <Row
+          label="Your total sweep volume"
+          value={"$" + formatUsdTotal(stats.sv)}
+          hit={Number(stats.sv) >= CLAIM_CRITERIA.sweepUsd}
+        />
+        <Row
+          label="Your total swap volume"
+          value={"$" + formatUsdTotal(stats.wv)}
+          hit={Number(stats.wv) >= CLAIM_CRITERIA.swapVolumeUsd}
+        />
+        <Row
+          label="Your total Streak Save"
+          value={String(stats.ss)}
+          hit={stats.ss >= CLAIM_CRITERIA.streakSaves}
+          last
+        />
+      </div>
     </div>
   );
 }
@@ -514,15 +606,34 @@ function CommunityBadge() {
   );
 }
 
-function Row({ label, value, last }: { label: string; value: string; last?: boolean }) {
+function Row({
+  label,
+  value,
+  hit,
+  last,
+}: {
+  label: string;
+  value: string;
+  hit?: boolean;
+  last?: boolean;
+}) {
   return (
     <div
       className={[
-        "flex items-center justify-between py-2 text-[13px]",
+        "flex items-center justify-between py-2.5 text-[13px]",
         last ? "" : "border-b border-slate-200/70 dark:border-white/[0.07]",
       ].join(" ")}
     >
-      <span className="text-slate-500 dark:text-white/55">{label}</span>
+      <span className="flex items-center gap-2 text-slate-500 dark:text-white/55">
+        {hit ? (
+          <span className="flex h-4 w-4 items-center justify-center rounded-full bg-emerald-500 text-[9px] font-bold text-white">
+            {"✓"}
+          </span>
+        ) : (
+          <span className="h-4 w-4 rounded-full border border-slate-300 dark:border-white/20" />
+        )}
+        {label}
+      </span>
       <span className="font-semibold tabular-nums text-slate-900 dark:text-white">{value}</span>
     </div>
   );
