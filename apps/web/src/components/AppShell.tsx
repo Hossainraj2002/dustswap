@@ -15,6 +15,7 @@ import {
 } from 'react';
 import { useAccount } from 'wagmi';
 import {
+  ClaimIcon,
   DustSweepIcon,
   ProfileIcon,
   SpinIcon,
@@ -53,6 +54,7 @@ const NAV_ITEMS = [
   { icon: SpinIcon, label: 'Spin', route: '/spin' },
   { icon: DustSweepIcon, label: 'Dust Sweep', route: '/dustsweep', brand: true },
   { icon: SwapIcon, label: 'Swap', route: '/swap' },
+  { icon: ClaimIcon, label: 'Claim', route: '/claim' },
 ] satisfies NavItem[];
 
 function isActiveRoute(pathname: string, route: string) {

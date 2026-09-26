@@ -125,6 +125,18 @@ export function SpinIcon(props: IconProps) {
   );
 }
 
+export function ClaimIcon(props: IconProps) {
+  return (
+    <IconFrame {...props}>
+      <path d="M3.75 8.75h16.5v3H3.75z" />
+      <path d="M5.25 11.75v7.5h13.5v-7.5" />
+      <path d="M12 8.75v10.5" />
+      <path d="M12 8.75S10.9 4.75 8.6 4.75a1.95 1.95 0 0 0 0 4z" />
+      <path d="M12 8.75s1.1-4 3.4-4a1.95 1.95 0 0 1 0 4z" />
+    </IconFrame>
+  );
+}
+
 export function HistoryIcon(props: IconProps) {
   return (
     <IconFrame {...props}>
