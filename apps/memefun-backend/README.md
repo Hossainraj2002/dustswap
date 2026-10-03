@@ -118,7 +118,9 @@ See `.env.example`. The essentials:
 | `DATABASE_URL`, `DATABASE_SCHEMA` | all | `DATABASE_SCHEMA` is required for `ponder start` and `ponder serve`, and is the schema the API and keeper read |
 | `PUBLIC_API_URL`, `ALLOWED_ORIGINS` | api | `ALLOWED_ORIGINS` also defines the accepted SIWE domains; required off the local chain |
 | `SIWE_SESSION_SECRET`, `ADMIN_TOKEN` | api | 32+ random characters each |
-| `MEDIA_STORE`, `MEDIA_LOCAL_DIR`, `PINATA_*`, `R2_*` | api, keeper | `local` or `pinata` |
+| `MEDIA_STORE`, `MEDIA_LOCAL_DIR` | api, keeper | `local` (files on disk), `bucket` (one S3-compatible bucket shared by API and keeper, served at `/media/<cid>`; the testnet) or `pinata` (Pinata IPFS pin + R2 mirror; mainnet) |
+| `BUCKET_ENDPOINT`, `BUCKET_NAME`, `BUCKET_ACCESS_KEY_ID`, `BUCKET_SECRET_ACCESS_KEY`, `BUCKET_REGION` | api, keeper | `bucket` store; on Railway, references to the bucket's own variables |
+| `PINATA_JWT`, `PINATA_GATEWAY`, `R2_*` | api, keeper | `pinata` store |
 | `KEEPER_PRIVATE_KEY`, `PRICE_KEEPER_PRIVATE_KEY`, `REWARDS_PUBLISHER_PRIVATE_KEY` | keeper | local chain falls back to anvil's dev keys |
 | `BUYBACK_MIN_USD_CENTS`, `FLOOR_MIN_USD_CENTS`, `KEEPER_DRY_RUN` | keeper | thresholds default to $5 and $10 ($0.50 locally) |
 | `STOCK_PRICE_SOURCE` | keeper | `dev` (a drift around the current price; local chain and testnets only, refused on mainnet), `http`, or `none`. Default: `http` when `STOCK_PRICE_URL` is set, `dev` locally, otherwise `none` |
@@ -153,23 +155,26 @@ pnpm verify-index                           # the running dev index against the 
 
 ## Base Sepolia (testnet) on Railway
 
-Railway project `memefun-testnet` (not DustSwap's `mellow-wisdom`), with Postgres and two services built from this folder of `main` (watch paths `/apps/memefun-backend/**`):
+Railway project `memefun-testnet` (not DustSwap's `mellow-wisdom`): Postgres, a storage bucket and three services built from `main`, each watching only its own folder:
 
-| Service | Start command | Notes |
-|---|---|---|
-| `memefun-api` | `pnpm exec ponder start --schema $RAILWAY_DEPLOYMENT_ID --views-schema memefun` | indexer and API in one process; each deploy indexes into a fresh schema and the `memefun` views switch over once it is ready. Health check `/ready` (300 s) |
-| `memefun-keeper` | `pnpm keeper` | no domain |
+| Service | Root | Start command | Notes |
+|---|---|---|---|
+| `memefun-api` | `/apps/memefun-backend` | `pnpm exec ponder start --schema $RAILWAY_DEPLOYMENT_ID --views-schema memefun --port $PORT` | indexer and API in one process; each deploy indexes into a fresh schema and the `memefun` views switch over once it is ready. Health check `/ready` (300 s). `https://memefun-api-production.up.railway.app` |
+| `memefun-keeper` | `/apps/memefun-backend` | `pnpm keeper` | no domain |
+| `memefun-web` | `/apps/memefun` | `pnpm exec next start -p $PORT` | the app (built with `NEXT_PUBLIC_MEMEFUN_API_URL`, `NEXT_PUBLIC_MEMEFUN_CHAIN_ID=84532`). `https://memefun-web-production.up.railway.app` |
 
-Shared variables: `MEMEFUN_CHAIN=base-sepolia`, `MEMEFUN_RPC_URLS` (paid endpoints), `DATABASE_URL=${{Postgres.DATABASE_URL}}`, `DATABASE_SCHEMA=memefun`, `MEDIA_STORE=pinata` with `PINATA_*` and `R2_*`. The API also gets `PUBLIC_API_URL`, `ALLOWED_ORIGINS` (the app's workers.dev URL), `SIWE_SESSION_SECRET` and `ADMIN_TOKEN`; the keeper gets its three keys and `STOCK_PRICE_SOURCE=dev` (the testnet's test stock has no real price).
+Variables already set: `MEMEFUN_CHAIN=base-sepolia`, `MEMEFUN_RPC_URLS` (public Base Sepolia endpoints for now; a paid URL can replace them), `DATABASE_URL=${{Postgres.DATABASE_URL}}`, `DATABASE_SCHEMA=memefun`, `PUBLIC_API_URL`, `ALLOWED_ORIGINS` (the app), `MEDIA_STORE=bucket` with `BUCKET_*` referencing the `memefun-media` bucket, `STOCK_PRICE_SOURCE=dev` on the keeper (the test stock has no real price).
+
+Still to set by the owner (they are credentials): `SIWE_SESSION_SECRET` and `ADMIN_TOKEN` (32+ random characters each) on `memefun-api`; `KEEPER_PRIVATE_KEY`, `PRICE_KEEPER_PRIVATE_KEY`, `REWARDS_PUBLISHER_PRIVATE_KEY` (fresh keys with a little Sepolia ETH) on `memefun-keeper`; `NEXT_PUBLIC_PRIVY_APP_ID` on `memefun-web`, with its URL added to Privy's allowed origins.
 
 Order of work:
 
-1. Deploy the contracts from an encrypted keystore (`packages/memefun-contracts`: `script/Deploy.s.sol`, then `script/TestnetExtras.s.sol` for the test stock, its faucet and the keeper roles), then `pnpm sync-shared` here and `pnpm deployments` in `apps/memefun`, and commit the records.
-2. The services above, with the keeper keys generated straight into Railway (only their addresses leave it) and funded with a little Sepolia ETH.
-3. The media bucket (R2 with its r2.dev URL) and Pinata (JWT and a dedicated gateway).
-4. The app on Cloudflare (`.github/workflows/deploy-memefun.yml`), then `ALLOWED_ORIGINS` set to its URL.
+1. Deploy the contracts from an encrypted keystore (`packages/memefun-contracts` README, "Base Sepolia"), then `pnpm sync-shared` here and `pnpm deployments` in `apps/memefun`, and commit the records.
+2. Connect the three services to the repository (branch `main`); they build and deploy.
+3. Check `/ready`, `/v1/health` and `pnpm verify-index` against the Railway database.
 
-Mainnet (Phase 5) uses the same layout with a Safe as owner, Coinbase's tokenized stocks priced by their Chainlink feeds (no keeper price source), and the memefun.dustswap.wtf domain.
+Mainnet (Phase 5) uses the same layout with a Safe as owner, Pinata + R2 media, a paid RPC, Coinbase's tokenized stocks priced by their Chainlink feeds (no keeper price source), and the memefun.dustswap.wtf domain.
+
 ## Known limits
 
 - **Stock prices.** On mainnet each Coinbase tokenized stock has a Chainlink feed, so it is listed as a CHAINLINK quote and needs no keeper price. MANUAL quotes (the testnet's test stock) follow `STOCK_PRICE_SOURCE`.

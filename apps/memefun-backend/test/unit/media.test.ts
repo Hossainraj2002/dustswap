@@ -6,7 +6,10 @@ import { afterAll, describe, expect, it } from "vitest";
 
 import { cidV1Raw } from "../../lib/cid";
 import { ImageRejected, processCoinImage, sniffImageType } from "../../lib/media/image";
+import { BucketMediaStore } from "../../lib/media/bucket";
 import { LocalMediaStore } from "../../lib/media/local";
+import type { ObjectBucket } from "../../lib/media/remote";
+import type { MediaObject } from "../../lib/media/store";
 import { buildMetadata, encodeMetadata, safeImageUri, sanitizeMetadata } from "../../lib/media/metadata";
 
 const CID = "bafkreifzjut3te2nhyekklss27nh3k72ysco7y32koao5eei66wof36n5e";
@@ -156,5 +159,41 @@ describe("metadata", () => {
       external_link: "https://frog.example/",
       links: { website: "https://frog.example/" },
     });
+  });
+});
+
+describe("BucketMediaStore", () => {
+  function memoryBucket(): ObjectBucket & { objects: Map<string, MediaObject> } {
+    const objects = new Map<string, MediaObject>();
+    return {
+      objects,
+      async put(key, bytes, contentType) {
+        objects.set(key, { bytes, contentType });
+      },
+      async get(key) {
+        return objects.get(key) ?? null;
+      },
+    };
+  }
+
+  it("stores under the bytes' own CID and serves it back through the API", async () => {
+    const bucket = memoryBucket();
+    const store = new BucketMediaStore(bucket, "https://api.test/");
+    const bytes = new TextEncoder().encode('{"name":"Toad"}');
+    const stored = await store.put(bytes, "application/json");
+    expect(stored.cid).toBe(cidV1Raw(bytes));
+    expect(stored.uri).toBe(`ipfs://${stored.cid}`);
+    expect(stored.url).toBe(`https://api.test/media/${stored.cid}`);
+    expect(await store.get(stored.cid)).toEqual({ bytes, contentType: "application/json" });
+  });
+
+  it("never serves an object whose bytes no longer match its CID, nor a non-CID key", async () => {
+    const bucket = memoryBucket();
+    const store = new BucketMediaStore(bucket, "https://api.test");
+    const stored = await store.put(new TextEncoder().encode("{}"), "application/json");
+    bucket.objects.set(stored.cid, { bytes: new TextEncoder().encode("{ }"), contentType: "application/json" });
+    expect(await store.get(stored.cid)).toBeNull();
+    expect(await store.get("../../etc/passwd")).toBeNull();
+    await expect(store.put(new Uint8Array([1]), "image/svg+xml")).rejects.toThrow("unsupported content type");
   });
 });

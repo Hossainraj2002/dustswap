@@ -3,7 +3,8 @@
  * CID of the bytes it stored, and the on-chain contractURI is `ipfs://<cid>`.
  *
  *   LocalMediaStore  : files under data/media, CIDs computed locally (dev and tests)
- *   Pinata + R2      : pinned to IPFS through Pinata, mirrored to R2 for fast reads (Phase 4)
+ *   BucketMediaStore : one S3-compatible bucket shared by the API and keeper (the testnet)
+ *   Pinata + R2      : pinned to IPFS through Pinata, mirrored to R2 for fast reads (mainnet)
  */
 export interface StoredObject {
   cid: string;

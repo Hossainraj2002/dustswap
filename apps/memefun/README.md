@@ -40,4 +40,7 @@ Live mode against the local stack: `pnpm dev:chain` and `pnpm dev` in `apps/meme
 
 ## Deploying
 
-Only through `.github/workflows/deploy-memefun.yml` on pushes to `main`: the Base Sepolia build on the `memefun-testnet` worker's workers.dev URL. It stays off until the repository variable `MEMEFUN_TESTNET_DEPLOY` is `on`, and refuses to build without the `MEMEFUN_TESTNET_ENV` secret and a Sepolia deployment in the build. Never deploy from a laptop: a local `.env.local` would end up in the bundle.
+- **Testnet (Base Sepolia):** the Railway service `memefun-web` in the `memefun-testnet` project builds this folder from `main` (`pnpm build`, then `next start`) at https://memefun-web-production.up.railway.app. Its `NEXT_PUBLIC_*` variables live on the service. Railway sends no visitor country, so the stock-pair geofence is open there; that only matters once real stocks are listed.
+- **Cloudflare (later, mainnet on memefun.dustswap.wtf):** `.github/workflows/deploy-memefun.yml` builds the OpenNext worker. It stays off until the repository variable `MEMEFUN_TESTNET_DEPLOY` is `on`, and it needs the `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` secrets, which the repository does not have yet.
+
+Never deploy from a laptop: a local `.env.local` would end up in the bundle.

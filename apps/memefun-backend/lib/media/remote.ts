@@ -24,9 +24,20 @@ export interface ObjectBucket {
 }
 
 export function r2Bucket(config: PinataR2Config["r2"]): ObjectBucket {
-  const client = new S3Client({
-    region: "auto",
+  return s3Bucket({
     endpoint: `https://${config.accountId}.r2.cloudflarestorage.com`,
+    region: "auto",
+    accessKeyId: config.accessKeyId,
+    secretAccessKey: config.secretAccessKey,
+    bucket: config.bucket,
+  });
+}
+
+/** Any S3-compatible bucket: Cloudflare R2, or a Railway storage bucket (virtual-hosted URLs). */
+export function s3Bucket(config: { endpoint: string; region: string; accessKeyId: string; secretAccessKey: string; bucket: string }): ObjectBucket {
+  const client = new S3Client({
+    region: config.region,
+    endpoint: config.endpoint,
     credentials: { accessKeyId: config.accessKeyId, secretAccessKey: config.secretAccessKey },
   });
   return {
