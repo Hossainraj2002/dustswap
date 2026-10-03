@@ -1,0 +1,72 @@
+[profile.default]
+src = "src"
+out = "out"
+test = "test"
+script = "script"
+libs = ["lib"]
+# Uniswap v4 (transient storage) needs cancun, and v4-core v4.0.0 is pinned to 0.8.26.
+# This project is deliberately separate from packages/contracts, which must stay on paris.
+solc_version = "0.8.26"
+evm_version = "cancun"
+optimizer = true
+optimizer_runs = 1_000
+via_ir = true
+ffi = false
+# v4-core is pinned to d153b04: the v4.0.0 PoolManager logic deployed on Base, plus the later
+# move of SwapParams/ModifyLiquidityParams into types/PoolOperation.sol (ABI-identical). It is
+# the commit OpenZeppelin uniswap-hooks v1.1.1 was audited against.
+remappings = [
+    "forge-std/=lib/forge-std/src/",
+    "@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/",
+    "@openzeppelin/uniswap-hooks/=lib/uniswap-hooks/src/",
+    "@uniswap/v4-core/=lib/v4-core/",
+    "@uniswap/v4-periphery/=lib/v4-periphery/",
+    "base-std/=lib/base-std/src/",
+    "base-std-test/=lib/base-std/test/",
+    "solmate/=lib/v4-core/lib/solmate/",
+]
+# Tests deploy a local PoolManager. v4-core only compiles it under via-IR with its own optimizer
+# setting (Pool.swap is otherwise one slot too deep), so that file keeps v4-core's profile.
+additional_compiler_profiles = [{ name = "v4core", via_ir = true, optimizer_runs = 44_444_444 }]
+compilation_restrictions = [{ paths = "lib/v4-core/src/PoolManager.sol", optimizer_runs = 44_444_444 }]
+# Test vectors generated from apps/memefun/src/core are read, deployments are written.
+fs_permissions = [
+    { access = "read", path = "./test/vectors" },
+    { access = "read", path = "./out" },
+    { access = "read-write", path = "./deployments" },
+]
+
+[profile.default.fuzz]
+runs = 1_000
+seed = "0x6d656d6566756e"
+
+[profile.default.invariant]
+runs = 256
+depth = 64
+fail_on_revert = false
+
+[profile.ci.fuzz]
+runs = 10_000
+
+[profile.ci.invariant]
+runs = 1_000
+depth = 128
+
+[profile.default.fmt]
+line_length = 100
+tab_width = 4
+bracket_spacing = false
+int_types = "long"
+multiline_func_header = "all"
+quote_style = "double"
+number_underscore = "thousands"
+single_line_statement_blocks = "single"
+
+[rpc_endpoints]
+base_mainnet = "${BASE_MAINNET_RPC_URL}"
+base_sepolia = "${BASE_SEPOLIA_RPC_URL}"
+
+[etherscan]
+base_mainnet = { key = "${BASESCAN_API_KEY}", url = "https://api.basescan.org/api" }
+base_sepolia = { key = "${BASESCAN_API_KEY}", url = "https://api-sepolia.basescan.org/api" }
+

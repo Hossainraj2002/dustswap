@@ -1,0 +1,419 @@
+@import "tailwindcss";
+
+/* Class-based dark mode (ThemeProvider toggles .dark on <html>). */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/*
+ * memefun design tokens. Apple HIG semantics (system, grouped and elevated
+ * backgrounds, four label levels, fills, separators) with Base Blue as the
+ * single tint. Price green/red are reserved for market direction.
+ * Contrast targets: 4.5:1 for text up to 17px, 3:1 for bold or 18px+.
+ * src/lib/theme/contrast.test.ts parses this file and enforces them.
+ */
+:root {
+  --mf-bg: #ffffff;
+  --mf-bg-grouped: #f2f2f7;
+  --mf-bg-elevated: #ffffff;
+  --mf-bg-elevated-2: #f2f2f7;
+  --mf-bg-secondary: #f2f2f7;
+
+  --mf-label: #000000;
+  /* iOS uses 0.6 here, which is only about 3.45:1 on white; 0.78 meets 4.5:1 even on gray fills. */
+  --mf-label-2: rgba(60, 60, 67, 0.78);
+  --mf-label-3: rgba(60, 60, 67, 0.3);
+  --mf-label-4: rgba(60, 60, 67, 0.18);
+  /* Example text in empty fields: clearly dimmer than typed text, still 3:1. */
+  --mf-placeholder: rgba(60, 60, 67, 0.55);
+
+  --mf-fill: rgba(120, 120, 128, 0.2);
+  --mf-fill-2: rgba(120, 120, 128, 0.16);
+  --mf-fill-3: rgba(118, 118, 128, 0.12);
+  --mf-fill-4: rgba(116, 116, 128, 0.08);
+
+  --mf-separator: rgba(60, 60, 67, 0.29);
+  --mf-separator-opaque: #c6c6c8;
+
+  /* Base Blue. `tint` (a hair darker, for small text on tinted grays) is for text and icons; `tint-fill` sits behind white labels. */
+  --mf-tint: #004be6;
+  --mf-tint-fill: #0052ff;
+  --mf-on-tint: #ffffff;
+
+  /* Market direction. *-fill sits behind white labels (4.5:1, WCAG treats 15px bold as normal text). */
+  --mf-up: #1a6e2f;
+  --mf-up-fill: #1e7e34;
+  --mf-down: #bb0012;
+  --mf-down-fill: #d70015;
+
+  /* Launch protection, warnings. */
+  --mf-warning: #b22e00;
+  --mf-warning-ring: #ff9500;
+
+  /* Fee destinations. */
+  --mf-mode-creator: #004be6;
+  --mf-mode-burn: #b22e00;
+  --mf-mode-holders: #8944ab;
+  --mf-mode-floor: #00658f;
+  --mf-mode-platform: rgba(60, 60, 67, 0.55);
+  --mf-referral: #c2185b;
+
+  --mf-shadow-float: 0 12px 40px rgba(0, 0, 0, 0.12), 0 2px 6px rgba(0, 0, 0, 0.05);
+  --mf-shadow-card: 0 1px 2px rgba(0, 0, 0, 0.04);
+
+  --mf-safe-top: env(safe-area-inset-top, 0px);
+  --mf-safe-bottom: env(safe-area-inset-bottom, 0px);
+  --mf-tabbar-height: 64px;
+}
+
+:root.dark {
+  --mf-bg: #000000;
+  --mf-bg-grouped: #000000;
+  --mf-bg-elevated: #1c1c1e;
+  --mf-bg-elevated-2: #2c2c2e;
+  --mf-bg-secondary: #1c1c1e;
+
+  --mf-label: #ffffff;
+  --mf-label-2: rgba(235, 235, 245, 0.6);
+  --mf-label-3: rgba(235, 235, 245, 0.3);
+  --mf-label-4: rgba(235, 235, 245, 0.16);
+  --mf-placeholder: rgba(235, 235, 245, 0.42);
+
+  --mf-fill: rgba(120, 120, 128, 0.36);
+  --mf-fill-2: rgba(120, 120, 128, 0.32);
+  --mf-fill-3: rgba(118, 118, 128, 0.24);
+  --mf-fill-4: rgba(118, 118, 128, 0.18);
+
+  --mf-separator: rgba(84, 84, 88, 0.65);
+  --mf-separator-opaque: #38383a;
+
+  --mf-tint: #5b95ff;
+  --mf-tint-fill: #1a66ff;
+  --mf-on-tint: #ffffff;
+
+  --mf-up: #30d158;
+  --mf-up-fill: #238636;
+  --mf-down: #ff5a50;
+  --mf-down-fill: #d70015;
+
+  --mf-warning: #ff9f0a;
+  --mf-warning-ring: #ff9f0a;
+
+  --mf-mode-creator: #4d8bff;
+  --mf-mode-burn: #ff9f0a;
+  --mf-mode-holders: #c77df5;
+  --mf-mode-floor: #40c8e0;
+  --mf-mode-platform: rgba(235, 235, 245, 0.45);
+  --mf-referral: #ff6482;
+
+  --mf-shadow-float: 0 12px 40px rgba(0, 0, 0, 0.6), 0 2px 6px rgba(0, 0, 0, 0.4);
+  --mf-shadow-card: none;
+}
+
+@theme inline {
+  --font-sans: -apple-system, BlinkMacSystemFont, var(--font-inter), "Segoe UI", Roboto, system-ui, sans-serif;
+  --font-rounded: ui-rounded, "SF Pro Rounded", var(--font-nunito), -apple-system, system-ui, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+
+  --color-bg: var(--mf-bg);
+  --color-bg-grouped: var(--mf-bg-grouped);
+  --color-bg-elevated: var(--mf-bg-elevated);
+  --color-bg-elevated-2: var(--mf-bg-elevated-2);
+  --color-bg-secondary: var(--mf-bg-secondary);
+  --color-label: var(--mf-label);
+  --color-label-2: var(--mf-label-2);
+  --color-label-3: var(--mf-label-3);
+  --color-label-4: var(--mf-label-4);
+  --color-placeholder: var(--mf-placeholder);
+  --color-fill: var(--mf-fill);
+  --color-fill-2: var(--mf-fill-2);
+  --color-fill-3: var(--mf-fill-3);
+  --color-fill-4: var(--mf-fill-4);
+  --color-separator: var(--mf-separator);
+  --color-separator-opaque: var(--mf-separator-opaque);
+  --color-tint: var(--mf-tint);
+  --color-tint-fill: var(--mf-tint-fill);
+  --color-on-tint: var(--mf-on-tint);
+  --color-up: var(--mf-up);
+  --color-up-fill: var(--mf-up-fill);
+  --color-down: var(--mf-down);
+  --color-down-fill: var(--mf-down-fill);
+  --color-warning: var(--mf-warning);
+  --color-warning-ring: var(--mf-warning-ring);
+  --color-mode-creator: var(--mf-mode-creator);
+  --color-mode-burn: var(--mf-mode-burn);
+  --color-mode-holders: var(--mf-mode-holders);
+  --color-mode-floor: var(--mf-mode-floor);
+  --color-mode-platform: var(--mf-mode-platform);
+  --color-referral: var(--mf-referral);
+
+  --shadow-float: var(--mf-shadow-float);
+  --shadow-card: var(--mf-shadow-card);
+}
+
+@theme {
+  /* HIG iOS default (Large) Dynamic Type scale, in rem so browser text size applies. */
+  --text-large-title: 2.125rem;
+  --text-large-title--line-height: 1.2059;
+  --text-large-title--letter-spacing: 0.011em;
+  --text-large-title--font-weight: 700;
+  --text-title1: 1.75rem;
+  --text-title1--line-height: 1.2143;
+  --text-title1--letter-spacing: 0.013em;
+  --text-title1--font-weight: 700;
+  --text-title2: 1.375rem;
+  --text-title2--line-height: 1.2727;
+  --text-title2--letter-spacing: 0.016em;
+  --text-title2--font-weight: 700;
+  --text-title3: 1.25rem;
+  --text-title3--line-height: 1.25;
+  --text-title3--letter-spacing: 0.019em;
+  --text-title3--font-weight: 600;
+  --text-headline: 1.0625rem;
+  --text-headline--line-height: 1.2941;
+  --text-headline--letter-spacing: -0.025em;
+  --text-headline--font-weight: 600;
+  --text-body: 1.0625rem;
+  --text-body--line-height: 1.2941;
+  --text-body--letter-spacing: -0.025em;
+  --text-callout: 1rem;
+  --text-callout--line-height: 1.3125;
+  --text-callout--letter-spacing: -0.02em;
+  --text-subhead: 0.9375rem;
+  --text-subhead--line-height: 1.3333;
+  --text-subhead--letter-spacing: -0.015em;
+  --text-footnote: 0.8125rem;
+  --text-footnote--line-height: 1.3846;
+  --text-footnote--letter-spacing: -0.006em;
+  --text-caption1: 0.75rem;
+  --text-caption1--line-height: 1.3333;
+  --text-caption2: 0.6875rem;
+  --text-caption2--line-height: 1.1818;
+  --text-caption2--letter-spacing: 0.006em;
+
+  /* Concentric radii: inner = outer - padding. */
+  --radius-xs: 6px;
+  --radius-sm: 10px;
+  --radius-md: 14px;
+  --radius-lg: 20px;
+  --radius-xl: 28px;
+
+  --ease-ios: cubic-bezier(0.32, 0.72, 0, 1);
+  --animate-flash-up: flash-up 0.4s ease-out;
+  --animate-flash-down: flash-down 0.4s ease-out;
+  --animate-marquee: marquee var(--mf-marquee-duration, 60s) linear infinite;
+  --animate-pulse-soft: pulse-soft 1.6s ease-in-out infinite;
+
+  @keyframes flash-up {
+    from { background-color: color-mix(in srgb, var(--mf-up) 22%, transparent); }
+    to { background-color: transparent; }
+  }
+  @keyframes flash-down {
+    from { background-color: color-mix(in srgb, var(--mf-down) 22%, transparent); }
+    to { background-color: transparent; }
+  }
+  @keyframes marquee {
+    from { transform: translateX(0); }
+    to { transform: translateX(-50%); }
+  }
+  @keyframes pulse-soft {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.45; }
+  }
+}
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+    background-color: var(--mf-bg-grouped);
+    color-scheme: light;
+  }
+  html.dark {
+    color-scheme: dark;
+  }
+  body {
+    min-height: 100dvh;
+    background-color: var(--mf-bg-grouped);
+    color: var(--mf-label);
+    font-family: var(--font-sans);
+    font-size: var(--text-body);
+    line-height: var(--text-body--line-height);
+    letter-spacing: var(--text-body--letter-spacing);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+    -webkit-tap-highlight-color: transparent;
+  }
+  ::selection {
+    background: color-mix(in srgb, var(--mf-tint) 28%, transparent);
+  }
+  :focus {
+    outline: none;
+  }
+  :focus-visible {
+    outline: 2.5px solid var(--mf-tint);
+    outline-offset: 2px;
+    border-radius: 8px;
+  }
+  button,
+  [role="button"],
+  a {
+    -webkit-user-select: none;
+    user-select: none;
+  }
+  input,
+  textarea,
+  select {
+    font: inherit;
+    letter-spacing: inherit;
+  }
+  /* Inputs at 16px+ stop iOS Safari zooming the page on focus. */
+  @media (max-width: 1023px) {
+    input,
+    textarea,
+    select {
+      font-size: max(16px, 1em);
+    }
+  }
+  img,
+  svg {
+    display: block;
+  }
+  hr {
+    border-color: var(--mf-separator);
+  }
+}
+
+@layer components {
+  /* Translucent material for navigation bars (HIG: blur + vibrancy). */
+  .mf-material {
+    background-color: color-mix(in srgb, var(--mf-bg-grouped) 76%, transparent);
+    -webkit-backdrop-filter: saturate(180%) blur(20px);
+    backdrop-filter: saturate(180%) blur(20px);
+  }
+
+  /*
+   * Liquid Glass, regular variant. Reserved for the navigation and control
+   * layer (tab bar, sidebar, floating trade bar), never for content cards.
+   */
+  .mf-glass {
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.68), rgba(255, 255, 255, 0.52));
+    -webkit-backdrop-filter: blur(24px) saturate(190%);
+    backdrop-filter: blur(24px) saturate(190%);
+    border: 0.5px solid rgba(255, 255, 255, 0.72);
+    box-shadow:
+      0 10px 34px rgba(0, 0, 0, 0.12),
+      0 1px 3px rgba(0, 0, 0, 0.06),
+      inset 0 1px 0 rgba(255, 255, 255, 0.85),
+      inset 0 -1px 0 rgba(0, 0, 0, 0.03);
+  }
+  .dark .mf-glass {
+    background: linear-gradient(180deg, rgba(52, 52, 56, 0.66), rgba(30, 30, 32, 0.58));
+    border: 0.5px solid rgba(255, 255, 255, 0.14);
+    box-shadow:
+      0 10px 34px rgba(0, 0, 0, 0.55),
+      inset 0 1px 0 rgba(255, 255, 255, 0.14);
+  }
+  /* Larger glass surfaces that carry labels (the tab bar) get more opaque,
+     so text scrolling underneath never competes with the tab labels. */
+  .mf-glass-dense {
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.86), rgba(250, 250, 252, 0.8));
+    -webkit-backdrop-filter: blur(28px) saturate(200%);
+    backdrop-filter: blur(28px) saturate(200%);
+  }
+  .dark .mf-glass-dense {
+    background: linear-gradient(180deg, rgba(44, 44, 48, 0.86), rgba(24, 24, 26, 0.82));
+  }
+
+  /* Elevated grouped surface (inset-grouped lists, cards). */
+  .mf-card {
+    background-color: var(--mf-bg-elevated);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--mf-shadow-card);
+  }
+
+  .mf-num {
+    font-family: var(--font-rounded);
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum" 1;
+  }
+
+  .mf-scroll-x {
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+  .mf-scroll-x::-webkit-scrollbar {
+    display: none;
+  }
+
+  .mf-skeleton {
+    background: linear-gradient(90deg, var(--mf-fill-3), var(--mf-fill-4), var(--mf-fill-3));
+    background-size: 200% 100%;
+    animation: mf-shimmer 1.4s ease-in-out infinite;
+    border-radius: var(--radius-xs);
+  }
+  @keyframes mf-shimmer {
+    from { background-position: 200% 0; }
+    to { background-position: -200% 0; }
+  }
+}
+
+/* Hairline separators: 0.5px on high-density screens. Utilities, so variants apply. */
+@utility hairline-t {
+  border-top: 1px solid var(--mf-separator);
+  @media (min-resolution: 2dppx) {
+    border-top-width: 0.5px;
+  }
+}
+@utility hairline-b {
+  border-bottom: 1px solid var(--mf-separator);
+  @media (min-resolution: 2dppx) {
+    border-bottom-width: 0.5px;
+  }
+}
+
+/* Continuous (squircle) corners where the browser supports them. */
+@supports (corner-shape: squircle) {
+  .mf-card,
+  .mf-squircle {
+    corner-shape: squircle;
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .mf-material,
+  .mf-glass,
+  .mf-glass-dense,
+  .dark .mf-glass,
+  .dark .mf-glass-dense {
+    background: var(--mf-bg-elevated);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+}
+
+@media (prefers-contrast: more) {
+  :root {
+    --mf-label-2: rgba(60, 60, 67, 0.85);
+    --mf-separator: rgba(60, 60, 67, 0.6);
+  }
+  :root.dark {
+    --mf-label-2: rgba(235, 235, 245, 0.85);
+    --mf-separator: rgba(160, 160, 168, 0.8);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+  .mf-skeleton {
+    animation: none;
+  }
+}

@@ -1,0 +1,51 @@
+{
+  "name": "@dustswap/memefun-backend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@9.15.4",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "ponder dev",
+    "start": "ponder start",
+    "serve": "ponder serve",
+    "codegen": "ponder codegen",
+    "keeper": "tsx keeper/main.ts",
+    "migrate": "tsx scripts/migrate.ts",
+    "sync-shared": "tsx scripts/sync-shared.ts",
+    "dev:db": "tsx scripts/dev-db.ts",
+    "dev:chain": "tsx scripts/dev-chain.ts",
+    "dev:seed": "tsx scripts/seed.ts",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "e2e": "vitest run --config vitest.e2e.config.ts",
+    "verify-index": "tsx scripts/verify-index.ts"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "3.1145.0",
+    "@fontsource/inter": "5.3.0",
+    "@openzeppelin/merkle-tree": "1.0.8",
+    "@resvg/resvg-js": "2.6.2",
+    "hono": "4.13.12",
+    "pg": "8.23.1",
+    "ponder": "0.17.12",
+    "satori": "0.35.0",
+    "sharp": "0.35.5",
+    "viem": "2.52.0",
+    "zod": "3.25.76"
+  },
+  "devDependencies": {
+    "@eslint/js": "9.39.4",
+    "@types/node": "22.19.15",
+    "@types/pg": "8.23.1",
+    "eslint": "9.39.4",
+    "tsx": "4.23.15",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.71.0",
+    "vitest": "^3.2.4"
+  }
+}

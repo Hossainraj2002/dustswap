@@ -1,0 +1,1042 @@
+{
+ "generatedBy": "apps/memefun/scripts/vectors.ts",
+ "count": "148",
+ "cases": [
+  {
+   "base": "100",
+   "start": "5000",
+   "duration": "15",
+   "elapsed": "0",
+   "bps": "5000"
+  },
+  {
+   "base": "100",
+   "start": "5000",
+   "duration": "15",
+   "elapsed": "1",
+   "bps": "4673"
+  },
+  {
+   "base": "100",
+   "start": "5000",
+   "duration": "15",
+   "elapsed": "2",
+   "bps": "4346"
+  },
+  {
+   "base": "100",
+   "start": "5000",
+   "duration": "15",
+   "elapsed": "3",
+   "bps": "4020"
+  },
+  {
+   "base": "100",
+   "start": "5000",
+   "duration": "15",
+   "elapsed": "4",
+   "bps": "3693"
+  },
+  {
+   "base": "100",
+   "start": "5000",
+   "duration": "15",
+   "elapsed": "5",
+   "bps": "3366"
+  },
+  {
+   "base": "100",
+   "start": "5000",
+   "duration": "15",
+   "elapsed": "6",
+   "bps": "3040"
+  },
+  {
+   "base": "100",
+   "start": "5000",
+   "duration": "15",
+   "elapsed": "7",
+   "bps": "2713"
+  },
+  {
+   "base": "100",
+   "start": "5000",
+   "duration": "15",
+   "elapsed": "8",
+   "bps": "2386"
+  },
+  {
+   "base": "100",
+   "start": "5000",
+   "duration": "15",
+   "elapsed": "9",
+   "bps": "2060"
+  },
+  {
+   "base": "100",
+   "start": "5000",
+   "duration": "15",
+   "elapsed": "10",
+   "bps": "1733"
+  },
+  {
+   "base": "100",
+   "start": "5000",
+   "duration": "15",
+   "elapsed": "11",
+   "bps": "1406"
+  },
+  {
+   "base": "100",
+   "start": "5000",
+   "duration": "15",
+   "elapsed": "12",
+   "bps": "1080"
+  },
+  {
+   "base": "100",
+   "start": "5000",
+   "duration": "15",
+   "elapsed": "13",
+   "bps": "753"
+  },
+  {
+   "base": "100",
+   "start": "5000",
+   "duration": "15",
+   "elapsed": "14",
+   "bps": "426"
+  },
+  {
+   "base": "100",
+   "start": "5000",
+   "duration": "15",
+   "elapsed": "15",
+   "bps": "100"
+  },
+  {
+   "base": "100",
+   "start": "5000",
+   "duration": "15",
+   "elapsed": "16",
+   "bps": "100"
+  },
+  {
+   "base": "100",
+   "start": "5000",
+   "duration": "15",
+   "elapsed": "17",
+   "bps": "100"
+  },
+  {
+   "base": "532",
+   "start": "8768",
+   "duration": "268",
+   "elapsed": "379",
+   "bps": "532"
+  },
+  {
+   "base": "555",
+   "start": "3133",
+   "duration": "52",
+   "elapsed": "233",
+   "bps": "555"
+  },
+  {
+   "base": "77",
+   "start": "5141",
+   "duration": "179",
+   "elapsed": "105",
+   "bps": "2170"
+  },
+  {
+   "base": "433",
+   "start": "7631",
+   "duration": "96",
+   "elapsed": "323",
+   "bps": "433"
+  },
+  {
+   "base": "361",
+   "start": "6578",
+   "duration": "66",
+   "elapsed": "81",
+   "bps": "361"
+  },
+  {
+   "base": "491",
+   "start": "8813",
+   "duration": "214",
+   "elapsed": "42",
+   "bps": "7179"
+  },
+  {
+   "base": "141",
+   "start": "5525",
+   "duration": "241",
+   "elapsed": "82",
+   "bps": "3693"
+  },
+  {
+   "base": "363",
+   "start": "7920",
+   "duration": "59",
+   "elapsed": "8",
+   "bps": "6895"
+  },
+  {
+   "base": "262",
+   "start": "7086",
+   "duration": "9",
+   "elapsed": "232",
+   "bps": "262"
+  },
+  {
+   "base": "345",
+   "start": "3714",
+   "duration": "243",
+   "elapsed": "390",
+   "bps": "345"
+  },
+  {
+   "base": "882",
+   "start": "8570",
+   "duration": "125",
+   "elapsed": "18",
+   "bps": "7462"
+  },
+  {
+   "base": "154",
+   "start": "5851",
+   "duration": "250",
+   "elapsed": "307",
+   "bps": "154"
+  },
+  {
+   "base": "828",
+   "start": "6842",
+   "duration": "108",
+   "elapsed": "151",
+   "bps": "828"
+  },
+  {
+   "base": "327",
+   "start": "3346",
+   "duration": "173",
+   "elapsed": "262",
+   "bps": "327"
+  },
+  {
+   "base": "140",
+   "start": "7257",
+   "duration": "294",
+   "elapsed": "387",
+   "bps": "140"
+  },
+  {
+   "base": "986",
+   "start": "404",
+   "duration": "150",
+   "elapsed": "52",
+   "bps": "986"
+  },
+  {
+   "base": "876",
+   "start": "8876",
+   "duration": "300",
+   "elapsed": "170",
+   "bps": "4342"
+  },
+  {
+   "base": "246",
+   "start": "4192",
+   "duration": "263",
+   "elapsed": "235",
+   "bps": "666"
+  },
+  {
+   "base": "368",
+   "start": "3427",
+   "duration": "298",
+   "elapsed": "320",
+   "bps": "368"
+  },
+  {
+   "base": "283",
+   "start": "2518",
+   "duration": "153",
+   "elapsed": "384",
+   "bps": "283"
+  },
+  {
+   "base": "273",
+   "start": "4013",
+   "duration": "220",
+   "elapsed": "186",
+   "bps": "851"
+  },
+  {
+   "base": "85",
+   "start": "547",
+   "duration": "161",
+   "elapsed": "300",
+   "bps": "85"
+  },
+  {
+   "base": "21",
+   "start": "3467",
+   "duration": "120",
+   "elapsed": "357",
+   "bps": "21"
+  },
+  {
+   "base": "221",
+   "start": "3956",
+   "duration": "2",
+   "elapsed": "84",
+   "bps": "221"
+  },
+  {
+   "base": "296",
+   "start": "355",
+   "duration": "221",
+   "elapsed": "226",
+   "bps": "296"
+  },
+  {
+   "base": "806",
+   "start": "3339",
+   "duration": "159",
+   "elapsed": "263",
+   "bps": "806"
+  },
+  {
+   "base": "106",
+   "start": "7107",
+   "duration": "94",
+   "elapsed": "348",
+   "bps": "106"
+  },
+  {
+   "base": "163",
+   "start": "2414",
+   "duration": "259",
+   "elapsed": "144",
+   "bps": "1162"
+  },
+  {
+   "base": "269",
+   "start": "6367",
+   "duration": "2",
+   "elapsed": "168",
+   "bps": "269"
+  },
+  {
+   "base": "782",
+   "start": "6064",
+   "duration": "17",
+   "elapsed": "19",
+   "bps": "782"
+  },
+  {
+   "base": "959",
+   "start": "8931",
+   "duration": "191",
+   "elapsed": "286",
+   "bps": "959"
+  },
+  {
+   "base": "225",
+   "start": "4941",
+   "duration": "282",
+   "elapsed": "140",
+   "bps": "2599"
+  },
+  {
+   "base": "556",
+   "start": "6277",
+   "duration": "261",
+   "elapsed": "21",
+   "bps": "5816"
+  },
+  {
+   "base": "438",
+   "start": "1433",
+   "duration": "80",
+   "elapsed": "321",
+   "bps": "438"
+  },
+  {
+   "base": "995",
+   "start": "8786",
+   "duration": "219",
+   "elapsed": "30",
+   "bps": "7718"
+  },
+  {
+   "base": "837",
+   "start": "424",
+   "duration": "186",
+   "elapsed": "395",
+   "bps": "837"
+  },
+  {
+   "base": "97",
+   "start": "7973",
+   "duration": "116",
+   "elapsed": "260",
+   "bps": "97"
+  },
+  {
+   "base": "482",
+   "start": "9113",
+   "duration": "211",
+   "elapsed": "299",
+   "bps": "482"
+  },
+  {
+   "base": "127",
+   "start": "7428",
+   "duration": "200",
+   "elapsed": "368",
+   "bps": "127"
+  },
+  {
+   "base": "33",
+   "start": "8328",
+   "duration": "289",
+   "elapsed": "111",
+   "bps": "5142"
+  },
+  {
+   "base": "397",
+   "start": "7383",
+   "duration": "115",
+   "elapsed": "43",
+   "bps": "4770"
+  },
+  {
+   "base": "50",
+   "start": "3705",
+   "duration": "185",
+   "elapsed": "236",
+   "bps": "50"
+  },
+  {
+   "base": "440",
+   "start": "1422",
+   "duration": "196",
+   "elapsed": "363",
+   "bps": "440"
+  },
+  {
+   "base": "180",
+   "start": "3141",
+   "duration": "169",
+   "elapsed": "381",
+   "bps": "180"
+  },
+  {
+   "base": "697",
+   "start": "4500",
+   "duration": "128",
+   "elapsed": "239",
+   "bps": "697"
+  },
+  {
+   "base": "50",
+   "start": "4817",
+   "duration": "123",
+   "elapsed": "107",
+   "bps": "670"
+  },
+  {
+   "base": "116",
+   "start": "5399",
+   "duration": "108",
+   "elapsed": "344",
+   "bps": "116"
+  },
+  {
+   "base": "405",
+   "start": "7869",
+   "duration": "228",
+   "elapsed": "137",
+   "bps": "3384"
+  },
+  {
+   "base": "58",
+   "start": "6565",
+   "duration": "145",
+   "elapsed": "119",
+   "bps": "1224"
+  },
+  {
+   "base": "861",
+   "start": "9395",
+   "duration": "228",
+   "elapsed": "189",
+   "bps": "2320"
+  },
+  {
+   "base": "583",
+   "start": "709",
+   "duration": "214",
+   "elapsed": "85",
+   "bps": "658"
+  },
+  {
+   "base": "147",
+   "start": "2528",
+   "duration": "181",
+   "elapsed": "144",
+   "bps": "633"
+  },
+  {
+   "base": "914",
+   "start": "9746",
+   "duration": "187",
+   "elapsed": "198",
+   "bps": "914"
+  },
+  {
+   "base": "308",
+   "start": "1144",
+   "duration": "137",
+   "elapsed": "28",
+   "bps": "973"
+  },
+  {
+   "base": "97",
+   "start": "6538",
+   "duration": "122",
+   "elapsed": "204",
+   "bps": "97"
+  },
+  {
+   "base": "306",
+   "start": "1559",
+   "duration": "47",
+   "elapsed": "181",
+   "bps": "306"
+  },
+  {
+   "base": "341",
+   "start": "5038",
+   "duration": "173",
+   "elapsed": "196",
+   "bps": "341"
+  },
+  {
+   "base": "358",
+   "start": "879",
+   "duration": "118",
+   "elapsed": "352",
+   "bps": "358"
+  },
+  {
+   "base": "675",
+   "start": "3327",
+   "duration": "269",
+   "elapsed": "296",
+   "bps": "675"
+  },
+  {
+   "base": "368",
+   "start": "7163",
+   "duration": "7",
+   "elapsed": "350",
+   "bps": "368"
+  },
+  {
+   "base": "179",
+   "start": "4183",
+   "duration": "131",
+   "elapsed": "293",
+   "bps": "179"
+  },
+  {
+   "base": "162",
+   "start": "7032",
+   "duration": "28",
+   "elapsed": "96",
+   "bps": "162"
+  },
+  {
+   "base": "442",
+   "start": "3865",
+   "duration": "282",
+   "elapsed": "120",
+   "bps": "2408"
+  },
+  {
+   "base": "486",
+   "start": "6108",
+   "duration": "71",
+   "elapsed": "164",
+   "bps": "486"
+  },
+  {
+   "base": "797",
+   "start": "1567",
+   "duration": "222",
+   "elapsed": "278",
+   "bps": "797"
+  },
+  {
+   "base": "725",
+   "start": "8360",
+   "duration": "148",
+   "elapsed": "218",
+   "bps": "725"
+  },
+  {
+   "base": "672",
+   "start": "3587",
+   "duration": "120",
+   "elapsed": "99",
+   "bps": "1182"
+  },
+  {
+   "base": "902",
+   "start": "4363",
+   "duration": "172",
+   "elapsed": "93",
+   "bps": "2491"
+  },
+  {
+   "base": "929",
+   "start": "9895",
+   "duration": "257",
+   "elapsed": "200",
+   "bps": "2917"
+  },
+  {
+   "base": "949",
+   "start": "5085",
+   "duration": "144",
+   "elapsed": "167",
+   "bps": "949"
+  },
+  {
+   "base": "205",
+   "start": "1369",
+   "duration": "124",
+   "elapsed": "16",
+   "bps": "1218"
+  },
+  {
+   "base": "510",
+   "start": "6525",
+   "duration": "52",
+   "elapsed": "23",
+   "bps": "3864"
+  },
+  {
+   "base": "40",
+   "start": "2757",
+   "duration": "220",
+   "elapsed": "177",
+   "bps": "571"
+  },
+  {
+   "base": "532",
+   "start": "3158",
+   "duration": "119",
+   "elapsed": "105",
+   "bps": "840"
+  },
+  {
+   "base": "164",
+   "start": "6553",
+   "duration": "230",
+   "elapsed": "307",
+   "bps": "164"
+  },
+  {
+   "base": "320",
+   "start": "7778",
+   "duration": "149",
+   "elapsed": "19",
+   "bps": "6826"
+  },
+  {
+   "base": "246",
+   "start": "8668",
+   "duration": "162",
+   "elapsed": "49",
+   "bps": "6120"
+  },
+  {
+   "base": "510",
+   "start": "1896",
+   "duration": "78",
+   "elapsed": "371",
+   "bps": "510"
+  },
+  {
+   "base": "699",
+   "start": "6932",
+   "duration": "17",
+   "elapsed": "381",
+   "bps": "699"
+  },
+  {
+   "base": "784",
+   "start": "3723",
+   "duration": "291",
+   "elapsed": "93",
+   "bps": "2783"
+  },
+  {
+   "base": "551",
+   "start": "4604",
+   "duration": "153",
+   "elapsed": "124",
+   "bps": "1319"
+  },
+  {
+   "base": "111",
+   "start": "8273",
+   "duration": "130",
+   "elapsed": "149",
+   "bps": "111"
+  },
+  {
+   "base": "154",
+   "start": "1253",
+   "duration": "233",
+   "elapsed": "220",
+   "bps": "215"
+  },
+  {
+   "base": "422",
+   "start": "4603",
+   "duration": "11",
+   "elapsed": "392",
+   "bps": "422"
+  },
+  {
+   "base": "870",
+   "start": "8598",
+   "duration": "2",
+   "elapsed": "356",
+   "bps": "870"
+  },
+  {
+   "base": "693",
+   "start": "7743",
+   "duration": "233",
+   "elapsed": "25",
+   "bps": "6986"
+  },
+  {
+   "base": "833",
+   "start": "9542",
+   "duration": "32",
+   "elapsed": "52",
+   "bps": "833"
+  },
+  {
+   "base": "450",
+   "start": "9342",
+   "duration": "156",
+   "elapsed": "1",
+   "bps": "9285"
+  },
+  {
+   "base": "998",
+   "start": "576",
+   "duration": "30",
+   "elapsed": "124",
+   "bps": "998"
+  },
+  {
+   "base": "893",
+   "start": "899",
+   "duration": "152",
+   "elapsed": "260",
+   "bps": "893"
+  },
+  {
+   "base": "739",
+   "start": "9831",
+   "duration": "264",
+   "elapsed": "340",
+   "bps": "739"
+  },
+  {
+   "base": "711",
+   "start": "707",
+   "duration": "83",
+   "elapsed": "3",
+   "bps": "711"
+  },
+  {
+   "base": "964",
+   "start": "79",
+   "duration": "237",
+   "elapsed": "102",
+   "bps": "964"
+  },
+  {
+   "base": "652",
+   "start": "3956",
+   "duration": "199",
+   "elapsed": "137",
+   "bps": "1681"
+  },
+  {
+   "base": "532",
+   "start": "9837",
+   "duration": "36",
+   "elapsed": "266",
+   "bps": "532"
+  },
+  {
+   "base": "356",
+   "start": "4399",
+   "duration": "109",
+   "elapsed": "317",
+   "bps": "356"
+  },
+  {
+   "base": "744",
+   "start": "2497",
+   "duration": "196",
+   "elapsed": "272",
+   "bps": "744"
+  },
+  {
+   "base": "916",
+   "start": "4006",
+   "duration": "138",
+   "elapsed": "20",
+   "bps": "3558"
+  },
+  {
+   "base": "967",
+   "start": "6869",
+   "duration": "232",
+   "elapsed": "23",
+   "bps": "6283"
+  },
+  {
+   "base": "78",
+   "start": "2506",
+   "duration": "29",
+   "elapsed": "260",
+   "bps": "78"
+  },
+  {
+   "base": "964",
+   "start": "9519",
+   "duration": "140",
+   "elapsed": "83",
+   "bps": "4447"
+  },
+  {
+   "base": "878",
+   "start": "7332",
+   "duration": "139",
+   "elapsed": "85",
+   "bps": "3385"
+  },
+  {
+   "base": "233",
+   "start": "6886",
+   "duration": "212",
+   "elapsed": "85",
+   "bps": "4218"
+  },
+  {
+   "base": "352",
+   "start": "764",
+   "duration": "289",
+   "elapsed": "230",
+   "bps": "436"
+  },
+  {
+   "base": "808",
+   "start": "7453",
+   "duration": "175",
+   "elapsed": "36",
+   "bps": "6086"
+  },
+  {
+   "base": "369",
+   "start": "8204",
+   "duration": "155",
+   "elapsed": "31",
+   "bps": "6637"
+  },
+  {
+   "base": "580",
+   "start": "1004",
+   "duration": "228",
+   "elapsed": "351",
+   "bps": "580"
+  },
+  {
+   "base": "89",
+   "start": "7550",
+   "duration": "150",
+   "elapsed": "191",
+   "bps": "89"
+  },
+  {
+   "base": "929",
+   "start": "602",
+   "duration": "92",
+   "elapsed": "325",
+   "bps": "929"
+  },
+  {
+   "base": "969",
+   "start": "329",
+   "duration": "16",
+   "elapsed": "255",
+   "bps": "969"
+  },
+  {
+   "base": "214",
+   "start": "4172",
+   "duration": "51",
+   "elapsed": "177",
+   "bps": "214"
+  },
+  {
+   "base": "385",
+   "start": "1730",
+   "duration": "259",
+   "elapsed": "126",
+   "bps": "1075"
+  },
+  {
+   "base": "925",
+   "start": "8336",
+   "duration": "127",
+   "elapsed": "72",
+   "bps": "4134"
+  },
+  {
+   "base": "892",
+   "start": "3950",
+   "duration": "73",
+   "elapsed": "350",
+   "bps": "892"
+  },
+  {
+   "base": "625",
+   "start": "4170",
+   "duration": "159",
+   "elapsed": "380",
+   "bps": "625"
+  },
+  {
+   "base": "974",
+   "start": "6158",
+   "duration": "171",
+   "elapsed": "95",
+   "bps": "3278"
+  },
+  {
+   "base": "468",
+   "start": "4992",
+   "duration": "242",
+   "elapsed": "46",
+   "bps": "4132"
+  },
+  {
+   "base": "693",
+   "start": "8470",
+   "duration": "184",
+   "elapsed": "181",
+   "bps": "819"
+  },
+  {
+   "base": "105",
+   "start": "9473",
+   "duration": "89",
+   "elapsed": "399",
+   "bps": "105"
+  },
+  {
+   "base": "954",
+   "start": "2896",
+   "duration": "183",
+   "elapsed": "181",
+   "bps": "975"
+  },
+  {
+   "base": "711",
+   "start": "7165",
+   "duration": "90",
+   "elapsed": "79",
+   "bps": "1499"
+  },
+  {
+   "base": "409",
+   "start": "9514",
+   "duration": "202",
+   "elapsed": "379",
+   "bps": "409"
+  },
+  {
+   "base": "471",
+   "start": "7719",
+   "duration": "141",
+   "elapsed": "308",
+   "bps": "471"
+  },
+  {
+   "base": "307",
+   "start": "769",
+   "duration": "66",
+   "elapsed": "109",
+   "bps": "307"
+  },
+  {
+   "base": "138",
+   "start": "5782",
+   "duration": "108",
+   "elapsed": "357",
+   "bps": "138"
+  },
+  {
+   "base": "629",
+   "start": "5619",
+   "duration": "93",
+   "elapsed": "267",
+   "bps": "629"
+  },
+  {
+   "base": "368",
+   "start": "3797",
+   "duration": "42",
+   "elapsed": "152",
+   "bps": "368"
+  },
+  {
+   "base": "58",
+   "start": "7818",
+   "duration": "12",
+   "elapsed": "400",
+   "bps": "58"
+  },
+  {
+   "base": "619",
+   "start": "1010",
+   "duration": "89",
+   "elapsed": "72",
+   "bps": "693"
+  },
+  {
+   "base": "79",
+   "start": "7082",
+   "duration": "47",
+   "elapsed": "172",
+   "bps": "79"
+  }
+ ]
+}

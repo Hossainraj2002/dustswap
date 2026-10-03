@@ -1,0 +1,19 @@
+# Foundry build output
+cache/
+out/
+
+# Local broadcasts and dry runs are never committed; deployments/ holds the curated record.
+broadcast/
+
+# Environment and keys stay on the machine that deploys.
+.env
+.env.*
+!.env.example
+
+# Coverage and gas artifacts
+lcov.info
+coverage/
+report/
+
+# The local dev chain (base-anvil, 31337) is redeployed on every `pnpm dev:chain`.
+deployments/31337.json

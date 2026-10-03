@@ -1,0 +1,14 @@
+node_modules/
+.ponder/
+generated/
+
+# Local media store and dev chain state.
+data/
+
+# Environment and keys stay on the machine that runs the service.
+.env
+.env.*
+!.env.example
+
+# The local dev chain (31337) is redeployed on every `pnpm dev:chain`.
+deployments/31337.json
