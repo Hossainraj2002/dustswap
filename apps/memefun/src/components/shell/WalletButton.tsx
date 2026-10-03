@@ -7,7 +7,7 @@ import { LogOut, TriangleAlert, UserRound, Gift } from "lucide-react";
 import { formatQuoteAmount, formatUsd, shortAddress } from "@/core/format";
 import { cn } from "@/lib/cn";
 import { useMarket } from "@/lib/market/MarketProvider";
-import { QUOTES } from "@/lib/market/quotes";
+import { CHAIN_NAME, IS_TESTNET } from "@/lib/chain";
 import { useWallet } from "@/lib/wallet/WalletProvider";
 import { AddressAvatar } from "@/components/ui/AddressAvatar";
 import { Button } from "@/components/ui/Button";
@@ -44,11 +44,11 @@ export function WalletButton({ className }: { className?: string }) {
         loading={wallet.isSwitching}
         loadingLabel="Switching"
         onClick={() => {
-          wallet.switchToBase().catch((error: unknown) => toast.error(error instanceof Error ? error.message : "Switch to Base in your wallet."));
+          wallet.switchToBase().catch((error: unknown) => toast.error(error instanceof Error ? error.message : `Switch to ${CHAIN_NAME} in your wallet.`));
         }}
         className={className}
       >
-        Switch to Base
+        Switch to {CHAIN_NAME}
       </Button>
     );
   }
@@ -78,7 +78,7 @@ function AccountSheet({ open, onOpenChange }: { open: boolean; onOpenChange: (op
   const { market } = useMarket();
   if (!wallet.address) return null;
   const address = wallet.address;
-  const balances = QUOTES.map((quote) => ({ quote, amount: market?.getQuoteBalance(address, quote.symbol) ?? 0 })).filter(
+  const balances = (market?.listQuotes() ?? []).map((quote) => ({ quote, amount: market?.getQuoteBalance(address, quote.symbol) ?? 0 })).filter(
     (entry) => entry.amount > 0,
   );
   const totalUsd = balances.reduce((sum, entry) => sum + entry.amount * entry.quote.usdPrice, 0);
@@ -91,13 +91,13 @@ function AccountSheet({ open, onOpenChange }: { open: boolean; onOpenChange: (op
           <span className="mf-num text-headline text-label">{shortAddress(address, 6, 4)}</span>
           <CopyButton value={address} label="Copy address" />
         </div>
-        {wallet.mode === "demo" ? <Badge tone="warning">Demo wallet, preview balances</Badge> : <Badge tone="up">Connected on Base</Badge>}
+        {wallet.mode === "demo" ? <Badge tone="warning">Demo wallet, preview balances</Badge> : <Badge tone="up">Connected on {CHAIN_NAME}</Badge>}
         <p className="mf-num mt-1 text-title2 text-label">{formatUsd(totalUsd)}</p>
       </div>
       <div className="flex flex-col gap-6">
         <List header="Balances">
           {balances.length === 0 ? (
-            <ListRow title="No balances" subtitle="Add ETH on Base to start trading." />
+            <ListRow title="No balances" subtitle={IS_TESTNET ? `Get free  ETH from a faucet to start trading.` : "Add ETH on Base to start trading."} />
           ) : (
             balances.map(({ quote, amount }) => (
               <ListRow

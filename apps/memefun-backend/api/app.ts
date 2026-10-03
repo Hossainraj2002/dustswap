@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 
+import type { Deployment } from "../lib/deployment";
 import type { MediaStore } from "../lib/media/store";
 import { HttpError, errorBody, originGuard } from "./http";
 import { mountMedia } from "./media";
@@ -18,6 +19,8 @@ export interface AppDeps {
   hub: LiveHub;
   media: MediaStore;
   allowedOrigins: Set<string>;
+  /** The contracts this API indexes. Public; the app cross-checks it against its own build. */
+  deployment: Deployment;
 }
 
 /** The memefun HTTP API: read endpoints typed as the app's own data, writes, admin, media, cards. */
@@ -45,6 +48,11 @@ export function createApp(deps: AppDeps) {
     const state = deps.read.snapshot.current;
     const healthy = deps.read.snapshot.healthy;
     return c.json({ ok: healthy, snapshot: state.version, coins: state.coins.length, asOf: state.nowSec * 1000, streams: deps.hub.size }, healthy ? 200 : 503);
+  });
+
+  app.get("/v1/deployment", (c) => {
+    c.header("Cache-Control", "public, max-age=60");
+    return c.json({ deployment: deps.deployment });
   });
 
   app.route("/", readRoutes(deps.read));

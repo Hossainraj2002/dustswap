@@ -15,6 +15,7 @@ import {PriceSource, QuoteKind} from "../src/types/MemeFunTypes.sol";
 import {TestToken} from "../test/utils/TestTokens.sol";
 import {Deploy} from "./Deploy.s.sol";
 import {DevPriceFeed} from "./dev/DevPriceFeed.sol";
+import {TestStockFaucet} from "./testnet/TestStockFaucet.sol";
 
 /// @notice A complete memefun on a fresh LOCAL chain, for backend development and the e2e suite.
 ///
@@ -56,6 +57,7 @@ contract DevDeploy is Deploy {
     struct LocalChain {
         ChainAddresses c;
         address stock;
+        address stockFaucet;
     }
 
     function run() external override returns (Deployed memory d) {
@@ -70,6 +72,7 @@ contract DevDeploy is Deploy {
 
         string memory key = "memefun";
         vm.serializeAddress(key, "stock", local.stock);
+        vm.serializeAddress(key, "stockFaucet", local.stockFaucet);
         vm.serializeUint(key, "stockPriceUsdE8", STOCK_USD_E8);
         vm.serializeAddress(key, "priceFeedAdmin", dev[DEPLOYER]);
         string memory json = _record(d, local.c, dev[DEPLOYER], dev[TREASURY]);
@@ -122,25 +125,31 @@ contract DevDeploy is Deploy {
         for (uint256 i = FIRST_USER; i <= LAST_USER; ++i) {
             usdc.mint(dev[i], USDC_PER_USER);
         }
-        local.stock = _createStock();
+        (local.stock, local.stockFaucet) = _createStock();
         vm.stopBroadcast();
     }
 
     /// @dev A B20 like Coinbase's tokenized stocks: 8 decimals. Unlike memefun coins it has an
-    ///      admin (the deployer, who may also mint), so tests can top up balances.
-    function _createStock() internal returns (address stock) {
+    ///      admin (the deployer, who may also mint), so tests can top up balances, and a faucet
+    ///      with MINT_ROLE, as on the testnet.
+    function _createStock() internal returns (address stock, address faucet) {
+        bytes32 salt = keccak256("memefun dev stock AAPLc");
+        address predicted = StdPrecompiles.B20_FACTORY.getB20Address(IB20Factory.B20Variant.ASSET, dev[DEPLOYER], salt);
+        faucet = address(new TestStockFaucet(IB20(predicted), 10e8));
         uint256 users = LAST_USER - FIRST_USER + 1;
-        bytes[] memory initCalls = new bytes[](users + 1);
+        bytes[] memory initCalls = new bytes[](users + 2);
         initCalls[0] = B20FactoryLib.encodeGrantRole(B20Constants.MINT_ROLE, dev[DEPLOYER]);
+        initCalls[1] = B20FactoryLib.encodeGrantRole(B20Constants.MINT_ROLE, faucet);
         for (uint256 i; i < users; ++i) {
-            initCalls[i + 1] = abi.encodeCall(IB20.mint, (dev[FIRST_USER + i], STOCK_PER_USER));
+            initCalls[i + 2] = abi.encodeCall(IB20.mint, (dev[FIRST_USER + i], STOCK_PER_USER));
         }
         stock = StdPrecompiles.B20_FACTORY.createB20(
             IB20Factory.B20Variant.ASSET,
-            keccak256("memefun dev stock AAPLc"),
+            salt,
             B20FactoryLib.encodeAssetCreateParams("Apple tokenized stock (dev)", "AAPLc", dev[DEPLOYER], 8),
             initCalls
         );
+        require(stock == predicted, "DevDeploy: stock address moved");
     }
 
     function _enableStockPair(Deployed memory d, address stock) internal {

@@ -28,6 +28,20 @@ export interface ReadStore {
   holderClaimsOf(account: string): Promise<Set<string>>;
   epochs(): Promise<Map<string, { publishedAt: number; vetoed: boolean }>>;
   platformTotals(): Promise<{ trades: number; volumeUsdE8: bigint; coins: number }>;
+  pool(coin: string): Promise<PoolRecord | null>;
+}
+
+/** A coin's pool as the PoolManager holds it: slot0, the launch position and the floor bands. */
+export interface PoolRecord {
+  poolId: string;
+  quote: string;
+  quoteIsCurrency0: boolean;
+  startTick: number;
+  /** The launch position's liquidity. */
+  liquidity: bigint;
+  sqrtPriceX96: bigint;
+  tick: number;
+  floors: Array<{ tickLower: number; tickUpper: number; liquidity: bigint }>;
 }
 
 /** A trade with its position in the chain, for cursors. */
@@ -408,6 +422,26 @@ export function createReadStore(index: Queryable): ReadStore {
     async platformTotals() {
       const [r] = await rows<Row>(index, `SELECT COUNT(*) AS coins, COALESCE(SUM(trades), 0) AS trades, COALESCE(SUM(volume_usd_e_8), 0) AS volume FROM coin WHERE launched = true`);
       return { coins: num(r?.coins), trades: num(r?.trades), volumeUsdE8: big(r?.volume as string) };
+    },
+
+    async pool(coin) {
+      const [c] = await rows<Row>(
+        index,
+        `SELECT pool_id, quote, quote_is_currency0, start_tick, liquidity, sqrt_price_x_96, tick FROM coin WHERE address = $1 AND launched = true`,
+        [coin],
+      );
+      if (!c) return null;
+      const floors = await rows<Row>(index, `SELECT tick_lower, tick_upper, liquidity FROM floor_add WHERE coin = $1 ORDER BY block_number, id`, [coin]);
+      return {
+        poolId: String(c.pool_id),
+        quote: String(c.quote),
+        quoteIsCurrency0: Boolean(c.quote_is_currency0),
+        startTick: num(c.start_tick),
+        liquidity: big(c.liquidity as string),
+        sqrtPriceX96: big(c.sqrt_price_x_96 as string),
+        tick: num(c.tick),
+        floors: floors.map((f) => ({ tickLower: num(f.tick_lower), tickUpper: num(f.tick_upper), liquidity: big(f.liquidity as string) })),
+      };
     },
   };
 }

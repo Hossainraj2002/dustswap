@@ -98,3 +98,15 @@ export function useCoinBalance(owner: Address | null | undefined, coin: string |
   const { market, version } = useMarket();
   return useMemo(() => (owner && coin && market ? market.getCoinBalance(owner, coin) : 0), [market, version, owner, coin]); // eslint-disable-line react-hooks/exhaustive-deps
 }
+
+/** Pair assets a coin can launch with (live: from the API; preview: the simulated list). */
+export function useQuoteAssets() {
+  const { market, version } = useMarket();
+  return useMemo(() => market?.listQuotes() ?? [], [market, version]); // eslint-disable-line react-hooks/exhaustive-deps
+}
+
+/** Whether the data on screen is current; live mode reports outages here. */
+export function useMarketStatus() {
+  const { market, version } = useMarket();
+  return useMemo(() => market?.getStatus() ?? { state: "loading" as const }, [market, version]); // eslint-disable-line react-hooks/exhaustive-deps
+}

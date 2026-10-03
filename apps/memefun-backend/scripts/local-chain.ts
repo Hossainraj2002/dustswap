@@ -83,3 +83,29 @@ export function deployMemefun(rpcUrl: string): void {
   mkdirSync(join(backendRoot, "deployments"), { recursive: true });
   copyFileSync(join(contractsDir, "deployments", `${LOCAL_CHAIN_ID}.json`), join(backendRoot, "deployments", `${LOCAL_CHAIN_ID}.json`));
 }
+
+/**
+ * Forgets everything Ponder cached about earlier local chains. Every `pnpm dev:chain` is a new
+ * chain with the same id (31337), and Ponder's sync store (`ponder_sync`) keys its blocks, logs
+ * and synced ranges by chain id, so without this `ponder dev` would replay the previous chain's
+ * history. (`disableCache` only covers RPC request results.) Safe when the store does not exist.
+ */
+export async function purgeLocalSyncCache(databaseUrl: string): Promise<number> {
+  const pg = (await import("pg")).default;
+  const client = new pg.Client({ connectionString: databaseUrl });
+  await client.connect();
+  try {
+    const { rows } = await client.query<{ table_name: string }>(
+      `SELECT c.table_name FROM information_schema.columns c
+        WHERE c.table_schema = 'ponder_sync' AND c.column_name = 'chain_id'`,
+    );
+    let removed = 0;
+    for (const { table_name } of rows) {
+      const result = await client.query(`DELETE FROM ponder_sync."${table_name}" WHERE chain_id = $1`, [LOCAL_CHAIN_ID]);
+      removed += result.rowCount ?? 0;
+    }
+    return removed;
+  } finally {
+    await client.end();
+  }
+}

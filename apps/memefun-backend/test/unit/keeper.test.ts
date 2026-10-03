@@ -6,7 +6,7 @@ import { afterAll, describe, expect, it } from "vitest";
 
 import { FetchRejected, loadUri, resolveMetadata } from "../../keeper/jobs/metadata";
 import { needsUpdate, nextManualPrice } from "../../keeper/jobs/stockPrices";
-import { decimalToE8, devPriceSource, httpPriceSource, readJsonPath } from "../../keeper/prices";
+import { createPriceSource, decimalToE8, devPriceSource, httpPriceSource, readJsonPath } from "../../keeper/prices";
 import { LocalMediaStore } from "../../lib/media/local";
 import { PinataR2MediaStore } from "../../lib/media/remote";
 import type { MediaObject } from "../../lib/media/store";
@@ -55,6 +55,35 @@ describe("stock prices", () => {
     for (const nowSec of [0, 1_000, 5_000, 11_310, 90_000]) {
       const price = (await source.usdE8({ address: "0x1", symbol: "AAPLc", currentUsdE8: 10_000_000_000n, nowSec }))!;
       expect(price >= 9_900_000_000n && price <= 10_100_000_000n).toBe(true);
+    }
+  });
+
+  it("STOCK_PRICE_SOURCE picks the source, and the drift never reaches mainnet", () => {
+    const saved = { source: process.env.STOCK_PRICE_SOURCE, url: process.env.STOCK_PRICE_URL };
+    const set = (source?: string, url?: string) => {
+      if (source === undefined) delete process.env.STOCK_PRICE_SOURCE;
+      else process.env.STOCK_PRICE_SOURCE = source;
+      if (url === undefined) delete process.env.STOCK_PRICE_URL;
+      else process.env.STOCK_PRICE_URL = url;
+    };
+    try {
+      set();
+      expect(createPriceSource("local").kind).toBe("dev");
+      expect(createPriceSource("base-sepolia").kind).toBe("none");
+      expect(createPriceSource("base").kind).toBe("none");
+      set(undefined, "https://example.com/{symbol}");
+      expect(createPriceSource("base").kind).toBe("http");
+      set("dev");
+      expect(createPriceSource("base-sepolia").kind).toBe("dev");
+      expect(() => createPriceSource("base")).toThrow(/testnets only/);
+      set("http");
+      expect(() => createPriceSource("base-sepolia")).toThrow(/STOCK_PRICE_URL/);
+      set("none", "https://example.com/{symbol}");
+      expect(createPriceSource("base-sepolia").kind).toBe("none");
+      set("coinbase");
+      expect(() => createPriceSource("base-sepolia")).toThrow(/dev, http or none/);
+    } finally {
+      set(saved.source, saved.url);
     }
   });
 });

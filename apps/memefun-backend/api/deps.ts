@@ -62,6 +62,7 @@ export async function createDeps(): Promise<Running> {
     hub,
     media,
     allowedOrigins,
+    deployment,
     async dispose() {
       snapshot.stop();
       hub.stop();

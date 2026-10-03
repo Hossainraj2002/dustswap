@@ -23,8 +23,9 @@ export interface Deployment {
   treasury: Address;
   priceKeeper: Address;
   rewardsPublisher: Address;
-  /** Local chain only: the mock tokenized stock. */
+  /** Local chain and testnets only: the test stock and the faucet that mints it. */
   stock?: Address;
+  stockFaucet?: Address;
 }
 
 const address = z
@@ -51,6 +52,7 @@ const schema = z.object({
   priceKeeper: address,
   rewardsPublisher: address,
   stock: address.optional(),
+  stockFaucet: address.optional(),
 });
 
 const deploymentsDir = resolve(dirname(fileURLToPath(import.meta.url)), "../deployments");

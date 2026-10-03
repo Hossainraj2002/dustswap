@@ -8,6 +8,7 @@ export type TradeCta =
   | { kind: "restricted"; label: string; enabled: false }
   | { kind: "enter-amount"; label: string; enabled: false }
   | { kind: "insufficient"; label: string; enabled: false }
+  | { kind: "loading"; label: string; enabled: false }
   | { kind: "no-liquidity"; label: string; enabled: false }
   | { kind: "pending"; label: string; enabled: false }
   | { kind: "ready"; label: string; enabled: true };
@@ -23,17 +24,22 @@ export interface TradeCtaInput {
   restricted: boolean;
   pending: boolean;
   quoteOk: boolean;
+  /** Live: the pool has not loaded yet, so there is no price to show. */
+  quoteLoading?: boolean;
+  /** The network the wallet must be on ("Base" unless this build targets a testnet). */
+  chainName?: string;
 }
 
 export function tradeCta(input: TradeCtaInput): TradeCta {
   if (!input.connected) return { kind: "connect", label: "Connect wallet", enabled: true };
   if (input.restricted) return { kind: "restricted", label: "Not available in your region", enabled: false };
-  if (!input.onBase) return { kind: "switch", label: "Switch to Base", enabled: true };
+  if (!input.onBase) return { kind: "switch", label: `Switch to ${input.chainName ?? "Base"}`, enabled: true };
   if (input.pending) return { kind: "pending", label: "Confirm in your wallet", enabled: false };
   if (!(input.amount > 0)) return { kind: "enter-amount", label: "Enter an amount", enabled: false };
   if (input.amount > input.balance + 1e-12) {
     return { kind: "insufficient", label: `Not enough ${input.payingSymbol}`, enabled: false };
   }
+  if (input.quoteLoading) return { kind: "loading", label: "Getting the price", enabled: false };
   if (!input.quoteOk) return { kind: "no-liquidity", label: "Amount too large for the pool", enabled: false };
   return { kind: "ready", label: `${input.side === "buy" ? "Buy" : "Sell"} ${input.coinSymbol}`, enabled: true };
 }

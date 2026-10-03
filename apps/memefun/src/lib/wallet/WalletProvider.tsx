@@ -2,7 +2,7 @@
 
 import dynamic from "next/dynamic";
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
-import { BASE_CHAIN_ID } from "@/core/constants";
+import { TARGET_CHAIN_ID } from "@/lib/chain";
 import type { Address } from "@/core/types";
 import { usePreview } from "@/lib/preview/scenario";
 import { useTheme } from "@/components/theme/ThemeProvider";
@@ -31,7 +31,7 @@ function DemoWalletProvider({ children }: { children: ReactNode }) {
   const { scenario, ready } = usePreview();
   const [connected, setConnected] = useState(false);
   const [connecting, setConnecting] = useState(false);
-  const [chainId, setChainId] = useState<number>(BASE_CHAIN_ID);
+  const [chainId, setChainId] = useState<number>(TARGET_CHAIN_ID);
   const [switching, setSwitching] = useState(false);
 
   useEffect(() => {
@@ -43,7 +43,7 @@ function DemoWalletProvider({ children }: { children: ReactNode }) {
       stored = null;
     }
     setConnected(scenario === "disconnected" ? false : stored !== "off");
-    setChainId(scenario === "wrong-chain" ? 1 : BASE_CHAIN_ID);
+    setChainId(scenario === "wrong-chain" ? 1 : TARGET_CHAIN_ID);
   }, [ready, scenario]);
 
   const connect = useCallback(async () => {
@@ -70,7 +70,7 @@ function DemoWalletProvider({ children }: { children: ReactNode }) {
   const switchToBase = useCallback(async () => {
     setSwitching(true);
     await new Promise((resolve) => setTimeout(resolve, 700));
-    setChainId(BASE_CHAIN_ID);
+    setChainId(TARGET_CHAIN_ID);
     setSwitching(false);
   }, []);
 
@@ -80,7 +80,7 @@ function DemoWalletProvider({ children }: { children: ReactNode }) {
       status: connected ? "connected" : connecting ? "connecting" : "disconnected",
       address: connected ? DEMO_ADDRESS : null,
       chainId: connected ? chainId : null,
-      onBase: connected && chainId === BASE_CHAIN_ID,
+      onBase: connected && chainId === TARGET_CHAIN_ID,
       isSwitching: switching,
       connect,
       disconnect,

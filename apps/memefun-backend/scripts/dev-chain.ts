@@ -16,7 +16,7 @@
 import { join } from "node:path";
 
 import { loadLocalEnv } from "../lib/env";
-import { backendRoot, deployMemefun, startLocalChain } from "./local-chain";
+import { backendRoot, deployMemefun, purgeLocalSyncCache, startLocalChain } from "./local-chain";
 import { seed } from "./seed";
 
 function argValue(name: string): string | undefined {
@@ -39,6 +39,14 @@ async function main() {
     process.exit(1);
   });
   console.log(`base-anvil up on ${chain.rpcUrl} (log: ${logPath})`);
+  const databaseUrl = process.env.DATABASE_URL;
+  if (databaseUrl) {
+    const removed = await purgeLocalSyncCache(databaseUrl).catch((error: unknown) => {
+      console.warn(`could not clear Ponder's cache of earlier local chains: ${error instanceof Error ? error.message : error}`);
+      return 0;
+    });
+    if (removed > 0) console.log(`cleared ${removed} cached rows of earlier local chains (restart ponder dev too)`);
+  }
 
   try {
     console.log("deploying memefun with DevDeploy.s.sol ...");

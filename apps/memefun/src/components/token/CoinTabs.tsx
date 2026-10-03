@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { CircleAlert, CircleCheck, Lock, ShieldCheck } from "lucide-react";
 import { DEAD_ADDRESS } from "@/core/constants";
 import { formatAge, formatBps, formatCoinAmount, formatPercent, formatQuoteAmount, formatUsd, shortAddress } from "@/core/format";
+import { IS_TESTNET, explorerUrl } from "@/lib/chain";
 import { cn } from "@/lib/cn";
 import { useNow } from "@/lib/hooks";
 import { useComments, useHolders, useTrades } from "@/lib/market/hooks";
@@ -244,11 +245,11 @@ function AboutTab({ coin }: { coin: Coin }) {
       {coin.quote.kind === "stock" ? (
         <p className="mf-card p-4 text-footnote text-label-2">
           This coin is paired with {coin.quote.name}. Holding the coin does not give you any ownership of the company or rights to its shares.
-          Coinbase tokenized stocks are only offered outside the United States.
+          {IS_TESTNET ? " The test stock has no value." : " Coinbase tokenized stocks are only offered outside the United States."}
         </p>
       ) : null}
-      {!preview ? (
-        <a href={`https://basescan.org/token/${coin.address}`} target="_blank" rel="noopener noreferrer" className="text-center text-subhead font-semibold text-tint">
+      {!preview && explorerUrl("token", coin.address) ? (
+        <a href={explorerUrl("token", coin.address) ?? undefined} target="_blank" rel="noopener noreferrer" className="text-center text-subhead font-semibold text-tint">
           View on Basescan
         </a>
       ) : null}

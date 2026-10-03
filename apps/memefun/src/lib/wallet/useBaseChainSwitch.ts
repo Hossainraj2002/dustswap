@@ -2,10 +2,9 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useAccount, useSwitchChain, useWalletClient } from "wagmi";
-import { base } from "wagmi/chains";
-import { getRpcUrlForChain } from "@/lib/wallet/wagmi";
+import { getRpcUrlForChain } from "@/lib/wallet/rpc";
+import { CHAIN_NAME, TARGET_CHAIN, TARGET_CHAIN_ID } from "@/lib/chain";
 import { isUserRejectedRequest } from "@/lib/wallet/paymaster";
-import { BASE_CHAIN_ID } from "@/core/constants";
 
 type RequestCapableProvider = {
   request: (args: { method: string; params?: unknown[] }) => Promise<unknown>;
@@ -100,43 +99,43 @@ function isUnknownChainError(error: unknown) {
 
 function getSwitchErrorMessage(error: unknown) {
   if (isUserRejectedRequest(error)) {
-    return "Please switch your wallet to Base to continue.";
+    return `Please switch your wallet to ${CHAIN_NAME} to continue.`;
   }
 
   if (error instanceof Error && error.message) {
     return error.message;
   }
 
-  return "Your wallet could not switch to Base automatically. Please switch to Base and try again.";
+  return `Your wallet could not switch to ${CHAIN_NAME} automatically. Please switch to ${CHAIN_NAME} and try again.`;
 }
 
 async function requestBaseChainFromProvider(provider: RequestCapableProvider) {
   try {
     await provider.request({
       method: "wallet_switchEthereumChain",
-      params: [{ chainId: toHexChainId(BASE_CHAIN_ID) }],
+      params: [{ chainId: toHexChainId(TARGET_CHAIN_ID) }],
     });
   } catch (error) {
     if (!isUnknownChainError(error)) {
       throw error;
     }
 
-    const rpcUrl = getRpcUrlForChain(BASE_CHAIN_ID) || base.rpcUrls.default.http[0];
+    const rpcUrl = getRpcUrlForChain(TARGET_CHAIN_ID) || TARGET_CHAIN.rpcUrls.default.http[0];
     await provider.request({
       method: "wallet_addEthereumChain",
       params: [
         {
-          chainId: toHexChainId(BASE_CHAIN_ID),
-          chainName: base.name,
-          nativeCurrency: base.nativeCurrency,
+          chainId: toHexChainId(TARGET_CHAIN_ID),
+          chainName: TARGET_CHAIN.name,
+          nativeCurrency: TARGET_CHAIN.nativeCurrency,
           rpcUrls: [rpcUrl],
-          blockExplorerUrls: [base.blockExplorers?.default.url || "https://basescan.org"],
+          ...(TARGET_CHAIN.blockExplorers ? { blockExplorerUrls: [TARGET_CHAIN.blockExplorers.default.url] } : {}),
         },
       ],
     });
     await provider.request({
       method: "wallet_switchEthereumChain",
-      params: [{ chainId: toHexChainId(BASE_CHAIN_ID) }],
+      params: [{ chainId: toHexChainId(TARGET_CHAIN_ID) }],
     });
   }
 }
@@ -149,7 +148,7 @@ export function useBaseChainSwitch() {
   const [observedChainId, setObservedChainId] = useState<number | null>(null);
 
   const effectiveChainId = observedChainId ?? chainId ?? null;
-  const isOnBase = effectiveChainId === BASE_CHAIN_ID;
+  const isOnBase = effectiveChainId === TARGET_CHAIN_ID;
 
   const getRequestProvider = useCallback(async () => {
     const connectorProvider = await connector?.getProvider?.().catch(() => null);
@@ -243,21 +242,21 @@ export function useBaseChainSwitch() {
         ? await readProviderChainId(provider).catch(() => null)
         : null;
 
-      if ((providerChainId ?? chainId) === BASE_CHAIN_ID) {
-        setObservedChainId(BASE_CHAIN_ID);
+      if ((providerChainId ?? chainId) === TARGET_CHAIN_ID) {
+        setObservedChainId(TARGET_CHAIN_ID);
         return true;
       }
 
       try {
         const switchedChain = await switchChainAsync({
-          chainId: BASE_CHAIN_ID,
+          chainId: TARGET_CHAIN_ID,
         });
 
         if (provider) {
-          await waitForProviderChainId(provider, BASE_CHAIN_ID);
+          await waitForProviderChainId(provider, TARGET_CHAIN_ID);
         }
 
-        setObservedChainId(switchedChain?.id ?? BASE_CHAIN_ID);
+        setObservedChainId(switchedChain?.id ?? TARGET_CHAIN_ID);
         return true;
       } catch (error) {
         if (isUserRejectedRequest(error)) {
@@ -271,13 +270,13 @@ export function useBaseChainSwitch() {
 
       if (!provider) {
         throw new Error(
-          "Your wallet connection could not switch to Base automatically. Please switch to Base and try again."
+          `Your wallet connection could not switch to ${CHAIN_NAME} automatically. Please switch to ${CHAIN_NAME} and try again.`
         );
       }
 
       await requestBaseChainFromProvider(provider);
-      await waitForProviderChainId(provider, BASE_CHAIN_ID);
-      setObservedChainId(BASE_CHAIN_ID);
+      await waitForProviderChainId(provider, TARGET_CHAIN_ID);
+      setObservedChainId(TARGET_CHAIN_ID);
       return true;
     } catch (error) {
       throw new Error(getSwitchErrorMessage(error));

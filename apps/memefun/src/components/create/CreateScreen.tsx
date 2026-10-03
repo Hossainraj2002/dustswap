@@ -8,12 +8,14 @@ import { DEFAULT_SETTINGS } from "@/core/settings";
 import { normalizeTicker, validateDescription, validateName, validateTelegram, validateWebsite, validateXHandle } from "@/core/validation";
 import { cn } from "@/lib/cn";
 import { useIsRegularWidth } from "@/lib/hooks";
-import { useLaunchSettings, useQuoteBalance } from "@/lib/market/hooks";
+import { useLaunchSettings, useQuoteAssets, useQuoteBalance } from "@/lib/market/hooks";
 import { useMarket } from "@/lib/market/MarketProvider";
-import { ETH, QUOTES } from "@/lib/market/quotes";
+import { ETH } from "@/lib/market/quotes";
+import { TxError, type TxStage } from "@/lib/market/Market";
+import { CHAIN_NAME } from "@/lib/chain";
+import { stageLabel } from "@/lib/trade/stages";
 import type { Coin } from "@/lib/market/types";
 import { clearDraft, EMPTY_DRAFT, loadDraft, saveDraft, STEPS, validateCoinStep, validateFeesStep, type CreateDraft, type DraftErrors, type StepId } from "@/lib/create/draft";
-import { PreviewTxError } from "@/lib/preview/engine";
 import { usePreview } from "@/lib/preview/scenario";
 import { useWallet } from "@/lib/wallet/WalletProvider";
 import { PageHeader } from "@/components/shell/PageHeader";
@@ -38,7 +40,7 @@ export function CreateScreen() {
   const [stepIndex, setStepIndex] = useState(0);
   const [furthest, setFurthest] = useState(0);
   const [showErrors, setShowErrors] = useState(false);
-  const [stage, setStage] = useState<"idle" | "wallet" | "chain">("idle");
+  const [stage, setStage] = useState<"idle" | TxStage>("idle");
   const [launched, setLaunched] = useState<Coin | null>(null);
   const top = useRef<HTMLDivElement>(null);
 
@@ -53,7 +55,15 @@ export function CreateScreen() {
   }, [draft, loaded, launched]);
 
   const step: StepId = STEPS[stepIndex]?.id ?? "coin";
-  const quote = QUOTES.find((entry) => entry.symbol === draft.quoteSymbol) ?? ETH;
+  const quotes = useQuoteAssets();
+  const quote = quotes.find((entry) => entry.symbol === draft.quoteSymbol) ?? quotes[0] ?? ETH;
+  // A draft saved against assets this market does not list (another network, a delisted stock)
+  // falls back to the first available one.
+  useEffect(() => {
+    if (quotes.length > 0 && !quotes.some((entry) => entry.symbol === draft.quoteSymbol)) {
+      setDraft((current) => ({ ...current, quoteSymbol: quotes[0]!.symbol }));
+    }
+  }, [quotes, draft.quoteSymbol]);
   const quoteBalance = useQuoteBalance(wallet.address, quote.symbol);
   const update = (patch: Partial<CreateDraft>) => setDraft((current) => ({ ...current, ...patch }));
 
@@ -100,7 +110,7 @@ export function CreateScreen() {
       try {
         await wallet.switchToBase();
       } catch (error) {
-        toast.error(error instanceof Error ? error.message : "Switch to Base in your wallet.");
+        toast.error(error instanceof Error ? error.message : `Switch to ${CHAIN_NAME} in your wallet.`);
       }
       return;
     }
@@ -112,8 +122,9 @@ export function CreateScreen() {
       goTo(blocking.feeBps || blocking.mode || blocking.creatorKeepBps ? 2 : 0);
       return;
     }
-    setStage("wallet");
-    const chainTimer = window.setTimeout(() => setStage("chain"), 700);
+    setStage("confirm");
+    // Preview has no wallet steps to report, so it shows the confirm then the launch step.
+    const chainTimer = market.kind === "preview" ? window.setTimeout(() => setStage("pending"), 700) : undefined;
     try {
       const coin = await market.launch(
         wallet.address,
@@ -132,17 +143,19 @@ export function CreateScreen() {
           mode: draft.mode,
           creatorKeepBps: draft.mode === "creator" ? 0 : draft.creatorKeepBps,
           firstBuyQuote: Number(draft.firstBuy) || 0,
+          firstBuyText: draft.firstBuy,
         },
         txOutcome,
+        setStage,
       );
       clearDraft();
       setLaunched(coin);
       window.scrollTo({ top: 0 });
     } catch (error) {
-      if (error instanceof PreviewTxError && error.kind === "rejected") toast("Launch cancelled", { description: error.message });
+      if (error instanceof TxError && error.kind === "rejected") toast("Launch cancelled", { description: error.message });
       else toast.error("Launch did not go through", { description: error instanceof Error ? error.message : "Try again." });
     } finally {
-      window.clearTimeout(chainTimer);
+      if (chainTimer !== undefined) window.clearTimeout(chainTimer);
       setStage("idle");
     }
   };
@@ -166,12 +179,10 @@ export function CreateScreen() {
     wallet.status !== "connected"
       ? "Connect wallet to launch"
       : !wallet.onBase
-        ? "Switch to Base"
-        : stage === "wallet"
-          ? "Confirm in your wallet"
-          : stage === "chain"
-            ? "Launching on Base"
-            : `Launch ${normalizeTicker(draft.ticker) || "coin"}`;
+        ? `Switch to ${CHAIN_NAME}`
+        : stage !== "idle"
+          ? stageLabel(stage, { token: quote.symbol, chainName: CHAIN_NAME, pending: `Launching on ${CHAIN_NAME}` })
+          : `Launch ${normalizeTicker(draft.ticker) || "coin"}`;
 
   const actions = (
     <div className="flex gap-3">
@@ -221,7 +232,7 @@ export function CreateScreen() {
           <section aria-label={STEPS[stepIndex]?.label} className="mf-card p-5 sm:p-6">
             <h2 className="mb-5 text-title2 text-label">{stepTitle(step)}</h2>
             {step === "coin" ? <CoinStep draft={draft} update={update} errors={errors} showErrors={showErrors} /> : null}
-            {step === "pair" ? <PairStep draft={draft} update={update} openingFdvUsd={settings.openingFdvUsd} enabledKinds={settings.enabledQuoteKinds} /> : null}
+            {step === "pair" ? <PairStep draft={draft} update={update} openingFdvUsd={settings.openingFdvUsd} enabledKinds={settings.enabledQuoteKinds} quotes={quotes} /> : null}
             {step === "fees" ? <FeesStep draft={draft} update={update} settings={settings} errors={errors} showErrors={showErrors} /> : null}
             {step === "buy" ? <FirstBuyStep draft={draft} update={update} quote={quote} openingFdvUsd={settings.openingFdvUsd} /> : null}
             {step === "review" ? <ReviewStep draft={draft} quote={quote} settings={settings} /> : null}

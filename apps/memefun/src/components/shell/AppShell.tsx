@@ -8,6 +8,7 @@ import { cn } from "@/lib/cn";
 import { Button } from "@/components/ui/Button";
 import { BrandWordmark } from "./Brand";
 import { SIDEBAR_ITEMS, TAB_ITEMS } from "./nav";
+import { LiveBar } from "./LiveBar";
 import { PreviewBar } from "./PreviewBar";
 import { SearchCommand, useSearchShortcut } from "./SearchCommand";
 import { ThemeSegmented } from "./ThemeSegmented";
@@ -29,6 +30,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       <div className="lg:pl-[268px]">
         <div className="lg:px-6 lg:pt-3">
           <PreviewBar />
+          <LiveBar />
         </div>
         <main
           id="main"

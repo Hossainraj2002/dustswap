@@ -2,16 +2,18 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { isStockRestrictedCountry, readCountryCookie } from "@/lib/geo";
+import { liveConfigured } from "@/lib/live/config";
 
 /**
  * Preview mode renders every screen from a simulated market so the product
- * can be reviewed before contracts exist. It is on while no factory address
- * is configured, or when NEXT_PUBLIC_MEMEFUN_PREVIEW is "1", so it cannot
- * reach production by accident once a real deployment is set.
+ * can be reviewed without a deployment. It is on until the build has an API
+ * and contract addresses for its chain (live/config.ts), or when
+ * NEXT_PUBLIC_MEMEFUN_PREVIEW is "1".
  */
 export function isPreviewMode(): boolean {
   if (process.env.NEXT_PUBLIC_MEMEFUN_PREVIEW === "1") return true;
-  return !/^0x[0-9a-fA-F]{40}$/.test(process.env.NEXT_PUBLIC_MEMEFUN_FACTORY_ADDRESS ?? "");
+  return !liveConfigured();
 }
 
 export const SCENARIOS = [
@@ -65,6 +67,11 @@ export function PreviewProvider({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const [scenario, setScenarioState] = useState<ScenarioId>("default");
   const [ready, setReady] = useState(!preview);
+  // Live: the visitor's country (middleware cookie) closes stock pairs where they are not offered.
+  const [geoRestricted, setGeoRestricted] = useState(false);
+  useEffect(() => {
+    if (!preview) setGeoRestricted(isStockRestrictedCountry(readCountryCookie()));
+  }, [preview]);
 
   // Adopt the scenario after mount, never in initial state (hydration). A
   // ?scenario= link wins; otherwise the session's scenario persists across
@@ -116,9 +123,9 @@ export function PreviewProvider({ children }: { children: ReactNode }) {
       ready,
       setScenario,
       txOutcome: scenario === "tx-rejected" ? "rejected" : scenario === "tx-failed" ? "reverted" : "ok",
-      stocksRestricted: scenario === "stock-restricted",
+      stocksRestricted: preview ? scenario === "stock-restricted" : geoRestricted,
     }),
-    [preview, ready, scenario, setScenario],
+    [geoRestricted, preview, ready, scenario, setScenario],
   );
 
   return <PreviewContext.Provider value={value}>{children}</PreviewContext.Provider>;

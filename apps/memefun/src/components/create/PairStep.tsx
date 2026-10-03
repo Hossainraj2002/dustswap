@@ -4,8 +4,9 @@ import { RadioGroup } from "radix-ui";
 import { Check, Lock } from "lucide-react";
 import { formatUsd } from "@/core/format";
 import { cn } from "@/lib/cn";
-import { ETH, PREVIEW_STOCKS, USDC } from "@/lib/market/quotes";
-import type { QuoteKind } from "@/core/types";
+import { IS_TESTNET } from "@/lib/chain";
+import { ETH, USDC } from "@/lib/market/quotes";
+import type { QuoteAsset, QuoteKind } from "@/core/types";
 import type { CreateDraft } from "@/lib/create/draft";
 import { usePreview } from "@/lib/preview/scenario";
 import { Badge } from "@/components/ui/display";
@@ -49,15 +50,19 @@ export function PairStep({
   update,
   openingFdvUsd,
   enabledKinds,
+  quotes,
 }: {
   draft: CreateDraft;
   update: (patch: Partial<CreateDraft>) => void;
   openingFdvUsd: number;
   enabledKinds: QuoteKind[];
+  /** Every listed pair asset; the stocks among them fill the stock picker. */
+  quotes: QuoteAsset[];
 }) {
   const { stocksRestricted } = usePreview();
-  const stocksOff = !enabledKinds.includes("stock");
-  const stockSelected = PREVIEW_STOCKS.some((stock) => stock.symbol === draft.quoteSymbol);
+  const stocks = quotes.filter((quote) => quote.kind === "stock");
+  const stocksOff = !enabledKinds.includes("stock") || stocks.length === 0;
+  const stockSelected = stocks.some((stock) => stock.symbol === draft.quoteSymbol);
   const open = usMarketOpen();
 
   return (
@@ -67,7 +72,7 @@ export function PairStep({
       </p>
       <RadioGroup.Root
         value={stockSelected ? "stocks" : draft.quoteSymbol}
-        onValueChange={(value) => update({ quoteSymbol: value === "stocks" ? (PREVIEW_STOCKS[0]?.symbol ?? "ETH") : value })}
+        onValueChange={(value) => update({ quoteSymbol: value === "stocks" ? (stocks[0]?.symbol ?? "ETH") : value })}
         aria-label="Pair asset"
         className="flex flex-col gap-3"
       >
@@ -107,7 +112,7 @@ export function PairStep({
       {stockSelected && !stocksRestricted && !stocksOff ? (
         <div className="flex flex-col gap-3">
           <RadioGroup.Root value={draft.quoteSymbol} onValueChange={(value) => update({ quoteSymbol: value })} aria-label="Stock" className="mf-card overflow-hidden [&>*+*]:hairline-t">
-            {PREVIEW_STOCKS.map((stock) => (
+            {stocks.map((stock) => (
               <RadioGroup.Item key={stock.symbol} value={stock.symbol} className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-fill-4 data-[state=checked]:bg-tint/8">
                 <QuoteGlyph label={stock.symbol.slice(0, 1)} small />
                 <span className="flex min-w-0 flex-1 flex-col">
@@ -125,8 +130,9 @@ export function PairStep({
             ))}
           </RadioGroup.Root>
           <p className="rounded-md bg-fill-4 px-3 py-2 text-footnote text-label-2">
-            Stock prices come from Chainlink and hold their last value outside US market hours. Pairing with a stock gives no ownership of the company.
-            Coinbase tokenized stocks are only offered outside the United States.
+            {IS_TESTNET
+              ? "This is a test stock with no value, for trying stock pairs on the testnet. Get some free from the test stock faucet at the top of the page."
+              : "Stock prices come from Chainlink and hold their last value outside US market hours. Pairing with a stock gives no ownership of the company. Coinbase tokenized stocks are only offered outside the United States."}
           </p>
         </div>
       ) : null}

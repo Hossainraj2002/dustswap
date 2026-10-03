@@ -8,7 +8,7 @@ import { formatQuoteAmount, formatUsd } from "@/core/format";
 import { useClaimables, useCoins } from "@/lib/market/hooks";
 import { useMarket } from "@/lib/market/MarketProvider";
 import type { Claimable, Coin } from "@/lib/market/types";
-import { PreviewTxError } from "@/lib/preview/engine";
+import { TxError } from "@/lib/market/Market";
 import { usePreview } from "@/lib/preview/scenario";
 import { referralLink } from "@/lib/referrals";
 import { useWallet } from "@/lib/wallet/WalletProvider";
@@ -49,7 +49,7 @@ export function RewardsScreen() {
       await market.claim(wallet.address, items, txOutcome);
       toast.success(`Claimed ${totalsBySymbol(items)}`, { description: preview ? "Preview claim. Nothing was sent on chain." : "Sent to your wallet." });
     } catch (error) {
-      if (error instanceof PreviewTxError && error.kind === "rejected") toast("Claim cancelled", { description: error.message });
+      if (error instanceof TxError && error.kind === "rejected") toast("Claim cancelled", { description: error.message });
       else toast.error("Claim did not go through", { description: error instanceof Error ? error.message : "Try again." });
     } finally {
       setClaiming(null);

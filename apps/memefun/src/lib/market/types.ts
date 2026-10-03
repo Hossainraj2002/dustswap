@@ -153,6 +153,16 @@ export interface Claimable {
   quoteSymbol: string;
   amountUsd: number;
   epoch?: number;
+  /** Live: the asset paid out (FeeVault keeps referral fees per asset). */
+  currency?: string;
+  /** Live: the exact amount, in the asset's units. */
+  amountRaw?: string;
+  /** Live holder rewards: the published Merkle leaf. */
+  index?: string;
+  proof?: string[];
+  /** Live holder rewards: claiming opens after the 12-hour veto window and closes after 90 days. */
+  claimableAt?: number;
+  expiresAt?: number;
 }
 
 export type CandleInterval = 60 | 300 | 900 | 3600 | 14400 | 86400;

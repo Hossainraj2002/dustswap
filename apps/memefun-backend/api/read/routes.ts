@@ -202,6 +202,35 @@ export function readRoutes(deps: ReadDeps) {
     return cachedJson(c, { candles, interval, metric }, { maxAge: 2 });
   });
 
+  // Everything needed to quote a trade exactly (apps/memefun src/core/pool.ts `livePool`): slot0,
+  // the launch position and the floor bands, which are the pool's only liquidity.
+  app.get("/v1/coins/:address/pool", async (c) => {
+    const state = await snapshot();
+    const address = parseAddress(c.req.param("address"));
+    const coin = requireCoin(state, address);
+    const pool = await deps.store.pool(address);
+    if (!pool) throw new HttpError(404, "coin_not_found", "No coin with this address on memefun.");
+    return cachedJson(
+      c,
+      {
+        pool: {
+          coin: coin.address,
+          poolId: pool.poolId,
+          quote: getAddress(pool.quote),
+          quoteDecimals: coin.quote.decimals,
+          coinIsCurrency0: !pool.quoteIsCurrency0,
+          startTick: pool.startTick,
+          liquidity: pool.liquidity.toString(),
+          sqrtPriceX96: pool.sqrtPriceX96.toString(),
+          tick: pool.tick,
+          floors: pool.floors.map((f) => ({ tickLower: f.tickLower, tickUpper: f.tickUpper, liquidity: f.liquidity.toString() })),
+        },
+        asOf: state.nowSec * 1000,
+      },
+      { maxAge: 1 },
+    );
+  });
+
   app.get("/v1/coins/:address/holders", async (c) => {
     const state = await snapshot();
     const address = parseAddress(c.req.param("address"));

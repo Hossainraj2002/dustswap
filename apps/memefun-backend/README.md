@@ -36,7 +36,7 @@ pnpm keeper                     # all keeper jobs; or `pnpm keeper --once`, `pnp
 pnpm verify-index               # compares every indexed number with the chain right now
 ```
 
-`pnpm dev:chain` always starts a fresh chain, and `ponder dev` re-indexes from scratch on every start, so the two never disagree. On the local chain the keeper uses anvil's public dev keys (accounts 0, 8 and 9) when no key is configured; on any other chain keys are required.
+`pnpm dev:chain` always starts a fresh chain and clears what Ponder cached about earlier local chains (they all share chain id 31337), and `ponder dev` re-indexes from scratch on every start, so the two never disagree. Restart `ponder dev` after each `pnpm dev:chain`. On the local chain the keeper uses anvil's public dev keys (accounts 0, 8 and 9) when no key is configured; on any other chain keys are required.
 
 ## Layout
 
@@ -66,12 +66,14 @@ All JSON, numbers as the app's types (`shared/market-types.ts`). Reads are publi
 | `GET /v1/coins/:address/holders?viewer=&limit=` | `{ holders: Holder[] }` with pool, burn, creator and you labels |
 | `GET /v1/coins/:address/comments` | `{ comments: Comment[] }` |
 | `GET /v1/coins/:address/balance/:owner` | `{ balance, raw }` |
+| `GET /v1/coins/:address/pool` | `{ pool }`: slot0 (`sqrtPriceX96`, `tick`), the launch position (`startTick`, `liquidity`) and every floor band, the pool's only liquidity. The app quotes trades from it exactly (`shared/core/pool.ts` `livePool`); the e2e suite checks those quotes against the router's fills |
 | `GET /v1/activity?limit=` | `{ items: ActivityItem[] }`: trades, launches, burns, floors, payouts, milestones |
 | `GET /v1/creators/top`, `GET /v1/profiles/:address` | `CreatorProfile`s, a wallet's trades |
 | `GET /v1/positions/:address` | `{ positions: Position[] }` (average-cost P&L) |
 | `GET /v1/claimables/:address` | creator fees, referral fees (per pair asset, so `coin` is the pair asset), holder rewards with `index`, `amountRaw`, `proof`, `claimableAt`, `expiresAt` |
 | `GET /v1/launch-settings` | live `LaunchSettings` read from MemeFunConfig, plus listed pairs |
 | `GET /v1/moderation`, `/v1/search?q=`, `/v1/stats`, `/v1/health` | featured coins and banner, search, totals, snapshot health |
+| `GET /v1/deployment` | the contract addresses this API indexes; the app refuses to send anything if they differ from its own build |
 | `GET /v1/stream?coin=` | Server-Sent Events: `trade`, `activity`, `ping` |
 | `GET /og/{coin,launch}/:address.png`, `/og/milestone/:address/:level.png`, `/og/profile/:address.png` | 1200 x 630 share cards |
 | `GET /media/:cid` | stored media, immutable |
@@ -119,12 +121,13 @@ See `.env.example`. The essentials:
 | `MEDIA_STORE`, `MEDIA_LOCAL_DIR`, `PINATA_*`, `R2_*` | api, keeper | `local` or `pinata` |
 | `KEEPER_PRIVATE_KEY`, `PRICE_KEEPER_PRIVATE_KEY`, `REWARDS_PUBLISHER_PRIVATE_KEY` | keeper | local chain falls back to anvil's dev keys |
 | `BUYBACK_MIN_USD_CENTS`, `FLOOR_MIN_USD_CENTS`, `KEEPER_DRY_RUN` | keeper | thresholds default to $5 and $10 ($0.50 locally) |
-| `STOCK_PRICE_URL`, `STOCK_PRICE_JSON_PATH` | keeper | NAV source; `{symbol}` and `{address}` placeholders |
+| `STOCK_PRICE_SOURCE` | keeper | `dev` (a drift around the current price; local chain and testnets only, refused on mainnet), `http`, or `none`. Default: `http` when `STOCK_PRICE_URL` is set, `dev` locally, otherwise `none` |
+| `STOCK_PRICE_URL`, `STOCK_PRICE_JSON_PATH` | keeper | the `http` source; `{symbol}` and `{address}` placeholders |
 
 ## Testing
 
 ```bash
-pnpm typecheck && pnpm lint && pnpm test    # 104 unit tests: math, effects, derivations, rewards, media, API helpers, keeper
+pnpm typecheck && pnpm lint && pnpm test    # 105 unit tests: math, effects, derivations, rewards, media, API helpers, keeper
 pnpm e2e                                    # the whole stack, isolated (needs `pnpm dev:db`)
 pnpm verify-index                           # the running dev index against the dev chain
 ```
@@ -133,13 +136,14 @@ pnpm verify-index                           # the running dev index against the 
 
 1. the index equals the chain (every balance, price, fee ledger, module total, candle, and per-asset conservation),
 2. the API's prices, holders, paged trades and candles match the chain,
-3. the keeper resolves every coin's metadata and image,
-4. the keeper's buyback burns coins,
-5. a 12-hour epoch is published, its IPFS leaf set rebuilds the on-chain root, and a holder claims on chain with the API's proof,
-6. image, metadata, launch, then the indexed coin shows that metadata,
-7. sign-in, comments, moderation and reports,
-8. the live stream pushes a new trade,
-9. after all of it, the index still equals the chain.
+3. the pool endpoint quotes exactly what the router fills, for buys and sells on every pair,
+4. the keeper resolves every coin's metadata and image,
+5. the keeper's buyback burns coins,
+6. a 12-hour epoch is published, its IPFS leaf set rebuilds the on-chain root, and a holder claims on chain with the API's proof,
+7. image, metadata, launch, then the indexed coin shows that metadata,
+8. sign-in, comments, moderation and reports,
+9. the live stream pushes a new trade,
+10. after all of it, the index still equals the chain.
 
 ## Windows notes
 
@@ -147,21 +151,28 @@ pnpm verify-index                           # the running dev index against the 
 - **WSL stops the distro about a minute after the last wsl.exe session**, taking Docker and Postgres with it. `pnpm dev:db` leaves a detached `wsl -- sleep infinity` keep-alive running; `pnpm dev:db --stop` ends it.
 - **`forge script` needs `--offline`**, or it can hang after the run looking up trace signatures online.
 
-## Phase 4 provisioning (not done yet)
+## Base Sepolia (testnet) on Railway
 
-1. Deploy the contracts to Base Sepolia with `script/Deploy.s.sol` from an encrypted keystore, then `pnpm sync-shared` to copy `deployments/84532.json` here.
-2. Railway: a new project (not `mellow-wisdom`) with Postgres and three services from this folder:
-   - indexer: `ponder start --schema $RAILWAY_DEPLOYMENT_ID --views-schema memefun`
-   - api: `ponder serve --schema memefun` (health check `/ready`)
-   - keeper: `pnpm keeper`
-3. Cloudflare R2 bucket with a custom domain for media; Pinata account (JWT and dedicated gateway); set `MEDIA_STORE=pinata`.
-4. Three keeper wallets, funded with gas only; `MemeFunConfig.setPriceKeeper` and `setRewardsPublisher` from the owner Safe.
-5. `ALLOWED_ORIGINS=https://memefun.dustswap.wtf`, fresh `SIWE_SESSION_SECRET` and `ADMIN_TOKEN`, paid RPC URLs.
-6. Point the app at the API (PreviewMarket to the live source).
+Railway project `memefun-testnet` (not DustSwap's `mellow-wisdom`), with Postgres and two services built from this folder of `main` (watch paths `/apps/memefun-backend/**`):
 
-## Known limits and things to confirm in Phase 4
+| Service | Start command | Notes |
+|---|---|---|
+| `memefun-api` | `pnpm exec ponder start --schema $RAILWAY_DEPLOYMENT_ID --views-schema memefun` | indexer and API in one process; each deploy indexes into a fresh schema and the `memefun` views switch over once it is ready. Health check `/ready` (300 s) |
+| `memefun-keeper` | `pnpm keeper` | no domain |
 
-- **Stock NAV source.** The keeper reads a configurable HTTP JSON source; the exact Coinbase tokenized-stock NAV endpoint must be confirmed and set in `STOCK_PRICE_URL` before stock pairs go live.
+Shared variables: `MEMEFUN_CHAIN=base-sepolia`, `MEMEFUN_RPC_URLS` (paid endpoints), `DATABASE_URL=${{Postgres.DATABASE_URL}}`, `DATABASE_SCHEMA=memefun`, `MEDIA_STORE=pinata` with `PINATA_*` and `R2_*`. The API also gets `PUBLIC_API_URL`, `ALLOWED_ORIGINS` (the app's workers.dev URL), `SIWE_SESSION_SECRET` and `ADMIN_TOKEN`; the keeper gets its three keys and `STOCK_PRICE_SOURCE=dev` (the testnet's test stock has no real price).
+
+Order of work:
+
+1. Deploy the contracts from an encrypted keystore (`packages/memefun-contracts`: `script/Deploy.s.sol`, then `script/TestnetExtras.s.sol` for the test stock, its faucet and the keeper roles), then `pnpm sync-shared` here and `pnpm deployments` in `apps/memefun`, and commit the records.
+2. The services above, with the keeper keys generated straight into Railway (only their addresses leave it) and funded with a little Sepolia ETH.
+3. The media bucket (R2 with its r2.dev URL) and Pinata (JWT and a dedicated gateway).
+4. The app on Cloudflare (`.github/workflows/deploy-memefun.yml`), then `ALLOWED_ORIGINS` set to its URL.
+
+Mainnet (Phase 5) uses the same layout with a Safe as owner, Coinbase's tokenized stocks priced by their Chainlink feeds (no keeper price source), and the memefun.dustswap.wtf domain.
+## Known limits
+
+- **Stock prices.** On mainnet each Coinbase tokenized stock has a Chainlink feed, so it is listed as a CHAINLINK quote and needs no keeper price. MANUAL quotes (the testnet's test stock) follow `STOCK_PRICE_SOURCE`.
 - **Pinata API.** The adapter uses `pinning/pinFileToIPFS` with CIDv1; confirm against the account's API version when provisioning. A contract test pins what is sent.
 - **`eth_call` on `pending`.** Keeper simulations run in the next block's context; confirm the production RPC supports `pending` (Alchemy does on Base).
 - **Trade attribution.** Trades through MemeFunRouter name the user; through Uniswap's Universal Router, the transaction sender; through any other router, the router address (add it to `MEMEFUN_EXTRA_ROUTERS`). A first buy is attributed to the creator.

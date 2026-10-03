@@ -9,7 +9,8 @@ import type { FeeMode, QuoteKind } from "@/core/types";
 import { ownerCalls } from "@/lib/admin/ownerCalls";
 import { cn } from "@/lib/cn";
 import { useCoins, useLaunchSettings, useModeration } from "@/lib/market/hooks";
-import { useMarket } from "@/lib/market/MarketProvider";
+import { useLiveMarket, useMarket } from "@/lib/market/MarketProvider";
+import { TxError } from "@/lib/market/Market";
 import { usePreview } from "@/lib/preview/scenario";
 import { useWallet } from "@/lib/wallet/WalletProvider";
 import { PageHeader } from "@/components/shell/PageHeader";
@@ -57,6 +58,7 @@ export function AdminScreen() {
   const { scenario, preview } = usePreview();
   const wallet = useWallet();
   const { market } = useMarket();
+  const live = useLiveMarket();
   const current = useLaunchSettings() ?? DEFAULT_SETTINGS;
   const [unlocked, setUnlocked] = useState(false);
   const [tokenInput, setTokenInput] = useState("");
@@ -73,6 +75,19 @@ export function AdminScreen() {
       // Ignore.
     }
   }, [scenario]);
+
+  // Live moderation reads and writes carry the token.
+  useEffect(() => {
+    if (!live || !unlocked) return;
+    let token: string | null = null;
+    try {
+      token = window.sessionStorage.getItem(TOKEN_KEY);
+    } catch {
+      token = null;
+    }
+    live.setAdminToken(token);
+    return () => live.setAdminToken(null);
+  }, [live, unlocked]);
 
   // Follow live settings until the admin starts editing.
   const dirtyKeys = useMemo(() => diffSettings(current, draft), [current, draft]);
@@ -142,12 +157,19 @@ export function AdminScreen() {
   const sign = async () => {
     if (!market) return;
     setSigning(true);
-    await new Promise((resolve) => setTimeout(resolve, 900));
-    market.updateSettings(draft);
-    setSigning(false);
-    setReviewing(false);
-    setTexts({});
-    toast.success("Settings updated", { description: "They apply to coins launched from now on. Existing coins keep their terms." });
+    try {
+      // Preview simulates the wallet step; live sends one owner transaction per change.
+      if (market.kind === "preview") await new Promise((resolve) => setTimeout(resolve, 900));
+      await market.updateSettings(draft);
+      setReviewing(false);
+      setTexts({});
+      toast.success("Settings updated", { description: "They apply to coins launched from now on. Existing coins keep their terms." });
+    } catch (error) {
+      if (error instanceof TxError && error.kind === "rejected") toast("Settings not changed", { description: error.message });
+      else toast.error("Settings did not change", { description: error instanceof Error ? error.message : "Try again." });
+    } finally {
+      setSigning(false);
+    }
   };
 
   return (
@@ -334,6 +356,16 @@ function ModerationSection() {
   const [query, setQuery] = useState("");
   const [banner, setBanner] = useState(moderation.banner);
   const all = market?.listCoins(true) ?? coins;
+  const save = async (action: () => Promise<void> | undefined, done: string) => {
+    try {
+      await action();
+      toast.success(done);
+    } catch (error) {
+      toast.error("That did not save", { description: error instanceof Error ? error.message : "Try again." });
+    }
+  };
+  const isFeatured = (address: string) => moderation.featured.some((entry) => entry.toLowerCase() === address.toLowerCase());
+  const isHidden = (address: string) => moderation.hidden.some((entry) => entry.toLowerCase() === address.toLowerCase());
   const q = query.trim().toLowerCase();
   const results = all.filter((coin) => !q || coin.name.toLowerCase().includes(q) || coin.symbol.toLowerCase().includes(q) || coin.address.toLowerCase().startsWith(q)).slice(0, 12);
 
@@ -352,10 +384,7 @@ function ModerationSection() {
           <Button
             size="sm"
             variant="tinted"
-            onClick={() => {
-              market?.setBanner(banner.trim());
-              toast.success(banner.trim() ? "Banner published" : "Banner removed");
-            }}
+            onClick={() => void save(() => market?.setBanner(banner.trim()), banner.trim() ? "Banner published" : "Banner removed")}
           >
             Save banner
           </Button>
@@ -372,11 +401,11 @@ function ModerationSection() {
             </div>
             <label className="flex items-center gap-2 text-footnote text-label-2">
               Featured
-              <Switch checked={moderation.featured.includes(coin.address)} onCheckedChange={(on) => market?.setFeatured(coin.address, on)} label={`Feature ${coin.name}`} />
+              <Switch checked={isFeatured(coin.address)} onCheckedChange={(on) => void save(() => market?.setFeatured(coin.address, on), on ? `${coin.name} is featured` : `${coin.name} is no longer featured`)} label={`Feature ${coin.name}`} />
             </label>
             <label className="flex items-center gap-2 text-footnote text-label-2">
               Hidden
-              <Switch checked={moderation.hidden.includes(coin.address)} onCheckedChange={(on) => market?.setHidden(coin.address, on)} label={`Hide ${coin.name}`} />
+              <Switch checked={isHidden(coin.address)} onCheckedChange={(on) => void save(() => market?.setHidden(coin.address, on), on ? `${coin.name} is hidden` : `${coin.name} is visible again`)} label={`Hide ${coin.name}`} />
             </label>
           </div>
         ))}

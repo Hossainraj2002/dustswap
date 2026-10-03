@@ -10,7 +10,9 @@ import { useAnimationNow, useNow } from "@/lib/hooks";
 import { useCoinBalance, useQuoteBalance } from "@/lib/market/hooks";
 import { useMarket } from "@/lib/market/MarketProvider";
 import type { Coin } from "@/lib/market/types";
-import { PreviewTxError } from "@/lib/preview/engine";
+import { CHAIN_NAME, explorerUrl } from "@/lib/chain";
+import { TxError, type TxStage } from "@/lib/market/Market";
+import { stageLabel } from "@/lib/trade/stages";
 import { usePreview } from "@/lib/preview/scenario";
 import { useReferrer } from "@/lib/referrals";
 import { DEFAULT_SLIPPAGE_BPS, MAX_SLIPPAGE_BPS, SLIPPAGE_PRESETS_BPS, buyPresets, impactLevel, tradeCta } from "@/lib/trade/cta";
@@ -34,24 +36,34 @@ function parseAmount(value: string): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+/** Rounds DOWN, so a filled-in amount never exceeds the balance it came from. */
 function trimInput(value: number, decimals = 6) {
-  return value.toFixed(decimals).replace(/\.?0+$/, "");
+  const factor = 10 ** decimals;
+  return (Math.floor(value * factor) / factor).toFixed(decimals).replace(/\.?0+$/, "");
 }
 
 export function TradePanel({ coin, initialSide = "buy", onDone, className }: TradePanelProps) {
   const wallet = useWallet();
-  const { market } = useMarket();
+  const { market, version } = useMarket();
   const { txOutcome, stocksRestricted, preview } = usePreview();
   const referrer = useReferrer(wallet.address);
   const [side, setSide] = useState<"buy" | "sell">(initialSide);
   const [amountText, setAmountText] = useState("");
+  // "Max" on a sell means the whole balance to the last unit, not the rounded number shown.
+  const [maxSell, setMaxSell] = useState(false);
   const [payWithEth, setPayWithEth] = useState(false);
   const [slippageBps, setSlippageBps] = useState(DEFAULT_SLIPPAGE_BPS);
   const [pending, setPending] = useState(false);
+  const [stage, setStage] = useState<TxStage | null>(null);
   const [showFees, setShowFees] = useState(false);
 
   useEffect(() => setSide(initialSide), [initialSide]);
-  useEffect(() => setAmountText(""), [side, payWithEth]);
+  useEffect(() => {
+    setAmountText("");
+    setMaxSell(false);
+  }, [side, payWithEth]);
+  // Live pairs have no ETH route yet: pay in the pair asset.
+  const live = market?.kind === "live";
 
   const tick = useNow();
   const protection = { startBps: coin.terms.snipeStartBps, durationSec: coin.terms.snipeDurationSec };
@@ -61,7 +73,7 @@ export function TradePanel({ coin, initialSide = "buy", onDone, className }: Tra
   const now = protectionActive ? smoothNow : tick;
   const protectionLeft = now > 0 ? protectionRemainingSec(coin.createdAt, now, protection) : 0;
 
-  const routed = side === "buy" && payWithEth && coin.quote.symbol !== "ETH";
+  const routed = !live && side === "buy" && payWithEth && coin.quote.symbol !== "ETH";
   const payingSymbol = side === "sell" ? coin.symbol : routed ? "ETH" : coin.quote.symbol;
   const quoteBalance = useQuoteBalance(wallet.address, routed ? "ETH" : coin.quote.symbol);
   const coinBalance = useCoinBalance(wallet.address, coin.address);
@@ -70,8 +82,8 @@ export function TradePanel({ coin, initialSide = "buy", onDone, className }: Tra
 
   const quote = useMemo(
     () => (market && amount > 0 ? market.quote(coin.address, side, amount, Date.now(), routed) : null),
-    // Re-quote whenever the coin's price moves.
-    [market, coin.address, coin.priceQuote, side, amount, routed], // eslint-disable-line react-hooks/exhaustive-deps
+    // Re-quote whenever the market changes: a price move, or (live) the pool arriving.
+    [market, version, coin.address, coin.priceQuote, side, amount, routed], // eslint-disable-line react-hooks/exhaustive-deps
   );
 
   const restricted = stocksRestricted && coin.quote.kind === "stock";
@@ -86,6 +98,8 @@ export function TradePanel({ coin, initialSide = "buy", onDone, className }: Tra
     restricted,
     pending,
     quoteOk: quote ? quote.ok : true,
+    quoteLoading: Boolean(quote && !quote.ok && quote.reason === "Loading the pool."),
+    chainName: CHAIN_NAME,
   });
 
   const outSymbol = side === "buy" ? coin.symbol : coin.quote.symbol;
@@ -99,7 +113,7 @@ export function TradePanel({ coin, initialSide = "buy", onDone, className }: Tra
       try {
         await wallet.switchToBase();
       } catch (error) {
-        toast.error(error instanceof Error ? error.message : "Switch to Base in your wallet.");
+        toast.error(error instanceof Error ? error.message : `Switch to ${CHAIN_NAME} in your wallet.`);
       }
       return;
     }
@@ -110,21 +124,31 @@ export function TradePanel({ coin, initialSide = "buy", onDone, className }: Tra
         outcome: txOutcome,
         referrer,
         payWithEth: routed,
+        amountText: amountText.replace(/,/g, "").trim(),
+        max: side === "sell" && maxSell,
+        slippageBps,
+        onStage: setStage,
       });
+      const txUrl = preview ? null : explorerUrl("tx", trade.txHash);
       const verb = side === "buy" ? "Bought" : "Sold";
       toast.success(
         side === "buy"
           ? `${verb} ${formatCoinAmount(trade.coinAmount)} ${coin.symbol}`
           : `${verb} ${formatCoinAmount(trade.coinAmount)} ${coin.symbol} for ${formatQuoteAmount(trade.quoteAmount, coin.quote.symbol)}`,
-        { description: preview ? "Preview trade. Nothing was sent on chain." : undefined },
+        {
+          description: preview ? "Preview trade. Nothing was sent on chain." : undefined,
+          ...(txUrl ? { action: { label: "View", onClick: () => window.open(txUrl, "_blank", "noopener,noreferrer") } } : {}),
+        },
       );
       setAmountText("");
+      setMaxSell(false);
       onDone?.();
     } catch (error) {
-      if (error instanceof PreviewTxError && error.kind === "rejected") toast("Trade cancelled", { description: error.message });
+      if (error instanceof TxError && error.kind === "rejected") toast("Trade cancelled", { description: error.message });
       else toast.error("Trade did not go through", { description: error instanceof Error ? error.message : "Try again." });
     } finally {
       setPending(false);
+      setStage(null);
     }
   };
 
@@ -164,7 +188,10 @@ export function TradePanel({ coin, initialSide = "buy", onDone, className }: Tra
             <button
               type="button"
               className="mf-num font-semibold text-tint"
-              onClick={() => setAmountText(trimInput(side === "buy" && payingSymbol === "ETH" ? Math.max(0, balance - 0.0005) : balance))}
+              onClick={() => {
+                setAmountText(trimInput(side === "buy" && payingSymbol === "ETH" ? Math.max(0, balance - 0.0005) : balance));
+                setMaxSell(side === "sell");
+              }}
             >
               Balance {side === "buy" ? formatQuoteAmount(balance, payingSymbol) : `${formatCoinAmount(balance)} ${coin.symbol}`}
             </button>
@@ -179,11 +206,14 @@ export function TradePanel({ coin, initialSide = "buy", onDone, className }: Tra
             value={amountText}
             onChange={(event) => {
               const next = event.target.value.replace(",", ".");
-              if (/^\d*\.?\d*$/.test(next) && next.length <= 24) setAmountText(next);
+              if (/^\d*\.?\d*$/.test(next) && next.length <= 24) {
+                setAmountText(next);
+                setMaxSell(false);
+              }
             }}
             className="mf-num min-w-0 flex-1 bg-transparent text-title1 font-bold text-label outline-none placeholder:text-label-3"
           />
-          {side === "buy" && coin.quote.symbol !== "ETH" ? (
+          {side === "buy" && coin.quote.symbol !== "ETH" && !live ? (
             <SegmentedControl
               label="Pay with"
               size="sm"
@@ -208,7 +238,10 @@ export function TradePanel({ coin, initialSide = "buy", onDone, className }: Tra
               aria-label={
                 side === "buy" ? `Pay ${preset} ${payingSymbol}` : preset === 1 ? "Max, sell your whole balance" : `Sell ${preset * 100}% of your balance`
               }
-              onClick={() => setAmountText(trimInput(side === "buy" ? preset : balance * preset))}
+              onClick={() => {
+                setAmountText(trimInput(side === "buy" ? preset : balance * preset));
+                setMaxSell(side === "sell" && preset === 1);
+              }}
               className="relative h-8 min-w-0 rounded-full bg-fill-3 px-2 text-footnote font-semibold text-label transition-colors hover:bg-fill-2 before:absolute before:inset-x-0 before:-inset-y-1.5 before:content-['']"
             >
               {side === "buy" ? String(preset) : preset === 1 ? "Max" : `${preset * 100}%`}
@@ -274,7 +307,7 @@ export function TradePanel({ coin, initialSide = "buy", onDone, className }: Tra
         variant={cta.kind === "ready" || cta.kind === "pending" ? (side === "buy" ? "buy" : "sell") : cta.kind === "switch" ? "destructive" : "filled"}
         disabled={!cta.enabled && cta.kind !== "pending"}
         loading={pending}
-        loadingLabel="Confirm in your wallet"
+        loadingLabel={stageLabel(stage, { token: payingSymbol, chainName: CHAIN_NAME })}
         onClick={() => void submit()}
       >
         {cta.label}

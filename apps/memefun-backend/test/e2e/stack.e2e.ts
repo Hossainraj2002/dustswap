@@ -1,7 +1,7 @@
 import { StandardMerkleTree } from "@openzeppelin/merkle-tree";
 import pg from "pg";
 import sharp from "sharp";
-import { erc20Abi, getAddress, keccak256, parseEther, toHex, zeroAddress } from "viem";
+import { encodeAbiParameters, erc20Abi, getAddress, keccak256, maxUint256, parseEther, toHex, zeroAddress } from "viem";
 import { createSiweMessage } from "viem/siwe";
 import { afterAll, beforeAll, describe, expect, inject, it } from "vitest";
 
@@ -11,11 +11,13 @@ import { runMetadata } from "../../keeper/jobs/metadata";
 import { runBuybacks } from "../../keeper/jobs/modules";
 import { LOCAL_CHAIN_ID } from "../../lib/chain";
 import { loadDeployment } from "../../lib/deployment";
-import { devAccount, localClients } from "../../lib/dev";
+import { type DevRole, devAccount, localClients } from "../../lib/dev";
 import { priceUsdE18 } from "../../lib/market/math";
 import { EPOCH_LENGTH_SEC, latestBoundary } from "../../lib/rewards/twab";
 import { verifyIndexAgainstChain } from "../../lib/verify/chain-truth";
 import { COIN_SUPPLY } from "../../shared/core/constants";
+import { livePool, quoteBuy, quoteSell } from "../../shared/core/pool";
+import { activeLiquidity } from "../../shared/core/uniswap/swap";
 import { holderRewardDistributorAbi, memeFunFactoryAbi, memeFunRouterAbi } from "../../shared/abis";
 
 const e2e = inject("e2e");
@@ -134,6 +136,89 @@ describe("memefun backend, end to end", () => {
         expect(candles.at(-1).close / coin.priceUsd).toBeCloseTo(1, 2);
       }
     }
+  });
+
+  it("the pool endpoint quotes exactly what the router fills", async () => {
+    const pm = [
+      { type: "function", name: "extsload", stateMutability: "view", inputs: [{ name: "slot", type: "bytes32" }], outputs: [{ name: "", type: "bytes32" }] },
+    ] as const;
+    const latest = await publicClient.getBlock();
+    const deadline = latest.timestamp + 3_600n;
+    const roles: DevRole[] = ["alice", "bob", "carol", "dave", "erin", "frank"];
+    const approved = new Set<string>();
+    const approveRouter = async (role: DevRole, token: `0x${string}`) => {
+      if (approved.has(`${role}:${token}`)) return;
+      await send(await wallet(role).writeContract({ address: token, abi: erc20Abi, functionName: "approve", args: [d.router, maxUint256] }));
+      approved.add(`${role}:${token}`);
+    };
+    const simulate = async (role: DevRole, side: "buy" | "sell", coin: `0x${string}`, amountIn: bigint, value: bigint) => {
+      const account = devAccount(role);
+      const args = [{ coin, amountIn, minAmountOut: 0n, recipient: zeroAddress, referrer: zeroAddress, deadline }] as const;
+      return side === "buy"
+        ? (await publicClient.simulateContract({ account, address: d.router, abi: memeFunRouterAbi, functionName: "buy", args, value })).result
+        : (await publicClient.simulateContract({ account, address: d.router, abi: memeFunRouterAbi, functionName: "sell", args })).result;
+    };
+
+    const coins = (await api("/v1/coins?sort=new&limit=50")).body.coins as Json[];
+    let checked = 0;
+    for (const coin of coins) {
+      const { pool } = (await api(`/v1/coins/${coin.address}/pool`)).body;
+      const live = livePool({
+        coinIsCurrency0: pool.coinIsCurrency0,
+        quoteDecimals: pool.quoteDecimals,
+        startTick: pool.startTick,
+        liquidity: BigInt(pool.liquidity),
+        sqrtPriceX96: BigInt(pool.sqrtPriceX96),
+        tick: pool.tick,
+        floors: pool.floors.map((f: Json) => ({ tickLower: f.tickLower, tickUpper: f.tickUpper, liquidity: BigInt(f.liquidity) })),
+      });
+
+      // The endpoint is the chain: slot0 as the PoolManager stores it, and its positions add up to
+      // the liquidity in range.
+      const stateSlot = keccak256(encodeAbiParameters([{ type: "bytes32" }, { type: "uint256" }], [pool.poolId, 6n]));
+      const slot0 = BigInt(await publicClient.readContract({ address: d.poolManager, abi: pm, functionName: "extsload", args: [stateSlot] }));
+      const inRange = BigInt(
+        await publicClient.readContract({ address: d.poolManager, abi: pm, functionName: "extsload", args: [toHex(BigInt(stateSlot) + 3n, { size: 32 })] }),
+      );
+      expect(live.sqrtPriceX96).toBe(slot0 & ((1n << 160n) - 1n));
+      expect(live.tick).toBe(Number(BigInt.asIntN(24, slot0 >> 160n)));
+      const positions = [{ tickLower: live.tickLower, tickUpper: live.tickUpper, liquidity: live.liquidity }, ...(live.floors ?? [])];
+      expect(activeLiquidity(positions, live.tick)).toBe(inRange);
+      if (coin.symbol === "FAPE") expect(pool.floors.length).toBeGreaterThan(0);
+
+      // Every seeded coin is past launch protection, so trades pay the base fee.
+      expect(Number(latest.timestamp) - coin.createdAt / 1000).toBeGreaterThan(coin.terms.snipeDurationSec);
+      const feeBps = coin.terms.feeBps as number;
+      const quote = coin.quote.address as `0x${string}`;
+      const isEth = quote === zeroAddress;
+
+      // Buys worth $0.50, $50 and $5,000.
+      if (!isEth) await approveRouter("alice", quote);
+      for (const usd of [0.5, 50, 5_000]) {
+        const amountIn = BigInt(Math.round((usd / coin.quote.usdPrice) * 10 ** coin.quote.decimals));
+        const expected = quoteBuy(live, amountIn, feeBps);
+        expect(expected.partial).toBe(false);
+        expect(await simulate("alice", "buy", coin.address, amountIn, isEth ? amountIn : 0n)).toBe(expected.amountOut);
+        checked++;
+      }
+
+      // Sells of 10%, 50% and all of the largest dev holder's balance.
+      let holder: DevRole | null = null;
+      let held = 0n;
+      for (const role of roles) {
+        const balance = await publicClient.readContract({ address: coin.address, abi: erc20Abi, functionName: "balanceOf", args: [devAccount(role).address] });
+        if (balance > held) [holder, held] = [role, balance];
+      }
+      if (!holder) continue;
+      await approveRouter(holder, coin.address);
+      for (const share of [1_000n, 5_000n, 10_000n]) {
+        const amountIn = (held * share) / 10_000n;
+        const expected = quoteSell(live, amountIn, feeBps);
+        expect(await simulate(holder, "sell", coin.address, amountIn, 0n)).toBe(expected.amountOut);
+        checked++;
+      }
+    }
+    expect(checked).toBeGreaterThanOrEqual(30);
   });
 
   it("the keeper resolves every coin's metadata and image", async () => {

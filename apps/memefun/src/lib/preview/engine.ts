@@ -16,7 +16,8 @@ import { feeShareFractions } from "@/core/fees";
 import { crossedMilestone, milestoneProgress } from "@/core/milestones";
 import { DEFAULT_SETTINGS, type LaunchSettings } from "@/core/settings";
 import type { Address, CoinLinks, CoinTerms, FeeMode, QuoteAsset, TradeSide } from "@/core/types";
-import { ETH, PREVIEW_STOCKS, USDC } from "@/lib/market/quotes";
+import { ETH, PREVIEW_STOCKS, QUOTES, USDC } from "@/lib/market/quotes";
+import { type LaunchInput, type Market, type MarketQuote, type MarketStatus, TxError } from "@/lib/market/Market";
 import type {
   ActivityItem,
   Candle,
@@ -36,45 +37,15 @@ import { between, createRng, hashString, logNormal, pick, seededAddress, seededH
 
 export type Archetype = "rocket" | "pumpdump" | "steady" | "fading" | "sleepy" | "newborn";
 
-export interface PreviewQuote {
-  side: TradeSide;
-  amountIn: number;
-  amountOut: number;
-  feeQuote: number;
-  feeBps: number;
-  priceImpact: number;
-  priceAfterUsd: number;
-  marketCapAfterUsd: number;
-  ok: boolean;
-  reason?: string;
-  /** Pay-with-ETH buys: the pair-asset amount the ETH converts into first. */
-  routedQuoteIn?: number;
-}
+export type PreviewQuote = MarketQuote;
 
 /** Estimated cost of the ETH to pair-asset hop for pay-with-ETH buys. */
 export const ROUTE_COST_BPS = 30;
 
-export interface LaunchInput {
-  name: string;
-  symbol: string;
-  description: string;
-  image: string;
-  links: CoinLinks;
-  quote: QuoteAsset;
-  feeBps: number;
-  mode: FeeMode;
-  creatorKeepBps: number;
-  firstBuyQuote: number;
-}
+export type { LaunchInput } from "@/lib/market/Market";
 
-export class PreviewTxError extends Error {
-  constructor(
-    message: string,
-    readonly kind: "rejected" | "reverted" | "insufficient",
-  ) {
-    super(message);
-  }
-}
+/** Preview transactions fail exactly like live ones. */
+export const PreviewTxError = TxError;
 
 interface SimCoin {
   coin: Coin;
@@ -153,7 +124,8 @@ function emptyStats(now: number): ModeStats {
   };
 }
 
-export class PreviewMarket {
+export class PreviewMarket implements Market {
+  readonly kind = "preview" as const;
   private readonly coins = new Map<Address, SimCoin>();
   private readonly order: Address[] = [];
   private activity: ActivityItem[] = [];
@@ -237,16 +209,24 @@ export class PreviewMarket {
     return this.settings;
   }
 
-  updateSettings(next: LaunchSettings) {
+  async updateSettings(next: LaunchSettings) {
     this.settings = { ...next, enabledModes: [...next.enabledModes], enabledQuoteKinds: [...next.enabledQuoteKinds] };
     this.emit();
+  }
+
+  listQuotes(): QuoteAsset[] {
+    return QUOTES;
+  }
+
+  getStatus(): MarketStatus {
+    return { state: "ready" };
   }
 
   getModeration() {
     return { hidden: [...this.hiddenCoins], featured: [...this.featuredCoins], banner: this.banner };
   }
 
-  setHidden(address: Address, hidden: boolean) {
+  async setHidden(address: Address, hidden: boolean) {
     if (hidden) this.hiddenCoins.add(address);
     else this.hiddenCoins.delete(address);
     const sim = this.coins.get(address);
@@ -254,7 +234,7 @@ export class PreviewMarket {
     this.emit();
   }
 
-  setFeatured(address: Address, featured: boolean) {
+  async setFeatured(address: Address, featured: boolean) {
     if (featured) this.featuredCoins.add(address);
     else this.featuredCoins.delete(address);
     const sim = this.coins.get(address);
@@ -262,7 +242,7 @@ export class PreviewMarket {
     this.emit();
   }
 
-  setBanner(text: string) {
+  async setBanner(text: string) {
     this.banner = text;
     this.emit();
   }
@@ -435,9 +415,9 @@ export class PreviewMarket {
 
   async claim(address: Address, items: Claimable[], outcome: "ok" | "rejected" | "reverted" = "ok"): Promise<`0x${string}`> {
     await wait(700);
-    if (outcome === "rejected") throw new PreviewTxError("You rejected the request in your wallet.", "rejected");
+    if (outcome === "rejected") throw new TxError("You rejected the request in your wallet.", "rejected");
     await wait(900);
-    if (outcome === "reverted") throw new PreviewTxError("The claim did not go through. Nothing was paid out. Try again.", "reverted");
+    if (outcome === "reverted") throw new TxError("The claim did not go through. Nothing was paid out. Try again.", "reverted");
     const user = this.ensureUser(address);
     for (const item of items) {
       const sim = this.coins.get(item.coin);
@@ -536,24 +516,24 @@ export class PreviewMarket {
     options: { outcome?: "ok" | "rejected" | "reverted"; referrer?: Address; payWithEth?: boolean } = {},
   ): Promise<Trade> {
     const sim = this.findSim(coinAddress);
-    if (!sim) throw new PreviewTxError("This coin is not available.", "reverted");
+    if (!sim) throw new TxError("This coin is not available.", "reverted");
     const state = this.ensureUser(user);
     const quoteSymbol = sim.coin.quote.symbol;
     const routed = side === "buy" && options.payWithEth === true && quoteSymbol !== "ETH";
     const payingSymbol = routed ? "ETH" : side === "buy" ? quoteSymbol : sim.coin.symbol;
     const balance = side === "buy" ? state.balances.get(routed ? "ETH" : quoteSymbol) ?? 0 : sim.balances.get(user) ?? 0;
     if (amountIn > balance + 1e-12) {
-      throw new PreviewTxError(`Not enough ${payingSymbol} in your wallet.`, "insufficient");
+      throw new TxError(`Not enough ${payingSymbol} in your wallet.`, "insufficient");
     }
     await wait(650);
-    if (options.outcome === "rejected") throw new PreviewTxError("You rejected the request in your wallet.", "rejected");
+    if (options.outcome === "rejected") throw new TxError("You rejected the request in your wallet.", "rejected");
     await wait(900);
     if (options.outcome === "reverted") {
-      throw new PreviewTxError("The price moved more than your slippage allows, so the trade was cancelled. Nothing was spent except network fee.", "reverted");
+      throw new TxError("The price moved more than your slippage allows, so the trade was cancelled. Nothing was spent except network fee.", "reverted");
     }
     const quoted = this.quote(coinAddress, side, amountIn, Date.now(), routed);
     if (quoted.amountOut < minOut) {
-      throw new PreviewTxError("The price moved more than your slippage allows, so the trade was cancelled.", "reverted");
+      throw new TxError("The price moved more than your slippage allows, so the trade was cancelled.", "reverted");
     }
     const swapIn = routed ? this.routeEthToQuote(coinAddress, amountIn) : amountIn;
     const trade = this.applyTrade(sim, side, user, swapIn, Date.now(), { referred: Boolean(options.referrer) });
@@ -575,24 +555,24 @@ export class PreviewMarket {
 
   async launch(user: Address, input: LaunchInput, outcome: "ok" | "rejected" | "reverted" = "ok"): Promise<Coin> {
     // The same checks the factory enforces on chain, so the UI cannot drift from them.
-    if (this.settings.launchesPaused) throw new PreviewTxError("New launches are paused right now. Existing coins trade as normal.", "reverted");
-    if (!this.settings.enabledModes.includes(input.mode)) throw new PreviewTxError("That fee destination is not available right now.", "reverted");
-    if (!this.settings.enabledQuoteKinds.includes(input.quote.kind)) throw new PreviewTxError("That pair is not available right now.", "reverted");
+    if (this.settings.launchesPaused) throw new TxError("New launches are paused right now. Existing coins trade as normal.", "reverted");
+    if (!this.settings.enabledModes.includes(input.mode)) throw new TxError("That fee destination is not available right now.", "reverted");
+    if (!this.settings.enabledQuoteKinds.includes(input.quote.kind)) throw new TxError("That pair is not available right now.", "reverted");
     if (input.feeBps < this.settings.feeMinBps || input.feeBps > this.settings.feeMaxBps) {
-      throw new PreviewTxError("The trading fee is outside the allowed range.", "reverted");
+      throw new TxError("The trading fee is outside the allowed range.", "reverted");
     }
     if (input.mode !== "creator" && (input.creatorKeepBps < 0 || input.creatorKeepBps > this.settings.creatorKeepMaxBps)) {
-      throw new PreviewTxError("The creator share is above the allowed limit.", "reverted");
+      throw new TxError("The creator share is above the allowed limit.", "reverted");
     }
     const state = this.ensureUser(user);
     const quoteBalance = state.balances.get(input.quote.symbol) ?? 0;
     if (input.firstBuyQuote > quoteBalance + 1e-12) {
-      throw new PreviewTxError(`Not enough ${input.quote.symbol} for the first buy.`, "insufficient");
+      throw new TxError(`Not enough ${input.quote.symbol} for the first buy.`, "insufficient");
     }
     await wait(700);
-    if (outcome === "rejected") throw new PreviewTxError("You rejected the request in your wallet.", "rejected");
+    if (outcome === "rejected") throw new TxError("You rejected the request in your wallet.", "rejected");
     await wait(1400);
-    if (outcome === "reverted") throw new PreviewTxError("The launch did not go through and nothing was created. You were only charged network fee.", "reverted");
+    if (outcome === "reverted") throw new TxError("The launch did not go through and nothing was created. You were only charged network fee.", "reverted");
     const now = Date.now();
     const sim = this.createSim({
       address: seededAddress(Math.random, "b20"),
@@ -636,10 +616,10 @@ export class PreviewMarket {
    */
   async addComment(author: Address, coinAddress: string, body: string): Promise<Comment> {
     const sim = this.findSim(coinAddress);
-    if (!sim) throw new PreviewTxError("This coin is not available.", "reverted");
+    if (!sim) throw new TxError("This coin is not available.", "reverted");
     const text = body.replace(/\s+/g, " ").trim();
-    if (!text) throw new PreviewTxError("Write something first.", "reverted");
-    if (text.length > 280) throw new PreviewTxError("Comments can be up to 280 characters.", "reverted");
+    if (!text) throw new TxError("Write something first.", "reverted");
+    if (text.length > 280) throw new TxError("Comments can be up to 280 characters.", "reverted");
     await wait(450);
     const comment: Comment = {
       id: `${sim.coin.address}-u${Date.now()}`,

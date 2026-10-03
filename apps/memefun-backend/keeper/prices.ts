@@ -5,10 +5,13 @@ import { optionalEnv } from "../lib/env";
  * Where tokenized-stock NAVs come from, as USD with 8 decimals. The keeper only ever moves the
  * on-chain MANUAL price toward this value, at most 20% per update (the contract enforces it).
  *
- *   local : a deterministic drift around the current on-chain price, so the job runs end to end
- *   http  : STOCK_PRICE_URL with `{symbol}` / `{address}` placeholders, reading the USD value (a
- *           decimal number or string) at the dot path STOCK_PRICE_JSON_PATH (e.g. "data.nav").
- *           Phase 4 points this at the issuer's published NAV (Coinbase) once confirmed.
+ * STOCK_PRICE_SOURCE picks one (default: http when STOCK_PRICE_URL is set, dev on the local chain,
+ * none otherwise):
+ *   dev  : a deterministic drift around the current on-chain price, so the job runs end to end.
+ *          Used locally and for the testnet's test stock, which has no real price.
+ *   http : STOCK_PRICE_URL with `{symbol}` / `{address}` placeholders, reading the USD value (a
+ *          decimal number or string) at the dot path STOCK_PRICE_JSON_PATH (e.g. "data.nav").
+ *   none : never updates (mainnet stocks are priced by their Chainlink feeds instead).
  */
 export interface PriceSource {
   readonly kind: string;
@@ -59,9 +62,22 @@ export function httpPriceSource(config: { url: string; path: string }, fetchFn: 
   };
 }
 
+const noPriceSource: PriceSource = { kind: "none", usdE8: async () => null };
+
 export function createPriceSource(chainKey: ChainSettings["key"]): PriceSource {
   const url = optionalEnv("STOCK_PRICE_URL");
-  if (url) return httpPriceSource({ url, path: optionalEnv("STOCK_PRICE_JSON_PATH") ?? "price" });
-  if (chainKey === "local") return devPriceSource();
-  return { kind: "none", usdE8: async () => null };
+  const kind = optionalEnv("STOCK_PRICE_SOURCE") ?? (url ? "http" : chainKey === "local" ? "dev" : "none");
+  switch (kind) {
+    case "dev":
+      // A drifting made-up price must never reach a real stock.
+      if (chainKey === "base") throw new Error("STOCK_PRICE_SOURCE=dev is for the local chain and testnets only.");
+      return devPriceSource();
+    case "http":
+      if (!url) throw new Error("STOCK_PRICE_SOURCE=http needs STOCK_PRICE_URL.");
+      return httpPriceSource({ url, path: optionalEnv("STOCK_PRICE_JSON_PATH") ?? "price" });
+    case "none":
+      return noPriceSource;
+    default:
+      throw new Error(`STOCK_PRICE_SOURCE must be dev, http or none, not "${kind}".`);
+  }
 }

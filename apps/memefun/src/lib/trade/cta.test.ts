@@ -22,9 +22,14 @@ describe("tradeCta", () => {
     expect(tradeCta({ ...base, pending: true })).toMatchObject({ kind: "pending", enabled: false });
     expect(tradeCta({ ...base, amount: 0 })).toMatchObject({ kind: "enter-amount", enabled: false });
     expect(tradeCta({ ...base, amount: 2 })).toMatchObject({ kind: "insufficient", label: "Not enough ETH", enabled: false });
+    expect(tradeCta({ ...base, quoteOk: false, quoteLoading: true })).toMatchObject({ kind: "loading", enabled: false });
     expect(tradeCta({ ...base, quoteOk: false })).toMatchObject({ kind: "no-liquidity", enabled: false });
     expect(tradeCta(base)).toEqual({ kind: "ready", label: "Buy TOAD", enabled: true });
     expect(tradeCta({ ...base, side: "sell", payingSymbol: "TOAD" })).toEqual({ kind: "ready", label: "Sell TOAD", enabled: true });
+  });
+
+  it("names the network to switch to", () => {
+    expect(tradeCta({ ...base, onBase: false, chainName: "Base Sepolia" }).label).toBe("Switch to Base Sepolia");
   });
 
   it("treats NaN and negative amounts as empty", () => {

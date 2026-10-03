@@ -1,15 +1,11 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "main": ".open-next/worker.js",
-  "name": "memefun",
-  // Not deployed in Phase 1. The custom domain attaches on the first real
-  // deploy (Phase 5), the same way apps/site binds dustswap.wtf.
-  "routes": [
-    {
-      "pattern": "memefun.dustswap.wtf",
-      "custom_domain": true
-    }
-  ],
+  // Phase 4: the Base Sepolia build, on its workers.dev URL only. The mainnet build (Phase 5) is
+  // a separate worker that gets the memefun.dustswap.wtf custom domain.
+  "name": "memefun-testnet",
+  "workers_dev": true,
+  "preview_urls": false,
   "compatibility_date": "2024-12-30",
   "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
   "assets": {
@@ -19,7 +15,7 @@
   "services": [
     {
       "binding": "WORKER_SELF_REFERENCE",
-      "service": "memefun"
+      "service": "memefun-testnet"
     }
   ],
   "images": {

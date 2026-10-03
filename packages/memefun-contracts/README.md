@@ -90,6 +90,8 @@ cd ../../apps/memefun && pnpm vectors        # regenerate golden vectors from th
 
 | Suite | What it proves |
 |---|---|
+| `test/unit/SwapVectors.t.sol` | 120 pools and 544 swaps from the app's swap engine (`src/core/uniswap/swap.ts`) replayed on a real PoolManager: launch positions, floor bands, partial fills to the price limit, and swaps across tick-bitmap word edges. Input used, output, price and tick match to the unit, so the app's trade quotes and minimum outputs are exact. |
+| `test/unit/TestnetFaucet.t.sol` | The testnet stock faucet holds `MINT_ROLE` from the stock's creation and gives each address 10 shares once a day. |
 | `test/unit/Vectors.t.sol` | 720 golden vectors from the app's TypeScript (fees, splits, protection schedule, launch positions across 6/8/18 decimals and both orderings, including the reduced-precision branch) match the contracts to the wei. |
 | `test/fuzz/*` | Fee rounding is minimal and never short. Splits conserve every wei. Protection never rises. Every opening is at or at most one spacing above target. The supply always fits the pool. A 1,000-run end-to-end fee-engine fuzz covers every swap type, both orderings, any fee, and inside or after protection. |
 | `test/unit/Launch.t.sol` | Admin-less coins with no role anywhere, the exact opening price, supply locked with dust to dEaD, first buys at the base fee, snapshotted terms, and every validation. |
@@ -101,9 +103,9 @@ cd ../../apps/memefun && pnpm vectors        # regenerate golden vectors from th
 | `test/invariant/*` | 7 invariants over 256 runs x 64 calls (launches, all swap types, buybacks, floors, epochs, claims, fee cuts, settings changes, time), with fail-on-revert: fixed supply and no roles, launch liquidity untouched, terms frozen except a falling fee, vault claims equal its ledgers, module books exact, no stray funds, settings within caps. |
 | `test/fork/MainnetFork.t.sol` | On a Base mainnet fork with real precompiles: the real PoolManager, Chainlink, USDC and Coinbase's **AAPLc**, and trades through **Uniswap's own Universal Router** paying the same fee. |
 
-**Results (2026-10-02):**
-- **Stock forge:** 136 tests pass.
-- **Live B20 precompiles:** the same 136 pass.
+**Results (2026-10-03):**
+- **Stock forge:** 139 tests pass.
+- **Live B20 precompiles:** the same tests pass (136 on 2026-10-02, plus the faucet suite since).
 - **Mainnet fork:** 5 of 5 pass.
 - **Coverage of `src/`:** 98.5% lines, 98.2% statements, 100% functions, 92.6% branches. Most of the remaining branches are unreachable by construction: partial-fill refunds without a price limit, `CoinSetupFailed`, `AlreadySeeded`, a zero fee at a nonzero rate (ceiling rounding makes it at least 1 wei), and malformed hookData from our own router. A few others are assembly lines the coverage tool cannot attribute.
 
@@ -205,6 +207,26 @@ FOUNDRY_BASE=true ~/.base-foundry/bin/forge script script/DevDeploy.s.sol \
 Pass `--offline`: otherwise forge looks up trace signatures on Sourcify after the run, and that lookup can hang indefinitely. Trading activity is seeded by the backend's seed script, which can move chain time between trades.
 
 **Verified 2026-10-02:** about 33 transactions; all contracts at their predicted addresses; then a launch with a 0.01 ETH first buy (856k gas) and a router buy (170k gas) on the live B20 precompiles.
+
+### Base Sepolia (testnet)
+
+The testnet runs the same `Deploy.s.sol`, owned by the deployer's EOA, plus `script/TestnetExtras.s.sol` (testnet only; it refuses Base mainnet). Base Sepolia has no tokenized stocks, so TestnetExtras:
+- creates a **test stock** (`tAAPL`, "Test stock AAPL (testnet, no value)"), a B20 with 8 decimals like Coinbase's;
+- deploys `script/testnet/TestStockFaucet.sol`, which holds the stock's `MINT_ROLE` from the moment the stock exists and gives each address 10 test shares a day;
+- lists the stock as a MANUAL quote at $240 (the keeper's `dev` price source keeps it fresh), enables stock pairs on the testnet only, and sets the price keeper and rewards publisher;
+- adds the stock and faucet to `deployments/84532.json`.
+
+```bash
+cast wallet import memefun-testnet --interactive      # once; the key never leaves the keystore
+export DEPLOYER=$(cast wallet address --account memefun-testnet)
+OWNER=$DEPLOYER TREASURY=$DEPLOYER FOUNDRY_BASE=true ~/.base-foundry/bin/forge script script/Deploy.s.sol \
+  --rpc-url https://sepolia.base.org --account memefun-testnet --sender $DEPLOYER \
+  --broadcast --slow --verify --verifier blockscout --verifier-url https://base-sepolia.blockscout.com/api/ --offline
+PRICE_KEEPER=0x... REWARDS_PUBLISHER=0x... FOUNDRY_BASE=true ~/.base-foundry/bin/forge script script/TestnetExtras.s.sol \
+  --rpc-url https://sepolia.base.org --account memefun-testnet --sender $DEPLOYER --broadcast --slow --offline
+```
+
+**Rehearsed 2026-10-03** on a Base Sepolia fork (base-anvil `--fork-url`): both scripts broadcast; the stock was listed at $240; the faucet minted 10 tAAPL; launches on the stock pair (floor mode) and on ETH both succeeded.
 
 ## Known limitations (accepted, documented)
 

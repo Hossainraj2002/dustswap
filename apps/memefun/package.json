@@ -12,11 +12,13 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:local": "vitest run --config vitest.local.config.ts",
     "cf:build": "opennextjs-cloudflare build",
     "preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
     "cf-typegen": "wrangler types --env-interface CloudflareEnv cloudflare-env.d.ts",
     "vectors": "jiti scripts/vectors.ts",
-    "abis": "jiti scripts/export-abis.ts"
+    "abis": "jiti scripts/export-abis.ts",
+    "deployments": "jiti scripts/export-deployments.ts"
   },
   "dependencies": {
     "@base-org/account": "2.4.0",
