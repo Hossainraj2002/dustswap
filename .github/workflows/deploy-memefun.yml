@@ -63,7 +63,11 @@ jobs:
       # The build must carry the Sepolia contract addresses (src/lib/contracts/deployments.ts), or
       # it would ship as the preview.
       - name: Check the deployment is in the build
-        run: grep -q '84532: {' src/lib/contracts/deployments.ts || { echo "::error::No Base Sepolia deployment in src/lib/contracts/deployments.ts; run pnpm deployments and commit it."; exit 1; }
+        run: |
+          if ! grep -q '84532: {' src/lib/contracts/deployments.ts; then
+            echo "::error::No Base Sepolia deployment in src/lib/contracts/deployments.ts; run pnpm deployments and commit it."
+            exit 1
+          fi
 
       - name: Typecheck, lint and test
         run: pnpm typecheck && pnpm lint && pnpm test
