@@ -124,8 +124,8 @@ contract AdminAndEdgesTest is MemeFunFixture {
         vm.startPrank(owner);
         vm.expectRevert(abi.encodeWithSelector(MemeFunConfig.InvalidMode.selector, 4));
         config.setModeEnabled(4, true);
-        vm.expectRevert(abi.encodeWithSelector(MemeFunConfig.InvalidKind.selector, 3));
-        config.setQuoteKindEnabled(3, true);
+        vm.expectRevert(abi.encodeWithSelector(MemeFunConfig.InvalidKind.selector, 4));
+        config.setQuoteKindEnabled(4, true);
         vm.expectRevert(abi.encodeWithSelector(MemeFunConfig.InvalidModule.selector, Mode.CREATOR, address(burnVault)));
         config.setModeModule(0, address(burnVault));
         vm.expectRevert(abi.encodeWithSelector(MemeFunConfig.InvalidModule.selector, Mode.BURN, alice));
@@ -139,6 +139,7 @@ contract AdminAndEdgesTest is MemeFunFixture {
         fresh.setModeEnabled(1, true);
         assertTrue(fresh.modeInfo(Mode.CREATOR).enabled, "creator mode is on from day one");
         assertFalse(fresh.kindEnabled(QuoteKind.STOCK), "stocks start off");
+        assertFalse(fresh.kindEnabled(QuoteKind.TOKEN), "other tokens start off");
     }
 
     function test_config_quoteListingRules() public {

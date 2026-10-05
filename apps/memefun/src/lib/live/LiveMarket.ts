@@ -34,6 +34,7 @@ import type {
   Trade,
 } from "@/lib/market/types";
 import { DEFAULT_SLIPPAGE_BPS, MAX_SLIPPAGE_BPS } from "@/lib/trade/cta";
+import { findPair, mergePairCatalog, pairId, pairUnavailableReason, type PairCatalogSort } from "@/lib/market/pairs";
 import { getRpcUrlsForChain, rotatingFetch } from "@/lib/wallet/rpc";
 import { ApiError, type ApiClient, createApi, dataUrlToBlob } from "./api";
 import { API_URL, DeploymentMismatch, resolveDeployment } from "./config";
@@ -119,7 +120,7 @@ function plain(value: number): string {
   return value.toLocaleString("en-US", { useGrouping: false, maximumFractionDigits: 20 });
 }
 
-const QUOTE_ORDER: Record<QuoteAsset["kind"], number> = { native: 0, stable: 1, stock: 2 };
+const QUOTE_ORDER: Record<QuoteAsset["kind"], number> = { native: 0, stable: 1, stock: 2, token: 3 };
 
 export class LiveMarket implements Market {
   readonly kind = "live" as const;
@@ -161,6 +162,7 @@ export class LiveMarket implements Market {
   private creators: CreatorProfile[] = [];
   private settings: LaunchSettings | null = null;
   private quotes: QuoteAsset[] = [];
+  private catalogs = new Map<PairCatalogSort, { quotes: QuoteAsset[]; notice?: string; stockIssuerVerified: boolean }>();
   private featured: Address[] = [];
   private banner = "";
   private adminToken: string | null = null;
@@ -343,7 +345,24 @@ export class LiveMarket implements Market {
   private async loadSettings() {
     const body = await this.api.get<{ settings: LaunchSettings; quotes: QuoteAsset[] }>("/v1/launch-settings");
     this.settings = body.settings;
-    this.quotes = [...body.quotes].sort((a, b) => QUOTE_ORDER[a.kind] - QUOTE_ORDER[b.kind] || a.symbol.localeCompare(b.symbol));
+    this.quotes = body.quotes.map(quote => quote.kind === "stock" || quote.kind === "token"
+      ? { ...quote, launchable: quote.launchable === true, unavailableReason: quote.unavailableReason || (quote.launchable === true ? undefined : "Waiting for verified launch eligibility") }
+      : quote).sort((a, b) => QUOTE_ORDER[a.kind] - QUOTE_ORDER[b.kind] || a.symbol.localeCompare(b.symbol));
+  }
+
+  private async loadPairCatalog(sort: PairCatalogSort) {
+    const body = await this.api.get<{ quotes?: QuoteAsset[]; stocks?: QuoteAsset[]; crypto?: QuoteAsset[];
+      sources?: { coinbase?: { status?: string }; o1?: { complete?: boolean; status?: string } } }>(`/v1/pair-catalog?sort=${sort}`).catch(error => {
+        const previous = this.catalogs.get(sort);
+        this.catalogs.set(sort, { quotes: previous?.quotes ?? [], notice: previous?.notice, stockIssuerVerified: false });
+        throw error;
+      });
+    const quotes = body.quotes ?? [...(body.stocks ?? []), ...(body.crypto ?? [])];
+    const source = body.sources?.o1;
+    this.catalogs.set(sort, { quotes, stockIssuerVerified: body.sources?.coinbase?.status === "ok",
+      ...(source?.complete === false ? { notice: source.status === "alpha_fallback"
+        ? "Showing the available o1 Alpha list. Complete launch history is currently unavailable."
+        : "The available token list is incomplete. Complete launch history is currently unavailable." } : {}) });
   }
 
   private async loadModeration() {
@@ -397,14 +416,19 @@ export class LiveMarket implements Market {
 
   private async loadQuoteBalances(owner: Address) {
     const quotes = this.listQuotes();
-    const values = await Promise.all(
+    const values = await Promise.allSettled(
       quotes.map((quote) =>
         quote.address === zeroAddress
           ? this.client.getBalance({ address: owner })
           : this.client.readContract({ address: quote.address, abi: erc20Abi, functionName: "balanceOf", args: [owner] }),
       ),
     );
-    this.quoteBalances.set(lower(owner), new Map(quotes.map((quote, i) => [quote.symbol, values[i] ?? 0n])));
+    const balances = new Map<string, bigint>();
+    quotes.forEach((quote, i) => {
+      const result = values[i];
+      if (result?.status === "fulfilled") balances.set(pairId(quote), result.value);
+    });
+    this.quoteBalances.set(lower(owner), balances);
   }
 
   private async readCoinBalance(owner: Address, coin: string): Promise<bigint> {
@@ -573,6 +597,14 @@ export class LiveMarket implements Market {
     return this.quotes;
   }
 
+  listPairCatalog(sort: PairCatalogSort = "trending"): QuoteAsset[] {
+    this.read(`pairs:${sort}`, 60_000, () => this.loadPairCatalog(sort));
+    const catalog = this.catalogs.get(sort);
+    return mergePairCatalog(this.listQuotes(), catalog?.quotes ?? [], { requireStockIssuer: TARGET_CHAIN_ID === 8453, stockIssuerVerified: catalog?.stockIssuerVerified });
+  }
+
+  getPairCatalogNotice(sort: PairCatalogSort = "trending") { return this.catalogs.get(sort)?.notice; }
+
   getModeration(): Moderation {
     this.read("moderation", 30_000, () => this.loadModeration());
     if (this.adminToken) this.read("admin", 15_000, () => this.loadAdmin());
@@ -583,10 +615,10 @@ export class LiveMarket implements Market {
     this.read(`qbal:${lower(address)}`, 10_000, () => this.loadQuoteBalances(address));
   }
 
-  getQuoteBalance(address: Address, symbol: string): number {
+  getQuoteBalance(address: Address, id: string): number {
     this.ensureUser(address);
-    const raw = this.quoteBalances.get(lower(address))?.get(symbol);
-    const quote = this.quotes.find((q) => q.symbol === symbol);
+    const quote = findPair(this.quotes, id);
+    const raw = quote && this.quoteBalances.get(lower(address))?.get(pairId(quote));
     return raw !== undefined && quote ? fromUnits(raw, quote.decimals) : 0;
   }
 
@@ -921,14 +953,26 @@ export class LiveMarket implements Market {
   }
 
   async launch(user: Address, input: LaunchInput, _outcome?: TxOutcome, onStage?: (stage: TxStage) => void): Promise<Coin> {
-    await this.loadSettings().catch(() => undefined);
+    try { await this.loadSettings(); }
+    catch { throw new TxError("Could not verify the current launch settings. Check your connection and try again.", "reverted"); }
     const settings = this.getSettings();
     if (settings.launchesPaused) throw new TxError("New launches are paused right now. Existing coins trade as normal.", "reverted");
     if (!settings.enabledModes.includes(input.mode)) throw new TxError("That fee destination is not available right now.", "reverted");
     if (input.tweet && (input.mode !== "creator" || !validateAuthorShareBps(input.tweet.authorShareBps))) throw new TxError("Tweet launches use Creator fees and an author share from 20% to 100%.", "reverted");
-    const markets = input.markets?.length ? input.markets : [{ quote: input.quote, firstBuyQuote: input.firstBuyQuote, firstBuyText: input.firstBuyText }];
-    if (markets.length > 5 || new Set(markets.map((market) => lower(market.quote.address))).size !== markets.length) throw new TxError("Choose up to five different pair assets.", "reverted");
-    if (markets.some((market) => !this.quotes.some((listed) => lower(listed.address) === lower(market.quote.address)))) throw new TxError("Choose listed pair assets.", "reverted");
+    const requestedMarkets = input.markets?.length ? input.markets : [{ quote: input.quote, firstBuyQuote: input.firstBuyQuote, firstBuyText: input.firstBuyText }];
+    if (requestedMarkets.length > 5 || new Set(requestedMarkets.map((market) => lower(market.quote.address))).size !== requestedMarkets.length) throw new TxError("Choose up to five different pair assets.", "reverted");
+    if (requestedMarkets.some((market) => !this.quotes.some((listed) => lower(listed.address) === lower(market.quote.address)))) throw new TxError("Choose listed pair assets.", "reverted");
+    // Registry identity, kind, decimals and price stay authoritative after a draft or catalog refresh.
+    let markets = requestedMarkets.map(market => ({ ...market, quote: findPair(this.quotes, market.quote.address)! }));
+    if (TARGET_CHAIN_ID === 8453 && markets.some(market => market.quote.kind === "stock")) {
+      try { await this.loadPairCatalog("trending"); }
+      catch { throw new TxError("Could not verify stock issuer availability. Try again before launching.", "reverted"); }
+      const catalog = this.catalogs.get("trending")!;
+      const verified = mergePairCatalog(this.quotes, catalog.quotes, { requireStockIssuer: true, stockIssuerVerified: catalog.stockIssuerVerified });
+      markets = markets.map(market => ({ ...market, quote: findPair(verified, market.quote.address)! }));
+    }
+    const unavailable = markets.map(market => pairUnavailableReason(market.quote, settings.enabledQuoteKinds, this.now())).find(Boolean);
+    if (unavailable) throw new TxError(unavailable, "reverted");
     if (markets.some((market) => !settings.enabledQuoteKinds.includes(market.quote.kind))) throw new TxError("That pair is not available right now.", "reverted");
     if (input.feeBps < settings.feeMinBps || input.feeBps > settings.feeMaxBps) throw new TxError("The trading fee is outside the allowed range.", "reverted");
     if (input.mode !== "creator" && (input.creatorKeepBps < 0 || input.creatorKeepBps > settings.creatorKeepMaxBps)) {
@@ -993,7 +1037,7 @@ export class LiveMarket implements Market {
     this.invalidate(`qbal:${lower(user)}`);
     const indexed = await this.waitForCoin(result.coin);
     if (indexed) return indexed;
-    const provisional = this.provisionalCoin(user, input, result.coin, settings);
+    const provisional = this.provisionalCoin(user, { ...input, quote: markets[0]!.quote }, result.coin, settings);
     if (result.markets?.length) provisional.markets = result.markets.map((market, i) => ({
       poolId: market.poolId, quote: markets[i]!.quote, supplyRaw: equalAllocations(markets.length)[i]!.toString(), supplyFraction: 1 / markets.length,
       poolCoins: Number(equalAllocations(markets.length)[i]!) / 1e18 - Number(market.coinsBought) / 1e18,

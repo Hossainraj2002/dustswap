@@ -19,7 +19,10 @@ enum Mode {
 enum QuoteKind {
     NATIVE,
     STABLE,
-    STOCK
+    STOCK,
+    /// Other owner-listed crypto assets, priced in USD rather than assumed to be stablecoins.
+    /// Appended so existing native/stable/stock event and storage indices remain unchanged.
+    TOKEN
 }
 
 /// @notice How the USD price of a quote is read when a new coin's opening price is set.

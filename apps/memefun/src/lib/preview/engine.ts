@@ -387,7 +387,8 @@ export class PreviewMarket implements Market {
     return user;
   }
 
-  getQuoteBalance(address: Address, symbol: string): number {
+  getQuoteBalance(address: Address, id: string): number {
+    const symbol = QUOTES.find(quote => quote.address.toLowerCase() === id.toLowerCase())?.symbol ?? id;
     return this.users.get(address)?.balances.get(symbol) ?? 0;
   }
 

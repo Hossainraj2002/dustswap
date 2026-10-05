@@ -65,7 +65,7 @@ export default createConfig({
     },
   },
   blocks: {
-    // Samples Chainlink ETH/USD so every trade's USD value uses a price at most minutes old.
+    // Samples all registered Chainlink quotes (ETH and stock feeds), retaining feed timestamps.
     EthUsdPrice: { chain: "memefun", interval: chain.priceIntervalBlocks, startBlock },
   },
 });

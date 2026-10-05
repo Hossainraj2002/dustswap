@@ -8,14 +8,15 @@ import { DEFAULT_SETTINGS } from "@/core/settings";
 import { normalizeTicker, validateDescription, validateName, validateTelegram, validateWebsite, validateXHandle } from "@/core/validation";
 import { cn } from "@/lib/cn";
 import { useIsRegularWidth } from "@/lib/hooks";
-import { useLaunchSettings, useQuoteAssets, useQuoteBalance } from "@/lib/market/hooks";
+import { useLaunchSettings, usePairCatalog, useQuoteAssets, useQuoteBalance } from "@/lib/market/hooks";
 import { useMarket } from "@/lib/market/MarketProvider";
 import { ETH } from "@/lib/market/quotes";
 import { TxError, type TxStage } from "@/lib/market/Market";
 import { CHAIN_NAME } from "@/lib/chain";
 import { stageLabel } from "@/lib/trade/stages";
 import type { Coin } from "@/lib/market/types";
-import { clearDraft, EMPTY_DRAFT, loadDraft, reconcileDraftSettings, saveDraft, selectedQuoteSymbols, STEPS, validateCoinStep, validateFeesStep, validatePairs, type CreateDraft, type DraftErrors, type StepId } from "@/lib/create/draft";
+import { clearDraft, EMPTY_DRAFT, loadDraft, reconcileDraftQuotes, reconcileDraftSettings, saveDraft, selectedQuoteIds, STEPS, validateCoinStep, validateFeesStep, validatePairs, type CreateDraft, type DraftErrors, type StepId } from "@/lib/create/draft";
+import { findPair, mergePairCatalog, pairId } from "@/lib/market/pairs";
 import { equalAllocations } from "@/lib/market/markets";
 import { usePreview } from "@/lib/preview/scenario";
 import { useWallet } from "@/lib/wallet/WalletProvider";
@@ -70,25 +71,20 @@ export function CreateScreen({ entry = "manual" }: { entry?: CreateDraft["entry"
   }, [draft, loaded, launched]);
 
   const step: StepId = STEPS[stepIndex]?.id ?? "coin";
-  const quotes = useQuoteAssets();
-  const quote = quotes.find((entry) => entry.symbol === draft.quoteSymbol) ?? quotes[0] ?? ETH;
-  const selectedSymbols = selectedQuoteSymbols(draft);
-  const selectedQuotes = selectedSymbols.map((symbol) => quotes.find((entry) => entry.symbol === symbol)).filter((entry): entry is typeof quote => Boolean(entry));
-  const buyQuote = selectedQuotes.find((entry) => entry.symbol === draft.firstBuyQuoteSymbol) ?? quote;
+  const registryQuotes = useQuoteAssets();
+  const pairCatalog = usePairCatalog();
+  const quotes = useMemo(() => mergePairCatalog(registryQuotes, pairCatalog.quotes), [registryQuotes, pairCatalog.quotes]);
+  const quote = findPair(quotes, draft.quoteId) ?? quotes[0] ?? ETH;
+  const selectedIds = selectedQuoteIds(draft);
+  const selectedQuotes = selectedIds.map((id) => findPair(quotes, id)).filter((entry): entry is typeof quote => Boolean(entry));
+  const buyQuote = findPair(selectedQuotes, draft.firstBuyQuoteId) ?? quote;
   // A draft saved against assets this market does not list (another network, a delisted stock)
   // falls back to the first available one.
   useEffect(() => {
-    if (!quotes.length) return;
-    setDraft((current) => {
-      const remaining = selectedQuoteSymbols(current).filter((symbol) => quotes.some((entry) => entry.symbol === symbol));
-      const symbols = remaining.length ? remaining : [quotes[0]!.symbol];
-      const firstBuyQuoteSymbol = symbols.includes(current.firstBuyQuoteSymbol) ? current.firstBuyQuoteSymbol : symbols[0]!;
-      if (symbols.join() === selectedQuoteSymbols(current).join() && current.quoteSymbol === symbols[0] && current.firstBuyQuoteSymbol === firstBuyQuoteSymbol) return current;
-      return { ...current, quoteSymbol: symbols[0]!, quoteSymbols: symbols, firstBuyQuoteSymbol,
-        firstBuy: firstBuyQuoteSymbol === current.firstBuyQuoteSymbol ? current.firstBuy : "" };
-    });
-  }, [quotes]);
-  const quoteBalance = useQuoteBalance(wallet.address, buyQuote.symbol);
+    if (!registryQuotes.length) return;
+    setDraft((current) => reconcileDraftQuotes(current, registryQuotes));
+  }, [registryQuotes]);
+  const quoteBalance = useQuoteBalance(wallet.address, buyQuote.address);
   const update = (patch: Partial<CreateDraft>) => setDraft((current) => ({ ...current, ...patch }));
 
   const errors: DraftErrors = useMemo(() => {
@@ -142,7 +138,7 @@ export function CreateScreen({ entry = "manual" }: { entry?: CreateDraft["entry"
     const blocking = { ...validateCoinStep(draft), ...validateFeesStep(draft, settings), ...validatePairs(draft, quotes, settings, stocksRestricted) };
     if (Object.keys(blocking).length > 0) {
       toast.error("Some details need fixing", { description: Object.values(blocking)[0] });
-      goTo(blocking.quoteSymbol ? 1 : blocking.feeBps || blocking.mode || blocking.creatorKeepBps ? 2 : 0);
+      goTo(blocking.quoteId ? 1 : blocking.feeBps || blocking.mode || blocking.creatorKeepBps ? 2 : 0);
       return;
     }
     setStage("confirm");
@@ -165,11 +161,11 @@ export function CreateScreen({ entry = "manual" }: { entry?: CreateDraft["entry"
           feeBps: draft.feeBps,
           mode: draft.mode,
           creatorKeepBps: draft.mode === "creator" ? 0 : draft.creatorKeepBps,
-          firstBuyQuote: buyQuote.symbol === quote.symbol ? Number(draft.firstBuy) || 0 : 0,
-          firstBuyText: buyQuote.symbol === quote.symbol ? draft.firstBuy : "",
+          firstBuyQuote: pairId(buyQuote) === pairId(quote) ? Number(draft.firstBuy) || 0 : 0,
+          firstBuyText: pairId(buyQuote) === pairId(quote) ? draft.firstBuy : "",
           tweet: entry === "tweet" ? draft.tweet : undefined,
-          markets: selectedQuotes.map((selected) => ({ quote: selected, firstBuyQuote: selected.symbol === buyQuote.symbol ? Number(draft.firstBuy) || 0 : 0,
-            firstBuyText: selected.symbol === buyQuote.symbol ? draft.firstBuy : "" })),
+          markets: selectedQuotes.map((selected) => ({ quote: selected, firstBuyQuote: pairId(selected) === pairId(buyQuote) ? Number(draft.firstBuy) || 0 : 0,
+            firstBuyText: pairId(selected) === pairId(buyQuote) ? draft.firstBuy : "" })),
         },
         txOutcome,
         setStage,
@@ -262,18 +258,18 @@ export function CreateScreen({ entry = "manual" }: { entry?: CreateDraft["entry"
             {step === "coin" && (entry === "manual" || draft.tweet) ? <CoinStep draft={draft} update={update} errors={errors} showErrors={showErrors} showImagePicker={entry === "manual"} /> : null}
             {step === "pair" ? <PairStep draft={draft} update={update} openingFdvUsd={settings.openingFdvUsd} enabledKinds={settings.enabledQuoteKinds} quotes={quotes} /> : null}
             {step === "fees" ? <FeesStep draft={draft} update={update} settings={settings} errors={errors} showErrors={showErrors} /> : null}
-            {step === "buy" ? <FirstBuyStep draft={draft} update={update} quote={buyQuote} quotes={selectedQuotes} allocationSupply={equalAllocations(Math.max(1, selectedQuotes.length))[selectedQuotes.findIndex((entry) => entry.symbol === buyQuote.symbol)]} openingFdvUsd={settings.openingFdvUsd} /> : null}
-            {step === "review" ? <ReviewStep draft={draft} quote={buyQuote} settings={settings} /> : null}
+            {step === "buy" ? <FirstBuyStep draft={draft} update={update} quote={buyQuote} quotes={selectedQuotes} allocationSupply={equalAllocations(Math.max(1, selectedQuotes.length))[selectedQuotes.findIndex((entry) => pairId(entry) === pairId(buyQuote))]} openingFdvUsd={settings.openingFdvUsd} /> : null}
+            {step === "review" ? <ReviewStep draft={draft} quote={buyQuote} quotes={selectedQuotes} settings={settings} /> : null}
           </section>
           {regular ? actions : null}
-          {!regular && step !== "review" ? <PreviewCard draft={draft} openingFdvUsd={settings.openingFdvUsd} /> : null}
+          {!regular && step !== "review" ? <PreviewCard draft={draft} quotes={selectedQuotes} openingFdvUsd={settings.openingFdvUsd} /> : null}
           {preview && step === "review" ? (
             <p className="px-1 text-footnote text-label-2">Preview: launching creates the coin in the simulated market only.</p>
           ) : null}
         </div>
         <aside className="hidden lg:block">
           <div className="sticky top-6">
-            <PreviewCard draft={draft} openingFdvUsd={settings.openingFdvUsd} />
+            <PreviewCard draft={draft} quotes={selectedQuotes} openingFdvUsd={settings.openingFdvUsd} />
           </div>
         </aside>
       </div>

@@ -6,6 +6,7 @@ import type { FeeMode, QuoteAsset } from "@/core/types";
 import { validateDescription, validateName, validateTelegram, validateTicker, validateWebsite, validateXHandle } from "@/core/validation";
 import { AUTHOR_SHARE_DEFAULT_BPS, validAuthorShare, type TweetDraft } from "./tweet";
 import { parseTweetUrl, validXId } from "@/core/tweet";
+import { findPair, pairId, pairUnavailableReason } from "@/lib/market/pairs";
 
 export interface CreateDraft {
   entry: "manual" | "tweet";
@@ -17,10 +18,10 @@ export interface CreateDraft {
   x: string;
   telegram: string;
   website: string;
-  quoteSymbol: string;
+  quoteId: string;
   launchMode: "single" | "multi";
-  quoteSymbols: string[];
-  firstBuyQuoteSymbol: string;
+  quoteIds: string[];
+  firstBuyQuoteId: string;
   feeBps: number;
   mode: FeeMode;
   creatorKeepBps: number;
@@ -36,10 +37,10 @@ export const EMPTY_DRAFT: CreateDraft = {
   x: "",
   telegram: "",
   website: "",
-  quoteSymbol: "ETH",
+  quoteId: "0x0000000000000000000000000000000000000000",
   launchMode: "single",
-  quoteSymbols: ["ETH"],
-  firstBuyQuoteSymbol: "ETH",
+  quoteIds: ["0x0000000000000000000000000000000000000000"],
+  firstBuyQuoteId: "0x0000000000000000000000000000000000000000",
   feeBps: 100,
   mode: "creator",
   creatorKeepBps: 2500,
@@ -104,6 +105,7 @@ export interface FirstBuyPreview {
  * exempt from launch protection), and the tick-snapped opening price.
  */
 export function previewFirstBuy(amount: string, quote: QuoteAsset, feeBps: number, openingFdvUsd: number, allocationSupply = COIN_SUPPLY): FirstBuyPreview | null {
+  if (!Number.isFinite(quote.usdPrice) || quote.usdPrice <= 0 || !Number.isFinite(openingFdvUsd) || openingFdvUsd <= 0 || allocationSupply <= 0n) return null;
   const raw = toUnits(amount, quote.decimals);
   if (raw <= 0n) return null;
   // ETH and USDC sort below every B20 address, so the coin is currency1. A
@@ -128,29 +130,47 @@ export function loadDraft(entry: CreateDraft["entry"] = "manual"): CreateDraft |
   try {
     const raw = window.sessionStorage.getItem(entry === "tweet" ? `${STORAGE_KEY}:tweet` : STORAGE_KEY);
     if (!raw) return null;
-    return migrateDraft(JSON.parse(raw) as Partial<CreateDraft>);
+    return migrateDraft(JSON.parse(raw) as SavedDraft);
   } catch {
     return null;
   }
 }
 
-export function migrateDraft(saved: Partial<CreateDraft>): CreateDraft {
-  const quoteSymbol = saved.quoteSymbol || "ETH";
-  const provided = Array.isArray(saved.quoteSymbols) ? saved.quoteSymbols.filter((symbol) => typeof symbol === "string" && symbol.length > 0) : [];
-  const quoteSymbols = [...new Set(provided.length ? provided : [quoteSymbol])].slice(0, 5);
-  const savedBuyQuote = saved.firstBuyQuoteSymbol ?? quoteSymbol;
+type SavedDraft = Partial<CreateDraft> & { quoteSymbol?: string; quoteSymbols?: string[]; firstBuyQuoteSymbol?: string };
+
+export function migrateDraft(saved: SavedDraft): CreateDraft {
+  const quoteId = saved.quoteId || saved.quoteSymbol || EMPTY_DRAFT.quoteId;
+  const entries = saved.quoteIds ?? saved.quoteSymbols;
+  const provided = Array.isArray(entries) ? entries.filter((id) => typeof id === "string" && id.length > 0) : [];
+  const normalize = (id: string) => /^0x[0-9a-f]{40}$/i.test(id) ? id.toLowerCase() : id;
+  const quoteIds = [...new Set((provided.length ? provided : [quoteId]).map(normalize))].slice(0, 5);
+  const savedBuyQuote = normalize(saved.firstBuyQuoteId ?? saved.firstBuyQuoteSymbol ?? quoteId);
   let tweet = saved.tweet;
   try {
     if (!tweet?.source || !validXId(tweet.source.postId) || !validXId(tweet.source.author?.id) || parseTweetUrl(tweet.source.url).postId !== tweet.source.postId) tweet = undefined;
     else tweet = { ...tweet, authorShareBps: validAuthorShare(tweet.authorShareBps) ? tweet.authorShareBps : AUTHOR_SHARE_DEFAULT_BPS };
   } catch { tweet = undefined; }
-  return { ...EMPTY_DRAFT, ...saved, entry: saved.entry === "tweet" ? "tweet" : "manual", launchMode: saved.launchMode === "multi" ? "multi" : "single", quoteSymbol: quoteSymbols[0] ?? quoteSymbol,
-    tweet, mode: saved.entry === "tweet" ? "creator" : (saved.mode ?? EMPTY_DRAFT.mode), quoteSymbols, firstBuyQuoteSymbol: quoteSymbols.includes(savedBuyQuote) ? savedBuyQuote : quoteSymbols[0]!,
-    firstBuy: quoteSymbols.includes(savedBuyQuote) ? (saved.firstBuy ?? "") : "" };
+  const { quoteSymbol: _oldPrimary, quoteSymbols: _oldPairs, firstBuyQuoteSymbol: _oldBuy, ...current } = saved;
+  void _oldPrimary; void _oldPairs; void _oldBuy;
+  return { ...EMPTY_DRAFT, ...current, entry: saved.entry === "tweet" ? "tweet" : "manual", launchMode: saved.launchMode === "multi" ? "multi" : "single", quoteId: quoteIds[0] ?? quoteId,
+    tweet, mode: saved.entry === "tweet" ? "creator" : (saved.mode ?? EMPTY_DRAFT.mode), quoteIds, firstBuyQuoteId: quoteIds.includes(savedBuyQuote) ? savedBuyQuote : quoteIds[0]!,
+    firstBuy: quoteIds.includes(savedBuyQuote) ? (saved.firstBuy ?? "") : "" };
 }
 
-export function selectedQuoteSymbols(draft: CreateDraft): string[] {
-  return draft.launchMode === "multi" ? draft.quoteSymbols : [draft.quoteSymbol];
+export function selectedQuoteIds(draft: CreateDraft): string[] {
+  return draft.launchMode === "multi" ? draft.quoteIds : [draft.quoteId];
+}
+
+/** Resolve legacy symbols once the current chain's registry is loaded. Never guess a duplicate ticker. */
+export function reconcileDraftQuotes(draft: CreateDraft, quotes: QuoteAsset[]): CreateDraft {
+  if (!quotes.length) return draft;
+  const ids = [...new Set(selectedQuoteIds(draft).map(id => findPair(quotes, id)).filter((quote): quote is QuoteAsset => Boolean(quote)).map(pairId))];
+  if (!ids.length) ids.push(pairId(quotes.find(quote => !pairUnavailableReason(quote)) ?? quotes[0]!));
+  const savedBuy = findPair(quotes, draft.firstBuyQuoteId);
+  const firstBuyQuoteId = savedBuy && ids.includes(pairId(savedBuy)) ? pairId(savedBuy) : ids[0]!;
+  const firstBuy = savedBuy && ids.includes(pairId(savedBuy)) ? draft.firstBuy : "";
+  if (ids.join() === selectedQuoteIds(draft).join() && draft.quoteId === ids[0] && draft.firstBuyQuoteId === firstBuyQuoteId && firstBuy === draft.firstBuy) return draft;
+  return { ...draft, quoteId: ids[0]!, quoteIds: ids, firstBuyQuoteId, firstBuy };
 }
 
 export function reconcileDraftSettings(draft: CreateDraft, settings: LaunchSettings): CreateDraft {
@@ -160,13 +180,14 @@ export function reconcileDraftSettings(draft: CreateDraft, settings: LaunchSetti
 }
 
 export function validatePairs(draft: CreateDraft, quotes: QuoteAsset[], settings: LaunchSettings, stocksRestricted: boolean): DraftErrors {
-  const symbols = selectedQuoteSymbols(draft);
-  if (!symbols.length || symbols.length > 5) return { quoteSymbol: "Choose between one and five pools." };
-  const selected = symbols.map((symbol) => quotes.find((quote) => quote.symbol === symbol));
-  if (selected.some((quote) => !quote)) return { quoteSymbol: "Choose listed pair assets." };
-  if (new Set(selected.map((quote) => quote!.address.toLowerCase())).size !== selected.length) return { quoteSymbol: "Each pool needs a different pair asset." };
-  if (selected.some((quote) => stocksRestricted && quote!.kind === "stock")) return { quoteSymbol: "Stock pairs are not available in your region." };
-  if (selected.some((quote) => !settings.enabledQuoteKinds.includes(quote!.kind))) return { quoteSymbol: "A selected pair is not available right now." };
+  const ids = selectedQuoteIds(draft);
+  if (!ids.length || ids.length > 5) return { quoteId: "Choose between one and five pools." };
+  const selected = ids.map((id) => findPair(quotes, id));
+  if (selected.some((quote) => !quote)) return { quoteId: "Choose listed pair assets." };
+  if (new Set(selected.map((quote) => pairId(quote!))).size !== selected.length) return { quoteId: "Each pool needs a different pair asset." };
+  if (selected.some((quote) => stocksRestricted && quote!.kind === "stock")) return { quoteId: "Stock pairs are not available in your region." };
+  const unavailable = selected.map(quote => pairUnavailableReason(quote!, settings.enabledQuoteKinds)).find(Boolean);
+  if (unavailable) return { quoteId: unavailable };
   return {};
 }
 

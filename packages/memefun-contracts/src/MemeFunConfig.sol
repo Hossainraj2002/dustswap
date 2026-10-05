@@ -163,7 +163,8 @@ contract MemeFunConfig is Ownable2Step {
     /// @dev Starts with the same defaults as DEFAULT_LAUNCH_SETTINGS in the app: free launches,
     ///      a 1-5% fee (1% default), a 20% platform share, 25% of it for referrers, creators may
     ///      keep up to 50% in community modes, 50% launch protection over 15 s, a $5,000 opening
-    ///      FDV, ETH and stable pairs on and stock pairs off until legal review.
+    ///      FDV, ETH and stable pairs on. Stock and other-token pairs require explicit owner
+    ///      enablement after their quote assets and price sources are configured.
     constructor(address owner_, address treasury_) Ownable(owner_) {
         if (treasury_ == address(0)) revert ZeroAddress();
         treasury = treasury_;
@@ -331,7 +332,7 @@ contract MemeFunConfig is Ownable2Step {
     // Quotes
     // -------------------------------------------------------------------------------------------
 
-    /// @param kind Index as in the app: 0 native, 1 stable, 2 stock.
+    /// @param kind Index as in the app: 0 native, 1 stable, 2 stock, 3 other token.
     function setQuoteKindEnabled(uint256 kind, bool enabled) external onlyOwner {
         if (kind > uint256(type(QuoteKind).max)) revert InvalidKind(kind);
         kindEnabled[QuoteKind(kind)] = enabled;

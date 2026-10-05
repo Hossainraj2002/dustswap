@@ -55,9 +55,10 @@ export { SLIPPAGE_PRESETS_BPS, MAX_SLIPPAGE_BPS } from "./slippage";
 /** Legacy adapter fallback. The trade UI resolves Auto explicitly per quote. */
 export const DEFAULT_SLIPPAGE_BPS = 200;
 
-export function buyPresets(symbol: string, kind: "native" | "stable" | "stock"): number[] {
+export function buyPresets(symbol: string, kind: "native" | "stable" | "stock" | "token"): number[] {
   if (kind === "native") return [0.01, 0.05, 0.1, 0.25];
   if (kind === "stable") return [10, 25, 50, 100];
+  if (kind === "token") return [10, 100, 1000, 10000];
   void symbol;
   return [0.1, 0.25, 0.5, 1];
 }

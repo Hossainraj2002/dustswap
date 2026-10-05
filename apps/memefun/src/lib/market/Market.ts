@@ -1,6 +1,7 @@
 import type { LaunchSettings } from "@/core/settings";
 import type { Address, CoinLinks, FeeMode, Hash, QuoteAsset, TradeSide } from "@/core/types";
 import type { AuthorReward, AuthorSession, TweetDraft, TweetImport } from "@/lib/create/tweet";
+import type { PairCatalogSort } from "./pairs";
 import type {
   ActivityItem,
   Candle,
@@ -41,12 +42,15 @@ export interface Market {
   isSettingsReady(): boolean;
   /** Pair assets new coins can launch with, ETH first. */
   listQuotes(): QuoteAsset[];
+  /** Complete discovery catalog, including assets that cannot currently launch. */
+  listPairCatalog?(sort?: PairCatalogSort): QuoteAsset[];
+  getPairCatalogNotice?(sort?: PairCatalogSort): string | undefined;
   getModeration(): Moderation;
   /** Whether the data behind the screens is current (live mode reports outages here). */
   getStatus(): MarketStatus;
 
   ensureUser(address: Address, preset?: "default" | "poor" | "creator"): void;
-  getQuoteBalance(address: Address, symbol: string): number;
+  getQuoteBalance(address: Address, pairId: string): number;
   getCoinBalance(address: Address, coin: string): number;
   getPositions(address: Address): Position[];
   getClaimables(address: Address): Claimable[];

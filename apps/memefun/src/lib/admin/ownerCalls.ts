@@ -13,7 +13,7 @@ export interface OwnerCall {
 }
 
 const MODE_INDEX: Record<FeeMode, number> = { creator: 0, burn: 1, holders: 2, floor: 3 };
-const KIND_INDEX: Record<QuoteKind, number> = { native: 0, stable: 1, stock: 2 };
+const KIND_INDEX: Record<QuoteKind, number> = { native: 0, stable: 1, stock: 2, token: 3 };
 
 function pct(bps: number) {
   return `${(bps / 100).toFixed(2).replace(/\.?0+$/, "")}%`;

@@ -4,7 +4,7 @@ export type Hash = `0x${string}`;
 /** Where the non-platform share of every trading fee goes. Fixed at launch. */
 export type FeeMode = "creator" | "burn" | "holders" | "floor";
 
-export type QuoteKind = "native" | "stable" | "stock";
+export type QuoteKind = "native" | "stable" | "stock" | "token";
 
 export interface QuoteAsset {
   address: Address;
@@ -19,6 +19,20 @@ export interface QuoteAsset {
   /** Stocks only: ISIN from the Coinbase registry. */
   isin?: string;
   iconUrl?: string;
+  /** Catalog entries remain visible even when they cannot open a pool. */
+  launchable?: boolean;
+  unavailableReason?: string;
+  enabled?: boolean;
+  registered?: boolean;
+  /** Unix milliseconds, as returned by the launch API. */
+  priceUpdatedAt?: number;
+  priceMaxAgeSec?: number;
+  createdAt?: number;
+  rank?: number;
+  marketCapUsd?: number;
+  liquidityUsd?: number;
+  volume24hUsd?: number;
+  source?: "coinbase" | "o1" | "registry";
 }
 
 /** Immutable per-coin terms, snapshotted from the launch settings at launch. */

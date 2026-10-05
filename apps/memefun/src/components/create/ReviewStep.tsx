@@ -5,18 +5,19 @@ import { formatBps, formatQuoteAmount, formatUsd } from "@/core/format";
 import type { LaunchSettings } from "@/core/settings";
 import type { QuoteAsset } from "@/core/types";
 import { normalizeTicker } from "@/core/validation";
-import { selectedQuoteSymbols, type CreateDraft } from "@/lib/create/draft";
+import { selectedQuoteIds, type CreateDraft } from "@/lib/create/draft";
+import { findPair } from "@/lib/market/pairs";
 import { CoinAvatar } from "@/components/ui/CoinAvatar";
 import { MODE_META } from "@/components/ui/ModeBadge";
 import { TweetSourceCard } from "./TweetImportPanel";
 import { AuthorRewardTerms } from "@/components/rewards/AuthorRewardTerms";
 
-export function ReviewStep({ draft, quote, settings }: { draft: CreateDraft; quote: QuoteAsset; settings: LaunchSettings }) {
+export function ReviewStep({ draft, quote, quotes = [quote], settings }: { draft: CreateDraft; quote: QuoteAsset; quotes?: QuoteAsset[]; settings: LaunchSettings }) {
   const meta = MODE_META[draft.mode];
   const firstBuy = Number(draft.firstBuy) || 0;
   const rows: Array<[string, React.ReactNode]> = [
-    ["Pairs", selectedQuoteSymbols(draft).map((symbol) => `${normalizeTicker(draft.ticker)} / ${symbol}`).join(", ")],
-    ["Pool allocations", `${selectedQuoteSymbols(draft).length} equal shares of 1 billion tokens; one token contract`],
+    ["Pairs", selectedQuoteIds(draft).map(id => `${normalizeTicker(draft.ticker)} / ${findPair(quotes, id)?.symbol ?? "Unavailable pair"}`).join(", ")],
+    ["Pool allocations", `${selectedQuoteIds(draft).length} equal shares of 1 billion tokens; one token contract`],
     ["Trading fee", `${formatBps(draft.feeBps)} of every trade`],
     ["Fees go to", draft.tweet ? `Post author ${formatBps(draft.tweet.authorShareBps)}, launcher ${formatBps(10_000 - draft.tweet.authorShareBps)} of creator earnings after platform fees` : draft.mode === "creator" ? "You" : `${meta.destinationLabel}, you keep ${formatBps(draft.creatorKeepBps)} of that share`],
     ["Platform share", `${formatBps(settings.platformShareBps)} of each fee`],

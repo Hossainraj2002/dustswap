@@ -84,7 +84,7 @@ export function TradePanel({ coin, initialSide = "buy", onDone, onPendingChange,
 
   const routed = !live && side === "buy" && payWithEth && coin.quote.symbol !== "ETH";
   const payingSymbol = side === "sell" ? coin.symbol : routed ? "ETH" : coin.quote.symbol;
-  const quoteBalance = useQuoteBalance(wallet.address, routed ? "ETH" : coin.quote.symbol);
+  const quoteBalance = useQuoteBalance(wallet.address, routed ? "0x0000000000000000000000000000000000000000" : coin.quote.address);
   const coinBalance = useCoinBalance(wallet.address, coin.address);
   const balance = side === "buy" ? quoteBalance : coinBalance;
   const amount = parseAmount(amountText);

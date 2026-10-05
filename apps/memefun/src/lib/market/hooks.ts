@@ -5,6 +5,7 @@ import type { Address, Hash } from "@/core/types";
 import { useWallet } from "@/lib/wallet/WalletProvider";
 import { useMarket } from "./MarketProvider";
 import type { CandleInterval } from "./types";
+import type { PairCatalogSort } from "./pairs";
 
 /* Each hook re-reads when the market version changes. `ready` is false until
  * the client-side market exists, which is when screens show skeletons. */
@@ -92,9 +93,9 @@ export function useClaimables(owner: Address | null | undefined) {
   return useMemo(() => (owner && market ? market.getClaimables(owner) : []), [market, version, owner]); // eslint-disable-line react-hooks/exhaustive-deps
 }
 
-export function useQuoteBalance(owner: Address | null | undefined, symbol: string | undefined) {
+export function useQuoteBalance(owner: Address | null | undefined, pairId: string | undefined) {
   const { market, version } = useMarket();
-  return useMemo(() => (owner && symbol && market ? market.getQuoteBalance(owner, symbol) : 0), [market, version, owner, symbol]); // eslint-disable-line react-hooks/exhaustive-deps
+  return useMemo(() => (owner && pairId && market ? market.getQuoteBalance(owner, pairId) : 0), [market, version, owner, pairId]); // eslint-disable-line react-hooks/exhaustive-deps
 }
 
 export function useCoinBalance(owner: Address | null | undefined, coin: string | undefined) {
@@ -106,6 +107,12 @@ export function useCoinBalance(owner: Address | null | undefined, coin: string |
 export function useQuoteAssets() {
   const { market, version } = useMarket();
   return useMemo(() => market?.listQuotes() ?? [], [market, version]); // eslint-disable-line react-hooks/exhaustive-deps
+}
+
+export function usePairCatalog(sort: PairCatalogSort = "trending") {
+  const { market, version } = useMarket();
+  return useMemo(() => ({ quotes: market?.listPairCatalog?.(sort) ?? market?.listQuotes() ?? [],
+    notice: market?.getPairCatalogNotice?.(sort) }), [market, version, sort]); // eslint-disable-line react-hooks/exhaustive-deps
 }
 
 /** Whether the data on screen is current; live mode reports outages here. */

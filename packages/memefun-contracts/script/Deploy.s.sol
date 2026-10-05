@@ -131,6 +131,7 @@ contract Deploy is Script {
         ChainAddresses memory c
     )
         internal
+        virtual
         returns (Deployed memory d)
     {
         uint64 nonce = vm.getNonce(deployer);
@@ -180,6 +181,7 @@ contract Deploy is Script {
         address tweetAttestor
     )
         internal
+        virtual
     {
         vm.startBroadcast(deployer);
         MemeFunConfig cfg = d.config;

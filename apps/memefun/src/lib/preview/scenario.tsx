@@ -4,6 +4,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState, t
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { isStockRestrictedCountry, readCountryCookie } from "@/lib/geo";
 import { liveConfigured } from "@/lib/live/config";
+import { TARGET_CHAIN_ID } from "@/lib/chain";
 
 /**
  * Preview mode renders every screen from a simulated market so the product
@@ -68,10 +69,11 @@ export function PreviewProvider({ children }: { children: ReactNode }) {
   const [scenario, setScenarioState] = useState<ScenarioId>("default");
   const [ready, setReady] = useState(!preview);
   // Live: the visitor's country (middleware cookie) closes stock pairs where they are not offered.
-  const [geoRestricted, setGeoRestricted] = useState(false);
+  const requireKnownCountry = !preview && TARGET_CHAIN_ID === 8453;
+  const [geoRestricted, setGeoRestricted] = useState(requireKnownCountry);
   useEffect(() => {
-    if (!preview) setGeoRestricted(isStockRestrictedCountry(readCountryCookie()));
-  }, [preview]);
+    if (!preview) setGeoRestricted(isStockRestrictedCountry(readCountryCookie(), requireKnownCountry));
+  }, [preview, requireKnownCountry, pathname]);
 
   // Adopt the scenario after mount, never in initial state (hydration). A
   // ?scenario= link wins; otherwise the session's scenario persists across

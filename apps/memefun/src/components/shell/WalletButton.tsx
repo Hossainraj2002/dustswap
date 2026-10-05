@@ -78,7 +78,7 @@ function AccountSheet({ open, onOpenChange }: { open: boolean; onOpenChange: (op
   const { market } = useMarket();
   if (!wallet.address) return null;
   const address = wallet.address;
-  const balances = (market?.listQuotes() ?? []).map((quote) => ({ quote, amount: market?.getQuoteBalance(address, quote.symbol) ?? 0 })).filter(
+  const balances = (market?.listQuotes() ?? []).map((quote) => ({ quote, amount: market?.getQuoteBalance(address, quote.address) ?? 0 })).filter(
     (entry) => entry.amount > 0,
   );
   const totalUsd = balances.reduce((sum, entry) => sum + entry.amount * entry.quote.usdPrice, 0);

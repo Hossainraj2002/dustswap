@@ -1,11 +1,14 @@
-import type { Address, PublicClient } from "viem";
+import {
+  AbiDecodingDataSizeInvalidError, AbiDecodingDataSizeTooSmallError, AbiDecodingZeroDataError, BaseError,
+  ContractFunctionRevertedError, ContractFunctionZeroDataError, type Address, type PublicClient,
+} from "viem";
 
 import type { LaunchSettings } from "../../shared/core/settings";
 import type { FeeMode, QuoteKind } from "../../shared/core/types";
 import { memeFunConfigAbi } from "../../shared/abis";
 
 const MODES: FeeMode[] = ["creator", "burn", "holders", "floor"];
-const KINDS: QuoteKind[] = ["native", "stable", "stock"];
+const KINDS: QuoteKind[] = ["native", "stable", "stock", "token"];
 
 /**
  * The launch settings new coins get right now, read from MemeFunConfig (the source of truth the
@@ -34,7 +37,17 @@ export function createSettingsReader(client: PublicClient, config: Address, ttlM
       }>("launchTerms"),
       read<bigint>("openingFdvUsdE8"),
       Promise.all(MODES.map((_, i) => read<{ enabled: boolean; module: Address }>("modeInfo", [i]))),
-      Promise.all(KINDS.map((_, i) => read<boolean>("kindEnabled", [i]))),
+      Promise.all(KINDS.map((_, i) => {
+        const enabled = read<boolean>("kindEnabled", [i]);
+        // Older deployments reject the appended enum value. Only an ABI/revert failure
+        // is compatible with that explanation; RPC failures must still fail the read.
+        return i === 3 ? enabled.catch((error: unknown) => {
+          if (error instanceof BaseError && error.walk((cause) => cause instanceof ContractFunctionRevertedError
+            || cause instanceof ContractFunctionZeroDataError || cause instanceof AbiDecodingZeroDataError
+            || cause instanceof AbiDecodingDataSizeInvalidError || cause instanceof AbiDecodingDataSizeTooSmallError)) return false;
+          throw error;
+        }) : enabled;
+      })),
     ]);
     return {
       creationFeeEth: Number(terms.creationFee) / 1e18,

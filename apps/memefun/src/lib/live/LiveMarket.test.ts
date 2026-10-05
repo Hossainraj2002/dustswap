@@ -3,6 +3,8 @@ import type { PublicClient } from "viem";
 import { mnemonicToAccount } from "viem/accounts";
 import { fromUnits } from "@/core/format";
 import { COIN_SUPPLY } from "@/core/constants";
+import { DEFAULT_SETTINGS } from "@/core/settings";
+import type { QuoteAsset } from "@/core/types";
 import { USDC } from "@/lib/market/quotes";
 import { applyQuote, createLaunchPool, launchPoolAt, livePool, minOut, quoteBuy, quoteSell, type LaunchPool } from "@/core/pool";
 import type { Coin } from "@/lib/market/types";
@@ -167,6 +169,130 @@ function baseApi() {
 }
 
 describe("LiveMarket", () => {
+  it("keeps same-ticker quote balances distinct and preserves successful balances when one token fails", async () => {
+    const tokens: QuoteAsset[] = [COIN, OTHER].map(address => ({
+      address: address as QuoteAsset["address"], symbol: "SAME", name: "Different token", decimals: 18,
+      kind: "token", usdPrice: 1, registered: true, enabled: true, launchable: true,
+    }));
+    const unavailable = { ...tokens[0]!, address: "0x00000000000000000000000000000000000000ff" as const, symbol: "FAILED" };
+    const api = baseApi().on("/v1/launch-settings", { settings: DEFAULT_SETTINGS, quotes: [coin(COIN).quote, ...tokens, unavailable] });
+    const readContract = vi.fn(async ({ address }: { address: string }) => {
+      if (address === unavailable.address) throw new Error("Token unavailable");
+      return address === COIN ? 10n ** 18n : 2n * 10n ** 18n;
+    });
+    const { m } = market(api, { client: { ...client, readContract } as unknown as PublicClient });
+    await settle();
+    m.ensureUser(USER);
+    await settle();
+    expect(m.getQuoteBalance(USER, COIN)).toBe(1);
+    expect(m.getQuoteBalance(USER, OTHER)).toBe(2);
+    expect(m.getQuoteBalance(USER, coin(COIN).quote.address)).toBe(2);
+    expect(m.getQuoteBalance(USER, "SAME")).toBe(0);
+    expect(m.getQuoteBalance(USER, unavailable.address)).toBe(0);
+  });
+
+  it("keeps catalog discovery separate from registry launch eligibility", async () => {
+    const registered: QuoteAsset = { address: COIN, symbol: "SAME", name: "Listed token", decimals: 18,
+      kind: "token", usdPrice: 1, launchable: false, enabled: false, registered: true, unavailableReason: "Pair paused" };
+    const discovered: QuoteAsset = { ...registered, address: OTHER, enabled: true, launchable: true, unavailableReason: undefined };
+    const api = baseApi().on("/v1/launch-settings", { settings: DEFAULT_SETTINGS, quotes: [coin(COIN).quote, registered] })
+      .on("/v1/pair-catalog", { quotes: [{ ...registered, enabled: true, launchable: true }, discovered],
+        sources: { o1: { complete: false, message: "Private environment setup instructions" } } });
+    const { m } = market(api);
+    await settle();
+    m.listPairCatalog("newest");
+    await settle();
+    const catalog = m.listPairCatalog("newest");
+    expect(catalog.find(quote => quote.address === COIN)).toMatchObject({ launchable: false, enabled: false, unavailableReason: "Pair paused" });
+    expect(catalog.find(quote => quote.address === OTHER)?.launchable).toBe(false);
+    expect(m.getPairCatalogNotice("newest")).toContain("Complete launch history is currently unavailable");
+    expect(m.getPairCatalogNotice("newest")).not.toContain("environment");
+    expect(m.getPairCatalogNotice("newest")).not.toContain("Alpha");
+    expect(api.calls.some(call => call.path === "/v1/pair-catalog?sort=newest")).toBe(true);
+  });
+
+  it("rejects expired, disabled and unverified pair assets before upload or wallet access", async () => {
+    const now = Date.now();
+    const active: QuoteAsset = { address: COIN, symbol: "SAME", name: "Listed token", decimals: 18,
+      kind: "token", usdPrice: 1, launchable: true, enabled: true, registered: true,
+      priceUpdatedAt: now - 61_000, priceMaxAgeSec: 60 };
+    const txContext = vi.fn();
+    for (const [quote, reason] of [
+      [active, "Waiting for a fresh verified price"],
+      [{ ...active, priceUpdatedAt: now, launchable: false, enabled: false, unavailableReason: "Pair paused" }, "Pair paused"],
+      [{ ...active, priceUpdatedAt: now, launchable: undefined }, "Waiting for verified launch eligibility"],
+    ] as const) {
+      const api = baseApi().on("/v1/launch-settings", { settings: DEFAULT_SETTINGS, quotes: [coin(COIN).quote, quote] });
+      const { m } = market(api, { now: () => now, txContext });
+      await expect(m.launch(USER, { name: "New token", symbol: "NEW", description: "", image: "data:image/png;base64,AA==", links: {},
+        quote: { ...quote, launchable: true, enabled: true }, mode: "creator", feeBps: 100, creatorKeepBps: 0, firstBuyQuote: 0 })).rejects.toThrow(reason);
+      expect(api.count("/v1/media/")).toBe(0);
+    }
+    expect(txContext).not.toHaveBeenCalled();
+  });
+
+  it("uses registry decimals for a first buy even when saved draft metadata differs", async () => {
+    const quote: QuoteAsset = { address: COIN, symbol: "SAME", name: "Listed token", decimals: 18,
+      kind: "token", usdPrice: 1, launchable: true, enabled: true, registered: true };
+    const api = baseApi().on("/v1/launch-settings", { settings: DEFAULT_SETTINGS, quotes: [quote] });
+    const txContext = vi.fn();
+    const { m } = market(api, { client: { ...client, readContract: async () => 10n ** 18n } as unknown as PublicClient, txContext });
+    await expect(m.launch(USER, { name: "New token", symbol: "NEW", description: "", image: "data:image/png;base64,AA==", links: {},
+      quote: { ...quote, decimals: 6 }, mode: "creator", feeBps: 100, creatorKeepBps: 0, firstBuyQuote: 2 })).rejects.toThrow("Not enough SAME for the first buy");
+    expect(api.count("/v1/media/")).toBe(0);
+    expect(txContext).not.toHaveBeenCalled();
+  });
+
+  it("fails closed on a launch settings refresh failure instead of reusing an eligible cached pair", async () => {
+    const quote: QuoteAsset = { address: COIN, symbol: "SAME", name: "Listed token", decimals: 18,
+      kind: "token", usdPrice: 1, launchable: true, enabled: true, registered: true,
+      priceUpdatedAt: Date.now(), priceMaxAgeSec: 3600 };
+    const api = baseApi().on("/v1/launch-settings", { settings: DEFAULT_SETTINGS, quotes: [quote] });
+    const txContext = vi.fn();
+    const onStage = vi.fn();
+    const { m } = market(api, { txContext });
+    await settle();
+    expect(m.listQuotes()[0]?.launchable).toBe(true);
+    api.on("/v1/launch-settings", () => ({ status: 503, body: { error: { code: "unavailable", message: "Try later" } } }));
+    await expect(m.launch(USER, { name: "New token", symbol: "NEW", description: "", image: "data:image/png;base64,AA==", links: {},
+      quote, mode: "creator", feeBps: 100, creatorKeepBps: 0, firstBuyQuote: 0 }, undefined, onStage)).rejects.toThrow("Could not verify the current launch settings");
+    expect(api.count("/v1/media/")).toBe(0);
+    expect(api.count("/v1/tweets/attestation")).toBe(0);
+    expect(onStage).not.toHaveBeenCalled();
+    expect(txContext).not.toHaveBeenCalled();
+  });
+
+  it("rechecks stock issuer availability at launch even after a valid catalog was cached", async () => {
+    const stock: QuoteAsset = { address: COIN, symbol: "AAPL", name: "Apple tokenized stock", decimals: 18,
+      kind: "stock", usdPrice: 200, launchable: true, enabled: true, registered: true,
+      priceUpdatedAt: Date.now(), priceMaxAgeSec: 3600 };
+    const txContext = vi.fn();
+    for (const [response, reason] of [
+      [{ quotes: [{ ...stock, launchable: false, unavailableReason: "Issuer paused" }], sources: { coinbase: { status: "ok" } } }, "Issuer paused"],
+      [{ quotes: [{ ...stock, launchable: false, unavailableReason: "No circulating supply" }], sources: { coinbase: { status: "ok" } } }, "No circulating supply"],
+      [{ quotes: [stock], sources: { coinbase: { status: "unavailable" } } }, "Stock issuer availability could not be verified"],
+      [{ quotes: [], sources: { coinbase: { status: "ok" } } }, "Stock issuer availability could not be verified"],
+      [null, "Could not verify stock issuer availability"],
+    ] as const) {
+      const api = baseApi().on("/v1/launch-settings", { settings: DEFAULT_SETTINGS, quotes: [stock] })
+        .on("/v1/pair-catalog", { quotes: [stock], sources: { coinbase: { status: "ok" } } });
+      const { m } = market(api, { txContext });
+      await settle();
+      m.listPairCatalog();
+      await settle();
+      expect(m.listPairCatalog().find(quote => quote.address === COIN)?.launchable).toBe(true);
+      if (response) api.on("/v1/pair-catalog", response);
+      else api.on("/v1/pair-catalog", () => ({ status: 503, body: { error: { code: "unavailable", message: "Try later" } } }));
+      await expect(m.launch(USER, { name: "New token", symbol: "NEW", description: "", image: "data:image/png;base64,AA==", links: {},
+        quote: stock, mode: "creator", feeBps: 100, creatorKeepBps: 0, firstBuyQuote: 0 })).rejects.toThrow(reason);
+      expect(api.count("/v1/media/")).toBe(0);
+      expect(api.count("/v1/tweets/attestation")).toBe(0);
+      expect(api.count("/v1/pair-catalog")).toBeGreaterThanOrEqual(2);
+      expect(m.listPairCatalog().find(quote => quote.address === COIN)?.launchable).toBe(false);
+    }
+    expect(txContext).not.toHaveBeenCalled();
+  });
+
   it("waits for real settings and keeps selected pools, candles and streamed trades separate", async () => {
     const base = coin(COIN);
     const markets = [{ poolId: "0x01" as const, quote: base.quote }, { poolId: "0x02" as const, quote: USDC }].map((market) => ({ ...market,

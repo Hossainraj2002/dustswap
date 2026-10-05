@@ -13,6 +13,7 @@ import { createTweetAttestor } from "../lib/x/attestation";
 import { createXOAuth } from "../lib/x/oauth";
 import { createTweetProvider } from "../lib/x/provider";
 import { createXStore } from "../lib/x/store";
+import { createPairCatalog } from "../lib/market/pair-catalog";
 import type { AppDeps } from "./app";
 import { normalizeOrigins } from "./http";
 import { createSettingsReader } from "./read/settings";
@@ -43,6 +44,11 @@ export async function createDeps(): Promise<Running> {
   const client = createPublicClient({ chain: chain.viemChain, transport: fallback(chain.rpcUrls.map((url) => http(url, { timeout: 10_000 }))) });
   const snapshot = new MarketSnapshot({ store, app, media });
   const hub = new LiveHub({ store, snapshot });
+  const settings = createSettingsReader(client, deployment.config);
+  const pairCatalog = createPairCatalog({ chainId: chain.id, client, apiKey: optionalEnv("O1_API_KEY"), registry: async () => {
+    const [state, currentSettings] = await Promise.all([snapshot.ready(), settings.get()]);
+    return { quotes: [...state.quotes.values()], settings: currentSettings, nowSec: state.nowSec };
+  } });
 
   const origins = envList("ALLOWED_ORIGINS");
   if (origins.length === 0 && chain.key !== "local") throw new Error("ALLOWED_ORIGINS is required outside the local chain.");
@@ -73,7 +79,7 @@ export async function createDeps(): Promise<Running> {
   await snapshot.refresh().catch((error: unknown) => console.error("[memefun api] first snapshot failed", error));
 
   return {
-    read: { snapshot, store, app, settings: createSettingsReader(client, deployment.config), poolManager: lc(deployment.poolManager) },
+    read: { snapshot, store, app, settings, pairCatalog, poolManager: lc(deployment.poolManager) },
     write: { app, media, snapshot, sessions, ipSalt },
     auth: { pool: appPool, sessions, client, chainId: chain.id, domains, ipSalt },
     admin: { token: optionalEnv("ADMIN_TOKEN"), app, index: readPool, snapshot },

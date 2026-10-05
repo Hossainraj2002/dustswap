@@ -182,7 +182,7 @@ export function createReadStore(index: Queryable): ReadStore {
     },
 
     async quotes() {
-      const result = await rows<Row>(index, `SELECT address, kind, decimals, symbol, name, price_usd_e_8 FROM quote`);
+      const result = await rows<Row>(index, `SELECT address, kind, decimals, symbol, name, price_usd_e_8, enabled, source, feed, max_age, price_updated_at FROM quote`);
       return result.map((r) => ({
         address: String(r.address),
         kind: num(r.kind),
@@ -190,6 +190,11 @@ export function createReadStore(index: Queryable): ReadStore {
         symbol: String(r.symbol),
         name: String(r.name),
         priceUsdE8: big(r.price_usd_e_8 as string),
+        enabled: r.enabled === true,
+        source: num(r.source),
+        feed: r.feed ? String(r.feed) : null,
+        maxAge: num(r.max_age),
+        priceUpdatedAt: num(r.price_updated_at),
       }));
     },
 

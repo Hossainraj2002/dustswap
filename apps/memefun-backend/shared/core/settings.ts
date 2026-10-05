@@ -20,14 +20,14 @@ export interface LaunchSettings {
   openingFdvUsd: number;
   launchesPaused: boolean;
   enabledModes: FeeMode[];
-  /** Which kinds of pair new coins may use. Stocks stay off on mainnet until legal review. */
+  /** Which kinds of registered pair assets new coins may use. */
   enabledQuoteKinds: QuoteKind[];
 }
 
 export const DEFAULT_SETTINGS: LaunchSettings = {
   ...DEFAULT_LAUNCH_SETTINGS,
   enabledModes: ["creator", "burn", "holders", "floor"],
-  enabledQuoteKinds: ["native", "stable", "stock"],
+  enabledQuoteKinds: ["native", "stable", "stock", "token"],
 };
 
 export type SettingKey = Exclude<keyof LaunchSettings, "launchesPaused" | "enabledModes" | "enabledQuoteKinds">;

@@ -7,10 +7,11 @@ import { previewFirstBuy, type CreateDraft } from "@/lib/create/draft";
 import { buyPresets } from "@/lib/trade/cta";
 import { useQuoteBalance } from "@/lib/market/hooks";
 import { useWallet } from "@/lib/wallet/WalletProvider";
+import { pairId } from "@/lib/market/pairs";
 
 export function FirstBuyStep({ draft, update, quote, quotes = [quote], allocationSupply, openingFdvUsd }: { draft: CreateDraft; update: (patch: Partial<CreateDraft>) => void; quote: QuoteAsset; quotes?: QuoteAsset[]; allocationSupply?: bigint; openingFdvUsd: number }) {
   const wallet = useWallet();
-  const balance = useQuoteBalance(wallet.address, quote.symbol);
+  const balance = useQuoteBalance(wallet.address, quote.address);
   const preview = previewFirstBuy(draft.firstBuy, quote, draft.feeBps, openingFdvUsd, allocationSupply);
   const amount = Number(draft.firstBuy) || 0;
   const tooMuch = wallet.status === "connected" && amount > balance;
@@ -18,8 +19,8 @@ export function FirstBuyStep({ draft, update, quote, quotes = [quote], allocatio
   return (
     <div className="flex flex-col gap-5">
       {quotes.length > 1 ? <label className="flex flex-col gap-2 text-subhead text-label">First-buy pool
-        <select value={quote.symbol} onChange={(event) => update({ firstBuyQuoteSymbol: event.target.value, firstBuy: "" })} className="rounded-md bg-fill-4 p-3 text-label">
-          {quotes.map((entry) => <option key={entry.address} value={entry.symbol}>{entry.symbol}</option>)}
+        <select value={pairId(quote)} onChange={(event) => update({ firstBuyQuoteId: event.target.value, firstBuy: "" })} className="rounded-md bg-fill-4 p-3 text-label">
+          {quotes.map((entry) => <option key={entry.address} value={pairId(entry)}>{entry.symbol} · {entry.address.slice(0, 6)}…{entry.address.slice(-4)}</option>)}
         </select><span className="text-footnote text-label-2">Your first buy uses this pool. All other pools launch with no first buy.</span>
       </label> : null}
       <div className="flex gap-3 rounded-lg bg-tint/8 p-4">

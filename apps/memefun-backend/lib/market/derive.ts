@@ -77,6 +77,11 @@ export interface QuoteRecord {
   symbol: string;
   name: string;
   priceUsdE8: bigint;
+  enabled?: boolean;
+  source?: number;
+  feed?: string | null;
+  maxAge?: number;
+  priceUpdatedAt?: number;
 }
 
 /** Rolling-window numbers the snapshot computes from candles. */
@@ -113,7 +118,7 @@ export const EMPTY_WINDOWS: CoinWindows = {
   sparkline: [],
 };
 
-const QUOTE_KINDS: readonly QuoteKind[] = ["native", "stable", "stock"];
+const QUOTE_KINDS: readonly QuoteKind[] = ["native", "stable", "stock", "token"];
 
 export function quoteKind(kind: number): QuoteKind {
   return QUOTE_KINDS[kind] ?? "stable";

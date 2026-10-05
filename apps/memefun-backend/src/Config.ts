@@ -5,6 +5,7 @@ import { type Address, type Hex, erc20Abi, hexToString, zeroAddress } from "viem
 import { aggregatorV3Abi } from "../lib/abi-extra";
 import { lc } from "../lib/indexer/addresses";
 import { deployment } from "../lib/indexer/runtime";
+import { readableFeedRound } from "../lib/market/readiness";
 
 const PRICE_SOURCE = { fixed: 0, chainlink: 1, manual: 2 } as const;
 
@@ -17,10 +18,10 @@ function keyName(key: Hex): string {
   }
 }
 
-async function readFeed(context: Context, feed: Address): Promise<{ priceUsdE8: bigint; updatedAt: number } | null> {
+async function readFeed(context: Context, feed: Address, nowSec: number): Promise<{ priceUsdE8: bigint; updatedAt: number } | null> {
   try {
-    const [, answer, , updatedAt] = await context.client.readContract({ address: feed, abi: aggregatorV3Abi, functionName: "latestRoundData" });
-    return answer > 0n ? { priceUsdE8: answer, updatedAt: Number(updatedAt) } : null;
+    const round = await context.client.readContract({ address: feed, abi: aggregatorV3Abi, functionName: "latestRoundData" });
+    return readableFeedRound(round, nowSec);
   } catch {
     return null;
   }
@@ -77,7 +78,7 @@ ponder.on("MemeFunConfig:QuoteListed", async ({ event, context }) => {
   let priceUsdE8 = args.priceUsdE8;
   let priceUpdatedAt = timestamp;
   if (args.source === PRICE_SOURCE.chainlink) {
-    const read = await readFeed(context, args.feed);
+    const read = await readFeed(context, args.feed, timestamp);
     priceUsdE8 = read?.priceUsdE8 ?? 0n;
     priceUpdatedAt = read?.updatedAt ?? 0;
   }
@@ -112,7 +113,7 @@ ponder.on("MemeFunConfig:QuotePricingUpdated", async ({ event, context }) => {
   let priceUsdE8 = args.priceUsdE8;
   let priceUpdatedAt = timestamp;
   if (args.source === PRICE_SOURCE.chainlink) {
-    const read = await readFeed(context, args.feed);
+    const read = await readFeed(context, args.feed, timestamp);
     priceUsdE8 = read?.priceUsdE8 ?? 0n;
     priceUpdatedAt = read?.updatedAt ?? 0;
   }
@@ -120,7 +121,8 @@ ponder.on("MemeFunConfig:QuotePricingUpdated", async ({ event, context }) => {
     source: args.source,
     feed: args.source === PRICE_SOURCE.chainlink ? lc(args.feed) : null,
     maxAge: args.maxAge,
-    ...(priceUsdE8 > 0n ? { priceUsdE8, priceUpdatedAt } : {}),
+    priceUsdE8,
+    priceUpdatedAt,
   });
   if (priceUsdE8 > 0n) {
     await recordPrice(context, { quote: args.quote, priceUsdE8, source: "pricing", blockNumber: event.block.number, timestamp });
@@ -197,18 +199,20 @@ ponder.on("MemeFunConfig:OwnershipTransferred", async ({ event, context }) => {
   await logChange(context, event, { kind: "owner", key: "owner", oldValue: lc(event.args.previousOwner), newValue: lc(event.args.newOwner) });
 });
 
-/** Chainlink ETH/USD every few minutes, so trades are valued with a recent ETH price. */
+/** Sample every registered Chainlink quote, including stocks. A frozen feed never gains a new timestamp. */
 ponder.on("EthUsdPrice:block", async ({ event, context }) => {
-  const eth = await context.db.find(quote, { address: lc(zeroAddress) });
-  if (!eth || eth.source !== PRICE_SOURCE.chainlink || !eth.feed) return;
-  const read = await readFeed(context, eth.feed as Address);
-  if (!read || read.updatedAt <= eth.priceUpdatedAt) return;
-  await context.db.update(quote, { address: lc(zeroAddress) }).set({ priceUsdE8: read.priceUsdE8, priceUpdatedAt: read.updatedAt });
-  await recordPrice(context, {
-    quote: zeroAddress,
-    priceUsdE8: read.priceUsdE8,
-    source: "chainlink",
-    blockNumber: event.block.number,
-    timestamp: Number(event.block.timestamp),
-  });
+  const quotes = await context.db.sql.select().from(quote);
+  const timestamp = Number(event.block.timestamp);
+  // Bounded concurrency protects the RPC while retaining deterministic event writes.
+  for (let offset = 0; offset < quotes.length; offset += 8) {
+    const batch = quotes.slice(offset, offset + 8).filter((q) => q.source === PRICE_SOURCE.chainlink && q.feed);
+    const prices = await Promise.all(batch.map((q) => readFeed(context, q.feed as Address, timestamp)));
+    for (let i = 0; i < batch.length; i++) {
+      const q = batch[i]!;
+      const read = prices[i];
+      if (!read || read.updatedAt <= q.priceUpdatedAt) continue;
+      await context.db.update(quote, { address: q.address }).set({ priceUsdE8: read.priceUsdE8, priceUpdatedAt: read.updatedAt });
+      await recordPrice(context, { quote: q.address, priceUsdE8: read.priceUsdE8, source: "chainlink", blockNumber: event.block.number, timestamp });
+    }
+  }
 });

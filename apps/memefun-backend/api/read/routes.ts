@@ -5,6 +5,8 @@ import type { AppStore } from "../../lib/app-store";
 import { DEAD, type Lower } from "../../lib/indexer/addresses";
 import { type TradeView, costBasisUsd, coinValue, deriveTrade, fillCandles, toQuoteAsset } from "../../lib/market/derive";
 import { priceUsdE18, toNumber } from "../../lib/market/math";
+import { eligibleQuoteAsset } from "../../lib/market/readiness";
+import type { PairCatalogReader, CatalogSort } from "../../lib/market/pair-catalog";
 import { COIN_SUPPLY } from "../../shared/core/constants";
 import { getSqrtPriceAtTick } from "../../shared/core/uniswap/tickMath";
 import type { ActivityItem, Candle, CandleInterval, Claimable, Coin, Comment, CreatorProfile, Holder, Position } from "../../shared/market-types";
@@ -20,6 +22,7 @@ export interface ReadDeps {
   settings: SettingsReader;
   /** PoolManager and the holder-rewards distributor, for holder labels and claims. */
   poolManager: Lower;
+  pairCatalog?: PairCatalogReader;
 }
 
 /** Claimable as the app's type, plus what a holder-reward claim transaction needs. */
@@ -473,8 +476,20 @@ export function readRoutes(deps: ReadDeps) {
   app.get("/v1/launch-settings", async (c) => {
     const state = await snapshot();
     const settings = await deps.settings.get();
-    const quotes = [...state.quotes.values()].map(toQuoteAsset);
+    const quotes = [...state.quotes.values()].map((quote) => eligibleQuoteAsset(quote, settings, state.nowSec));
     return cachedJson(c, { settings, quotes }, { maxAge: 10 });
+  });
+
+  app.get("/v1/pair-catalog", async (c) => {
+    const sort = c.req.query("sort") ?? "trending";
+    if (!["trending", "newest", "oldest"].includes(sort)) throw new HttpError(400, "invalid_sort", "sort must be trending, newest or oldest.");
+    const q = c.req.query("q")?.trim().toLowerCase();
+    if (q && q.length > 80) throw new HttpError(400, "invalid_search", "Search text must be at most 80 characters.");
+    if (!deps.pairCatalog) throw new HttpError(503, "catalog_unavailable", "Pair discovery is not available right now.");
+    const catalog = await deps.pairCatalog.get(sort as CatalogSort);
+    if (!q) return cachedJson(c, catalog, { maxAge: 10 });
+    const matches = (asset: { address: string; name: string; symbol: string }) => [asset.address, asset.name, asset.symbol].some((v) => v.toLowerCase().includes(q.replace(/^\$/, "")));
+    return cachedJson(c, { ...catalog, quotes: catalog.quotes.filter(matches), stocks: catalog.stocks.filter(matches), crypto: catalog.crypto.filter(matches) }, { maxAge: 10 });
   });
 
   app.get("/v1/moderation", async (c) => {

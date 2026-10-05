@@ -247,9 +247,10 @@ export function AdminScreen() {
               ))}
               <SwitchRow label="ETH pairs" help="New coins can pair with ETH." checked={draft.enabledQuoteKinds.includes("native")} onChange={(on) => toggleKind("native", on)} />
               <SwitchRow label="USDC pairs" help="New coins can pair with USDC." checked={draft.enabledQuoteKinds.includes("stable")} onChange={(on) => toggleKind("stable", on)} />
+              <SwitchRow label="Meme token pairs" help="New coins can pair with listed tokens with a fresh verified price." checked={draft.enabledQuoteKinds.includes("token")} onChange={(on) => toggleKind("token", on)} />
               <SwitchRow
                 label="Tokenized stock pairs"
-                help="Keep off on mainnet until the legal review is done. Restricted for US visitors either way."
+                help="Listed stocks need a fresh verified price. Restricted for US visitors."
                 checked={draft.enabledQuoteKinds.includes("stock")}
                 onChange={(on) => toggleKind("stock", on)}
               />

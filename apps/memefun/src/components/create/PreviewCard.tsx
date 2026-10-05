@@ -2,13 +2,15 @@
 
 import { formatBps, formatPercent, formatUsd } from "@/core/format";
 import { normalizeTicker } from "@/core/validation";
-import { selectedQuoteSymbols, type CreateDraft } from "@/lib/create/draft";
+import { selectedQuoteIds, type CreateDraft } from "@/lib/create/draft";
+import type { QuoteAsset } from "@/core/types";
+import { findPair } from "@/lib/market/pairs";
 import { CoinAvatar } from "@/components/ui/CoinAvatar";
 import { Badge } from "@/components/ui/display";
 import { ModeBadge } from "@/components/ui/ModeBadge";
 
 /** How the coin will look in the feed, updated as the creator types. */
-export function PreviewCard({ draft, openingFdvUsd }: { draft: CreateDraft; openingFdvUsd: number }) {
+export function PreviewCard({ draft, quotes = [], openingFdvUsd }: { draft: CreateDraft; quotes?: QuoteAsset[]; openingFdvUsd: number }) {
   const ticker = normalizeTicker(draft.ticker);
   return (
     <section aria-label="Preview of your coin" className="mf-card flex flex-col gap-4 p-5">
@@ -20,13 +22,13 @@ export function PreviewCard({ draft, openingFdvUsd }: { draft: CreateDraft; open
           <p className="truncate text-subhead text-label-2">${ticker || "TICKER"}</p>
           <div className="mt-1.5 flex flex-wrap gap-1">
             <ModeBadge mode={draft.mode} compact />
-            {selectedQuoteSymbols(draft).map((symbol) => <Badge key={symbol}>{symbol}</Badge>)}
+            {selectedQuoteIds(draft).map(id => <Badge key={id}>{findPair(quotes, id)?.symbol ?? "Pair"}</Badge>)}
           </div>
         </div>
       </div>
       {draft.description.trim() ? <p className="line-clamp-3 text-subhead text-label">{draft.description.trim()}</p> : null}
       {draft.tweet ? <p className="text-footnote text-label-2">From @{draft.tweet.source.author.handle}&apos;s post · author receives {formatBps(draft.tweet.authorShareBps)} of creator earnings after platform fees</p> : null}
-      {selectedQuoteSymbols(draft).length > 1 ? <p className="text-footnote text-label-2">One token · {selectedQuoteSymbols(draft).length} pools · {formatPercent(1 / selectedQuoteSymbols(draft).length)} of supply each</p> : null}
+      {selectedQuoteIds(draft).length > 1 ? <p className="text-footnote text-label-2">One token · {selectedQuoteIds(draft).length} pools · {formatPercent(1 / selectedQuoteIds(draft).length)} of supply each</p> : null}
       <dl className="grid grid-cols-2 gap-3 text-footnote">
         <div>
           <dt className="text-label-2">Opens at</dt>
