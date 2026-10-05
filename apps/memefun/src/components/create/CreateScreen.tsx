@@ -15,7 +15,8 @@ import { TxError, type TxStage } from "@/lib/market/Market";
 import { CHAIN_NAME } from "@/lib/chain";
 import { stageLabel } from "@/lib/trade/stages";
 import type { Coin } from "@/lib/market/types";
-import { clearDraft, EMPTY_DRAFT, loadDraft, saveDraft, STEPS, validateCoinStep, validateFeesStep, type CreateDraft, type DraftErrors, type StepId } from "@/lib/create/draft";
+import { clearDraft, EMPTY_DRAFT, loadDraft, reconcileDraftSettings, saveDraft, selectedQuoteSymbols, STEPS, validateCoinStep, validateFeesStep, validatePairs, type CreateDraft, type DraftErrors, type StepId } from "@/lib/create/draft";
+import { equalAllocations } from "@/lib/market/markets";
 import { usePreview } from "@/lib/preview/scenario";
 import { useWallet } from "@/lib/wallet/WalletProvider";
 import { PageHeader } from "@/components/shell/PageHeader";
@@ -28,28 +29,42 @@ import { PairStep } from "./PairStep";
 import { PreviewCard } from "./PreviewCard";
 import { ReviewStep } from "./ReviewStep";
 import { Stepper } from "./Stepper";
+import { TweetImportPanel } from "./TweetImportPanel";
 
-export function CreateScreen() {
-  const settings = useLaunchSettings() ?? DEFAULT_SETTINGS;
+export function CreateScreen({ entry = "manual" }: { entry?: CreateDraft["entry"] }) {
+  const liveSettings = useLaunchSettings();
+  const settings = liveSettings ?? DEFAULT_SETTINGS;
   const wallet = useWallet();
   const { market } = useMarket();
   const { txOutcome, stocksRestricted, preview } = usePreview();
   const regular = useIsRegularWidth();
-  const [draft, setDraft] = useState<CreateDraft>({ ...EMPTY_DRAFT, feeBps: DEFAULT_SETTINGS.defaultFeeBps });
+  const [draft, setDraft] = useState<CreateDraft>({ ...EMPTY_DRAFT, entry, feeBps: DEFAULT_SETTINGS.defaultFeeBps });
   const [loaded, setLoaded] = useState(false);
   const [stepIndex, setStepIndex] = useState(0);
   const [furthest, setFurthest] = useState(0);
   const [showErrors, setShowErrors] = useState(false);
+  const [preparingTweet, setPreparingTweet] = useState(false);
   const [stage, setStage] = useState<"idle" | TxStage>("idle");
   const [launched, setLaunched] = useState<Coin | null>(null);
   const top = useRef<HTMLDivElement>(null);
+  const restored = useRef(false);
+  const settingsApplied = useRef(false);
 
   // Restore an unfinished draft after mount (never during render: hydration).
   useEffect(() => {
-    const saved = loadDraft();
-    if (saved) setDraft(saved);
+    const saved = loadDraft(entry);
+    restored.current = Boolean(saved);
+    settingsApplied.current = false;
+    setDraft(saved ?? { ...EMPTY_DRAFT, entry, feeBps: DEFAULT_SETTINGS.defaultFeeBps });
     setLoaded(true);
-  }, []);
+  }, [entry]);
+  useEffect(() => {
+    if (!loaded || !liveSettings) return;
+    const applyDefaultFee = !settingsApplied.current && !restored.current;
+    setDraft((current) => reconcileDraftSettings(applyDefaultFee
+      ? { ...current, feeBps: liveSettings.defaultFeeBps } : current, liveSettings));
+    settingsApplied.current = true;
+  }, [loaded, liveSettings]);
   useEffect(() => {
     if (loaded && !launched) saveDraft(draft);
   }, [draft, loaded, launched]);
@@ -57,14 +72,23 @@ export function CreateScreen() {
   const step: StepId = STEPS[stepIndex]?.id ?? "coin";
   const quotes = useQuoteAssets();
   const quote = quotes.find((entry) => entry.symbol === draft.quoteSymbol) ?? quotes[0] ?? ETH;
+  const selectedSymbols = selectedQuoteSymbols(draft);
+  const selectedQuotes = selectedSymbols.map((symbol) => quotes.find((entry) => entry.symbol === symbol)).filter((entry): entry is typeof quote => Boolean(entry));
+  const buyQuote = selectedQuotes.find((entry) => entry.symbol === draft.firstBuyQuoteSymbol) ?? quote;
   // A draft saved against assets this market does not list (another network, a delisted stock)
   // falls back to the first available one.
   useEffect(() => {
-    if (quotes.length > 0 && !quotes.some((entry) => entry.symbol === draft.quoteSymbol)) {
-      setDraft((current) => ({ ...current, quoteSymbol: quotes[0]!.symbol }));
-    }
-  }, [quotes, draft.quoteSymbol]);
-  const quoteBalance = useQuoteBalance(wallet.address, quote.symbol);
+    if (!quotes.length) return;
+    setDraft((current) => {
+      const remaining = selectedQuoteSymbols(current).filter((symbol) => quotes.some((entry) => entry.symbol === symbol));
+      const symbols = remaining.length ? remaining : [quotes[0]!.symbol];
+      const firstBuyQuoteSymbol = symbols.includes(current.firstBuyQuoteSymbol) ? current.firstBuyQuoteSymbol : symbols[0]!;
+      if (symbols.join() === selectedQuoteSymbols(current).join() && current.quoteSymbol === symbols[0] && current.firstBuyQuoteSymbol === firstBuyQuoteSymbol) return current;
+      return { ...current, quoteSymbol: symbols[0]!, quoteSymbols: symbols, firstBuyQuoteSymbol,
+        firstBuy: firstBuyQuoteSymbol === current.firstBuyQuoteSymbol ? current.firstBuy : "" };
+    });
+  }, [quotes]);
+  const quoteBalance = useQuoteBalance(wallet.address, buyQuote.symbol);
   const update = (patch: Partial<CreateDraft>) => setDraft((current) => ({ ...current, ...patch }));
 
   const errors: DraftErrors = useMemo(() => {
@@ -72,23 +96,22 @@ export function CreateScreen() {
       case "coin":
         return validateCoinStep(draft);
       case "pair":
-        if (stocksRestricted && quote.kind === "stock") return { quoteSymbol: "Stock pairs are not available in your region." };
-        if (!settings.enabledQuoteKinds.includes(quote.kind)) return { quoteSymbol: "This pair is not available right now. Choose another." };
-        return {};
+        return validatePairs(draft, quotes, settings, stocksRestricted);
       case "fees":
         return validateFeesStep(draft, settings);
       case "buy": {
         const amount = Number(draft.firstBuy) || 0;
         if (amount < 0 || Number.isNaN(Number(draft.firstBuy || "0"))) return { firstBuy: "Enter a valid amount." };
-        if (wallet.status === "connected" && amount > quoteBalance) return { firstBuy: `Not enough ${quote.symbol}.` };
+        if (wallet.status === "connected" && amount > quoteBalance) return { firstBuy: `Not enough ${buyQuote.symbol}.` };
         return {};
       }
       default:
         return {};
     }
-  }, [draft, quote.kind, quote.symbol, quoteBalance, settings, step, stocksRestricted, wallet.status]);
+  }, [draft, quotes, buyQuote.symbol, quoteBalance, settings, step, stocksRestricted, wallet.status]);
 
   const goTo = (index: number) => {
+    if (preparingTweet) return;
     setStepIndex(index);
     setFurthest((current) => Math.max(current, index));
     setShowErrors(false);
@@ -116,10 +139,10 @@ export function CreateScreen() {
     }
     if (!market) return;
     // Re-check everything at launch time; earlier steps may have been edited.
-    const blocking = { ...validateCoinStep(draft), ...validateFeesStep(draft, settings) };
+    const blocking = { ...validateCoinStep(draft), ...validateFeesStep(draft, settings), ...validatePairs(draft, quotes, settings, stocksRestricted) };
     if (Object.keys(blocking).length > 0) {
       toast.error("Some details need fixing", { description: Object.values(blocking)[0] });
-      goTo(blocking.feeBps || blocking.mode || blocking.creatorKeepBps ? 2 : 0);
+      goTo(blocking.quoteSymbol ? 1 : blocking.feeBps || blocking.mode || blocking.creatorKeepBps ? 2 : 0);
       return;
     }
     setStage("confirm");
@@ -142,13 +165,16 @@ export function CreateScreen() {
           feeBps: draft.feeBps,
           mode: draft.mode,
           creatorKeepBps: draft.mode === "creator" ? 0 : draft.creatorKeepBps,
-          firstBuyQuote: Number(draft.firstBuy) || 0,
-          firstBuyText: draft.firstBuy,
+          firstBuyQuote: buyQuote.symbol === quote.symbol ? Number(draft.firstBuy) || 0 : 0,
+          firstBuyText: buyQuote.symbol === quote.symbol ? draft.firstBuy : "",
+          tweet: entry === "tweet" ? draft.tweet : undefined,
+          markets: selectedQuotes.map((selected) => ({ quote: selected, firstBuyQuote: selected.symbol === buyQuote.symbol ? Number(draft.firstBuy) || 0 : 0,
+            firstBuyText: selected.symbol === buyQuote.symbol ? draft.firstBuy : "" })),
         },
         txOutcome,
         setStage,
       );
-      clearDraft();
+      clearDraft(entry);
       setLaunched(coin);
       window.scrollTo({ top: 0 });
     } catch (error) {
@@ -166,7 +192,7 @@ export function CreateScreen() {
         coin={launched}
         onLaunchAnother={() => {
           setLaunched(null);
-          setDraft({ ...EMPTY_DRAFT, feeBps: settings.defaultFeeBps });
+          setDraft({ ...EMPTY_DRAFT, entry, feeBps: settings.defaultFeeBps });
           goTo(0);
           setFurthest(0);
         }}
@@ -192,11 +218,11 @@ export function CreateScreen() {
         </Button>
       ) : null}
       {step === "review" ? (
-        <Button size="lg" className="flex-[2]" onClick={() => void launch()} loading={launching} loadingLabel={launchLabel} disabled={settings.launchesPaused}>
+        <Button size="lg" className="flex-[2]" onClick={() => void launch()} loading={launching} loadingLabel={launchLabel} disabled={settings.launchesPaused || (entry === "tweet" && market?.kind === "live" && !draft.tweet?.imported?.authorFeesSupported)}>
           {launchLabel}
         </Button>
       ) : (
-        <Button size="lg" className="flex-[2]" onClick={next}>
+        <Button size="lg" className="flex-[2]" onClick={next} disabled={preparingTweet}>
           Continue
         </Button>
       )}
@@ -207,7 +233,7 @@ export function CreateScreen() {
     <>
       <div ref={top} className="scroll-mt-4" />
       <PageHeader
-        title="Create a coin"
+        title={entry === "tweet" ? "Launch by tweet" : "Create a coin"}
         subtitle="One transaction. Fixed supply, no admin keys, liquidity locked forever."
         leading={
           <Link href="/" className="inline-flex h-11 items-center gap-0.5 text-body text-tint">
@@ -217,6 +243,7 @@ export function CreateScreen() {
         }
       />
       <div className="mb-5">
+        {entry === "manual" ? <Link href="/create/tweet" className="mb-4 inline-flex min-h-11 items-center text-subhead font-semibold text-tint">Launch by tweet</Link> : null}
         <Stepper current={step} furthest={furthest} onSelect={(id) => goTo(STEPS.findIndex((entry) => entry.id === id))} />
       </div>
 
@@ -231,11 +258,12 @@ export function CreateScreen() {
         <div className="flex min-w-0 flex-col gap-5">
           <section aria-label={STEPS[stepIndex]?.label} className="mf-card p-5 sm:p-6">
             <h2 className="mb-5 text-title2 text-label">{stepTitle(step)}</h2>
-            {step === "coin" ? <CoinStep draft={draft} update={update} errors={errors} showErrors={showErrors} /> : null}
+            {step === "coin" && entry === "tweet" ? <TweetImportPanel draft={draft} update={update} onBusy={setPreparingTweet} /> : null}
+            {step === "coin" && (entry === "manual" || draft.tweet) ? <CoinStep draft={draft} update={update} errors={errors} showErrors={showErrors} showImagePicker={entry === "manual"} /> : null}
             {step === "pair" ? <PairStep draft={draft} update={update} openingFdvUsd={settings.openingFdvUsd} enabledKinds={settings.enabledQuoteKinds} quotes={quotes} /> : null}
             {step === "fees" ? <FeesStep draft={draft} update={update} settings={settings} errors={errors} showErrors={showErrors} /> : null}
-            {step === "buy" ? <FirstBuyStep draft={draft} update={update} quote={quote} openingFdvUsd={settings.openingFdvUsd} /> : null}
-            {step === "review" ? <ReviewStep draft={draft} quote={quote} settings={settings} /> : null}
+            {step === "buy" ? <FirstBuyStep draft={draft} update={update} quote={buyQuote} quotes={selectedQuotes} allocationSupply={equalAllocations(Math.max(1, selectedQuotes.length))[selectedQuotes.findIndex((entry) => entry.symbol === buyQuote.symbol)]} openingFdvUsd={settings.openingFdvUsd} /> : null}
+            {step === "review" ? <ReviewStep draft={draft} quote={buyQuote} settings={settings} /> : null}
           </section>
           {regular ? actions : null}
           {!regular && step !== "review" ? <PreviewCard draft={draft} openingFdvUsd={settings.openingFdvUsd} /> : null}
@@ -264,7 +292,7 @@ function stepTitle(step: StepId): string {
     case "coin":
       return "Name your coin";
     case "pair":
-      return "Choose its pair";
+      return "Choose its pairs";
     case "fees":
       return "Set the fee and where it goes";
     case "buy":

@@ -6,6 +6,7 @@ import { DEAD, type Lower } from "../../lib/indexer/addresses";
 import { type TradeView, costBasisUsd, coinValue, deriveTrade, fillCandles, toQuoteAsset } from "../../lib/market/derive";
 import { priceUsdE18, toNumber } from "../../lib/market/math";
 import { COIN_SUPPLY } from "../../shared/core/constants";
+import { getSqrtPriceAtTick } from "../../shared/core/uniswap/tickMath";
 import type { ActivityItem, Candle, CandleInterval, Claimable, Coin, Comment, CreatorProfile, Holder, Position } from "../../shared/market-types";
 import { HttpError, cachedJson, parseAddress, parseLimit } from "../http";
 import type { SettingsReader } from "./settings";
@@ -70,7 +71,7 @@ export function filterCoins(
   const pair = query.pair?.toLowerCase();
   if (pair) {
     const kind = { eth: "native", native: "native", usdc: "stable", stable: "stable", stock: "stock", stocks: "stock" }[pair];
-    list = list.filter((c) => (kind ? c.quote.kind === kind : c.quote.address.toLowerCase() === pair || c.quote.symbol.toLowerCase() === pair));
+    list = list.filter((c) => (c.markets?.map((m) => m.quote) ?? [c.quote]).some((q) => kind ? q.kind === kind : q.address.toLowerCase() === pair || q.symbol.toLowerCase() === pair));
   }
   if (query.mode) {
     if (!["creator", "burn", "holders", "floor"].includes(query.mode)) throw new HttpError(400, "invalid_mode", "mode must be creator, burn, holders or floor.");
@@ -126,7 +127,7 @@ export function creatorProfiles(state: SnapshotState): CreatorProfile[] {
     const key = coin.creator.toLowerCase();
     const profile = byCreator.get(key) ?? { address: coin.creator, name: "", coins: [], earnedUsd: 0, volumeUsd: 0, joinedAt: coin.createdAt };
     profile.coins.push(coin.address);
-    profile.earnedUsd += coin.stats.creatorEarnedQuote * coin.quote.usdPrice;
+    profile.earnedUsd += coin.markets?.reduce((sum, m) => sum + m.stats.creatorEarnedQuote * m.quote.usdPrice, 0) ?? coin.stats.creatorEarnedQuote * coin.quote.usdPrice;
     profile.volumeUsd += coin.volumeTotalUsd;
     profile.joinedAt = Math.min(profile.joinedAt, coin.createdAt);
     byCreator.set(key, profile);
@@ -137,7 +138,15 @@ export function creatorProfiles(state: SnapshotState): CreatorProfile[] {
 export function readRoutes(deps: ReadDeps) {
   const app = new Hono();
   const snapshot = () => deps.snapshot.ready();
-  const quoteDecimals = (state: SnapshotState, coin: string) => state.quotes.get(state.records.get(coin)?.quote ?? "")?.decimals ?? 18;
+  const quoteDecimals = (state: SnapshotState, coin: string, currency?: string | null) => state.quotes.get(currency ?? state.records.get(coin)?.quote ?? "")?.decimals ?? 18;
+  const selectedPool = (state: SnapshotState, address: string, requested?: string) => {
+    if (!requested) return state.records.get(address)?.poolId;
+    if (!/^0x[0-9a-fA-F]{64}$/.test(requested)) throw new HttpError(400, "invalid_pool", "poolId must be a pool ID.");
+    const id = requested.toLowerCase();
+    const m = state.markets?.get(id);
+    if (!m || m.address !== address) throw new HttpError(404, "market_not_found", "No market with this pool ID for this coin.");
+    return id;
+  };
   const visible = (state: SnapshotState, coin: string) => {
     const c = state.byAddress.get(coin);
     return Boolean(c && !c.hidden);
@@ -164,13 +173,13 @@ export function readRoutes(deps: ReadDeps) {
     const address = parseAddress(c.req.param("address"));
     requireCoin(state, address);
     const limit = parseLimit(c.req.query("limit"), 60, 200);
-    const trades = await deps.store.trades(address, { limit, before: tradeCursor(c.req.query("before")) });
-    const decimals = quoteDecimals(state, address);
+    const poolId = selectedPool(state, address, c.req.query("poolId"));
+    const trades = await deps.store.trades(address, { limit, before: tradeCursor(c.req.query("before")), poolId });
     const last = trades.at(-1);
     return cachedJson(
       c,
       {
-        trades: trades.map((t) => deriveTrade(t, decimals)),
+        trades: trades.map((t) => deriveTrade(t, quoteDecimals(state, address, t.quote))),
         nextCursor: trades.length === limit && last ? encodeCursor({ b: last.blockNumber.toString(), l: last.logIndex }) : null,
       },
       { maxAge: 1 },
@@ -182,15 +191,20 @@ export function readRoutes(deps: ReadDeps) {
     const address = parseAddress(c.req.param("address"));
     const coin = requireCoin(state, address);
     const record = state.records.get(address)!;
+    const poolId = selectedPool(state, address, c.req.query("poolId"));
+    const market = poolId ? state.markets?.get(poolId) : undefined;
     const interval = Number(c.req.query("interval") ?? 300) as CandleInterval;
     if (!INTERVALS.includes(interval)) throw new HttpError(400, "invalid_interval", "interval must be 60, 300, 900, 3600, 14400 or 86400.");
     const metric = c.req.query("metric") === "mcap" ? "mcap" : "price";
     const endSec = Math.floor(state.nowSec / interval) * interval;
     const createdBucket = Math.floor(record.createdAt / interval) * interval;
     const startSec = Math.max(createdBucket, endSec - interval * (MAX_CANDLES - 1));
-    const rows = await deps.store.candles(address, interval, startSec, metric);
-    const before = startSec > createdBucket ? await deps.store.lastCloseBefore(address, interval, startSec, metric) : null;
-    const opening = metric === "price" ? BigInt(Math.round((coin.openingMarketCapUsd / 1e9) * 1e18)) : BigInt(Math.round(coin.openingMarketCapUsd * 1e8));
+    const rows = await deps.store.candles(address, interval, startSec, metric, poolId);
+    const before = startSec > createdBucket ? await deps.store.lastCloseBefore(address, interval, startSec, metric, poolId) : null;
+    const mq = market ? state.quotes.get(market.quote) : undefined;
+    const openingPrice = market && mq ? priceUsdE18(getSqrtPriceAtTick(market.startTick), { quoteIsCurrency0: market.quoteIsCurrency0, quoteDecimals: mq.decimals }, market.launchQuoteUsdE8)
+      : BigInt(Math.round((coin.openingMarketCapUsd / 1e9) * 1e18));
+    const opening = metric === "price" ? openingPrice : openingPrice * COIN_SUPPLY / 10n ** 28n;
     const candles: Candle[] = fillCandles({
       candles: rows,
       interval,
@@ -208,7 +222,7 @@ export function readRoutes(deps: ReadDeps) {
     const state = await snapshot();
     const address = parseAddress(c.req.param("address"));
     const coin = requireCoin(state, address);
-    const pool = await deps.store.pool(address);
+    const pool = await deps.store.pool(address, selectedPool(state, address, c.req.query("poolId")));
     if (!pool) throw new HttpError(404, "coin_not_found", "No coin with this address on memefun.");
     return cachedJson(
       c,
@@ -217,7 +231,7 @@ export function readRoutes(deps: ReadDeps) {
           coin: coin.address,
           poolId: pool.poolId,
           quote: getAddress(pool.quote),
-          quoteDecimals: coin.quote.decimals,
+          quoteDecimals: quoteDecimals(state, address, pool.quote),
           coinIsCurrency0: !pool.quoteIsCurrency0,
           startTick: pool.startTick,
           liquidity: pool.liquidity.toString(),
@@ -229,6 +243,25 @@ export function readRoutes(deps: ReadDeps) {
       },
       { maxAge: 1 },
     );
+  });
+
+  app.get("/v1/coins/:address/pools", async (c) => {
+    const state = await snapshot();
+    const address = parseAddress(c.req.param("address"));
+    const coin = requireCoin(state, address);
+    return cachedJson(c, { markets: coin.markets ?? [], asOf: state.nowSec * 1000 }, { maxAge: 2 });
+  });
+
+  app.get("/v1/coins/:address/fees", async (c) => {
+    const state = await snapshot();
+    const address = parseAddress(c.req.param("address"));
+    const coin = requireCoin(state, address);
+    const poolId = selectedPool(state, address, c.req.query("poolId"));
+    const record = poolId ? state.markets?.get(poolId) : state.records.get(address);
+    const view = coin.markets?.find((m) => m.poolId === poolId);
+    if (!record) throw new HttpError(404, "market_not_found", "No market for this coin.");
+    return cachedJson(c, { poolId, currency: getAddress(record.quote), feeBps: coin.terms.feeBps,
+      stats: view?.stats ?? coin.stats, creatorPendingRaw: (record.creatorEarned - record.creatorClaimed).toString() }, { maxAge: 2 });
   });
 
   app.get("/v1/coins/:address/holders", async (c) => {
@@ -279,16 +312,18 @@ export function readRoutes(deps: ReadDeps) {
     const items: Array<ActivityItem & { order: [bigint, number] }> = [];
     for (const t of trades) {
       if (!visible(state, t.coin)) continue;
-      const trade = deriveTrade(t, quoteDecimals(state, t.coin));
+      const trade = deriveTrade(t, quoteDecimals(state, t.coin, t.quote));
       items.push({ id: t.id, kind: "trade", coin: trade.coin, ts: trade.ts, trade, order: [t.blockNumber, t.logIndex] });
     }
     for (const e of events) {
       if (!visible(state, e.coin)) continue;
-      const decimals = quoteDecimals(state, e.coin);
+      const decimals = quoteDecimals(state, e.coin, e.currency);
       items.push({
         id: e.id,
         kind: e.kind as ActivityItem["kind"],
         coin: getAddress(e.coin),
+        ...(e.poolId ? { poolId: e.poolId as `0x${string}` } : {}),
+        ...(e.currency ? { quote: getAddress(e.currency) } : {}),
         ts: e.timestamp * 1000,
         ...(e.amountQuote !== null ? { amountQuote: toNumber.units(e.amountQuote, decimals) } : {}),
         ...(e.amountCoins !== null ? { amountCoins: toNumber.coins(e.amountCoins) } : {}),
@@ -316,7 +351,7 @@ export function readRoutes(deps: ReadDeps) {
       c,
       {
         profile,
-        trades: trades.filter((t) => visible(state, t.coin)).map((t): TradeView => deriveTrade(t, quoteDecimals(state, t.coin))),
+        trades: trades.filter((t) => visible(state, t.coin)).map((t): TradeView => deriveTrade(t, quoteDecimals(state, t.coin, t.quote))),
       },
       { maxAge: 2 },
     );
@@ -331,7 +366,7 @@ export function readRoutes(deps: ReadDeps) {
       const record = state.records.get(b.coin);
       const quote = record ? state.quotes.get(record.quote) : undefined;
       if (!coin || coin.hidden || !record || !quote) continue;
-      const priceE18 = priceUsdE18(record.sqrtPriceX96, { quoteIsCurrency0: record.quoteIsCurrency0, quoteDecimals: quote.decimals }, quote.priceUsdE8);
+      const priceE18 = BigInt(Math.round(coin.priceUsd * 1e18));
       const valueUsd = coinValue(b.amount, priceE18);
       const basis = costBasisUsd({ amount: b.amount, boughtCoins: b.boughtCoins, boughtUsdE8: b.boughtUsdE8, priceUsdE18: priceE18 });
       positions.push({ coin: coin.address, balance: toNumber.coins(b.amount), costBasisUsd: basis, valueUsd, pnlUsd: valueUsd - basis });
@@ -345,22 +380,40 @@ export function readRoutes(deps: ReadDeps) {
     const owner = parseAddress(c.req.param("address"), "owner");
     const items: ClaimableView[] = [];
 
+    // Author identity is permanently bound on chain, independently of the mutable creator.
+    for (const r of await deps.store.authorLedgerOf?.(owner) ?? []) {
+      const pending = r.earned - r.claimed - r.reclaimed;
+      const coin = state.byAddress.get(r.coin);
+      const asset = state.quotes.get(r.quote);
+      if (pending <= 0n || !coin || !asset) continue;
+      const amountQuote = toNumber.units(pending, asset.decimals);
+      items.push({ coin: coin.address, kind: "author", poolId: r.poolId as `0x${string}`, amountQuote,
+        quoteSymbol: asset.symbol, currency: getAddress(asset.address), amountRaw: pending.toString(),
+        amountUsd: amountQuote * toNumber.usdE8(asset.priceUsdE8) });
+    }
+
     // Creator fees: every coin this wallet is the creator of now.
     for (const coin of state.coins) {
       if (coin.creator.toLowerCase() !== owner) continue;
-      const record = state.records.get(coin.address.toLowerCase())!;
+      const primary = state.records.get(coin.address.toLowerCase())!;
+      const markets = [...(state.markets?.values() ?? [])].filter((m) => m.address === coin.address.toLowerCase());
+      for (const record of markets.length ? markets : [primary]) {
+      const asset = state.quotes.get(record.quote);
+      if (!asset) continue;
       const pending = record.creatorEarned - record.creatorClaimed;
       if (pending <= 0n) continue;
-      const amountQuote = toNumber.units(pending, coin.quote.decimals);
+      const amountQuote = toNumber.units(pending, asset.decimals);
       items.push({
         coin: coin.address,
         kind: "creator",
         amountQuote,
-        quoteSymbol: coin.quote.symbol,
-        amountUsd: amountQuote * coin.quote.usdPrice,
-        currency: coin.quote.address,
+        quoteSymbol: asset.symbol,
+        amountUsd: amountQuote * toNumber.usdE8(asset.priceUsdE8),
+        currency: getAddress(asset.address),
+        ...(record.poolId ? { poolId: record.poolId as `0x${string}` } : {}),
         amountRaw: pending.toString(),
       });
+      }
     }
 
     // Referral fees: FeeVault keeps them per pair asset, so `coin` is the pair asset here.
@@ -386,20 +439,24 @@ export function readRoutes(deps: ReadDeps) {
     for (const leaf of leaves) {
       const epoch = epochs.get(leaf.epoch.toString());
       if (!epoch || epoch.vetoed) continue;
-      if (claimed.has(`${leaf.epoch}:${leaf.coin}:${leaf.index}`)) continue;
+      if (claimed.has(`${leaf.epoch}:${leaf.poolId ?? leaf.coin}:${leaf.index}`)) continue;
       const expiresAt = epoch.publishedAt + CLAIM_PERIOD;
       if (state.nowSec > expiresAt) continue;
       const coin = state.byAddress.get(leaf.coin);
       if (!coin) continue;
-      const amountQuote = toNumber.units(leaf.amount, coin.quote.decimals);
+      const market = leaf.poolId ? state.markets?.get(leaf.poolId) : undefined;
+      const asset = state.quotes.get(market?.quote ?? state.records.get(leaf.coin)?.quote ?? "");
+      if (!asset) continue;
+      const amountQuote = toNumber.units(leaf.amount, asset.decimals);
       items.push({
         coin: coin.address,
         kind: "holders",
         amountQuote,
-        quoteSymbol: coin.quote.symbol,
-        amountUsd: amountQuote * coin.quote.usdPrice,
+        quoteSymbol: asset.symbol,
+        amountUsd: amountQuote * toNumber.usdE8(asset.priceUsdE8),
         epoch: Number(leaf.epoch),
-        currency: coin.quote.address,
+        currency: getAddress(asset.address),
+        ...(leaf.poolId ? { poolId: leaf.poolId as `0x${string}` } : {}),
         amountRaw: leaf.amount.toString(),
         index: leaf.index.toString(),
         proof: leaf.proof,
@@ -408,7 +465,9 @@ export function readRoutes(deps: ReadDeps) {
       });
     }
     items.sort((a, b) => b.amountUsd - a.amountUsd);
-    return cachedJson(c, { claimables: items }, { maxAge: 2, private: true });
+    const poolId = c.req.query("poolId")?.toLowerCase();
+    if (poolId && !/^0x[0-9a-f]{64}$/.test(poolId)) throw new HttpError(400, "invalid_pool", "poolId must be a pool ID.");
+    return cachedJson(c, { claimables: poolId ? items.filter((item) => item.poolId === poolId) : items }, { maxAge: 2, private: true });
   });
 
   app.get("/v1/launch-settings", async (c) => {

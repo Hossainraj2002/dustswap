@@ -24,8 +24,8 @@ export function ChartCard({ coin }: { coin: Coin }) {
   const wallet = useWallet();
   const [interval, setInterval] = useState<CandleInterval>(300);
   const [metric, setMetric] = useState<"price" | "mcap">("mcap");
-  const candles = useCandles(coin.address, interval, metric);
-  const trades = useTrades(coin.address, 400);
+  const candles = useCandles(coin.address, interval, metric, coin.selectedPoolId);
+  const trades = useTrades(coin.address, 400, coin.selectedPoolId);
 
   const markers = useMemo<ChartMarker[]>(() => {
     const result: ChartMarker[] = [];
@@ -47,7 +47,7 @@ export function ChartCard({ coin }: { coin: Coin }) {
     coin.terms.mode === "floor" && coin.stats.floorPriceUsd > 0
       ? metric === "price"
         ? coin.stats.floorPriceUsd
-        : coin.stats.floorPriceUsd * (COIN_SUPPLY_HUMAN - coin.stats.burnedCoins)
+        : coin.stats.floorPriceUsd * (coin.priceUsd > 0 ? coin.marketCapUsd / coin.priceUsd : COIN_SUPPLY_HUMAN)
       : undefined;
 
   const last = candles[candles.length - 1];
@@ -87,7 +87,7 @@ export function ChartCard({ coin }: { coin: Coin }) {
           floorValue={floorValue}
           height={regular ? 360 : 280}
           theme={resolvedTheme}
-          viewKey={`${coin.address}-${interval}-${metric}`}
+          viewKey={`${coin.address}-${coin.selectedPoolId ?? "primary"}-${interval}-${metric}`}
         />
         <figcaption className="sr-only">{summary}</figcaption>
       </figure>

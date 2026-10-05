@@ -23,9 +23,13 @@ const CHAINS: Record<number, Chain> = {
   [LOCAL_CHAIN_ID]: localChain,
 };
 
-function parseChainId(value: string | undefined): number {
-  const id = Number(value?.trim() || BASE_CHAIN_ID);
-  return CHAINS[id] ? id : BASE_CHAIN_ID;
+export function parseChainId(value: string | undefined): number {
+  const raw = value?.trim();
+  if (!raw) return BASE_CHAIN_ID;
+  if (!/^(8453|84532|31337)$/.test(raw)) {
+    throw new Error("NEXT_PUBLIC_MEMEFUN_CHAIN_ID must be 8453, 84532 or 31337.");
+  }
+  return Number(raw);
 }
 
 export const TARGET_CHAIN_ID = parseChainId(process.env.NEXT_PUBLIC_MEMEFUN_CHAIN_ID);

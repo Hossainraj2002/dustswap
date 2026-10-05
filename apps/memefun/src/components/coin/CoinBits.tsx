@@ -35,7 +35,7 @@ export function PriceText({ usd, className }: { usd: number; className?: string 
 export function PairBadge({ coin }: { coin: Coin }) {
   return (
     <Badge tone={coin.quote.kind === "stock" ? "tint" : "gray"}>
-      {coin.quote.symbol}
+      {coin.markets && coin.markets.length > 1 ? coin.markets.map((market) => market.quote.symbol).join(" / ") : coin.quote.symbol}
     </Badge>
   );
 }

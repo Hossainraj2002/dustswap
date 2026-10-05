@@ -19,7 +19,7 @@ Chain      MEMEFUN_CHAIN = local (base-anvil 31337) | base-sepolia | base
 
 - **Indexer.** Every coin is a B20 discovered from `MemeFunFactory.Launched`; its `Transfer` events drive balances and holder counts. The hook's `Trade` event carries the post-swap price, so no PoolManager events are indexed. FeeVault emits no event for credits, so fee ledgers are derived from each `Trade` with the same split the vault applies (`shared/core/fees.ts`, pinned to the contracts by golden vectors).
 - **API.** An in-memory market snapshot is rebuilt every 2 seconds from the index: every coin is re-priced live, rolling windows (24h volume, changes, sparkline, momentum) are recomputed only for coins traded in the last day, and holder stats only where transfers happened. Requests read the latest complete snapshot, so the database sees one set of queries per refresh however many requests arrive.
-- **Keeper.** Each job takes a Postgres advisory lock, so any number of instances can run and only one acts. Every transaction is simulated first (in the next block's context) and logged to `memefun_app.keeper_run`.
+- **Keeper.** Each job takes a Postgres advisory lock, so any number of instances can run and only one acts. Chain-mutating jobs run sequentially in each process and lock their configured signer addresses across replicas, allowing testnet roles to share one signer without racing nonces. Metadata jobs remain independent. Every transaction is simulated first (in the next block's context), carries DustSwap's ERC-8021 builder code `bc_tpolfjho`, and is logged to `memefun_app.keeper_run`. Keeper clients and the submission boundary both configure the suffix; Viem appends it once. Any configured builder-code alias must match the canonical code.
 
 ## Quick start (local, nothing in the cloud)
 
@@ -145,7 +145,8 @@ pnpm verify-index                           # the running dev index against the 
 7. image, metadata, launch, then the indexed coin shows that metadata,
 8. sign-in, comments, moderation and reports,
 9. the live stream pushes a new trade,
-10. after all of it, the index still equals the chain.
+10. after all of it, the index still equals the chain,
+11. one coin launches against ETH, USDC and an 8-decimal stock, each pool's quotes and trades stay separate, creator fees transfer together, the fee falls across all pools, and a USDC payout leaves the other fee balances unchanged.
 
 ## Windows notes
 
@@ -161,11 +162,11 @@ Railway project `memefun-testnet` (not DustSwap's `mellow-wisdom`): Postgres, a 
 |---|---|---|---|
 | `memefun-api` | `/apps/memefun-backend` | `pnpm exec ponder start --schema $RAILWAY_DEPLOYMENT_ID --views-schema memefun --port $PORT` | indexer and API in one process; each deploy indexes into a fresh schema and the `memefun` views switch over once it is ready. Health check `/ready` (300 s). `https://memefun-api-production.up.railway.app` |
 | `memefun-keeper` | `/apps/memefun-backend` | `pnpm keeper` | no domain |
-| `memefun-web` | `/apps/memefun` | `pnpm exec next start -p $PORT` | the app (built with `NEXT_PUBLIC_MEMEFUN_API_URL`, `NEXT_PUBLIC_MEMEFUN_CHAIN_ID=84532`). `https://memefun-web-production.up.railway.app` |
+| `memefun-web` | `/apps/memefun` | `pnpm exec next start --hostname 0.0.0.0 --port $PORT` | the public preview at `https://memefun.dustswap.wtf`, built for chain 84532 with preview forced |
 
 Variables already set: `MEMEFUN_CHAIN=base-sepolia`, `MEMEFUN_RPC_URLS` (public Base Sepolia endpoints for now; a paid URL can replace them), `DATABASE_URL=${{Postgres.DATABASE_URL}}`, `DATABASE_SCHEMA=memefun`, `PUBLIC_API_URL`, `ALLOWED_ORIGINS` (the app), `MEDIA_STORE=bucket` with `BUCKET_*` referencing the `memefun-media` bucket, `STOCK_PRICE_SOURCE=dev` on the keeper (the test stock has no real price).
 
-Still to set by the owner (they are credentials): `SIWE_SESSION_SECRET` and `ADMIN_TOKEN` (32+ random characters each) on `memefun-api`; `KEEPER_PRIVATE_KEY`, `PRICE_KEEPER_PRIVATE_KEY`, `REWARDS_PUBLISHER_PRIVATE_KEY` (fresh keys with a little Sepolia ETH) on `memefun-keeper`; `NEXT_PUBLIC_PRIVY_APP_ID` on `memefun-web`, with its URL added to Privy's allowed origins.
+`SIWE_SESSION_SECRET` and `ADMIN_TOKEN` are configured on `memefun-api`, and its allowed origins include the custom domain. The keeper remains in dry-run mode. Live operation still needs matching public deployment records, funded keeper/price-keeper/rewards-publisher signing keys, and the web wallet integration (`NEXT_PUBLIC_PRIVY_APP_ID`, with the site allowed in Privy). Keep signing keys in the provider's secret settings.
 
 Order of work:
 
@@ -173,9 +174,31 @@ Order of work:
 2. Connect the three services to the repository (branch `main`); they build and deploy.
 3. Check `/ready`, `/v1/health` and `pnpm verify-index` against the Railway database.
 
-Mainnet (Phase 5) uses the same layout with a Safe as owner, Pinata + R2 media, a paid RPC, Coinbase's tokenized stocks priced by their Chainlink feeds (no keeper price source), and the memefun.dustswap.wtf domain.
+Mainnet (Phase 5) uses the same layout with a Safe as owner, Pinata + R2 media, a paid RPC and Coinbase's tokenized stocks priced by their Chainlink feeds (no keeper price source). The custom domain currently serves the testnet-configured preview.
 
 ## Known limits
+
+### Multi-pair indexing and rewards
+
+A coin has one token identity and holder set, with up to five markets identified by their pool IDs. Pool state, quote-denominated fees, charts and module activity are scoped to a market. The primary market preserves the single-pair API behavior; explicit market queries select another pool. Coin discovery combines USD volume and liquidity and uses a pool-token-reserve-weighted USD price. It never adds native ETH, stablecoin and stock token amounts together.
+
+New multi-market reward epochs bind each leaf to its pool ID and use a separate, versioned leaf format. A root contains only one format. Legacy epochs retain the original coin-bound leaves; callers must use the claim function for the epoch's format. The keeper reserves and distributes each market's quote asset separately, reusing the token's holder history without duplicating holders.
+
+Deploy the updated contracts and regenerate their ABIs before enabling live multi-pair launching. Ponder should reindex from the deployment block into a fresh deployment schema; old single-pair tables must not be treated as multi-market data.
+
+### Tweet authors and fee reserves
+
+`POST /v1/tweets/import` accepts a public X post URL and returns verified numeric post/author IDs, text, safe X media URLs and editable name/ticker suggestions. It calls the fixed GetXAPI detail endpoint with `GETX_API_KEY`; public imports share a database-backed cache and provider/request quotas across replicas. Client-provided handles never determine an author fee recipient.
+
+`GETX_TWEET_DAILY_LIMIT` defaults to 100 paid detail reads per UTC day across all backend replicas and restarts; use an integer from 0 to 10,000. Zero disables paid reads. The budget is reserved before fetching, including failed calls, and one-hour cache hits cost no provider read. At GetXAPI's [published $0.001 detail-read rate](https://docs.getxapi.com/docs), the default is a nominal maximum of $0.10 per day for this backend feature; other applications using the same provider key have their own budgets.
+
+Official X author verification has a separate shared UTC-day budget, `X_AUTHOR_VERIFY_DAILY_LIMIT`, defaulting to 10 attempts (integer 0–10,000). Zero disables new OAuth flows and live tweet-launch support. A valid, atomically consumed state reserves a potential `users/me` read before either official HTTP call; failed flows count conservatively and state replay cannot spend again. At X's [published general User Read rate of $0.010/resource](https://docs.x.com/x-api/getting-started/pricing), 10 attempts estimate at most $0.10/day of user reads for this feature. Actual billing, deduplication and current endpoint prices are authoritative in the X Developer Console; this estimate does not cover other consumers of the app credentials.
+
+`POST /v1/tweets/attestation` requires a memefun SIWE bearer token and binds the real post and author, the immutable 20%–100% author share, launcher, launch salt, chain and factory in a five-minute EIP-712 signature. `TWEET_ATTESTOR_PRIVATE_KEY` must match the deployment's `MemeFunConfig.tweetAttestor()`. Live imports advertise author fee support only when both the signer and X OAuth verification are configured. Missing either blocks attestation with 503; preview imports never imply that live author fees are enabled.
+
+Authors sign in with their wallet, start `POST /v1/author/connect`, and verify X using official OAuth PKCE with only `users.read` and `tweet.read`. Configure `X_CLIENT_ID`, optional confidential-client `X_CLIENT_SECRET`, and the exact `X_REDIRECT_URI` (`/v1/author/callback`) in the X developer app. OAuth state is consumed atomically in Postgres. The callback does not link the identity: it returns a fresh five-minute completion token in the allowlisted app URL's `authorCompletion` fragment. The browser removes the fragment and sends `POST /v1/author/complete {token}` with its SIWE session. Only the original wallet can atomically consume it; forwarding an OAuth link cannot link the victim's X account. Access/refresh tokens are discarded; only the official numeric X ID and profile are retained after completion. `GET /v1/author/me` returns that verified account. A fresh verification (within 15 minutes) permits `POST /v1/author/verification {coin}`, which signs the caller wallet and coin's immutable author ID. The wallet submits `verifyAuthor` on chain once, then claims each quote asset directly with `claimAuthorFor`.
+
+Author fees always accrue into one pending balance for each market/currency. Authors can verify their X identity, bind their wallet and claim unpaid fees at any time. At launch plus 180 days, the configured treasury also gains the right to withdraw that same unpaid balance, regardless of prior author verification or claims. Only the treasury can initiate its withdrawal, and its payout is fixed to that treasury address. Either withdrawal reduces the balance for both parties; new fees continue accruing afterward. There is no author-expiry cutoff or automatic redirect of future allocations. Attribution arrives before pool registration and first buys; the indexer buffers it independently and divides only the existing creator allocation, preserving platform/referral splits. `GET /v1/coins/:address/author` separates verified identity from `treasuryUnlockAt` and `treasuryUnlocked`. The legacy `verifyBy` timestamp aliases treasury unlock time; it is not a verification deadline. `reclaimed` records historical treasury withdrawals without forfeiting future author fees. `/v1/claimables/:wallet` includes positive author rewards for the bound wallet, before or after treasury unlock.
 
 - **Stock prices.** On mainnet each Coinbase tokenized stock has a Chainlink feed, so it is listed as a CHAINLINK quote and needs no keeper price. MANUAL quotes (the testnet's test stock) follow `STOCK_PRICE_SOURCE`.
 - **Pinata API.** The adapter uses `pinning/pinFileToIPFS` with CIDv1; confirm against the account's API version when provisioning. A contract test pins what is sent.

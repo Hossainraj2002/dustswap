@@ -51,9 +51,9 @@ export function impactLevel(priceImpact: number): "none" | "notice" | "high" {
   return "none";
 }
 
-export const SLIPPAGE_PRESETS_BPS = [50, 100, 200, 500] as const;
+export { SLIPPAGE_PRESETS_BPS, MAX_SLIPPAGE_BPS } from "./slippage";
+/** Legacy adapter fallback. The trade UI resolves Auto explicitly per quote. */
 export const DEFAULT_SLIPPAGE_BPS = 200;
-export const MAX_SLIPPAGE_BPS = 5000;
 
 export function buyPresets(symbol: string, kind: "native" | "stable" | "stock"): number[] {
   if (kind === "native") return [0.01, 0.05, 0.1, 0.25];

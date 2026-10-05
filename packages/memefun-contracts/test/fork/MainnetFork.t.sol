@@ -31,7 +31,8 @@ import {Mode, PriceSource, QuoteKind} from "../../src/types/MemeFunTypes.sol";
 ///   MEMEFUN_FORK_TESTS=1 FOUNDRY_BASE=true ~/.base-foundry/bin/forge test --match-path "test/fork/*"
 ///
 /// Needs base-forge: real B20 balances (AAPLc) live in Base's precompiles, which stock forge
-/// cannot execute. Without it, or without MEMEFUN_FORK_TESTS, every test here is a no-op.
+/// cannot execute. Tests explicitly skip unless MEMEFUN_FORK_TESTS is set; once requested,
+/// unavailable B20 precompiles fail setup so an unexecuted fork cannot look like a passing one.
 contract MainnetForkTest is Test {
     IPoolManager internal constant POOL_MANAGER = IPoolManager(0x498581fF718922c3f8e6A244956aF099B2652b2b);
     address internal constant ETH_USD = 0x71041dddad3595F9CEd3DcCFBe3D1F4b0a16Bb70;
@@ -69,7 +70,7 @@ contract MainnetForkTest is Test {
         vm.createSelectFork(vm.envOr("BASE_MAINNET_RPC_URL", string("https://mainnet.base.org")));
         (bool ok, bytes memory ret) =
             StdPrecompiles.ACTIVATION_REGISTRY_ADDRESS.staticcall(abi.encodeCall(IActivationRegistry.admin, ()));
-        if (!ok || ret.length < 32) return; // stock forge: no B20 precompiles, skip
+        require(ok && ret.length >= 32, "Fork tests require live Base B20 precompiles");
         enabled = true;
         _deploy();
         deal(creator, 100 ether);
@@ -104,7 +105,7 @@ contract MainnetForkTest is Test {
     }
 
     function test_fork_ethCoin_launchTradeAndClaim() public {
-        if (!enabled) return;
+        if (!enabled) vm.skip(true, "MEMEFUN_FORK_TESTS is not enabled");
         address coin = _launch(address(0), Mode.CREATOR, 300, 0.5 ether);
         assertEq(IB20(coin).totalSupply(), LaunchMath.SUPPLY);
         assertGt(IB20(coin).balanceOf(creator), 0, "first buy on the real PoolManager");
@@ -127,7 +128,7 @@ contract MainnetForkTest is Test {
 
     /// Trades through Uniswap's own Universal Router pay exactly the same fee.
     function test_fork_universalRouterPaysTheFee() public {
-        if (!enabled) return;
+        if (!enabled) vm.skip(true, "MEMEFUN_FORK_TESTS is not enabled");
         address coin = _launch(address(0), Mode.CREATOR, 300, 0);
         vm.warp(block.timestamp + 15);
         PoolKey memory key = hook.poolKeyOf(coin);
@@ -144,7 +145,7 @@ contract MainnetForkTest is Test {
     }
 
     function test_fork_usdcCoin() public {
-        if (!enabled) return;
+        if (!enabled) vm.skip(true, "MEMEFUN_FORK_TESTS is not enabled");
         deal(USDC, creator, 1_000e6);
         address coin = _launch(USDC, Mode.HOLDERS, 200, 100e6);
         assertGt(IB20(coin).balanceOf(creator), 0);
@@ -152,7 +153,7 @@ contract MainnetForkTest is Test {
     }
 
     function test_fork_tokenizedStockCoin() public {
-        if (!enabled) return;
+        if (!enabled) vm.skip(true, "MEMEFUN_FORK_TESTS is not enabled");
         vm.prank(AAPLC_HOLDER);
         IERC20(AAPLC).transfer(creator, 100e8);
         address coin = _launch(AAPLC, Mode.CREATOR, 100, 5e8); // first buy: 5 AAPLc
@@ -163,7 +164,7 @@ contract MainnetForkTest is Test {
     }
 
     function test_fork_buybackAndFloorOnTheRealPoolManager() public {
-        if (!enabled) return;
+        if (!enabled) vm.skip(true, "MEMEFUN_FORK_TESTS is not enabled");
         address burnCoin = _launch(address(0), Mode.BURN, 500, 0);
         address floorCoin = _launch(address(0), Mode.FLOOR, 500, 0);
         vm.warp(block.timestamp + 15);

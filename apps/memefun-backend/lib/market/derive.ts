@@ -17,6 +17,8 @@ import { marketCapUsdE8, priceQuoteWad, priceUsdE18, priceUsdE18AtTick, toNumber
 
 export interface CoinRecord {
   address: string;
+  poolId?: string;
+  pendingCreator?: string | null;
   creator: string;
   launcher: string;
   quote: string;
@@ -61,6 +63,11 @@ export interface CoinRecord {
   devSold: boolean;
   snipers: number;
   sameBlockBuys: number;
+}
+
+export interface MarketRecord extends CoinRecord {
+  poolId: string;
+  supplyRaw: bigint;
 }
 
 export interface QuoteRecord {
@@ -157,6 +164,7 @@ export function deriveCoin(input: {
   metadata: CoinMetadataView | null;
   flags: { hidden: boolean; featured: boolean };
   nowSec: number;
+  markets?: Array<{ coin: MarketRecord; quote: QuoteRecord; windows: CoinWindows }>;
 }): Coin {
   const { coin: c, quote: q, windows: w } = input;
   const side = { quoteIsCurrency0: c.quoteIsCurrency0, quoteDecimals: q.decimals };
@@ -192,7 +200,7 @@ export function deriveCoin(input: {
     floorPriceUsd: c.floorNearTick === null ? 0 : toNumber.usdE18(priceUsdE18AtTick(c.floorNearTick, side, q.priceUsdE8)),
   };
 
-  return {
+  const result: Coin = {
     address: getAddress(c.address),
     name: c.name,
     symbol: c.symbol,
@@ -200,6 +208,7 @@ export function deriveCoin(input: {
     image: input.metadata?.image ?? "",
     links: input.metadata?.links ?? {},
     creator: getAddress(c.creator),
+    pendingCreator: c.pendingCreator ? getAddress(c.pendingCreator) : null,
     createdAt: c.createdAt * 1000,
     quote: toQuoteAsset(q),
     terms: {
@@ -245,11 +254,73 @@ export function deriveCoin(input: {
     ...(input.flags.hidden ? { hidden: true } : {}),
     ...(input.flags.featured ? { featured: true } : {}),
   };
+  if (input.markets?.length) {
+    const views = input.markets.map((m) => ({
+      record: m.coin,
+      view: deriveCoin({ ...input, markets: undefined, coin: { ...m.coin, burned: c.burned }, quote: m.quote, windows: m.windows }),
+    }));
+    result.markets = views.map(({ record, view }) => ({
+      poolId: record.poolId as `0x${string}`,
+      quote: view.quote,
+      supplyRaw: record.supplyRaw.toString(),
+      supplyFraction: Number((record.supplyRaw * 1_000_000_000n) / COIN_SUPPLY) / 1e9,
+      poolCoins: toNumber.coins(record.poolCoins),
+      priceQuote: view.priceQuote,
+      priceUsd: view.priceUsd,
+      liquidityUsd: view.liquidityUsd,
+      volume24hUsd: view.volume24hUsd,
+      volumeTotalUsd: view.volumeTotalUsd,
+      change5m: view.change5m,
+      change1h: view.change1h,
+      change24h: view.change24h,
+      stats: view.stats,
+    }));
+    const aggregatePrice = weightedMarketPrice(input.markets.map((m) => ({
+      poolCoins: m.coin.poolCoins,
+      priceUsdE18: priceUsdE18(m.coin.sqrtPriceX96, { quoteIsCurrency0: m.coin.quoteIsCurrency0, quoteDecimals: m.quote.decimals }, m.quote.priceUsdE8),
+    })), priceE18);
+    result.priceUsd = toNumber.usdE18(aggregatePrice);
+    result.marketCapUsd = toNumber.usdE8(marketCapUsdE8(aggregatePrice, c.burned));
+    result.fdvUsd = result.priceUsd * COIN_SUPPLY_HUMAN;
+    result.athMarketCapUsd = Math.max(result.marketCapUsd, toNumber.usdE8(c.athMarketCapUsdE8));
+    result.liquidityUsd = views.reduce((sum, m) => sum + m.view.liquidityUsd, 0);
+    result.volume24hUsd = views.reduce((sum, m) => sum + m.view.volume24hUsd, 0);
+    result.volumeTotalUsd = views.reduce((sum, m) => sum + m.view.volumeTotalUsd, 0);
+    result.buys24h = views.reduce((sum, m) => sum + m.view.buys24h, 0);
+    result.sells24h = views.reduce((sum, m) => sum + m.view.sells24h, 0);
+    result.change5m = change(aggregatePrice, w.priceAgoUsdE18.m5);
+    result.change1h = change(aggregatePrice, w.priceAgoUsdE18.h1);
+    result.change24h = change(aggregatePrice, w.priceAgoUsdE18.h24);
+    result.sparkline = w.sparkline.length > 0 ? [...w.sparkline.slice(0, -1), result.priceUsd] : Array.from({ length: 48 }, () => result.priceUsd);
+    result.momentum = momentumScore({ volume1hUsd: toNumber.usdE8(w.volume1hUsdE8), change1h: result.change1h,
+      trades15m: w.trades15m, ageSec: input.nowSec - c.createdAt });
+    result.milestonesReached = milestoneProgress(result.marketCapUsd, result.openingMarketCapUsd).reached;
+  }
+  return result;
+}
+
+/** Shared token price: weight each pool by its current raw coin reserve, never by quote units. */
+export function weightedMarketPrice(markets: readonly { poolCoins: bigint; priceUsdE18: bigint }[], fallback: bigint): bigint {
+  let weight = 0n;
+  let value = 0n;
+  for (const m of markets) {
+    if (m.poolCoins <= 0n) continue;
+    weight += m.poolCoins;
+    value += m.priceUsdE18 * m.poolCoins;
+  }
+  return weight > 0n ? value / weight : fallback;
+}
+
+/** Separate candle stream for the aggregate coin USD price, outside the actual pool namespace. */
+export function aggregatePoolId(coinAddress: string): `0x${string}` {
+  return `0x${coinAddress.slice(2).toLowerCase().padStart(64, "0")}`;
 }
 
 export interface TradeRecord {
   id: string;
   coin: string;
+  poolId?: string;
+  quote?: string;
   trader: string;
   kind: string;
   isBuy: boolean;
@@ -272,6 +343,8 @@ export function deriveTrade(t: TradeRecord, quoteDecimals: number): TradeView {
   return {
     id: t.id,
     coin: getAddress(t.coin),
+    ...(t.poolId ? { poolId: t.poolId as `0x${string}` } : {}),
+    ...(t.quote ? { quote: getAddress(t.quote) } : {}),
     ts: t.timestamp * 1000,
     side: t.isBuy ? "buy" : "sell",
     trader: getAddress(t.trader),

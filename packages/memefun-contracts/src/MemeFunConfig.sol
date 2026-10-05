@@ -13,9 +13,10 @@ import {Mode, PriceSource, QuoteKind} from "./types/MemeFunTypes.sol";
 ///
 /// @dev What makes this contract safe to hand to an owner:
 ///
-///      1. IT ONLY SHAPES NEW LAUNCHES. MemeFunFactory reads these values when a coin launches and
-///         MemeFunHook snapshots them into that coin's pool config. No value here is ever read for
-///         an existing coin's trades, so no setting can change a coin's terms under its holders.
+///      1. TRADING TERMS ARE SNAPSHOTTED. MemeFunFactory reads launch terms and MemeFunHook stores
+///         them in each pool's config. Owner changes cannot raise existing trading fees or change
+///         an existing pool's mode, split or module. Treasury, tweet-attestor and rewards-publisher
+///         roles remain mutable and affect existing reward payments, verification and epochs.
 ///
 ///      2. EVERY VALUE IS BOUNDED BY A COMPILE-TIME CAP (`MAX_*`), mirroring HARD_CAPS in
 ///         apps/memefun/src/core/constants.ts. Not even the owner can exceed them.
@@ -33,17 +34,17 @@ contract MemeFunConfig is Ownable2Step {
     // Hard caps
     // -------------------------------------------------------------------------------------------
 
-    uint256 public constant MAX_FEE_BPS = 1_000;
-    uint256 public constant MAX_PLATFORM_SHARE_BPS = 5_000;
-    uint256 public constant MAX_REFERRAL_SHARE_BPS = 5_000;
-    uint256 public constant MAX_CREATOR_KEEP_BPS = 5_000;
-    uint256 public constant MAX_PROTECTION_START_BPS = 9_900;
+    uint256 public constant MAX_FEE_BPS = 1000;
+    uint256 public constant MAX_PLATFORM_SHARE_BPS = 5000;
+    uint256 public constant MAX_REFERRAL_SHARE_BPS = 5000;
+    uint256 public constant MAX_CREATOR_KEEP_BPS = 5000;
+    uint256 public constant MAX_PROTECTION_START_BPS = 9900;
     uint256 public constant MAX_PROTECTION_DURATION_SEC = 300;
     uint256 public constant MAX_CREATION_FEE = 0.05 ether;
-    uint256 public constant MIN_OPENING_FDV_USD_E8 = 1_000e8;
+    uint256 public constant MIN_OPENING_FDV_USD_E8 = 1000e8;
     uint256 public constant MAX_OPENING_FDV_USD_E8 = 1_000_000e8;
     /// @notice The price keeper may move a manual price at most this far per update.
-    uint256 public constant MAX_MANUAL_PRICE_MOVE_BPS = 2_000;
+    uint256 public constant MAX_MANUAL_PRICE_MOVE_BPS = 2000;
     /// @notice No quote price may be trusted for longer than this, whatever its own max age.
     uint256 public constant MAX_PRICE_AGE = 7 days;
 
@@ -96,6 +97,8 @@ contract MemeFunConfig is Ownable2Step {
     address public priceKeeper;
     /// @notice May publish holder-reward epochs, which the owner can veto.
     address public rewardsPublisher;
+    /// @notice Backend EOA attesting canonical X posts and verified author wallets. Zero disables both.
+    address public tweetAttestor;
 
     // -------------------------------------------------------------------------------------------
     // Events and errors
@@ -111,9 +114,13 @@ contract MemeFunConfig is Ownable2Step {
         uint64 priceUsdE8,
         uint32 maxAge
     );
-    event QuotePricingUpdated(address indexed quote, PriceSource source, address feed, uint64 priceUsdE8, uint32 maxAge);
+    event QuotePricingUpdated(
+        address indexed quote, PriceSource source, address feed, uint64 priceUsdE8, uint32 maxAge
+    );
     event QuoteEnabled(address indexed quote, bool enabled);
-    event QuotePriceSet(address indexed quote, uint64 oldPriceUsdE8, uint64 newPriceUsdE8, address indexed setter);
+    event QuotePriceSet(
+        address indexed quote, uint64 oldPriceUsdE8, uint64 newPriceUsdE8, address indexed setter
+    );
     event QuoteKindEnabled(QuoteKind indexed kind, bool enabled);
     event ModeUpdated(Mode indexed mode, bool enabled, address module);
     event RoleUpdated(bytes32 indexed role, address oldAccount, address newAccount);
@@ -149,6 +156,7 @@ contract MemeFunConfig is Ownable2Step {
     bytes32 private constant ROLE_TREASURY = "treasury";
     bytes32 private constant ROLE_PRICE_KEEPER = "priceKeeper";
     bytes32 private constant ROLE_REWARDS_PUBLISHER = "rewardsPublisher";
+    bytes32 private constant ROLE_TWEET_ATTESTOR = "tweetAttestor";
 
     /// @param owner_ Owner. Use a Safe: it controls settings for new launches and nothing else.
     /// @param treasury_ Receives the platform share of fees.
@@ -164,14 +172,14 @@ contract MemeFunConfig is Ownable2Step {
             feeMinBps: 100,
             feeMaxBps: 500,
             defaultFeeBps: 100,
-            platformShareBps: 2_000,
-            referralShareBps: 2_500,
-            creatorKeepMaxBps: 5_000,
-            protectionStartBps: 5_000,
+            platformShareBps: 2000,
+            referralShareBps: 2500,
+            creatorKeepMaxBps: 5000,
+            protectionStartBps: 5000,
             protectionDurationSec: 15,
             launchesPaused: false
         });
-        openingFdvUsdE8 = 5_000e8;
+        openingFdvUsdE8 = 5000e8;
         // Creator mode needs no module; the community modes are enabled once their modules exist.
         _modes[Mode.CREATOR].enabled = true;
         kindEnabled[QuoteKind.NATIVE] = true;
@@ -213,12 +221,16 @@ contract MemeFunConfig is Ownable2Step {
         if (!q.listed) revert QuoteNotListed(quoteToken);
         if (q.source == PriceSource.FIXED) return q.priceUsdE8;
         if (q.source == PriceSource.MANUAL) {
-            if (block.timestamp - q.priceUpdatedAt > q.maxAge) revert StalePrice(quoteToken, q.priceUpdatedAt);
+            if (block.timestamp - q.priceUpdatedAt > q.maxAge) {
+                revert StalePrice(quoteToken, q.priceUpdatedAt);
+            }
             return q.priceUsdE8;
         }
         (, int256 answer,, uint256 updatedAt,) = IAggregatorV3(q.feed).latestRoundData();
         if (answer <= 0) revert InvalidPrice(quoteToken);
-        if (updatedAt > block.timestamp || block.timestamp - updatedAt > q.maxAge) revert StalePrice(quoteToken, updatedAt);
+        if (updatedAt > block.timestamp || block.timestamp - updatedAt > q.maxAge) {
+            revert StalePrice(quoteToken, updatedAt);
+        }
         return uint256(answer);
     }
 
@@ -235,7 +247,9 @@ contract MemeFunConfig is Ownable2Step {
     /// @notice Range creators may choose from at launch, and the value the app preselects.
     function setFeeBounds(uint256 minBps, uint256 maxBps, uint256 defaultBps) external onlyOwner {
         _cap(KEY_FEE_MAX, maxBps, MAX_FEE_BPS);
-        if (minBps > defaultBps || defaultBps > maxBps) revert InvalidFeeBounds(minBps, maxBps, defaultBps);
+        if (minBps > defaultBps || defaultBps > maxBps) {
+            revert InvalidFeeBounds(minBps, maxBps, defaultBps);
+        }
         LaunchTerms storage t = _terms;
         emit SettingUpdated(KEY_FEE_MIN, t.feeMinBps, minBps);
         emit SettingUpdated(KEY_FEE_MAX, t.feeMaxBps, maxBps);
@@ -276,7 +290,9 @@ contract MemeFunConfig is Ownable2Step {
 
     /// @param usdE8 Opening fully diluted value in USD with 8 decimals ($5,000 is 5_000e8).
     function setOpeningFdvUsd(uint256 usdE8) external onlyOwner {
-        if (usdE8 < MIN_OPENING_FDV_USD_E8 || usdE8 > MAX_OPENING_FDV_USD_E8) revert InvalidOpeningFdv(usdE8);
+        if (usdE8 < MIN_OPENING_FDV_USD_E8 || usdE8 > MAX_OPENING_FDV_USD_E8) {
+            revert InvalidOpeningFdv(usdE8);
+        }
         emit SettingUpdated(KEY_OPENING_FDV, openingFdvUsdE8, usdE8);
         openingFdvUsdE8 = uint64(usdE8);
     }
@@ -295,7 +311,9 @@ contract MemeFunConfig is Ownable2Step {
     function setModeEnabled(uint256 mode, bool enabled) external onlyOwner {
         Mode m = _mode(mode);
         ModeInfo storage info = _modes[m];
-        if (enabled && m != Mode.CREATOR && info.module == address(0)) revert InvalidModule(m, address(0));
+        if (enabled && m != Mode.CREATOR && info.module == address(0)) {
+            revert InvalidModule(m, address(0));
+        }
         info.enabled = enabled;
         emit ModeUpdated(m, enabled, info.module);
     }
@@ -328,10 +346,15 @@ contract MemeFunConfig is Ownable2Step {
         address feed,
         uint64 priceUsdE8,
         uint32 maxAge
-    ) external onlyOwner {
+    )
+        external
+        onlyOwner
+    {
         Quote storage q = _quotes[quoteToken];
         if (q.listed) revert QuoteAlreadyListed(quoteToken);
-        if ((kind == QuoteKind.NATIVE) != (quoteToken == address(0))) revert InvalidQuote(quoteToken);
+        if ((kind == QuoteKind.NATIVE) != (quoteToken == address(0))) {
+            revert InvalidQuote(quoteToken);
+        }
         uint8 decimals = quoteToken == address(0) ? 18 : IERC20Metadata(quoteToken).decimals();
         if (decimals < 6 || decimals > 18) revert InvalidQuote(quoteToken);
 
@@ -343,7 +366,13 @@ contract MemeFunConfig is Ownable2Step {
         emit QuoteListed(quoteToken, kind, decimals, source, feed, priceUsdE8, maxAge);
     }
 
-    function updateQuotePricing(address quoteToken, PriceSource source, address feed, uint64 priceUsdE8, uint32 maxAge)
+    function updateQuotePricing(
+        address quoteToken,
+        PriceSource source,
+        address feed,
+        uint64 priceUsdE8,
+        uint32 maxAge
+    )
         external
         onlyOwner
     {
@@ -401,6 +430,13 @@ contract MemeFunConfig is Ownable2Step {
         rewardsPublisher = account;
     }
 
+    /// @notice Zero disables new tweet launches and author verification. It does not affect
+    ///         established attribution, verified wallets, pending rewards or claims.
+    function setTweetAttestor(address account) external onlyOwner {
+        emit RoleUpdated(ROLE_TWEET_ATTESTOR, tweetAttestor, account);
+        tweetAttestor = account;
+    }
+
     /// @notice Disabled. Without an owner, new launches could never be paused and treasury, keeper
     ///         and module settings would be frozen. Hand over with `transferOwnership` instead.
     function renounceOwnership() public view override onlyOwner {
@@ -411,19 +447,31 @@ contract MemeFunConfig is Ownable2Step {
     // Internal
     // -------------------------------------------------------------------------------------------
 
-    function _setPricing(Quote storage q, PriceSource source, address feed, uint64 priceUsdE8, uint32 maxAge) private {
+    function _setPricing(
+        Quote storage q,
+        PriceSource source,
+        address feed,
+        uint64 priceUsdE8,
+        uint32 maxAge
+    )
+        private
+    {
         if (source == PriceSource.FIXED) {
             if (priceUsdE8 == 0 || feed != address(0)) revert InvalidPriceConfig();
             q.feed = address(0);
             q.maxAge = 0;
         } else if (source == PriceSource.CHAINLINK) {
-            if (feed.code.length == 0 || maxAge == 0 || maxAge > MAX_PRICE_AGE) revert InvalidPriceConfig();
+            if (feed.code.length == 0 || maxAge == 0 || maxAge > MAX_PRICE_AGE) {
+                revert InvalidPriceConfig();
+            }
             if (IAggregatorV3(feed).decimals() != 8) revert InvalidPriceConfig();
             q.feed = feed;
             q.maxAge = maxAge;
             priceUsdE8 = 0;
         } else {
-            if (priceUsdE8 == 0 || feed != address(0) || maxAge == 0 || maxAge > MAX_PRICE_AGE) revert InvalidPriceConfig();
+            if (priceUsdE8 == 0 || feed != address(0) || maxAge == 0 || maxAge > MAX_PRICE_AGE) {
+                revert InvalidPriceConfig();
+            }
             q.feed = address(0);
             q.maxAge = maxAge;
             q.priceUpdatedAt = uint40(block.timestamp);

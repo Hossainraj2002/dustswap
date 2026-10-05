@@ -2,6 +2,7 @@
 pragma solidity 0.8.26;
 
 import {Script, console2} from "forge-std/Script.sol";
+import {VmSafe} from "forge-std/Vm.sol";
 import {IPoolManager} from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
 import {Hooks} from "@uniswap/v4-core/src/libraries/Hooks.sol";
 
@@ -35,9 +36,10 @@ import {Mode, PriceSource, QuoteKind} from "../src/types/MemeFunTypes.sol";
 ///   forge script script/Deploy.s.sol --rpc-url base_sepolia --account <keystore> --broadcast --verify
 contract Deploy is Script {
     uint160 internal constant HOOK_FLAGS = uint160(
-        Hooks.BEFORE_INITIALIZE_FLAG | Hooks.BEFORE_ADD_LIQUIDITY_FLAG | Hooks.BEFORE_REMOVE_LIQUIDITY_FLAG
-            | Hooks.BEFORE_SWAP_FLAG | Hooks.AFTER_SWAP_FLAG | Hooks.BEFORE_DONATE_FLAG
-            | Hooks.BEFORE_SWAP_RETURNS_DELTA_FLAG | Hooks.AFTER_SWAP_RETURNS_DELTA_FLAG
+        Hooks.BEFORE_INITIALIZE_FLAG | Hooks.BEFORE_ADD_LIQUIDITY_FLAG
+            | Hooks.BEFORE_REMOVE_LIQUIDITY_FLAG | Hooks.BEFORE_SWAP_FLAG | Hooks.AFTER_SWAP_FLAG
+            | Hooks.BEFORE_DONATE_FLAG | Hooks.BEFORE_SWAP_RETURNS_DELTA_FLAG
+            | Hooks.AFTER_SWAP_RETURNS_DELTA_FLAG
     );
 
     struct ChainAddresses {
@@ -66,7 +68,7 @@ contract Deploy is Script {
                 usdc: 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913
             });
         }
-        if (chainId == 84532) {
+        if (chainId == 84_532) {
             return ChainAddresses({
                 poolManager: IPoolManager(0x05E73354cFDd6745C338b50BcFDfA3Aa6fA03408),
                 ethUsdFeed: 0x4aDC67696bA383F43DD60A9e78F2C97Fbbfc7cb1,
@@ -81,6 +83,7 @@ contract Deploy is Script {
         address deployer = vm.envOr("DEPLOYER", msg.sender);
         address owner = vm.envOr("OWNER", deployer);
         address treasury = vm.envOr("TREASURY", owner);
+        _checkRunSafety(dryRun, vm.isContext(VmSafe.ForgeContext.ScriptBroadcast), owner, treasury);
         ChainAddresses memory c = chainConfig(block.chainid);
         if (dryRun) vm.deal(deployer, 10 ether);
 
@@ -91,25 +94,54 @@ contract Deploy is Script {
             deployer,
             owner,
             vm.envOr("PRICE_KEEPER", address(0)),
-            vm.envOr("REWARDS_PUBLISHER", address(0))
+            vm.envOr("REWARDS_PUBLISHER", address(0)),
+            vm.envOr("TWEET_ATTESTOR", address(0))
         );
         if (dryRun) _smokeLaunch(d, deployer);
         string memory json = _record(d, c, owner, treasury);
-        if (dryRun) {
-            console2.log(json);
-        } else {
-            _write(json);
-        }
+        _outputRecord(json);
     }
 
-    function _deploy(address deployer, address treasury, ChainAddresses memory c) internal returns (Deployed memory d) {
+    /// @dev Refuse contradictory rehearsal flags before generating any broadcast transactions.
+    ///      A zero OWNER would otherwise cancel the two-step handoff and strand the deployer role.
+    function _checkRunSafety(
+        bool dryRun,
+        bool broadcasting,
+        address owner,
+        address treasury
+    )
+        internal
+        pure
+    {
+        require(!dryRun || !broadcasting, "DRY_RUN cannot be broadcast");
+        require(owner != address(0), "OWNER is zero");
+        require(treasury != address(0), "TREASURY is zero");
+    }
+
+    /// @dev A simulation must never leave public-looking deployment addresses on disk.
+    ///      Broadcast records still require receipt/code verification before being exported.
+    function _outputRecord(string memory json) internal {
+        if (vm.isContext(VmSafe.ForgeContext.ScriptBroadcast)) _write(json);
+        else console2.log(json);
+    }
+
+    function _deploy(
+        address deployer,
+        address treasury,
+        ChainAddresses memory c
+    )
+        internal
+        returns (Deployed memory d)
+    {
         uint64 nonce = vm.getNonce(deployer);
         address configAt = vm.computeCreateAddress(deployer, nonce);
         address vaultAt = vm.computeCreateAddress(deployer, nonce + 1);
         address factoryAt = vm.computeCreateAddress(deployer, nonce + 2);
         address routerAt = vm.computeCreateAddress(deployer, nonce + 3);
 
-        bytes memory hookInit = abi.encodePacked(type(MemeFunHook).creationCode, abi.encode(c.poolManager, factoryAt, vaultAt, routerAt));
+        bytes memory hookInit = abi.encodePacked(
+            type(MemeFunHook).creationCode, abi.encode(c.poolManager, factoryAt, vaultAt, routerAt)
+        );
         (address hookAt, bytes32 salt) = _mineHookSalt(keccak256(hookInit));
         d.hookSalt = salt;
         console2.log("hook address (mined):", hookAt);
@@ -122,7 +154,9 @@ contract Deploy is Script {
         d.router = new MemeFunRouter(c.poolManager, IMemeFunHook(hookAt));
         d.burnVault = new BuybackBurnVault(c.poolManager, IMemeFunHook(hookAt), IFeeVault(vaultAt));
         d.floorVault = new FloorVault(c.poolManager, IMemeFunHook(hookAt), IFeeVault(vaultAt));
-        d.holders = new HolderRewardDistributor(c.poolManager, IMemeFunHook(hookAt), IFeeVault(vaultAt), d.config);
+        d.holders = new HolderRewardDistributor(
+            c.poolManager, IMemeFunHook(hookAt), IFeeVault(vaultAt), d.config
+        );
         d.hook = new MemeFunHook{salt: salt}(c.poolManager, factoryAt, IFeeVault(vaultAt), routerAt);
         vm.stopBroadcast();
 
@@ -135,14 +169,18 @@ contract Deploy is Script {
 
     /// @param keeper Price keeper for MANUAL quotes, or address(0) for none yet.
     /// @param publisher Holder-rewards publisher, or address(0) for none yet.
+    /// @param tweetAttestor Backend X-post/author attestor, or address(0) to leave tweet paths disabled.
     function _configure(
         Deployed memory d,
         ChainAddresses memory c,
         address deployer,
         address owner,
         address keeper,
-        address publisher
-    ) internal {
+        address publisher,
+        address tweetAttestor
+    )
+        internal
+    {
         vm.startBroadcast(deployer);
         MemeFunConfig cfg = d.config;
         cfg.listQuote(address(0), QuoteKind.NATIVE, PriceSource.CHAINLINK, c.ethUsdFeed, 0, 1 days);
@@ -158,6 +196,7 @@ contract Deploy is Script {
         cfg.setModeEnabled(uint256(Mode.FLOOR), true);
         if (keeper != address(0)) cfg.setPriceKeeper(keeper);
         if (publisher != address(0)) cfg.setRewardsPublisher(publisher);
+        if (tweetAttestor != address(0)) cfg.setTweetAttestor(tweetAttestor);
         if (owner != deployer) cfg.transferOwnership(owner); // OWNER must call acceptOwnership()
         vm.stopBroadcast();
     }
@@ -186,7 +225,12 @@ contract Deploy is Script {
 
     /// @dev Serializes under the "memefun" object key, so a script that serialized more fields
     ///      under that key first gets them in the same JSON.
-    function _record(Deployed memory d, ChainAddresses memory c, address owner, address treasury)
+    function _record(
+        Deployed memory d,
+        ChainAddresses memory c,
+        address owner,
+        address treasury
+    )
         internal
         returns (string memory json)
     {
@@ -208,21 +252,28 @@ contract Deploy is Script {
         vm.serializeAddress(key, "treasury", treasury);
         vm.serializeAddress(key, "priceKeeper", d.config.priceKeeper());
         vm.serializeAddress(key, "rewardsPublisher", d.config.rewardsPublisher());
+        vm.serializeAddress(key, "tweetAttestor", d.config.tweetAttestor());
         json = vm.serializeUint(key, "deployedAtBlock", block.number);
     }
 
-    function _write(string memory json) internal {
+    function _write(string memory json) internal virtual {
         vm.writeJson(json, string.concat("deployments/", vm.toString(block.chainid), ".json"));
     }
 
     /// @dev Finds a CREATE2 salt (via the deterministic deployer) whose address carries exactly
     ///      the hook's 14 permission bits and has no code yet.
-    function _mineHookSalt(bytes32 initCodeHash) internal view returns (address hookAt, bytes32 salt) {
+    function _mineHookSalt(bytes32 initCodeHash)
+        internal
+        view
+        returns (address hookAt, bytes32 salt)
+    {
         uint160 mask = Hooks.ALL_HOOK_MASK;
         for (uint256 i; i < 2_000_000; ++i) {
             salt = bytes32(i);
             hookAt = vm.computeCreate2Address(salt, initCodeHash, CREATE2_FACTORY);
-            if (uint160(hookAt) & mask == HOOK_FLAGS && hookAt.code.length == 0) return (hookAt, salt);
+            if (uint160(hookAt) & mask == HOOK_FLAGS && hookAt.code.length == 0) {
+                return (hookAt, salt);
+            }
         }
         revert("no hook salt found");
     }

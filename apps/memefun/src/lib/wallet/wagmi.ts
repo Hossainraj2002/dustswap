@@ -4,6 +4,7 @@ import { base, baseSepolia } from "wagmi/chains";
 import type { Chain } from "wagmi/chains";
 import { LOCAL_CHAIN_ID, TARGET_CHAIN, TARGET_CHAIN_ID } from "@/lib/chain";
 import { getRpcUrlsForChain, rotatingFetch } from "./rpc";
+import { BUILDER_ATTRIBUTION } from "./builderCode";
 
 export { getRpcUrlForChain, getRpcUrlsForChain } from "./rpc";
 
@@ -27,6 +28,7 @@ function transports() {
 
 const parameters = {
   chains: MEMEFUN_CHAINS,
+  dataSuffix: BUILDER_ATTRIBUTION,
   ssr: true,
   storage: createStorage({ storage: cookieStorage }),
   transports: transports() as Record<number, ReturnType<typeof http>>,

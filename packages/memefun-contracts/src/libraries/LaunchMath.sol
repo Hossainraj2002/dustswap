@@ -6,9 +6,9 @@ import {FullMath} from "@uniswap/v4-core/src/libraries/FullMath.sol";
 import {TickMath} from "@uniswap/v4-core/src/libraries/TickMath.sol";
 
 /// @title LaunchMath
-/// @notice The shape of every memefun launch: the whole fixed supply in ONE single-sided position
-///         that starts at the opening price and runs to the far end of the tick range, so the coin
-///         trades along a constant-product curve from the first block.
+/// @notice The shape of every memefun market: its allocated coin supply in one single-sided
+///         position from the coin-wide opening price to the far end of the tick range. Each
+///         market trades along a constant-product curve from the first block.
 ///
 /// @dev Integer-exact mirror of apps/memefun/src/core/pool.ts (`openingSqrtPriceX96`,
 ///      `startTickExact`, `createLaunchPool`); test/vectors replays the TS results against it.
@@ -22,7 +22,7 @@ library LaunchMath {
 
     /// @dev Pool.tickSpacingToMaxLiquidityPerTick(200): uint128.max over the 8,874 ticks from
     ///      -4437 to 4436 spacings (v4 rounds the minimum down). Pinned by a unit test.
-    uint256 internal constant MAX_LIQUIDITY_PER_TICK = type(uint128).max / 8_874;
+    uint256 internal constant MAX_LIQUIDITY_PER_TICK = type(uint128).max / 8874;
 
     uint256 private constant Q96 = 1 << 96;
     uint256 private constant Q128 = 1 << 128;
@@ -42,7 +42,12 @@ library LaunchMath {
     ///      Full precision computes sqrt(price * 2^192). For a raw price of 2^64 or more (an
     ///      expensive 8-decimal stock at a low FDV) that product would overflow, so the price is
     ///      taken as sqrt(price * 2^128) * 2^32 instead. The TS mirror takes the same branch.
-    function openingSqrtPriceX96(uint256 quoteUsdE8, uint8 quoteDecimals, bool coinIsCurrency0, uint256 fdvUsdE8)
+    function openingSqrtPriceX96(
+        uint256 quoteUsdE8,
+        uint8 quoteDecimals,
+        bool coinIsCurrency0,
+        uint256 fdvUsdE8
+    )
         internal
         pure
         returns (uint160)
@@ -64,17 +69,24 @@ library LaunchMath {
     /// @notice Opening tick, snapped to the spacing in the direction that makes the coin slightly
     ///         MORE expensive: the real opening FDV is never below target, at most one spacing
     ///         (about 2%) above it.
-    function startTick(uint256 quoteUsdE8, uint8 quoteDecimals, bool coinIsCurrency0, uint256 fdvUsdE8)
+    function startTick(
+        uint256 quoteUsdE8,
+        uint8 quoteDecimals,
+        bool coinIsCurrency0,
+        uint256 fdvUsdE8
+    )
         internal
         pure
         returns (int24 snapped)
     {
-        uint160 sqrtPrice = openingSqrtPriceX96(quoteUsdE8, quoteDecimals, coinIsCurrency0, fdvUsdE8);
+        uint160 sqrtPrice =
+            openingSqrtPriceX96(quoteUsdE8, quoteDecimals, coinIsCurrency0, fdvUsdE8);
         int24 tick = TickMath.getTickAtSqrtPrice(sqrtPrice);
         if (coinIsCurrency0) {
             // A higher tick is a pricier coin: round the true (fractional) tick up. getTickAtSqrtPrice
             // floors, so step up first unless the price sits exactly on a tick.
-            snapped = _ceilToSpacing(TickMath.getSqrtPriceAtTick(tick) == sqrtPrice ? tick : tick + 1);
+            snapped =
+                _ceilToSpacing(TickMath.getSqrtPriceAtTick(tick) == sqrtPrice ? tick : tick + 1);
         } else {
             // A higher tick is a cheaper coin: round down.
             snapped = _floorToSpacing(tick);
@@ -86,7 +98,14 @@ library LaunchMath {
 
     /// @notice Tick range of the launch position. Coin-only liquidity sits above the price when
     ///         the coin is currency0 and below it when the coin is currency1.
-    function launchRange(int24 start, bool coinIsCurrency0) internal pure returns (int24 tickLower, int24 tickUpper) {
+    function launchRange(
+        int24 start,
+        bool coinIsCurrency0
+    )
+        internal
+        pure
+        returns (int24 tickLower, int24 tickUpper)
+    {
         return coinIsCurrency0 ? (start, MAX_USABLE_TICK) : (MIN_USABLE_TICK, start);
     }
 
@@ -97,12 +116,28 @@ library LaunchMath {
     ///      binding limit is v4's per-tick cap for spacing 200, not uint128: past roughly tick
     ///      350,000 on the coin's cheap side, the whole supply cannot be one position.
     function liquidityForSupply(int24 start, bool coinIsCurrency0) internal pure returns (uint128) {
+        return liquidityForAmount(start, coinIsCurrency0, SUPPLY);
+    }
+
+    /// @notice Sizes one market from its allocated share of the fixed coin supply.
+    /// @dev Opening prices always use SUPPLY; only liquidity sizing uses the market allocation.
+    function liquidityForAmount(
+        int24 start,
+        bool coinIsCurrency0,
+        uint256 amount
+    )
+        internal
+        pure
+        returns (uint128)
+    {
         (int24 tickLower, int24 tickUpper) = launchRange(start, coinIsCurrency0);
         uint256 sqrtLower = TickMath.getSqrtPriceAtTick(tickLower);
         uint256 sqrtUpper = TickMath.getSqrtPriceAtTick(tickUpper);
         uint256 liquidity = coinIsCurrency0
-            ? FullMath.mulDiv(SUPPLY, FullMath.mulDiv(sqrtLower, sqrtUpper, Q96), sqrtUpper - sqrtLower)
-            : FullMath.mulDiv(SUPPLY, Q96, sqrtUpper - sqrtLower);
+            ? FullMath.mulDiv(
+                amount, FullMath.mulDiv(sqrtLower, sqrtUpper, Q96), sqrtUpper - sqrtLower
+            )
+            : FullMath.mulDiv(amount, Q96, sqrtUpper - sqrtLower);
         if (liquidity > MAX_LIQUIDITY_PER_TICK) revert OpeningPriceOutOfRange();
         return uint128(liquidity);
     }

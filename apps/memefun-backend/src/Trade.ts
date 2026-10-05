@@ -1,5 +1,6 @@
+import { eq } from "ponder";
 import { ponder } from "ponder:registry";
-import { coin, quote, trade } from "ponder:schema";
+import { coin, market, quote, trade } from "ponder:schema";
 import { zeroAddress } from "viem";
 
 import { attributeTrade, lc } from "../lib/indexer/addresses";
@@ -11,8 +12,10 @@ ponder.on("MemeFunHook:Trade", async ({ event, context }) => {
   const db = context.db;
   const c = await db.find(coin, { address: lc(args.coin) });
   if (!c) throw new Error(`Trade on unknown coin ${args.coin}`);
-  const q = await db.find(quote, { address: lc(c.quote) });
-  if (!q) throw new Error(`Trade on ${args.coin}: quote ${c.quote} is not listed`);
+  const m = await db.find(market, { poolId: args.id });
+  if (!m || lc(m.address) !== lc(c.address)) throw new Error(`Trade on unknown market ${args.id}`);
+  const q = await db.find(quote, { address: lc(m.quote) });
+  if (!q) throw new Error(`Trade on ${args.coin}: quote ${m.quote} is not listed`);
 
   const { trader, kind } = attributeTrade(addresses, {
     sender: args.trader,
@@ -41,12 +44,14 @@ ponder.on("MemeFunHook:Trade", async ({ event, context }) => {
   if (!c.launched) {
     // The creator's first buy runs inside the launch, before `Launched` says what the coin opened
     // at. Park the raw trade; the Launched handler applies it with the opening state.
-    if (kind !== "first_buy" || c.pendingFirstBuy) {
+    if (kind !== "first_buy" || m.pendingFirstBuy) {
       throw new Error(`Unexpected ${kind} trade on ${args.coin} before its launch completed`);
     }
     await db.insert(trade).values({
       id: raw.id,
       coin: lc(c.address),
+      poolId: m.poolId,
+      quote: lc(m.quote),
       trader: raw.trader,
       sender: raw.sender,
       isBuy: raw.isBuy,
@@ -70,17 +75,29 @@ ponder.on("MemeFunHook:Trade", async ({ event, context }) => {
       timestamp: raw.timestamp,
       txHash: raw.txHash,
     });
-    await db.update(coin, { address: lc(c.address) }).set({ pendingFirstBuy: raw.id });
+    await db.update(market, { poolId: m.poolId }).set({ pendingFirstBuy: raw.id });
     return;
   }
 
-  await applyTrade(context, c, q, raw, q.priceUsdE8, { existingRow: false });
+  await applyTrade(context, c, m, q, raw, q.priceUsdE8, { existingRow: false });
 });
 
 ponder.on("MemeFunHook:FeeLowered", async ({ event, context }) => {
   await context.db.update(coin, { address: lc(event.args.coin) }).set({ feeBps: Number(event.args.newFeeBps) });
+  for (const m of await context.db.sql.select({ poolId: market.poolId }).from(market).where(eq(market.address, lc(event.args.coin)))) {
+    await context.db.update(market, { poolId: m.poolId }).set({ feeBps: Number(event.args.newFeeBps) });
+  }
+});
+
+ponder.on("MemeFunHook:CreatorProposed", async ({ event, context }) => {
+  await context.db.update(coin, { address: lc(event.args.coin) }).set({
+    pendingCreator: event.args.proposed === zeroAddress ? null : lc(event.args.proposed),
+  });
 });
 
 ponder.on("MemeFunHook:CreatorTransferred", async ({ event, context }) => {
-  await context.db.update(coin, { address: lc(event.args.coin) }).set({ creator: lc(event.args.next) });
+  await context.db.update(coin, { address: lc(event.args.coin) }).set({ creator: lc(event.args.next), pendingCreator: null });
+  for (const m of await context.db.sql.select({ poolId: market.poolId }).from(market).where(eq(market.address, lc(event.args.coin)))) {
+    await context.db.update(market, { poolId: m.poolId }).set({ creator: lc(event.args.next), pendingCreator: null });
+  }
 });

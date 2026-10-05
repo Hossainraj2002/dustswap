@@ -47,7 +47,7 @@ export function CoinTabs({ coin }: { coin: Coin }) {
 
 function TradesTab({ coin }: { coin: Coin }) {
   const [limit, setLimit] = useState(20);
-  const trades = useTrades(coin.address, limit + 1);
+  const trades = useTrades(coin.address, limit + 1, coin.selectedPoolId);
   const wallet = useWallet();
   const now = useNow();
   if (trades.length === 0) return <EmptyState title="No trades yet" message="The first buy sets the chart in motion." className="mf-card mt-3" />;
@@ -221,10 +221,11 @@ function AboutTab({ coin }: { coin: Coin }) {
   const { preview } = usePreview();
   const meta = MODE_META[coin.terms.mode];
   const rows: Array<[string, React.ReactNode]> = [
-    ["Pair", `${coin.symbol} / ${coin.quote.symbol}`],
+    ["Selected pair", `${coin.symbol} / ${coin.quote.symbol}`],
+    ["All pairs", coin.markets?.map((market) => market.quote.symbol).join(", ") || coin.quote.symbol],
     ["Supply", "1,000,000,000, fixed forever"],
     ["Trading fee", `${formatBps(coin.terms.feeBps)} of every trade, can only go down`],
-    ["Fees go to", coin.terms.mode === "creator" ? "Creator" : `${meta.destinationLabel}${coin.terms.creatorKeepBps > 0 ? `, creator keeps ${formatBps(coin.terms.creatorKeepBps)} of that share` : ""}`],
+    ["Fees go to", coin.tweet ? `Post author ${formatBps(coin.tweet.authorShareBps)}, launcher ${formatBps(10_000 - coin.tweet.authorShareBps)} of creator earnings after platform fees` : coin.terms.mode === "creator" ? "Creator" : `${meta.destinationLabel}${coin.terms.creatorKeepBps > 0 ? `, creator keeps ${formatBps(coin.terms.creatorKeepBps)} of that share` : ""}`],
     ["Platform share", `${formatBps(coin.terms.platformShareBps)} of each fee`],
     ["Launch protection", `${formatBps(coin.terms.snipeStartBps)} fee at launch, normal after ${coin.terms.snipeDurationSec}s`],
     ["Opening market cap", formatUsd(coin.openingMarketCapUsd)],
@@ -263,7 +264,7 @@ function SafetyTab({ coin }: { coin: Coin }) {
   const guarantees = [
     "Fixed supply of 1,000,000,000. Nobody can mint more.",
     "No admin or owner. Nobody can pause, block or seize transfers.",
-    "The whole supply went into the pool at launch.",
+    "The fixed supply was split between the launch pools.",
     "Liquidity is locked forever. Nobody can withdraw it.",
     `Trading fee is ${formatBps(coin.terms.feeBps)} and can only go down.`,
     `Fees always go to the same place: ${MODE_META[coin.terms.mode].label.toLowerCase()}.`,

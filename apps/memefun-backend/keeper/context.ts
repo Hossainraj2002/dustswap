@@ -11,6 +11,7 @@ import { envBool, envInt, optionalEnv } from "../lib/env";
 import { createMediaStore } from "../lib/media";
 import type { MediaStore } from "../lib/media/store";
 import { type PriceSource, createPriceSource } from "./prices";
+import { keeperAttribution } from "./builderCode";
 
 /**
  * What every keeper job gets. One key per role, so a leaked key is bounded by what that role can do
@@ -50,11 +51,12 @@ export function jsonLog(event: string, fields: Record<string, unknown> = {}) {
 }
 
 export function createKeeperContext(): KeeperContext {
+  const dataSuffix = keeperAttribution();
   const chain = chainSettings();
   const deployment = loadDeployment(chain.id);
   const transport = fallback(chain.rpcUrls.map((url) => http(url, { timeout: 15_000 })));
   const client = createPublicClient({ chain: chain.viemChain, transport });
-  const wallet = (account: Account | undefined) => (account ? createWalletClient({ chain: chain.viemChain, transport, account }) : undefined);
+  const wallet = (account: Account | undefined) => (account ? createWalletClient({ chain: chain.viemChain, transport, account, dataSuffix }) : undefined);
   const appPool = createAppPool({ max: 4 });
   return {
     chain,
@@ -87,18 +89,31 @@ export function createKeeperContext(): KeeperContext {
  * Runs `fn` only if this process gets the job's advisory lock, so several keeper instances never
  * act twice. The lock is session-level and released when `fn` ends.
  */
-export async function withJobLock<T>(pool: pg.Pool, job: string, fn: () => Promise<T>): Promise<{ ran: true; value: T } | { ran: false }> {
+export async function withJobLock<T>(pool: pg.Pool, job: string, fn: () => Promise<T>, signerLocks: readonly string[] = []): Promise<{ ran: true; value: T } | { ran: false }> {
   const client = await pool.connect();
+  const acquired: string[] = [];
   try {
-    const { rows } = await client.query<{ locked: boolean }>("SELECT pg_try_advisory_lock(hashtext($1)) AS locked", [`memefun_keeper:${job}`]);
-    if (!rows[0]?.locked) return { ran: false };
-    try {
-      return { ran: true, value: await fn() };
-    } finally {
-      await client.query("SELECT pg_advisory_unlock(hashtext($1))", [`memefun_keeper:${job}`]);
+    for (const key of [...new Set([`memefun_keeper:${job}`, ...signerLocks])].sort()) {
+      const { rows } = await client.query<{ locked: boolean }>("SELECT pg_try_advisory_lock(hashtext($1)) AS locked", [key]);
+      if (!rows[0]?.locked) return { ran: false };
+      acquired.push(key);
     }
+    return { ran: true, value: await fn() };
   } finally {
-    client.release();
+    await releaseJobLocks(client, acquired);
+  }
+}
+
+async function releaseJobLocks(client: pg.PoolClient, acquired: string[]) {
+  let unlockFailed = false;
+  try {
+    for (const key of acquired.reverse()) await client.query("SELECT pg_advisory_unlock(hashtext($1))", [key]);
+  } catch (error) {
+    unlockFailed = true;
+    throw error;
+  } finally {
+    // A pooled connection with unreleased session locks must never be reused.
+    client.release(unlockFailed);
   }
 }
 

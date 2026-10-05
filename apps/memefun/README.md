@@ -1,6 +1,6 @@
 # memefun app
 
-The memefun web app (Next.js 15 on Cloudflare Workers through OpenNext). Apple HIG styling, Base Blue, light and dark.
+The memefun web app (Next.js 15, hosted on Railway with an optional Cloudflare Workers build through OpenNext). Apple HIG styling, Base Blue, light and dark.
 
 ## Two modes
 
@@ -25,6 +25,46 @@ Both implement the same `Market` interface (`src/lib/market/Market.ts`), so scre
 - **Transactions** (`src/lib/live/tx.ts`) are simulated before the wallet sees them, carry the builder code, approve exactly the amount (or use a permit: one signature and one transaction), and turn every revert into a plain sentence (`txErrors.ts`).
 - **Stock pairs** close for visitors from the US and its territories: the middleware stores Cloudflare's country in a cookie (`src/lib/geo.ts`).
 
+## Builder attribution
+
+MemeFun uses DustSwap's registered Base Builder Code `bc_tpolfjho`, verified against the public `app.dustswap.wtf` wallet bundle. `src/lib/wallet/builderCode.ts` generates the ERC-8021 suffix with `ox`; mismatched `NEXT_PUBLIC_BUILDER_CODE` or `NEXT_PUBLIC_BASE_BUILDER_CODE` build variables are rejected. Both wallet configs use required attribution. The connected-wallet adapter also configures its actual Viem sender because the installed Wagmi connector client does not inherit the config default.
+
+Every app contract submission always supplies that suffix: ERC20 approvals, buys and sells (including permit routes), single/multi-pair and tweet launches, creator/holder/referral/author claims, author wallet verification, treasury reward withdrawals, creator fee reductions and control transfers, test faucets, and owner setters. The transaction override and client default append one suffix, not two. Offchain wallet messages, SIWE and EIP-712/permit signatures are not transactions and must not be modified.
+
+MemeFun checks the connected wallet's capabilities before submission. Wallets supporting `dataSuffix` submit the simulated action as one EIP-5792 call with required attribution, then resolve its receipt without retrying an uncertain batch as a direct transaction. Legacy providers may use direct attributed writes only when their address has no contract/delegation code. Unsupported smart wallets fail before the wallet transaction prompt. Any batch through the attributed client or paymaster capability helper also requires `dataSuffix`. For smart wallets, the wallet appends attribution to the outer transaction or user operation. Internal contract calls are part of that transaction; they are not separately signed transactions. No new contract deployment is needed for the attribution suffix.
+
+Verify a real Base transaction by decoding its input with `Attribution.fromData` and checking for `bc_tpolfjho`, or check the resulting user operation when using a smart wallet. Base.dev indexing/rewards and third-party wallet behavior still require a real-network acceptance check. Preview actions are simulated and create no onchain attribution. See [Base's app integration guide](https://docs.base.org/specifications/builder-codes/for-app-developers) and [wallet integration guide](https://docs.base.org/specifications/builder-codes/for-wallet-developers). Privy's separate suffix plugin is intentionally not used: its [current guide](https://docs.privy.io/recipes/evm/base-builder-codes) does not support the `@privy-io/wagmi` adapter.
+
+## Pair and fee controls
+
+The trade page shows the current trading fee beside the mode badge, including launch-protection decay and later fee reductions. Creator and community earnings remain visible; the redundant fee accordion and platform split bars are omitted. The entered trade's quote still shows its actual trading fee and minimum received.
+
+Slippage starts on Auto, a bounded local estimate rather than an execution oracle. It uses the selected pool's liquidity and actual recent trade prices. New pools (under ten minutes), liquidity below $50K, or insufficient/stale price history use 5%. Mature calm pools use a 3% floor at $50K or a 1% floor at $250K. Twice the largest observed price move in the last minute, plus 0.5%, can raise that floor; the result rounds up to 0.25% and never exceeds 5%. Deterministic quote price impact is not added again as slippage. Manual presets are 1%, 3%, 5% and 10%; custom percentages accept 0.01%–50% with two decimal places. Invalid edits disable submission rather than keeping a prior value.
+
+Live quotes expose exact raw output. The trade panel freezes the resolved tolerance and raw minimum when submitted, and the adapter never lowers that floor on a refreshed quote. A refreshed output below the displayed minimum fails before the wallet opens. Controls and the pool selector stay locked while a trade is pending. Tiny trades whose UI minimum rounds to zero are blocked.
+
+Design references: [Uniswap Auto/Custom](https://support.uniswap.org/hc/en-us/articles/8643879653261-How-to-change-slippage-on-the-Uniswap-Web-app), [Flaunch's 5% SDK examples](https://github.com/flayerlabs/flaunch-sdk#buying-a-flaunch-coin), and [Jupiter's execution estimator](https://developers.jup.ag/docs/swap/advanced/slippage). These support bounded defaults and explicit minimums; MemeFun's thresholds are its own heuristic, not Jupiter RTSE or a guarantee of execution.
+
+A token may launch with one pair or up to five distinct listed pair assets. Multi-pair launching creates one token, splits its supply equally between permanently locked pools, and keeps one opening market cap. The optional first buy targets the pair selected in the first-buy step. Trading uses an explicit market selection; a selected pair's reserves and earnings stay in that pair's currency. Discovery aggregates USD values across markets rather than adding different quote amounts.
+
+Fee modes and splits are fixed at launch. Creators can lower the shared fee across every pair and transfer creator control through proposal and acceptance by the receiving wallet. A fee claim's payout address is independent of that role transfer. Transferring creator control also transfers unclaimed creator earnings; it does not change the destination mode or take module rewards.
+
+The updated multi-pair contract ABI requires matching deployed contracts and backend data. Public preview mode simulates these actions; enabling the controls in preview does not deploy contracts or send real funds.
+
+## Launch by tweet
+
+`/create/tweet` imports a public X post, selects its own photos or a generated text image, and suggests editable names and tickers without an AI service. The existing one-to-five-pair launch flow remains available. Tweet launches fix Creator mode and reserve 20%–100% of creator earnings for the original numeric X author ID, defaulting to 50%, after platform fees. The split is immutable.
+
+Authors may verify X, permanently bind an earning wallet and claim unpaid fees at any time. For the first 180 days after launch, treasury cannot withdraw author reserves. After that, the configured DustSwap treasury can also withdraw the same unpaid balance, even if the author verified or claimed earlier. New author fees keep accruing; every withdrawal reduces the balance available to both parties. Launcher fee reductions and transfers do not transfer the author identity or wallet binding. `/rewards/author` handles X verification, wallet binding and claims. This condition is visible once in the reward terms on each relevant screen.
+
+Preview post imports are real server reads through `/api/tweets/import`; launches, X sign-in and payouts remain explicitly simulated. Configure the web server's `GETX_API_KEY` and optional `GETX_TWEET_DAILY_LIMIT` (default 100) to try imports. Never put the key in a `NEXT_PUBLIC_*` variable. The web preview cap is per process; replicas or restarts need a shared gateway for a fleet-wide spending limit. The live backend uses persistent shared quotas and a cache, and requires GetX, X OAuth and the matching on-chain attestor configuration before tweet launches are enabled. See the backend README for activation requirements.
+
+The OAuth callback returns a one-time completion credential in the app URL fragment. The live browser removes it from history, keeps it only in memory, and completes verification with the current wallet's SIWE session before loading the linked identity. Read hooks never automatically open wallet sign-in prompts. Importing a post does not imply its author's endorsement.
+
+## Branding
+
+The supplied F–M cube artwork is kept in `assets/branding/memefun-logo-source.png`. Run `pnpm brand:assets` to regenerate the sidebar image, favicon, installed-app and wallet icons, and the brand mark in the share card. The artwork retains its original background and colors.
+
 ## Scripts
 
 ```bash
@@ -40,7 +80,7 @@ Live mode against the local stack: `pnpm dev:chain` and `pnpm dev` in `apps/meme
 
 ## Deploying
 
-- **Testnet (Base Sepolia):** the Railway service `memefun-web` in the `memefun-testnet` project builds this folder from `main` (`pnpm build`, then `next start`) at https://memefun-web-production.up.railway.app. Its `NEXT_PUBLIC_*` variables live on the service. Railway sends no visitor country, so the stock-pair geofence is open there; that only matters once real stocks are listed.
-- **Cloudflare (later, mainnet on memefun.dustswap.wtf):** `.github/workflows/deploy-memefun.yml` builds the OpenNext worker. It stays off until the repository variable `MEMEFUN_TESTNET_DEPLOY` is `on`, and it needs the `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` secrets, which the repository does not have yet.
+- **Current public preview:** the Railway service `memefun-web` in the `memefun-testnet` project serves https://memefun.dustswap.wtf through a DNS-only Cloudflare CNAME. It builds this folder (`pnpm build`) and runs `pnpm exec next start --hostname 0.0.0.0 --port $PORT`. Its `NEXT_PUBLIC_*` variables live on the service. Preview remains forced until public contracts, the API/keeper and real wallet integration are ready. Railway sends no visitor country, so the stock-pair geofence is open there; that only matters once real stocks are listed.
+- **Optional Cloudflare Workers deployment:** `.github/workflows/deploy-memefun.yml` builds the OpenNext worker. It stays off until the repository variable `MEMEFUN_TESTNET_DEPLOY` is `on`, and it needs the `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` secrets. The current Railway deployment does not require this workflow.
 
-Never deploy from a laptop: a local `.env.local` would end up in the bundle.
+Production builds must use the service's reviewed variables. If uploading local source, stage only source files and required assets in an isolated directory, excluding `.env*`, local deployment records, dependencies and build output; a laptop's `.env.local` must never enter the bundle.

@@ -9,6 +9,7 @@ import { type ReadDeps, readRoutes } from "./read/routes";
 import { type LiveHub, mountStream } from "./read/stream";
 import { type AdminDeps, adminRoutes } from "./write/admin";
 import { type AuthDeps, authRoutes } from "./write/auth";
+import { type AuthorDeps, authorRoutes } from "./write/author";
 import { type WriteDeps, writeRoutes } from "./write/routes";
 
 export interface AppDeps {
@@ -21,6 +22,7 @@ export interface AppDeps {
   allowedOrigins: Set<string>;
   /** The contracts this API indexes. Public; the app cross-checks it against its own build. */
   deployment: Deployment;
+  author?: AuthorDeps;
 }
 
 /** The memefun HTTP API: read endpoints typed as the app's own data, writes, admin, media, cards. */
@@ -60,6 +62,7 @@ export function createApp(deps: AppDeps) {
   mountOg(app, { snapshot: deps.read.snapshot, media: deps.media });
   mountMedia(app, deps.media);
   app.route("/", authRoutes(deps.auth));
+  if (deps.author) app.route("/", authorRoutes(deps.author));
   app.route("/", writeRoutes(deps.write));
   app.route("/", adminRoutes(deps.admin));
   // Ponder owns the server's own 404; anything under /v1 that matched nothing gets ours.

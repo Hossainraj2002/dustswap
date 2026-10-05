@@ -7,7 +7,11 @@ import {IPoolManager} from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
 import {Hooks} from "@uniswap/v4-core/src/libraries/Hooks.sol";
 import {StateLibrary} from "@uniswap/v4-core/src/libraries/StateLibrary.sol";
 import {BalanceDelta} from "@uniswap/v4-core/src/types/BalanceDelta.sol";
-import {BeforeSwapDelta, BeforeSwapDeltaLibrary, toBeforeSwapDelta} from "@uniswap/v4-core/src/types/BeforeSwapDelta.sol";
+import {
+    BeforeSwapDelta,
+    BeforeSwapDeltaLibrary,
+    toBeforeSwapDelta
+} from "@uniswap/v4-core/src/types/BeforeSwapDelta.sol";
 import {Currency} from "@uniswap/v4-core/src/types/Currency.sol";
 import {PoolId} from "@uniswap/v4-core/src/types/PoolId.sol";
 import {PoolKey} from "@uniswap/v4-core/src/types/PoolKey.sol";
@@ -31,7 +35,7 @@ import {Mode} from "./types/MemeFunTypes.sol";
 ///         of their own and borrow memefun's name or events.
 ///
 ///      2. LIQUIDITY IS LOCKED BY CONSTRUCTION. The factory may add liquidity exactly once (the
-///         launch position holding the whole supply). A floor-mode coin's own FloorVault may add
+///         launch position holding that market's allocation). A floor-mode coin's FloorVault may add
 ///         liquidity on the quote side of the price only. Every other add reverts, and every
 ///         removal and donation reverts for everyone, the factory and the owner included.
 ///
@@ -76,6 +80,9 @@ contract MemeFunHook is BaseHook, IMemeFunHook {
 
     mapping(PoolId id => PoolConfig) internal _pools;
     mapping(address coin => PoolKey) internal _keys;
+    mapping(PoolId id => PoolKey) internal _poolKeys;
+    mapping(address coin => mapping(address quote => PoolId)) internal _pairIds;
+    mapping(address coin => PoolId[]) internal _coinPools;
     mapping(address coin => address) public creatorOf;
     mapping(address coin => address) public pendingCreatorOf;
     mapping(PoolId id => BlockStart) internal _blockStart;
@@ -88,7 +95,9 @@ contract MemeFunHook is BaseHook, IMemeFunHook {
     bytes32 private constant T_TRADER = keccak256("memefun.hook.transient.trader");
     bytes32 private constant T_REFERRER = keccak256("memefun.hook.transient.referrer");
 
-    event PoolRegistered(PoolId indexed id, address indexed coin, address indexed creator, PoolConfig config);
+    event PoolRegistered(
+        PoolId indexed id, address indexed coin, address indexed creator, PoolConfig config
+    );
     /// @notice One per swap on a memefun pool, from the trader's point of view.
     /// @param quoteAmount Gross quote amount: paid on a buy (fee included), or released by the pool on
     ///        a sell (the seller receives quoteAmount - fee).
@@ -117,6 +126,10 @@ contract MemeFunHook is BaseHook, IMemeFunHook {
     error NotPendingCreator();
     error UnknownCoin(address coin);
     error AlreadyRegistered(address coin);
+    error UnknownPool(PoolId id);
+    error UnknownPair(address coin, address quote);
+    error TooManyMarkets();
+    error TermsMismatch();
     error PoolNotRegistered();
     error InvalidPoolKey();
     error AlreadySeeded();
@@ -125,7 +138,12 @@ contract MemeFunHook is BaseHook, IMemeFunHook {
     error DonationsDisabled();
     error FeeNotLower(uint256 currentBps, uint256 requestedBps);
 
-    constructor(IPoolManager poolManager_, address factory_, IFeeVault feeVault_, address router_)
+    constructor(
+        IPoolManager poolManager_,
+        address factory_,
+        IFeeVault feeVault_,
+        address router_
+    )
         BaseHook(poolManager_)
     {
         factory = factory_;
@@ -157,16 +175,37 @@ contract MemeFunHook is BaseHook, IMemeFunHook {
     // -------------------------------------------------------------------------------------------
 
     /// @inheritdoc IMemeFunHook
-    function registerPool(PoolKey calldata key, PoolConfig calldata config, address creator) external {
+    function registerPool(
+        PoolKey calldata key,
+        PoolConfig calldata config,
+        address creator
+    )
+        external
+    {
         if (msg.sender != factory) revert NotFactory();
         address coin = config.coin;
-        if (address(_keys[coin].hooks) != address(0)) revert AlreadyRegistered(coin);
         if (
             address(key.hooks) != address(this) || key.fee != 0 || key.tickSpacing != TICK_SPACING
                 || Currency.unwrap(config.quoteIsCurrency0 ? key.currency1 : key.currency0) != coin
         ) revert InvalidPoolKey();
 
         PoolId id = key.toId();
+        if (_pools[id].coin != address(0)) revert AlreadyRegistered(coin);
+        bool first = address(_keys[coin].hooks) == address(0);
+        if (!first) {
+            if (_coinPools[coin].length >= 5) revert TooManyMarkets();
+            PoolConfig storage primary = _pools[_keys[coin].toId()];
+            if (
+                creatorOf[coin] != creator || primary.mode != config.mode
+                    || primary.feeBps != config.feeBps
+                    || primary.platformShareBps != config.platformShareBps
+                    || primary.referralShareBps != config.referralShareBps
+                    || primary.creatorKeepBps != config.creatorKeepBps
+                    || primary.protectionStartBps != config.protectionStartBps
+                    || primary.protectionDurationSec != config.protectionDurationSec
+                    || primary.module != config.module || primary.launchedAt != block.timestamp
+            ) revert TermsMismatch();
+        }
         PoolConfig storage stored = _pools[id];
         stored.coin = coin;
         stored.quoteIsCurrency0 = config.quoteIsCurrency0;
@@ -181,8 +220,14 @@ contract MemeFunHook is BaseHook, IMemeFunHook {
         stored.protectionDurationSec = config.protectionDurationSec;
         stored.seeded = false;
 
-        _keys[coin] = key;
-        creatorOf[coin] = creator;
+        if (first) {
+            _keys[coin] = key;
+            creatorOf[coin] = creator;
+        }
+        _poolKeys[id] = key;
+        address quote = Currency.unwrap(config.quoteIsCurrency0 ? key.currency0 : key.currency1);
+        _pairIds[coin][quote] = id;
+        _coinPools[coin].push(id);
         emit PoolRegistered(id, coin, creator, stored);
     }
 
@@ -196,7 +241,10 @@ contract MemeFunHook is BaseHook, IMemeFunHook {
         PoolConfig storage config = _pools[_keyOf(coin).toId()];
         uint256 current = config.feeBps;
         if (newFeeBps >= current) revert FeeNotLower(current, newFeeBps);
-        config.feeBps = uint16(newFeeBps);
+        PoolId[] storage ids = _coinPools[coin];
+        for (uint256 i; i < ids.length; ++i) {
+            _pools[ids[i]].feeBps = uint16(newFeeBps);
+        }
         emit FeeLowered(coin, current, newFeeBps);
     }
 
@@ -210,7 +258,9 @@ contract MemeFunHook is BaseHook, IMemeFunHook {
     }
 
     function acceptCreator(address coin) external {
-        if (msg.sender != pendingCreatorOf[coin] || msg.sender == address(0)) revert NotPendingCreator();
+        if (msg.sender != pendingCreatorOf[coin] || msg.sender == address(0)) {
+            revert NotPendingCreator();
+        }
         address previous = creatorOf[coin];
         creatorOf[coin] = msg.sender;
         delete pendingCreatorOf[coin];
@@ -226,9 +276,36 @@ contract MemeFunHook is BaseHook, IMemeFunHook {
         return _keyOf(coin);
     }
 
+    function poolKeyFor(address coin, address quote) external view returns (PoolKey memory) {
+        return _poolKeys[_pairId(coin, quote)];
+    }
+
+    function poolKeyOfPool(PoolId id) external view returns (PoolKey memory) {
+        _knownPool(id);
+        return _poolKeys[id];
+    }
+
+    function poolIdsOf(address coin) external view returns (PoolId[] memory) {
+        _keyOf(coin);
+        return _coinPools[coin];
+    }
+
+    function poolKeysOf(address coin) external view returns (PoolKey[] memory keys) {
+        _keyOf(coin);
+        PoolId[] storage ids = _coinPools[coin];
+        keys = new PoolKey[](ids.length);
+        for (uint256 i; i < ids.length; ++i) {
+            keys[i] = _poolKeys[ids[i]];
+        }
+    }
+
     /// @inheritdoc IMemeFunHook
     function poolIdOf(address coin) external view returns (PoolId) {
         return _keyOf(coin).toId();
+    }
+
+    function poolIdFor(address coin, address quote) external view returns (PoolId) {
+        return _pairId(coin, quote);
     }
 
     /// @inheritdoc IMemeFunHook
@@ -237,7 +314,12 @@ contract MemeFunHook is BaseHook, IMemeFunHook {
     }
 
     function configOfPool(PoolId id) external view returns (PoolConfig memory) {
+        _knownPool(id);
         return _pools[id];
+    }
+
+    function configFor(address coin, address quote) external view returns (PoolConfig memory) {
+        return _pools[_pairId(coin, quote)];
     }
 
     /// @inheritdoc IMemeFunHook
@@ -246,11 +328,22 @@ contract MemeFunHook is BaseHook, IMemeFunHook {
         return _pools[key.toId()].quoteIsCurrency0 ? key.currency0 : key.currency1;
     }
 
+    function quoteCurrencyOfPool(PoolId id) external view returns (Currency) {
+        _knownPool(id);
+        PoolKey storage key = _poolKeys[id];
+        return _pools[id].quoteIsCurrency0 ? key.currency0 : key.currency1;
+    }
+
     /// @inheritdoc IMemeFunHook
     function moduleOf(address coin) external view returns (address) {
         PoolKey storage key = _keys[coin];
         if (address(key.hooks) == address(0)) return address(0);
         return _pools[key.toId()].module;
+    }
+
+    function moduleOfPool(PoolId id) external view returns (address) {
+        _knownPool(id);
+        return _pools[id].module;
     }
 
     /// @notice Fee rate a trade would pay right now, launch protection included.
@@ -271,13 +364,27 @@ contract MemeFunHook is BaseHook, IMemeFunHook {
     // Pool lifecycle
     // -------------------------------------------------------------------------------------------
 
-    function _beforeInitialize(address sender, PoolKey calldata key, uint160) internal view override returns (bytes4) {
+    function _beforeInitialize(
+        address sender,
+        PoolKey calldata key,
+        uint160
+    )
+        internal
+        view
+        override
+        returns (bytes4)
+    {
         if (sender != factory) revert NotFactory();
         if (_pools[key.toId()].coin == address(0)) revert PoolNotRegistered();
         return this.beforeInitialize.selector;
     }
 
-    function _beforeAddLiquidity(address sender, PoolKey calldata key, ModifyLiquidityParams calldata params, bytes calldata)
+    function _beforeAddLiquidity(
+        address sender,
+        PoolKey calldata key,
+        ModifyLiquidityParams calldata params,
+        bytes calldata
+    )
         internal
         override
         returns (bytes4)
@@ -293,14 +400,20 @@ contract MemeFunHook is BaseHook, IMemeFunHook {
             // Quote-only ranges: above the price when the quote is currency0, at or below it when
             // the quote is currency1. Such a position can only ever buy the coin as it falls.
             (, int24 tick,,) = poolManager.getSlot0(id);
-            bool quoteOnly = config.quoteIsCurrency0 ? params.tickLower > tick : params.tickUpper <= tick;
+            bool quoteOnly =
+                config.quoteIsCurrency0 ? params.tickLower > tick : params.tickUpper <= tick;
             if (!quoteOnly) revert FloorNotQuoteSided();
             return this.beforeAddLiquidity.selector;
         }
         revert LiquidityLocked();
     }
 
-    function _beforeRemoveLiquidity(address, PoolKey calldata, ModifyLiquidityParams calldata, bytes calldata)
+    function _beforeRemoveLiquidity(
+        address,
+        PoolKey calldata,
+        ModifyLiquidityParams calldata,
+        bytes calldata
+    )
         internal
         pure
         override
@@ -309,7 +422,13 @@ contract MemeFunHook is BaseHook, IMemeFunHook {
         revert LiquidityLocked();
     }
 
-    function _beforeDonate(address, PoolKey calldata, uint256, uint256, bytes calldata)
+    function _beforeDonate(
+        address,
+        PoolKey calldata,
+        uint256,
+        uint256,
+        bytes calldata
+    )
         internal
         pure
         override
@@ -322,7 +441,12 @@ contract MemeFunHook is BaseHook, IMemeFunHook {
     // Swaps
     // -------------------------------------------------------------------------------------------
 
-    function _beforeSwap(address sender, PoolKey calldata key, SwapParams calldata params, bytes calldata hookData)
+    function _beforeSwap(
+        address sender,
+        PoolKey calldata key,
+        SwapParams calldata params,
+        bytes calldata hookData
+    )
         internal
         override
         returns (bytes4, BeforeSwapDelta, uint24)
@@ -338,14 +462,16 @@ contract MemeFunHook is BaseHook, IMemeFunHook {
         _tstore(T_REFERRER, uint256(uint160(referrer)));
 
         bool exactIn = params.amountSpecified < 0;
-        if (feeBps == 0 || !_specifiedIsQuote(exactIn, params.zeroForOne, config.quoteIsCurrency0)) {
+        if (feeBps == 0 || !_specifiedIsQuote(exactIn, params.zeroForOne, config.quoteIsCurrency0))
+        {
             _tstore(T_FEE, 0);
             return (this.beforeSwap.selector, BeforeSwapDeltaLibrary.ZERO_DELTA, 0);
         }
 
         // Quote is the specified currency: an exact-input buy (gross input known) or an
         // exact-output sell (net output known).
-        uint256 amount = exactIn ? uint256(-params.amountSpecified) : uint256(params.amountSpecified);
+        uint256 amount =
+            exactIn ? uint256(-params.amountSpecified) : uint256(params.amountSpecified);
         uint256 fee = exactIn ? FeeMath.onGross(amount, feeBps) : FeeMath.onNet(amount, feeBps);
         _tstore(T_FEE, fee);
         if (fee == 0) return (this.beforeSwap.selector, BeforeSwapDeltaLibrary.ZERO_DELTA, 0);
@@ -354,7 +480,13 @@ contract MemeFunHook is BaseHook, IMemeFunHook {
         return (this.beforeSwap.selector, toBeforeSwapDelta(fee.toInt256().toInt128(), 0), 0);
     }
 
-    function _afterSwap(address, PoolKey calldata key, SwapParams calldata params, BalanceDelta delta, bytes calldata)
+    function _afterSwap(
+        address,
+        PoolKey calldata key,
+        SwapParams calldata params,
+        BalanceDelta delta,
+        bytes calldata
+    )
         internal
         override
         returns (bytes4, int128)
@@ -372,10 +504,12 @@ contract MemeFunHook is BaseHook, IMemeFunHook {
         uint256 quoteAmount = _abs(quoteDelta);
 
         int128 hookDelta = 0;
-        if (feeBps != 0 && !_specifiedIsQuote(exactIn, params.zeroForOne, config.quoteIsCurrency0)) {
+        if (feeBps != 0 && !_specifiedIsQuote(exactIn, params.zeroForOne, config.quoteIsCurrency0))
+        {
             // Quote is the unspecified currency: an exact-input sell (pool output is the gross) or
             // an exact-output buy (pool input is the net).
-            fee = exactIn ? FeeMath.onGross(quoteAmount, feeBps) : FeeMath.onNet(quoteAmount, feeBps);
+            fee =
+                exactIn ? FeeMath.onGross(quoteAmount, feeBps) : FeeMath.onNet(quoteAmount, feeBps);
             if (fee != 0) {
                 _collect(config, _quoteOf(key, config), fee, referrer);
                 hookDelta = fee.toInt256().toInt128();
@@ -417,13 +551,23 @@ contract MemeFunHook is BaseHook, IMemeFunHook {
 
     function _rate(PoolConfig storage config) private view returns (uint256) {
         return FeeMath.launchFeeBps(
-            config.feeBps, config.protectionStartBps, config.protectionDurationSec, block.timestamp - config.launchedAt
+            config.feeBps,
+            config.protectionStartBps,
+            config.protectionDurationSec,
+            block.timestamp - config.launchedAt
         );
     }
 
     /// @dev Trader and referrer from MemeFunRouter's hookData; any other sender is the trader
     ///      itself, with no referrer. Self-referral is dropped.
-    function _parties(address sender, bytes calldata hookData) private view returns (address trader, address referrer) {
+    function _parties(
+        address sender,
+        bytes calldata hookData
+    )
+        private
+        view
+        returns (address trader, address referrer)
+    {
         if (sender != router) return (sender, address(0));
         (bool ok, address decodedTrader, address decodedReferrer) = HookDataLib.decode(hookData);
         if (!ok) return (sender, address(0));
@@ -433,7 +577,14 @@ contract MemeFunHook is BaseHook, IMemeFunHook {
 
     /// @dev Mints the fee to FeeVault as claims (the hook's delta for it is settled by the fee
     ///      delta this hook returns) and records who it is owed to.
-    function _collect(PoolConfig storage config, Currency quote, uint256 fee, address referrer) private {
+    function _collect(
+        PoolConfig storage config,
+        Currency quote,
+        uint256 fee,
+        address referrer
+    )
+        private
+    {
         poolManager.mint(address(feeVault), quote.toId(), fee);
         FeeMath.Split memory s = FeeMath.split(
             fee,
@@ -443,7 +594,9 @@ contract MemeFunHook is BaseHook, IMemeFunHook {
             config.creatorKeepBps,
             referrer != address(0)
         );
-        feeVault.credit(config.coin, quote, s.platform, referrer, s.referral, s.creator, s.destination);
+        feeVault.credit(
+            config.coin, quote, s.platform, referrer, s.referral, s.creator, s.destination
+        );
     }
 
     /// @dev The pool has already moved when afterSwap runs, and the hook's fee delta never moves
@@ -458,9 +611,23 @@ contract MemeFunHook is BaseHook, IMemeFunHook {
         uint256 fee,
         uint256 feeBps,
         address referrer
-    ) private {
+    )
+        private
+    {
         (uint160 sqrtPriceX96, int24 tick,,) = poolManager.getSlot0(id);
-        emit Trade(id, coin, trader, isBuy, quoteAmount, coinAmount, fee, feeBps, referrer, sqrtPriceX96, tick);
+        emit Trade(
+            id,
+            coin,
+            trader,
+            isBuy,
+            quoteAmount,
+            coinAmount,
+            fee,
+            feeBps,
+            referrer,
+            sqrtPriceX96,
+            tick
+        );
     }
 
     function _recordBlockStart(PoolId id) private {
@@ -470,17 +637,43 @@ contract MemeFunHook is BaseHook, IMemeFunHook {
     }
 
     /// @dev The specified currency is currency0 exactly when (exactIn == zeroForOne).
-    function _specifiedIsQuote(bool exactIn, bool zeroForOne, bool quoteIsCurrency0) private pure returns (bool) {
+    function _specifiedIsQuote(
+        bool exactIn,
+        bool zeroForOne,
+        bool quoteIsCurrency0
+    )
+        private
+        pure
+        returns (bool)
+    {
         return (exactIn == zeroForOne) == quoteIsCurrency0;
     }
 
-    function _quoteOf(PoolKey calldata key, PoolConfig storage config) private view returns (Currency) {
+    function _quoteOf(
+        PoolKey calldata key,
+        PoolConfig storage config
+    )
+        private
+        view
+        returns (Currency)
+    {
         return config.quoteIsCurrency0 ? key.currency0 : key.currency1;
     }
 
     function _keyOf(address coin) private view returns (PoolKey storage key) {
         key = _keys[coin];
         if (address(key.hooks) == address(0)) revert UnknownCoin(coin);
+    }
+
+    function _pairId(address coin, address quote) private view returns (PoolId id) {
+        id = _pairIds[coin][quote];
+        if (_pools[id].coin != coin || address(_poolKeys[id].hooks) == address(0)) {
+            revert UnknownPair(coin, quote);
+        }
+    }
+
+    function _knownPool(PoolId id) private view {
+        if (_pools[id].coin == address(0)) revert UnknownPool(id);
     }
 
     function _abs(int128 value) private pure returns (uint256) {

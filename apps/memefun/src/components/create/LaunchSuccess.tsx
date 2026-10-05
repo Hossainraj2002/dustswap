@@ -24,6 +24,7 @@ export function LaunchSuccess({ coin, onLaunchAnother }: { coin: Coin; onLaunchA
         <h1 className="text-large-title text-label">{coin.symbol} is live</h1>
         <p className="text-body text-label-2">
           {coin.name} is trading on Base at {formatUsd(coin.marketCapUsd, { compact: true })} market cap. Its liquidity is locked forever.
+          {coin.markets && coin.markets.length > 1 ? ` One token, ${coin.markets.length} pools: ${coin.markets.map((market) => market.quote.symbol).join(", ")}.` : ""}
           {preview ? " This is a preview launch, nothing was created on chain." : ""}
         </p>
       </div>
@@ -40,6 +41,7 @@ export function LaunchSuccess({ coin, onLaunchAnother }: { coin: Coin; onLaunchA
         <Button asChild size="lg" variant="gray" fullWidth>
           <Link href={`/t/${coin.address}`}>View coin</Link>
         </Button>
+        {coin.tweet ? <Button asChild variant="tinted" fullWidth><Link href={`/rewards/author?coin=${coin.address}`}>View post author&apos;s reserved share</Link></Button> : null}
         <Button size="lg" variant="plain" fullWidth onClick={onLaunchAnother}>
           Launch another
         </Button>

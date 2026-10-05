@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Gift, Link2, Share } from "lucide-react";
+import { getAddress, isAddress, zeroAddress } from "viem";
 import { formatQuoteAmount, formatUsd } from "@/core/format";
 import { useClaimables, useCoins } from "@/lib/market/hooks";
 import { useMarket } from "@/lib/market/MarketProvider";
@@ -19,11 +20,13 @@ import { Button } from "@/components/ui/Button";
 import { CoinAvatar } from "@/components/ui/CoinAvatar";
 import { CopyButton } from "@/components/ui/CopyButton";
 import { List, ListRow } from "@/components/ui/display";
+import { AuthorRewardTerms } from "./AuthorRewardTerms";
 
 const KIND_LABEL: Record<Claimable["kind"], string> = {
   creator: "Creator earnings",
   holders: "Holder rewards",
   referral: "Referral earnings",
+  author: "Post author earnings",
 };
 
 function totalsBySymbol(items: Claimable[]) {
@@ -39,15 +42,19 @@ export function RewardsScreen() {
   const claimables = useClaimables(wallet.address);
   const { coins } = useCoins();
   const [claiming, setClaiming] = useState<string | null>(null);
+  const [payoutWallet, setPayoutWallet] = useState("");
+  const payoutValid = payoutWallet === "" || (isAddress(payoutWallet) && payoutWallet.toLowerCase() !== zeroAddress);
+  const claimKey = (item: Claimable) => `${item.kind}-${item.coin}-${item.poolId ?? item.currency ?? item.quoteSymbol}-${item.epoch ?? ""}-${item.index ?? ""}`;
   const byAddress = useMemo(() => new Map(coins.map((coin) => [coin.address, coin])), [coins]);
   const total = claimables.reduce((sum, item) => sum + item.amountUsd, 0);
 
   const claim = async (items: Claimable[], key: string) => {
-    if (!market || !wallet.address || items.length === 0) return;
+    const customPayout = items.some((item) => item.kind === "creator" || item.kind === "referral");
+    if (!market || !wallet.address || items.length === 0 || (customPayout && !payoutValid)) return;
     setClaiming(key);
     try {
-      await market.claim(wallet.address, items, txOutcome);
-      toast.success(`Claimed ${totalsBySymbol(items)}`, { description: preview ? "Preview claim. Nothing was sent on chain." : "Sent to your wallet." });
+      await market.claim(wallet.address, items, txOutcome, undefined, customPayout && payoutWallet ? getAddress(payoutWallet) : wallet.address);
+      toast.success(`Claimed ${totalsBySymbol(items)}`, { description: preview ? "Preview claim. Nothing was sent on chain." : "Creator and referral payouts sent to your chosen wallet; holder and author rewards sent to their earning wallet." });
     } catch (error) {
       if (error instanceof TxError && error.kind === "rejected") toast("Claim cancelled", { description: error.message });
       else toast.error("Claim did not go through", { description: error instanceof Error ? error.message : "Try again." });
@@ -58,7 +65,8 @@ export function RewardsScreen() {
 
   return (
     <>
-      <PageHeader title="Rewards" subtitle="Fees you have earned as a creator, a holder or a referrer." />
+      <PageHeader title="Rewards" subtitle="Fees you have earned as a creator, post author, holder or referrer." />
+      <section className="mf-card mb-5 flex flex-wrap items-center justify-between gap-3 p-4"><div><h2 className="text-headline text-label">Earn from your original X posts</h2><p className="text-footnote text-label-2">Verify your X account and author wallet to claim a tweet coin&apos;s reserved share.</p></div><Button asChild variant="tinted"><Link href="/rewards/author">Post author earnings</Link></Button></section>
       {wallet.status !== "connected" || !wallet.address ? (
         <div className="mf-card">
           <ConnectHint action="see and claim your rewards" />
@@ -75,14 +83,20 @@ export function RewardsScreen() {
                   <UsdFlow value={total} compact={false} className="text-large-title font-bold text-label" />
                   {claimables.length > 0 ? <p className="mf-num text-subhead text-label-2">{totalsBySymbol(claimables)}</p> : null}
                 </div>
-                <Button size="lg" disabled={claimables.length === 0} loading={claiming === "all"} loadingLabel="Confirm in your wallet" onClick={() => void claim(claimables, "all")}>
+                <Button size="lg" disabled={claimables.length === 0 || !payoutValid || (claiming !== null && claiming !== "all")} loading={claiming === "all"} loadingLabel="Confirm in your wallet" onClick={() => void claim(claimables, "all")}>
                   Claim all
                 </Button>
               </div>
-              <p className="text-footnote text-label-2">Rewards are paid in the asset each coin trades against. Claiming sends them straight to your wallet.</p>
+              <label className="flex flex-col gap-2 text-subhead text-label">Creator and referral payout wallet
+                <input aria-label="Reward payout wallet" placeholder={wallet.address} value={payoutWallet} onChange={(event) => setPayoutWallet(event.target.value.trim())} className="rounded-md bg-fill-4 p-3 font-mono text-footnote text-label" />
+                <span className="text-footnote text-label-2">Leave empty to use your connected wallet. This applies to this claim only. Holder and author rewards always go to their earning wallet.</span>
+                {!payoutValid ? <span className="text-footnote text-down">Enter a valid, nonzero wallet address.</span> : null}
+              </label>
+              <p className="text-footnote text-label-2">Each pool pays rewards in its own pair asset. USD totals combine their values; different currencies are claimed separately.</p>
+              {claimables.some((item) => item.kind === "author") ? <AuthorRewardTerms /> : null}
             </section>
 
-            {(["creator", "holders", "referral"] as const).map((kind) => {
+            {(["creator", "author", "holders", "referral"] as const).map((kind) => {
               const items = claimables.filter((item) => item.kind === kind);
               return (
                 <List key={kind} header={KIND_LABEL[kind]}>
@@ -93,11 +107,12 @@ export function RewardsScreen() {
                       const coin = byAddress.get(item.coin);
                       return (
                         <ClaimRow
-                          key={`${item.kind}-${item.coin}`}
+                          key={claimKey(item)}
                           item={item}
                           coin={coin}
-                          loading={claiming === `${item.kind}-${item.coin}`}
-                          onClaim={() => void claim([item], `${item.kind}-${item.coin}`)}
+                          loading={claiming === claimKey(item)}
+                          disabled={(!payoutValid && (item.kind === "creator" || item.kind === "referral")) || claiming !== null}
+                          onClaim={() => void claim([item], claimKey(item))}
                         />
                       );
                     })
@@ -115,7 +130,7 @@ export function RewardsScreen() {
   );
 }
 
-function ClaimRow({ item, coin, loading, onClaim }: { item: Claimable; coin?: Coin; loading: boolean; onClaim: () => void }) {
+function ClaimRow({ item, coin, loading, disabled, onClaim }: { item: Claimable; coin?: Coin; loading: boolean; disabled: boolean; onClaim: () => void }) {
   return (
     <div className="flex min-h-16 items-center gap-3 px-4 py-2.5">
       {coin ? <CoinAvatar src={coin.image} alt="" size={40} symbol={coin.symbol} /> : null}
@@ -131,7 +146,7 @@ function ClaimRow({ item, coin, loading, onClaim }: { item: Claimable; coin?: Co
           {formatQuoteAmount(item.amountQuote, item.quoteSymbol)}, {formatUsd(item.amountUsd)}
         </span>
       </div>
-      <Button size="sm" variant="tinted" loading={loading} loadingLabel="Claiming" onClick={onClaim}>
+      <Button size="sm" variant="tinted" loading={loading} disabled={disabled} loadingLabel="Claiming" onClick={onClaim}>
         Claim
       </Button>
     </div>
@@ -139,6 +154,7 @@ function ClaimRow({ item, coin, loading, onClaim }: { item: Claimable; coin?: Co
 }
 
 function EmptyRow({ kind }: { kind: Claimable["kind"] }) {
+  if (kind === "author") return <ListRow title="No author earnings ready to claim" subtitle="Verify the original post author's X account and wallet." trailing={<Button asChild size="sm" variant="tinted"><Link href="/rewards/author">Verify author</Link></Button>} />;
   if (kind === "creator") {
     return (
       <ListRow

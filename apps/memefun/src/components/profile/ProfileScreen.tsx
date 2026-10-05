@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { tradeQuoteSymbol } from "@/lib/market/markets";
 import { useMemo, useState } from "react";
 import { Share, Sparkles } from "lucide-react";
 import { toast } from "sonner";
@@ -53,6 +54,7 @@ export function ProfileScreen({ address }: { address: string }) {
   return (
     <>
       <PageHeader title={isYou ? "Profile" : "Creator"} actions={<IconButton label="Share profile" icon={<Share aria-hidden />} onClick={() => void shareProfile()} />} />
+      {isYou ? <div className="mb-4 flex flex-wrap gap-3"><Button asChild variant="tinted"><Link href="/create/tweet">Launch by tweet</Link></Button><Button asChild variant="gray"><Link href="/rewards/author">Post author earnings</Link></Button></div> : null}
       <section aria-label="Profile" className="mf-card mb-6 flex flex-col gap-5 p-5 sm:flex-row sm:items-center sm:p-6">
         <div className="flex min-w-0 flex-1 items-center gap-4">
           <AddressAvatar address={address} size={72} />
@@ -142,7 +144,7 @@ export function ProfileScreen({ address }: { address: string }) {
                               <span className={cn("font-semibold", trade.side === "buy" ? "text-up" : "text-down")}>{trade.side === "buy" ? "Bought" : "Sold"}</span>{" "}
                               {formatCoinAmount(trade.coinAmount)} {coin.symbol}
                             </span>
-                            <span className="mf-num text-footnote text-label-2">{formatQuoteAmount(trade.quoteAmount, coin.quote.symbol)}</span>
+                            <span className="mf-num text-footnote text-label-2">{formatQuoteAmount(trade.quoteAmount, tradeQuoteSymbol(coin, trade))}</span>
                           </span>
                           <span className="mf-num text-footnote text-label-2">{now > 0 ? formatAge(now - trade.ts) : ""}</span>
                         </Link>

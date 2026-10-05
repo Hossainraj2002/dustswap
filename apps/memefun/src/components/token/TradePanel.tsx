@@ -1,13 +1,15 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { ChevronDown, ChevronRight, Settings2, ShieldAlert } from "lucide-react";
+import { ChevronRight, ShieldAlert } from "lucide-react";
 import { launchFeeBps, protectionRemainingSec } from "@/core/antiSnipe";
-import { formatBps, formatCoinAmount, formatPercent, formatQuoteAmount } from "@/core/format";
+import { formatBps, formatCoinAmount, formatPercent, formatQuoteAmount, fromUnits } from "@/core/format";
+import { COIN_DECIMALS } from "@/core/constants";
+import { minOut } from "@/core/pool";
 import { cn } from "@/lib/cn";
 import { useAnimationNow, useNow } from "@/lib/hooks";
-import { useCoinBalance, useQuoteBalance } from "@/lib/market/hooks";
+import { useCoinBalance, useQuoteBalance, useTrades } from "@/lib/market/hooks";
 import { useMarket } from "@/lib/market/MarketProvider";
 import type { Coin } from "@/lib/market/types";
 import { CHAIN_NAME, explorerUrl } from "@/lib/chain";
@@ -15,17 +17,20 @@ import { TxError, type TxStage } from "@/lib/market/Market";
 import { stageLabel } from "@/lib/trade/stages";
 import { usePreview } from "@/lib/preview/scenario";
 import { useReferrer } from "@/lib/referrals";
-import { DEFAULT_SLIPPAGE_BPS, MAX_SLIPPAGE_BPS, SLIPPAGE_PRESETS_BPS, buyPresets, impactLevel, tradeCta } from "@/lib/trade/cta";
+import { buyPresets, impactLevel, tradeCta } from "@/lib/trade/cta";
+import { autoSlippageBps, CUSTOM_SLIPPAGE_ERROR, resolveSlippageBps, type SlippageSetting } from "@/lib/trade/slippage";
 import { useWallet } from "@/lib/wallet/WalletProvider";
 import { Button } from "@/components/ui/Button";
-import { FeeSplitBar } from "@/components/ui/FeeSplitBar";
-import { Popover } from "@/components/ui/Popover";
 import { SegmentedControl } from "@/components/ui/SegmentedControl";
+import { SlippageControl } from "./SlippageControl";
 
 interface TradePanelProps {
   coin: Coin;
   initialSide?: "buy" | "sell";
   onDone?: () => void;
+  onPendingChange?: (pending: boolean) => void;
+  /** Another trade panel on this screen may already be awaiting the same wallet. */
+  locked?: boolean;
   className?: string;
 }
 
@@ -42,7 +47,8 @@ function trimInput(value: number, decimals = 6) {
   return (Math.floor(value * factor) / factor).toFixed(decimals).replace(/\.?0+$/, "");
 }
 
-export function TradePanel({ coin, initialSide = "buy", onDone, className }: TradePanelProps) {
+export function TradePanel({ coin, initialSide = "buy", onDone, onPendingChange, locked = false, className }: TradePanelProps) {
+  const amountInputId = useId();
   const wallet = useWallet();
   const { market, version } = useMarket();
   const { txOutcome, stocksRestricted, preview } = usePreview();
@@ -52,20 +58,23 @@ export function TradePanel({ coin, initialSide = "buy", onDone, className }: Tra
   // "Max" on a sell means the whole balance to the last unit, not the rounded number shown.
   const [maxSell, setMaxSell] = useState(false);
   const [payWithEth, setPayWithEth] = useState(false);
-  const [slippageBps, setSlippageBps] = useState(DEFAULT_SLIPPAGE_BPS);
+  const [slippage, setSlippage] = useState<SlippageSetting>({ mode: "auto" });
   const [pending, setPending] = useState(false);
+  const [submittedLimit, setSubmittedLimit] = useState<{ bps: number; minReceive: number; raw?: string } | null>(null);
   const [stage, setStage] = useState<TxStage | null>(null);
-  const [showFees, setShowFees] = useState(false);
 
   useEffect(() => setSide(initialSide), [initialSide]);
   useEffect(() => {
     setAmountText("");
     setMaxSell(false);
-  }, [side, payWithEth]);
+  }, [side, payWithEth, coin.selectedPoolId]);
   // Live pairs have no ETH route yet: pay in the pair asset.
   const live = market?.kind === "live";
 
   const tick = useNow();
+  const recentTrades = useTrades(coin.address, 100, coin.selectedPoolId);
+  const autoBps = autoSlippageBps({ createdAt: coin.createdAt, liquidityUsd: coin.liquidityUsd, now: tick, trades: recentTrades });
+  const slippageBps = pending && submittedLimit ? submittedLimit.bps : resolveSlippageBps(slippage, autoBps);
   const protection = { startBps: coin.terms.snipeStartBps, durationSec: coin.terms.snipeDurationSec };
   const protectionActive = tick > 0 && protectionRemainingSec(coin.createdAt, tick, protection) > 0;
   const smoothNow = useAnimationNow(protectionActive);
@@ -81,9 +90,9 @@ export function TradePanel({ coin, initialSide = "buy", onDone, className }: Tra
   const amount = parseAmount(amountText);
 
   const quote = useMemo(
-    () => (market && amount > 0 ? market.quote(coin.address, side, amount, Date.now(), routed) : null),
+    () => (market && amount > 0 ? market.quote(coin.address, side, amount, Date.now(), routed, coin.selectedPoolId) : null),
     // Re-quote whenever the market changes: a price move, or (live) the pool arriving.
-    [market, version, coin.address, coin.priceQuote, side, amount, routed], // eslint-disable-line react-hooks/exhaustive-deps
+    [market, version, coin.address, coin.priceQuote, coin.selectedPoolId, side, amount, routed], // eslint-disable-line react-hooks/exhaustive-deps
   );
 
   const restricted = stocksRestricted && coin.quote.kind === "stock";
@@ -103,11 +112,22 @@ export function TradePanel({ coin, initialSide = "buy", onDone, className }: Tra
   });
 
   const outSymbol = side === "buy" ? coin.symbol : coin.quote.symbol;
-  const minReceive = quote ? quote.amountOut * (1 - slippageBps / 10_000) : 0;
+  // Live quotes carry raw output so the displayed floor survives quote refreshes
+  // while the wallet opens, without any floating-point reconstruction.
+  const draftMinAmountOutRaw = quote?.amountOutRaw && slippageBps !== null
+    ? minOut(BigInt(quote.amountOutRaw), slippageBps).toString() : undefined;
+  const draftMinReceive = draftMinAmountOutRaw !== undefined
+    ? fromUnits(BigInt(draftMinAmountOutRaw), side === "buy" ? COIN_DECIMALS : coin.quote.decimals)
+    : quote && slippageBps !== null ? quote.amountOut * (1 - slippageBps / 10_000) : 0;
+  const minAmountOutRaw = pending && submittedLimit ? submittedLimit.raw : draftMinAmountOutRaw;
+  const minReceive = pending && submittedLimit ? submittedLimit.minReceive : draftMinReceive;
+  const invalidSlippage = slippageBps === null;
+  const zeroMinimum = quote?.ok && minReceive <= 0;
   const impact = quote ? impactLevel(quote.priceImpact) : "none";
   const feeNow = launchFeeBps(coin.terms.feeBps, protection, now > 0 ? (now - coin.createdAt) / 1000 : 0);
 
   const submit = async () => {
+    if (locked || pending) return;
     if (cta.kind === "connect") return void wallet.connect();
     if (cta.kind === "switch") {
       try {
@@ -117,16 +137,20 @@ export function TradePanel({ coin, initialSide = "buy", onDone, className }: Tra
       }
       return;
     }
-    if (cta.kind !== "ready" || !market || !wallet.address || !quote) return;
+    if (cta.kind !== "ready" || !market || !wallet.address || !quote || slippageBps === null || zeroMinimum) return;
+    setSubmittedLimit({ bps: slippageBps, minReceive, raw: minAmountOutRaw });
     setPending(true);
+    onPendingChange?.(true);
     try {
       const trade = await market.trade(wallet.address, coin.address, side, amount, minReceive, {
+        poolId: coin.selectedPoolId,
         outcome: txOutcome,
         referrer,
         payWithEth: routed,
         amountText: amountText.replace(/,/g, "").trim(),
         max: side === "sell" && maxSell,
         slippageBps,
+        minAmountOutRaw,
         onStage: setStage,
       });
       const txUrl = preview ? null : explorerUrl("tx", trade.txHash);
@@ -148,6 +172,8 @@ export function TradePanel({ coin, initialSide = "buy", onDone, className }: Tra
       else toast.error("Trade did not go through", { description: error instanceof Error ? error.message : "Try again." });
     } finally {
       setPending(false);
+      onPendingChange?.(false);
+      setSubmittedLimit(null);
       setStage(null);
     }
   };
@@ -155,7 +181,8 @@ export function TradePanel({ coin, initialSide = "buy", onDone, className }: Tra
   const presets = side === "buy" ? buyPresets(payingSymbol, routed ? "native" : coin.quote.kind) : [0.25, 0.5, 0.75, 1];
 
   return (
-    <div className={cn("flex flex-col gap-4", className)}>
+    <fieldset disabled={pending || locked} className={cn("flex min-w-0 flex-col gap-4", className)}>
+      <p className="text-footnote text-label-2">Trading {coin.symbol} / {coin.quote.symbol}. Token balances are shared across all pools.</p>
       <div className="flex items-center gap-2">
         <SegmentedControl
           label="Trade side"
@@ -169,7 +196,7 @@ export function TradePanel({ coin, initialSide = "buy", onDone, className }: Tra
           selectedClassName={(value) => (value === "buy" ? "bg-up-fill!" : "bg-down-fill!")}
           className="flex-1 [&_[aria-checked=true]]:text-on-tint"
         />
-        <SlippageButton value={slippageBps} onChange={setSlippageBps} />
+        <SlippageControl value={slippage} autoBps={pending && submittedLimit ? submittedLimit.bps : autoBps} onChange={setSlippage} disabled={pending || locked} />
       </div>
 
       {protectionLeft > 0 ? (
@@ -183,7 +210,7 @@ export function TradePanel({ coin, initialSide = "buy", onDone, className }: Tra
 
       <div className="flex flex-col gap-2 rounded-lg bg-fill-4 p-4">
         <div className="flex items-center justify-between text-footnote text-label-2">
-          <label htmlFor={`amount-${coin.address}`}>You pay</label>
+          <label htmlFor={amountInputId}>You pay</label>
           {wallet.status === "connected" ? (
             <button
               type="button"
@@ -199,7 +226,7 @@ export function TradePanel({ coin, initialSide = "buy", onDone, className }: Tra
         </div>
         <div className="flex items-center gap-3">
           <input
-            id={`amount-${coin.address}`}
+            id={amountInputId}
             inputMode="decimal"
             autoComplete="off"
             placeholder="0"
@@ -259,9 +286,9 @@ export function TradePanel({ coin, initialSide = "buy", onDone, className }: Tra
             </dd>
           </div>
           <div className="flex items-baseline justify-between gap-3">
-            <dt className="text-label-2">At least, after {formatBps(slippageBps)} slippage</dt>
+            <dt className="text-label-2">{slippageBps === null ? "Minimum received" : `At least, after ${formatBps(slippageBps)} slippage${slippage.mode === "auto" ? " (Auto)" : ""}`}</dt>
             <dd className="mf-num text-label">
-              {side === "buy" ? `${formatCoinAmount(minReceive)} ${outSymbol}` : formatQuoteAmount(minReceive, outSymbol)}
+              {invalidSlippage ? "Set slippage" : side === "buy" ? `${formatCoinAmount(minReceive)} ${outSymbol}` : formatQuoteAmount(minReceive, outSymbol)}
             </dd>
           </div>
           <div className="flex items-baseline justify-between gap-3">
@@ -301,42 +328,20 @@ export function TradePanel({ coin, initialSide = "buy", onDone, className }: Tra
         </p>
       ) : null}
 
+      {invalidSlippage ? <p role="alert" className="text-footnote text-down">{CUSTOM_SLIPPAGE_ERROR}</p> : zeroMinimum ? <p role="alert" className="text-footnote text-down">This amount is too small to set a protected minimum. Increase the amount.</p> : null}
+
       <Button
         size="lg"
         fullWidth
         variant={cta.kind === "ready" || cta.kind === "pending" ? (side === "buy" ? "buy" : "sell") : cta.kind === "switch" ? "destructive" : "filled"}
-        disabled={!cta.enabled && cta.kind !== "pending"}
+        disabled={(!cta.enabled && cta.kind !== "pending") || (cta.kind === "ready" && (invalidSlippage || Boolean(zeroMinimum)))}
         loading={pending}
         loadingLabel={stageLabel(stage, { token: payingSymbol, chainName: CHAIN_NAME })}
         onClick={() => void submit()}
       >
-        {cta.label}
+        {cta.kind === "ready" && invalidSlippage ? "Set valid slippage" : cta.kind === "ready" && zeroMinimum ? "Amount too small" : cta.label}
       </Button>
-
-      <div className="flex flex-col gap-3">
-        <button
-          type="button"
-          aria-expanded={showFees}
-          onClick={() => setShowFees((open) => !open)}
-          className="flex items-center justify-between rounded-md px-1 py-1 text-footnote text-label-2 transition-colors hover:text-label"
-        >
-          <span>
-            Fee is {formatBps(feeNow)} of every trade, paid in {coin.quote.symbol}
-            {feeNow !== coin.terms.feeBps ? ` (normally ${formatBps(coin.terms.feeBps)})` : ""}
-          </span>
-          <ChevronDown className={cn("size-4 transition-transform", showFees && "rotate-180")} aria-hidden />
-        </button>
-        {showFees ? (
-          <div className="rounded-lg bg-fill-4 p-4">
-            <FeeSplitBar
-              config={{ mode: coin.terms.mode, platformShareBps: coin.terms.platformShareBps, referralShareBps: coin.terms.referralShareBps, creatorKeepBps: coin.terms.creatorKeepBps }}
-              hasReferrer={Boolean(referrer)}
-              feeBps={coin.terms.feeBps}
-            />
-          </div>
-        ) : null}
-      </div>
-    </div>
+    </fieldset>
   );
 }
 
@@ -372,64 +377,6 @@ function ProtectionBanner({ remaining, duration, feeBps, normalBps }: { remainin
         </p>
       </div>
     </div>
-  );
-}
-
-function SlippageButton({ value, onChange }: { value: number; onChange: (bps: number) => void }) {
-  const [custom, setCustom] = useState("");
-  return (
-    <Popover
-      label="Slippage"
-      align="end"
-      trigger={
-        <button
-          type="button"
-          aria-label={`Slippage ${formatBps(value)}. Change`}
-          className="relative inline-flex h-9 shrink-0 items-center gap-1 rounded-[10px] bg-fill-3 px-2.5 text-footnote font-semibold text-label-2 transition-colors hover:text-label before:absolute before:inset-x-0 before:-inset-y-1 before:content-['']"
-        >
-          <Settings2 className="size-4" aria-hidden />
-          {formatBps(value)}
-        </button>
-      }
-    >
-      <div className="flex flex-col gap-3">
-        <div>
-          <p className="text-headline text-label">Slippage</p>
-          <p className="text-footnote text-label-2">If the price moves more than this before your trade lands, the trade is cancelled and you only pay the network fee.</p>
-        </div>
-        <div className="grid grid-cols-4 gap-1.5">
-          {SLIPPAGE_PRESETS_BPS.map((preset) => (
-            <button
-              key={preset}
-              type="button"
-              aria-pressed={value === preset}
-              onClick={() => onChange(preset)}
-              className={cn("h-9 rounded-[10px] text-footnote font-semibold transition-colors", value === preset ? "bg-tint-fill text-on-tint" : "bg-fill-3 text-label hover:bg-fill-2")}
-            >
-              {formatBps(preset)}
-            </button>
-          ))}
-        </div>
-        <label className="flex items-center gap-2 text-footnote text-label-2">
-          Custom
-          <input
-            inputMode="decimal"
-            value={custom}
-            placeholder="3"
-            onChange={(event) => {
-              const next = event.target.value;
-              if (!/^\d*\.?\d*$/.test(next)) return;
-              setCustom(next);
-              const bps = Math.round(Number(next) * 100);
-              if (bps > 0 && bps <= MAX_SLIPPAGE_BPS) onChange(bps);
-            }}
-            className="mf-num h-9 w-20 rounded-[10px] bg-fill-3 px-2 text-subhead text-label outline-none focus:shadow-[0_0_0_2px_var(--mf-tint)]"
-          />
-          %
-        </label>
-        {value > 500 ? <p className="text-footnote text-warning">High slippage can give you a much worse price.</p> : null}
-      </div>
-    </Popover>
   );
 }
 

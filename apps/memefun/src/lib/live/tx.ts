@@ -9,21 +9,26 @@ import {
   type Transport,
   type WalletClient,
   domainSeparator,
+  encodeFunctionData,
   erc20Abi,
   parseAbi,
   parseEventLogs,
   parseSignature,
   size,
   toHex,
+  verifyTypedData,
   zeroAddress,
 } from "viem";
 import { launchPoolAt, minOut, quoteBuy, startTickExact } from "@/core/pool";
+import { equalAllocations } from "@/lib/market/markets";
 import type { FeeMode } from "@/core/types";
+import { AUTHOR_VERIFICATION_TYPES, TWEET_LAUNCH_TYPES, validateAuthorShareBps, validXId, type AuthorVerification, type TweetLaunchAttestation } from "@/core/tweet";
 import type { OwnerCall } from "@/lib/admin/ownerCalls";
 import { feeVaultAbi, holderRewardDistributorAbi, memeFunConfigAbi, memeFunFactoryAbi, memeFunHookAbi, memeFunRouterAbi } from "@/lib/contracts/abis";
 import type { MemefunDeployment } from "@/lib/contracts/deployments";
 import { TxError, type TxStage } from "@/lib/market/Market";
 import { isUserRejectedRequest } from "@/lib/wallet/paymaster";
+import { DATA_SUFFIX } from "@/lib/wallet/builderCode";
 import { revertName, toTxError } from "./txErrors";
 
 /**
@@ -42,7 +47,7 @@ export interface TxContext {
   wallet: TxWallet;
   client: PublicClient;
   deployment: MemefunDeployment;
-  /** ERC-8021 builder code, appended to every transaction's calldata. */
+  /** Optional assertion for adapters/tests; another suffix is rejected before submission. */
   dataSuffix?: Hex;
   /** What the person is being asked to do right now, for button labels. */
   onStage?: (stage: TxStage) => void;
@@ -78,12 +83,85 @@ function account(ctx: TxContext): Address {
   return ctx.wallet.account.address;
 }
 
+/**
+ * A contract/delegated wallet needs attribution on its outer transaction/user operation.
+ * A verified EOA can append directly. Capability errors never authorize a contract wallet
+ * to fall back to a nested suffix that Base may not index.
+ */
+async function usesAttributedCalls(ctx: TxContext): Promise<boolean> {
+  // Locally signing accounts send the actual transaction calldata.
+  if (ctx.wallet.account.type === "local") return false;
+  let capabilities: Awaited<ReturnType<TxWallet["getCapabilities"]>> | undefined;
+  try {
+    if (typeof ctx.wallet.getCapabilities === "function") {
+      capabilities = await ctx.wallet.getCapabilities({ account: ctx.wallet.account, chainId: ctx.wallet.chain.id });
+    }
+  } catch (error) {
+    if (isUserRejectedRequest(error)) throw new TxError("You rejected the request in your wallet.", "rejected");
+    // A legacy EOA provider may not implement EIP-5792. Verify its chain code below.
+  }
+  const chainCapabilities = capabilities as { dataSuffix?: { supported?: boolean }; atomic?: { status?: string; supported?: boolean } } | undefined;
+  if (chainCapabilities?.dataSuffix?.supported === true) return true;
+  const atomic = chainCapabilities?.atomic;
+  if (atomic?.supported === true || atomic?.status === "supported" || atomic?.status === "ready") {
+    throw new TxError("This wallet cannot provide the required transaction attribution. Connect an EOA wallet or a wallet that supports Base builder codes.", "reverted");
+  }
+  let code: Hex | undefined;
+  try { code = await ctx.client.getCode({ address: account(ctx) }); }
+  catch { throw new TxError("The wallet's transaction support could not be checked. Try again before submitting.", "reverted"); }
+  if (code && code !== "0x") {
+    throw new TxError("This smart wallet cannot provide the required transaction attribution. Connect an EOA wallet or a wallet that supports Base builder codes.", "reverted");
+  }
+  return false;
+}
+
+const UNCERTAIN_CALLS = "The wallet request may have been sent but its confirmation could not be read. Check your wallet's activity before trying again.";
+
+async function sendAttributedCall(ctx: TxContext, request: Request, fallback: string): Promise<Hash> {
+  let id: string;
+  try {
+    const result = await ctx.wallet.sendCalls({
+      account: ctx.wallet.account,
+      chain: ctx.wallet.chain,
+      calls: [{ to: request.address, data: encodeFunctionData({ abi: request.abi, functionName: request.functionName, args: request.args }), value: request.value }],
+      capabilities: { dataSuffix: { value: DATA_SUFFIX } },
+      forceAtomic: true,
+      experimental_fallback: false,
+    });
+    ctx.onStage?.("pending");
+    if (!result.id || typeof result.id !== "string") throw new TxError(UNCERTAIN_CALLS, "reverted");
+    id = result.id;
+  } catch (error) {
+    // Never retry through eth_sendTransaction: a wallet may have accepted an ambiguous call.
+    throw toTxError(error, UNCERTAIN_CALLS);
+  }
+  let status: Awaited<ReturnType<TxWallet["waitForCallsStatus"]>>;
+  try {
+    status = await ctx.wallet.waitForCallsStatus({ id, timeout: RECEIPT_TIMEOUT_MS, pollingInterval: 1_000, retryCount: 0 });
+  } catch { throw new TxError(UNCERTAIN_CALLS, "reverted"); }
+  const receipt = status.receipts?.length === 1 ? status.receipts[0] : undefined;
+  const hash = receipt?.transactionHash;
+  if (status.status === "failure" || receipt?.status === "reverted") throw new TxError(fallback, "reverted", hash);
+  if (status.status !== "success" || receipt?.status !== "success" || !hash || !/^0x[\da-f]{64}$/i.test(hash)
+    || (status.chainId !== undefined && status.chainId !== ctx.wallet.chain.id)) {
+    throw new TxError(UNCERTAIN_CALLS, "reverted", hash);
+  }
+  return hash;
+}
+
 /** Sends a simulated request and waits for it; any failure becomes a TxError. */
 async function submit(ctx: TxContext, request: Request, fallback: string): Promise<{ hash: Hash; receipt: TransactionReceipt }> {
+  if (ctx.dataSuffix !== undefined && ctx.dataSuffix.toLowerCase() !== DATA_SUFFIX.toLowerCase()) {
+    throw new TxError("The transaction builder code does not match DustSwap. Refresh before trying again.", "reverted");
+  }
+  const useCalls = await usesAttributedCalls(ctx);
   ctx.onStage?.("confirm");
   let hash: Hash;
   try {
-    hash = await ctx.wallet.writeContract({ ...request, ...(ctx.dataSuffix ? { dataSuffix: ctx.dataSuffix } : {}) } as Request);
+    // Always attach the registered code, including approvals and callers with no context suffix.
+    // The explicit value takes precedence over the client default, so it is appended once.
+    hash = useCalls ? await sendAttributedCall(ctx, request, fallback)
+      : await ctx.wallet.writeContract({ ...request, dataSuffix: DATA_SUFFIX } as Request);
   } catch (error) {
     throw toTxError(error, fallback);
   }
@@ -176,6 +254,7 @@ async function permitDomain(ctx: TxContext, token: Address) {
 /* ---------------------------------------------------------------- trade */
 
 export interface TradeRequest {
+  explicitPool?: boolean;
   side: "buy" | "sell";
   coin: Address;
   /** The coin's pair asset; the zero address is ETH. */
@@ -219,6 +298,14 @@ export async function sendTrade(ctx: TxContext, t: TradeRequest): Promise<TradeF
   } as const;
   const simulate = async (withPermit: PermitSignature | null): Promise<Request> => {
     const base = { account: ctx.wallet.account, address: router, abi: memeFunRouterAbi } as const;
+    if (t.explicitPool) {
+      if (withPermit) return t.side === "buy"
+        ? (await ctx.client.simulateContract({ ...base, functionName: "buyForWithPermit", args: [params, t.quote, withPermit] })).request as Request
+        : (await ctx.client.simulateContract({ ...base, functionName: "sellForWithPermit", args: [params, t.quote, withPermit] })).request as Request;
+      return t.side === "buy"
+        ? (await ctx.client.simulateContract({ ...base, functionName: "buyFor", args: [params, t.quote], value: t.quote === zeroAddress ? t.amountIn : 0n })).request as Request
+        : (await ctx.client.simulateContract({ ...base, functionName: "sellFor", args: [params, t.quote] })).request as Request;
+    }
     if (t.side === "buy" && t.quote === zeroAddress) {
       return (await ctx.client.simulateContract({ ...base, functionName: "buy", args: [params], value: t.amountIn })).request as Request;
     }
@@ -278,6 +365,8 @@ export async function sendTrade(ctx: TxContext, t: TradeRequest): Promise<TradeF
 /* --------------------------------------------------------------- launch */
 
 export interface LaunchRequest {
+  tweet?: TweetLaunchAttestation;
+  pairs?: Array<{ quote: Address; quoteDecimals: number; firstBuy: bigint }>;
   name: string;
   symbol: string;
   contractURI: string;
@@ -294,6 +383,7 @@ export interface LaunchRequest {
 }
 
 export interface LaunchResult {
+  markets?: Array<{ poolId: Hex; quote: Address; coinsBought: bigint }>;
   hash: Hash;
   coin: Address;
   coinsBought: bigint;
@@ -304,11 +394,62 @@ export interface LaunchResult {
 const LAUNCH_FALLBACK = "The launch did not go through and nothing was created. Only the network fee was spent.";
 
 /** The first buy's minimum coins, from the pool the factory will seed at `startTick`. */
-export function firstBuyMinCoins(startTick: number, coinIsCurrency0: boolean, quoteDecimals: number, firstBuy: bigint, feeBps: number, slippageBps: number): bigint {
+export function firstBuyMinCoins(startTick: number, coinIsCurrency0: boolean, quoteDecimals: number, firstBuy: bigint, feeBps: number, slippageBps: number, allocationSupply?: bigint): bigint {
   if (firstBuy === 0n) return 0n;
-  const quoted = quoteBuy(launchPoolAt(startTick, coinIsCurrency0, quoteDecimals), firstBuy, feeBps);
+  const quoted = quoteBuy(launchPoolAt(startTick, coinIsCurrency0, quoteDecimals, { supply: allocationSupply }), firstBuy, feeBps);
   if (quoted.partial) throw new TxError("The first buy is larger than the whole supply. Lower it.", "reverted");
   return minOut(quoted.amountOut, slippageBps);
+}
+
+async function trustedTweetSigner(ctx: TxContext): Promise<Address> {
+  const signer = await ctx.client.readContract({ address: ctx.deployment.config, abi: memeFunConfigAbi, functionName: "tweetAttestor" });
+  if (signer === zeroAddress) throw new TxError("Tweet launches and author verification are not enabled on this network yet.", "reverted");
+  return signer;
+}
+
+async function validateTweetAttestation(ctx: TxContext, value: TweetLaunchAttestation, salt: Hex, mode: FeeMode): Promise<void> {
+  if (mode !== "creator" || value.launcher.toLowerCase() !== account(ctx).toLowerCase() || value.factory.toLowerCase() !== ctx.deployment.factory.toLowerCase()
+    || value.chainId !== ctx.deployment.chainId || value.salt.toLowerCase() !== salt.toLowerCase() || value.reserveDays !== 180
+    || !validXId(value.tweet.postId) || !validXId(value.tweet.authorXUserId) || !validateAuthorShareBps(value.tweet.authorShareBps)
+    || value.source.postId !== value.tweet.postId || value.source.author.id !== value.tweet.authorXUserId || !/^\d{1,20}$/.test(value.deadline)) {
+    throw new TxError("The X launch authorization does not match this wallet, post or network. Import the post again.", "reverted");
+  }
+  const deadline = BigInt(value.deadline);
+  const block = await ctx.client.getBlock();
+  if (deadline < block.timestamp) throw new TxError("The X launch authorization expired. Try launching again.", "reverted");
+  const valid = await verifyTypedData({ address: await trustedTweetSigner(ctx), domain: { name: "MemeFunFactory", version: "1", chainId: ctx.deployment.chainId, verifyingContract: ctx.deployment.factory },
+    types: TWEET_LAUNCH_TYPES, primaryType: "TweetLaunch", message: { launcher: value.launcher, salt: value.salt, postId: BigInt(value.tweet.postId), authorXUserId: BigInt(value.tweet.authorXUserId), authorShareBps: value.tweet.authorShareBps, deadline }, signature: value.signature });
+  if (!valid) throw new TxError("The X post authorization could not be verified. Import the post again.", "reverted");
+}
+
+/** Bind a wallet only using a fresh, chain-bound proof from the official X sign-in flow. */
+export async function sendAuthorVerification(ctx: TxContext, value: AuthorVerification): Promise<Hash> {
+  const fallback = "The author wallet verification did not go through.";
+  try {
+    if (value.wallet.toLowerCase() !== account(ctx).toLowerCase() || value.chainId !== ctx.deployment.chainId
+      || value.feeVault.toLowerCase() !== ctx.deployment.feeVault.toLowerCase() || !validXId(value.authorXUserId) || !/^\d{1,20}$/.test(value.deadline)) {
+      throw new TxError("This X verification belongs to a different wallet or network. Connect X again.", "reverted");
+    }
+    const deadline = BigInt(value.deadline);
+    if (deadline < (await ctx.client.getBlock()).timestamp) throw new TxError("This X verification expired. Connect X again.", "reverted");
+    const valid = await verifyTypedData({ address: await trustedTweetSigner(ctx), domain: { name: "MemeFunFeeVault", version: "1", chainId: ctx.deployment.chainId, verifyingContract: ctx.deployment.feeVault },
+      types: AUTHOR_VERIFICATION_TYPES, primaryType: "AuthorVerification", message: { coin: value.coin, authorXUserId: BigInt(value.authorXUserId), wallet: value.wallet, deadline }, signature: value.signature });
+    if (!valid) throw new TxError("The X verification signature could not be verified. Connect X again.", "reverted");
+    const request = (await ctx.client.simulateContract({ account: ctx.wallet.account, address: ctx.deployment.feeVault, abi: feeVaultAbi, functionName: "verifyAuthor", args: [value.coin, value.wallet, deadline, value.signature] })).request as Request;
+    return (await submit(ctx, request, fallback)).hash;
+  } catch (error) { throw toTxError(error, fallback); }
+}
+
+/** Only the current configured treasury may withdraw; the vault fixes the payout wallet. */
+export async function sendTreasuryAuthorWithdrawal(ctx: TxContext, coin: Address, currency: Address): Promise<Hash> {
+  const fallback = "The treasury withdrawal did not go through. Refresh the balance before trying again.";
+  try {
+    const treasury = await ctx.client.readContract({ address: ctx.deployment.config, abi: memeFunConfigAbi, functionName: "treasury" });
+    if (treasury.toLowerCase() !== account(ctx).toLowerCase()) throw new TxError("Connect the current DustSwap treasury wallet to withdraw these rewards.", "reverted");
+    const request = (await ctx.client.simulateContract({ account: ctx.wallet.account, address: ctx.deployment.feeVault, abi: feeVaultAbi,
+      functionName: "reclaimExpiredAuthorFor", args: [coin, currency] })).request as Request;
+    return (await submit(ctx, request, fallback)).hash;
+  } catch (error) { throw toTxError(error, fallback); }
 }
 
 export async function sendLaunch(ctx: TxContext, l: LaunchRequest): Promise<LaunchResult> {
@@ -325,6 +466,30 @@ export async function sendLaunch(ctx: TxContext, l: LaunchRequest): Promise<Laun
 
     const salt = l.salt ?? toHex(crypto.getRandomValues(new Uint8Array(32)));
     const predicted = await ctx.client.readContract({ address: factory, abi: memeFunFactoryAbi, functionName: "predictCoin", args: [creator, salt] });
+    if (l.tweet) await validateTweetAttestation(ctx, l.tweet, salt, l.mode);
+    if (l.tweet || (l.pairs && l.pairs.length > 1)) {
+      const launchPairs = l.pairs?.length ? l.pairs : [{ quote: l.quote, quoteDecimals: l.quoteDecimals, firstBuy: l.firstBuy }];
+      const allocations = equalAllocations(launchPairs.length);
+      if (new Set(launchPairs.map((pair) => pair.quote.toLowerCase())).size !== launchPairs.length) throw new TxError("Every pool needs a different pair asset.", "reverted");
+      const pairs = await Promise.all(launchPairs.map(async (pair, i) => {
+        const price = await ctx.client.readContract({ address: config, abi: memeFunConfigAbi, functionName: "quotePriceUsdE8", args: [pair.quote] });
+        const order = BigInt(predicted) < BigInt(pair.quote);
+        const expectedStartTick = startTickExact({ coinIsCurrency0: order, quoteDecimals: pair.quoteDecimals, quoteUsdE8: price, openingFdvUsdE8 });
+        return { quote: pair.quote, firstBuyAmount: pair.firstBuy,
+          firstBuyMinCoins: firstBuyMinCoins(expectedStartTick, order, pair.quoteDecimals, pair.firstBuy, l.feeBps, l.slippageBps, allocations[i]),
+          expectedStartTick, maxTickDrift: MAX_TICK_DRIFT };
+      }));
+      for (const pair of pairs) if (pair.firstBuyAmount > 0n && pair.quote !== zeroAddress && await allowance(ctx, pair.quote, factory) < pair.firstBuyAmount) await approve(ctx, pair.quote, factory, pair.firstBuyAmount);
+      const primary = pairs[0]!;
+      const base = { name: l.name, symbol: l.symbol, contractURI: l.contractURI, ...primary,
+        mode: MODE_INDEX[l.mode], feeBps: l.feeBps, creatorKeepBps: l.mode === "creator" ? 0 : l.creatorKeepBps, salt, deadline: l.deadline };
+      const value = terms.creationFee + pairs.filter((pair) => pair.quote === zeroAddress).reduce((sum, pair) => sum + pair.firstBuyAmount, 0n);
+      request = l.tweet ? (await ctx.client.simulateContract({ account: ctx.wallet.account, address: factory, abi: memeFunFactoryAbi,
+        functionName: "launchTweetMulti", args: [base, pairs, { postId: BigInt(l.tweet.tweet.postId), authorXUserId: BigInt(l.tweet.tweet.authorXUserId), authorShareBps: l.tweet.tweet.authorShareBps }, BigInt(l.tweet.deadline), l.tweet.signature], value,
+      })).request as Request : (await ctx.client.simulateContract({ account: ctx.wallet.account, address: factory, abi: memeFunFactoryAbi,
+        functionName: "launchMulti", args: [base, pairs], value,
+      })).request as Request;
+    } else {
     const coinIsCurrency0 = BigInt(predicted) < BigInt(l.quote);
     const expectedStartTick = startTickExact({ coinIsCurrency0, quoteDecimals: l.quoteDecimals, quoteUsdE8, openingFdvUsdE8 });
     // The first buy pays the base fee; slippage only has to cover the start tick moving.
@@ -359,6 +524,7 @@ export async function sendLaunch(ctx: TxContext, l: LaunchRequest): Promise<Laun
       value: terms.creationFee + (l.quote === zeroAddress ? l.firstBuy : 0n),
     })
     ).request as Request;
+    }
   } catch (error) {
     throw toTxError(error, LAUNCH_FALLBACK);
   }
@@ -367,6 +533,7 @@ export async function sendLaunch(ctx: TxContext, l: LaunchRequest): Promise<Laun
   const launched = parseEventLogs({ abi: memeFunFactoryAbi, eventName: "Launched", logs: receipt.logs })[0];
   if (!launched) throw new TxError("The launch confirmed but the new coin could not be read. Check your profile in a moment.", "reverted", hash);
   return {
+    markets: parseEventLogs({ abi: memeFunFactoryAbi, eventName: "MarketLaunched", logs: receipt.logs }).filter((log) => log.args.coin.toLowerCase() === launched.args.coin.toLowerCase()).map((log) => ({ poolId: log.args.poolId, quote: log.args.quote, coinsBought: log.args.record.firstBuyCoins })),
     hash,
     coin: launched.args.coin,
     coinsBought: launched.args.record.firstBuyCoins,
@@ -378,7 +545,8 @@ export async function sendLaunch(ctx: TxContext, l: LaunchRequest): Promise<Laun
 /* --------------------------------------------------------------- claims */
 
 export interface ClaimRequest {
-  kind: "creator" | "holders" | "referral";
+  poolId?: Hex;
+  kind: "creator" | "holders" | "referral" | "author";
   coin: Address;
   /** The asset paid out. */
   currency: Address;
@@ -389,35 +557,66 @@ export interface ClaimRequest {
   proof?: Hex[];
 }
 
-const CLAIM_FALLBACK = "The claim did not go through. Nothing was paid out.";
+export async function sendCreatorAction(ctx: TxContext, coin: Address, action: "lowerFee" | "proposeCreator" | "acceptCreator", value?: Address | number): Promise<Hash> {
+  const base = { account: ctx.wallet.account, address: ctx.deployment.hook, abi: memeFunHookAbi } as const;
+  const fallback = "The creator change did not go through.";
+  try {
+    let request: Request;
+    if (action === "lowerFee") {
+      if (typeof value !== "number" || !Number.isInteger(value) || value < 0) throw new TxError("Enter a valid fee.", "reverted");
+      request = (await ctx.client.simulateContract({ ...base, functionName: "lowerFee", args: [coin, BigInt(value)] })).request as Request;
+    } else if (action === "proposeCreator") {
+      if (typeof value !== "string") throw new TxError("Enter a wallet address.", "reverted");
+      request = (await ctx.client.simulateContract({ ...base, functionName: "proposeCreator", args: [coin, value] })).request as Request;
+    } else request = (await ctx.client.simulateContract({ ...base, functionName: "acceptCreator", args: [coin] })).request as Request;
+    return (await submit(ctx, request, fallback)).hash;
+  } catch (error) { throw toTxError(error, fallback); }
+}
+
+const CLAIM_FALLBACK = "A claim did not go through. Earlier confirmed claims may already have paid out; refresh rewards before retrying.";
 
 /**
  * Claims everything given, in as few transactions as the contracts allow: one for all creator
  * earnings, one per referral asset, one for all holder rewards. Returns the last hash.
  */
-export async function sendClaims(ctx: TxContext, items: ClaimRequest[]): Promise<Hash> {
-  const to = account(ctx);
+export async function sendClaims(ctx: TxContext, items: ClaimRequest[], payoutTo?: Address): Promise<Hash> {
+  const to = payoutTo ?? account(ctx);
+  if (to === zeroAddress) throw new TxError("Choose a nonzero payout wallet.", "reverted");
   const { feeVault, holderRewardDistributor } = ctx.deployment;
   const requests: Array<() => Promise<Request>> = [];
 
-  const creatorCoins = [...new Set(items.filter((i) => i.kind === "creator").map((i) => i.coin))];
+  const creatorCoins = [...new Set(items.filter((i) => i.kind === "creator" && !i.poolId).map((i) => i.coin))];
   if (creatorCoins.length > 0) {
     requests.push(async () =>
       (await ctx.client.simulateContract({ account: ctx.wallet.account, address: feeVault, abi: feeVaultAbi, functionName: "claimCreatorMany", args: [creatorCoins, to] }))
         .request as Request,
     );
   }
+  const creatorPools = new Map(items.filter((i) => i.kind === "creator" && i.poolId).map((i) => [`${i.coin}:${i.currency}`, i]));
+  for (const item of creatorPools.values()) requests.push(async () =>
+    (await ctx.client.simulateContract({ account: ctx.wallet.account, address: feeVault, abi: feeVaultAbi, functionName: "claimCreatorFor", args: [item.coin, item.currency, to] })).request as Request);
+  const authorPools = new Map(items.filter((i) => i.kind === "author").map((i) => [`${i.coin.toLowerCase()}:${i.currency.toLowerCase()}`, i]));
+  for (const item of authorPools.values()) requests.push(async () =>
+    (await ctx.client.simulateContract({ account: ctx.wallet.account, address: feeVault, abi: feeVaultAbi, functionName: "claimAuthorFor", args: [item.coin, item.currency, account(ctx)] })).request as Request);
   for (const currency of new Set(items.filter((i) => i.kind === "referral").map((i) => i.currency))) {
     requests.push(async () =>
       (await ctx.client.simulateContract({ account: ctx.wallet.account, address: feeVault, abi: feeVaultAbi, functionName: "claimReferral", args: [currency, to] }))
         .request as Request,
     );
   }
-  const holders = items.filter((i) => i.kind === "holders");
+  const poolHolders = items.filter((i) => i.kind === "holders" && i.poolId);
+  if (poolHolders.length) {
+    const claims = poolHolders.map((item) => {
+      if (item.epoch === undefined || item.index === undefined || !item.proof) throw new TxError("These rewards are missing their proof.", "reverted");
+      return { epoch: BigInt(item.epoch), poolId: item.poolId!, index: item.index, account: account(ctx), amount: item.amount, proof: item.proof };
+    });
+    requests.push(async () => (await ctx.client.simulateContract({ account: ctx.wallet.account, address: holderRewardDistributor, abi: holderRewardDistributorAbi, functionName: "claimManyFor", args: [claims] })).request as Request);
+  }
+  const holders = items.filter((i) => i.kind === "holders" && !i.poolId);
   if (holders.length > 0) {
     const claims = holders.map((i) => {
       if (i.epoch === undefined || i.index === undefined || !i.proof) throw new TxError("These rewards are missing their proof. Refresh and try again.", "reverted");
-      return { epoch: BigInt(i.epoch), coin: i.coin, index: i.index, account: to, amount: i.amount, proof: i.proof };
+      return { epoch: BigInt(i.epoch), coin: i.coin, index: i.index, account: account(ctx), amount: i.amount, proof: i.proof };
     });
     requests.push(async () =>
       (
@@ -435,13 +634,14 @@ export async function sendClaims(ctx: TxContext, items: ClaimRequest[]): Promise
 
   let last: Hash | null = null;
   for (const build of requests) {
-    let request: Request;
     try {
-      request = await build();
+      const request = await build();
+      last = (await submit(ctx, request, CLAIM_FALLBACK)).hash;
     } catch (error) {
-      throw toTxError(error, CLAIM_FALLBACK);
+      const failed = toTxError(error, CLAIM_FALLBACK);
+      if (last) throw new TxError(`${failed.message} Earlier claims confirmed; refresh rewards before retrying.`, failed.kind, failed.hash ?? last);
+      throw failed;
     }
-    last = (await submit(ctx, request, CLAIM_FALLBACK)).hash;
   }
   return last as Hash;
 }

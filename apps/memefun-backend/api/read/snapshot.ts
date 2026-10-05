@@ -3,6 +3,7 @@ import { parseIpfsUri } from "../../lib/cid";
 import {
   type CoinMetadataView,
   type CoinRecord,
+  type MarketRecord,
   type CoinWindows,
   EMPTY_WINDOWS,
   type HolderStats,
@@ -27,6 +28,7 @@ export interface SnapshotState {
   byAddress: Map<string, Coin>;
   records: Map<string, CoinRecord>;
   quotes: Map<string, QuoteRecord>;
+  markets?: Map<string, MarketRecord>;
   banner: string;
 }
 
@@ -100,20 +102,30 @@ export class MarketSnapshot {
   private async build(): Promise<SnapshotState> {
     const { store, app } = this.deps;
     const clockSec = Math.floor((this.deps.clock?.() ?? Date.now()) / 1000);
-    const [quoteRows, coinRows, latest, moderation, banner] = await Promise.all([
+    const [quoteRows, coinRows, latest, moderation, banner, marketRows, tweetRows] = await Promise.all([
       store.quotes(),
       store.coins(),
       store.latestTimestamp(),
       app.moderation(),
       app.setting<{ text: string }>("banner"),
+      store.markets?.() ?? Promise.resolve([]),
+      store.tweetAttributions?.() ?? Promise.resolve(new Map()),
     ]);
+    const tweetSources = app.tweetSources ? await app.tweetSources([...new Set([...tweetRows.values()].map((tweet) => tweet.postId))]) : new Map();
     // A local chain that was fast-forwarded runs ahead of the wall clock; the market's "now" is
     // whichever is later, so windows and ages stay meaningful.
     const nowSec = Math.max(clockSec, latest);
     const quotes = new Map(quoteRows.map((q) => [q.address, q]));
+    const marketsByCoin = new Map<string, MarketRecord[]>();
+    for (const m of marketRows) {
+      const list = marketsByCoin.get(m.address) ?? [];
+      list.push(m);
+      marketsByCoin.set(m.address, list);
+    }
 
     const active = coinRows.filter((c) => c.lastTradeAt >= nowSec - DAY - ACTIVE_MARGIN).map((c) => c.address);
     const [windowRows, sparkRows] = await Promise.all([store.windows(active, nowSec), store.sparklineCloses(active, nowSec - DAY)]);
+    const marketWindows = await store.marketWindows?.(marketRows.map((m) => m.poolId), nowSec) ?? new Map();
 
     // Holder stats only where balances moved since the last refresh, or the creator changed.
     const changed = await store.coinsWithTransfersSince(this.transferWatermark);
@@ -133,6 +145,7 @@ export class MarketSnapshot {
 
     const coins: Coin[] = [];
     const records = new Map<string, CoinRecord>();
+    const markets = new Map<string, MarketRecord>();
     for (const c of coinRows) {
       const q = quotes.get(c.quote);
       if (!q) continue;
@@ -160,8 +173,22 @@ export class MarketSnapshot {
         : EMPTY_WINDOWS;
       const holders = this.holderCache.get(c.address) ?? { top10: 0n, creatorBalance: 0n };
       const flags = moderation.get(c.address);
-      coins.push(
-        deriveCoin({
+      const pairs = (marketsByCoin.get(c.address) ?? []).map((m) => {
+        const merged = { ...m, creator: c.creator, pendingCreator: c.pendingCreator, burned: c.burned, holders: c.holders,
+          devSold: c.devSold, snipers: c.snipers, sameBlockBuys: c.sameBlockBuys };
+        markets.set(m.poolId, merged);
+        const mq = quotes.get(m.quote);
+        if (!mq) return null;
+        const mw = marketWindows.get(m.poolId);
+        const opening = priceUsdE18(getSqrtPriceAtTick(m.startTick), { quoteIsCurrency0: m.quoteIsCurrency0, quoteDecimals: mq.decimals }, m.launchQuoteUsdE8);
+        return { coin: merged, quote: mq, windows: mw ? {
+          volume24hUsdE8: mw.volume24hUsdE8, buys24h: mw.buys24h, sells24h: mw.trades24h - mw.buys24h,
+          volume1hUsdE8: mw.volume1hUsdE8, trades15m: mw.trades15m,
+          priceAgoUsdE18: { m5: mw.priceAgo.m5 ?? opening, h1: mw.priceAgo.h1 ?? opening, h24: mw.priceAgo.h24 ?? opening }, sparkline: [],
+        } : EMPTY_WINDOWS };
+      }).filter((m) => m !== null);
+      pairs.sort((a, b) => Number(b.coin.poolId === c.poolId) - Number(a.coin.poolId === c.poolId));
+      const dto = deriveCoin({
           coin: c,
           quote: q,
           windows,
@@ -169,8 +196,17 @@ export class MarketSnapshot {
           metadata: this.metadataCache.get(c.contractUri) ?? null,
           flags: { hidden: flags?.hidden ?? false, featured: flags?.featured ?? false },
           nowSec,
-        }),
-      );
+          markets: pairs,
+        });
+      const tweet = tweetRows.get(c.address);
+      if (tweet) {
+        const source = tweetSources.get(tweet.postId);
+        dto.tweet = { ...tweet, treasuryUnlocked: nowSec * 1_000 >= tweet.treasuryUnlockAt,
+          ...(source?.author.id === tweet.authorXUserId ? { source: {
+          postId: source.postId, url: source.url, text: source.text, author: source.author,
+        } } : {}) };
+      }
+      coins.push(dto);
     }
     coins.sort((a, b) => b.createdAt - a.createdAt);
     return {
@@ -180,6 +216,7 @@ export class MarketSnapshot {
       byAddress: new Map(coins.map((coin) => [coin.address.toLowerCase(), coin])),
       records,
       quotes,
+      markets,
       banner: banner?.text ?? "",
     };
   }

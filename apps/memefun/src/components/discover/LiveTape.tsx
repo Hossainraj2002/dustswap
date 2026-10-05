@@ -5,6 +5,7 @@ import { formatCoinAmount, formatQuoteAmount, shortAddress } from "@/core/format
 import { milestoneLabel } from "@/core/milestones";
 import { useActivity, useCoins } from "@/lib/market/hooks";
 import type { ActivityItem, Coin } from "@/lib/market/types";
+import { tradeQuoteSymbol } from "@/lib/market/markets";
 import { CoinAvatar } from "@/components/ui/CoinAvatar";
 import { Marquee } from "@/components/ui/Marquee";
 import { Skeleton } from "@/components/ui/display";
@@ -26,7 +27,7 @@ function describe(item: ActivityItem, coin: Coin): { tone: string; text: string 
       if (!trade) return { tone: "buy", text: "" };
       return {
         tone: trade.side,
-        text: `${shortAddress(trade.trader)} ${trade.side === "buy" ? "bought" : "sold"} ${formatQuoteAmount(trade.quoteAmount, coin.quote.symbol)}`,
+        text: `${shortAddress(trade.trader)} ${trade.side === "buy" ? "bought" : "sold"} ${formatQuoteAmount(trade.quoteAmount, tradeQuoteSymbol(coin, trade))}`,
       };
     }
     case "launch":
@@ -34,9 +35,9 @@ function describe(item: ActivityItem, coin: Coin): { tone: string; text: string 
     case "burn":
       return { tone: "burn", text: `burned ${formatCoinAmount(item.amountCoins ?? 0)}` };
     case "payout":
-      return { tone: "payout", text: `paid holders ${formatQuoteAmount(item.amountQuote ?? 0, coin.quote.symbol)}` };
+      return { tone: "payout", text: `paid holders ${formatQuoteAmount(item.amountQuote ?? 0, tradeQuoteSymbol(coin, item))}` };
     case "floor":
-      return { tone: "floor", text: `floor at ${formatQuoteAmount(item.amountQuote ?? 0, coin.quote.symbol)}` };
+      return { tone: "floor", text: `floor at ${formatQuoteAmount(item.amountQuote ?? 0, tradeQuoteSymbol(coin, item))}` };
     case "milestone":
       return { tone: "milestone", text: `passed ${milestoneLabel(item.milestone ?? 0)}` };
   }

@@ -19,13 +19,14 @@ import {LaunchMath} from "../libraries/LaunchMath.sol";
 import {Mode} from "../types/MemeFunTypes.sol";
 
 /// @title FloorVault
-/// @notice Destination module for floor-mode coins: their fees become permanent buy-side liquidity
-///         under the price, so sellers always meet a growing bid.
+/// @notice Destination module for floor-mode coins: each market's quote fees become permanent
+///         buy-side liquidity below that market's price. Each band supports its own market;
+///         it does not promise to buy the coin's entire circulating supply.
 ///
 /// @dev Review notes:
 ///
-///      1. PERMANENT. Each `addFloor` places the coin's accrued quote as a single-sided position the
-///         vault owns forever. There is no code path to remove it, and the hook rejects removals
+///      1. PERMANENT. Each `addFloorFor` places that market's accrued quote as a single-sided
+///         position the vault owns forever. No code path can remove it, and the hook rejects removals
 ///         from everyone regardless.
 ///
 ///      2. QUOTE-ONLY, BELOW THE PRICE. The band runs from 50% to 90% under the reference price, so
@@ -36,28 +37,42 @@ import {Mode} from "../types/MemeFunTypes.sol";
 ///         the block-start price the hook records, and adds are spaced an hour apart, so raising
 ///         the price within a block does not raise the band.
 ///
-///      4. THE FLOOR RATCHETS UP. As the coin grows, new deposits land higher; `floorNearTick` keeps
-///         the edge of the highest band so the app can show the price the floor supports.
+///      4. THE FLOOR RATCHETS UP PER MARKET. As its price grows, new deposits land higher;
+///         `floorNearTickFor` keeps the edge of its highest band. Balances, bands and cooldowns
+///         stay separate per pool even when several markets trade the same coin.
 contract FloorVault is IUnlockCallback, ReentrancyGuardTransient {
     using StateLibrary for IPoolManager;
 
     uint256 public constant COOLDOWN = 1 hours;
     /// @notice Ticks for a 2x and a 10x price move (ln 2 and ln 10 over ln 1.0001, rounded up).
-    int24 public constant NEAR_OFFSET = 6_932;
+    int24 public constant NEAR_OFFSET = 6932;
     int24 public constant FAR_OFFSET = 23_027;
 
     IPoolManager public immutable poolManager;
     IMemeFunHook public immutable hook;
     IFeeVault public immutable feeVault;
 
-    mapping(address coin => uint256) public balanceOf;
-    mapping(address coin => uint256) public lastAddAt;
-    mapping(address coin => uint256) public totalFloored;
-    /// @notice Edge of the highest floor band (the coin price the floor supports), 0 before the first.
-    mapping(address coin => int24) public floorNearTick;
-    mapping(address coin => bool) public hasFloor;
+    struct MarketBalance {
+        uint256 balance;
+        uint256 lastAdd;
+        uint256 floored;
+        int24 nearTick;
+        bool hasFloor;
+    }
+    mapping(PoolId id => MarketBalance) private _markets;
 
-    event FloorAdded(address indexed coin, int24 tickLower, int24 tickUpper, uint128 liquidity, uint256 quoteUsed);
+    event FloorAdded(
+        address indexed coin, int24 tickLower, int24 tickUpper, uint128 liquidity, uint256 quoteUsed
+    );
+    event MarketFloorAdded(
+        address indexed coin,
+        address indexed quote,
+        PoolId indexed poolId,
+        int24 tickLower,
+        int24 tickUpper,
+        uint128 liquidity,
+        uint256 quoteUsed
+    );
 
     error NotFloorCoin(address coin);
     error CoolingDown(uint256 nextAt);
@@ -71,22 +86,88 @@ contract FloorVault is IUnlockCallback, ReentrancyGuardTransient {
         feeVault = feeVault_;
     }
 
+    function balanceOf(address coin) external view returns (uint256) {
+        return _markets[_primary(coin)].balance;
+    }
+
+    function lastAddAt(address coin) external view returns (uint256) {
+        return _markets[_primary(coin)].lastAdd;
+    }
+
+    function totalFloored(address coin) external view returns (uint256) {
+        return _markets[_primary(coin)].floored;
+    }
+
+    function floorNearTick(address coin) external view returns (int24) {
+        return _markets[_primary(coin)].nearTick;
+    }
+
+    function hasFloor(address coin) external view returns (bool) {
+        return _markets[_primary(coin)].hasFloor;
+    }
+
+    function balanceOfFor(address coin, address quote) external view returns (uint256) {
+        return _markets[hook.poolIdFor(coin, quote)].balance;
+    }
+
+    function lastAddAtFor(address coin, address quote) external view returns (uint256) {
+        return _markets[hook.poolIdFor(coin, quote)].lastAdd;
+    }
+
+    function totalFlooredFor(address coin, address quote) external view returns (uint256) {
+        return _markets[hook.poolIdFor(coin, quote)].floored;
+    }
+
+    function floorNearTickFor(address coin, address quote) external view returns (int24) {
+        return _markets[hook.poolIdFor(coin, quote)].nearTick;
+    }
+
+    function hasFloorFor(address coin, address quote) external view returns (bool) {
+        return _markets[hook.poolIdFor(coin, quote)].hasFloor;
+    }
+
+    function _primary(address coin) private view returns (PoolId) {
+        return hook.creatorOf(coin) == address(0) ? PoolId.wrap(bytes32(0)) : hook.poolIdOf(coin);
+    }
+
     /// @notice Places the coin's accrued fees as floor liquidity 50-90% under the price.
     function addFloor(address coin)
         external
         nonReentrant
         returns (int24 tickLower, int24 tickUpper, uint128 liquidity, uint256 used)
     {
-        IMemeFunHook.PoolConfig memory c = hook.configOf(coin);
-        if (c.mode != Mode.FLOOR || c.module != address(this)) revert NotFloorCoin(coin);
-        uint256 nextAt = lastAddAt[coin] + COOLDOWN;
-        if (lastAddAt[coin] != 0 && block.timestamp < nextAt) revert CoolingDown(nextAt);
+        return _addFloor(coin, hook.poolIdOf(coin));
+    }
 
-        uint256 amount = balanceOf[coin] + feeVault.pullDestination(coin);
+    function addFloorFor(
+        address coin,
+        address quote
+    )
+        external
+        nonReentrant
+        returns (int24 tickLower, int24 tickUpper, uint128 liquidity, uint256 used)
+    {
+        return _addFloor(coin, hook.poolIdFor(coin, quote));
+    }
+
+    function _addFloor(
+        address coin,
+        PoolId id
+    )
+        private
+        returns (int24 tickLower, int24 tickUpper, uint128 liquidity, uint256 used)
+    {
+        IMemeFunHook.PoolConfig memory c = hook.configOfPool(id);
+        if (c.mode != Mode.FLOOR || c.module != address(this)) revert NotFloorCoin(coin);
+        MarketBalance storage book = _markets[id];
+        uint256 nextAt = book.lastAdd + COOLDOWN;
+        if (book.lastAdd != 0 && block.timestamp < nextAt) revert CoolingDown(nextAt);
+
+        address quoteAddress = Currency.unwrap(hook.quoteCurrencyOfPool(id));
+        uint256 amount = book.balance + feeVault.pullDestinationFor(coin, quoteAddress);
         if (amount == 0) revert NothingToAdd();
 
-        PoolKey memory key = hook.poolKeyOf(coin);
-        PoolId id = key.toId();
+        PoolKey memory key = hook.poolKeyOfPool(id);
         (tickLower, tickUpper) = _band(id, c.quoteIsCurrency0);
 
         uint160 sqrtLower = TickMath.getSqrtPriceAtTick(tickLower);
@@ -97,26 +178,39 @@ contract FloorVault is IUnlockCallback, ReentrancyGuardTransient {
         if (liquidity == 0) revert NothingToAdd();
 
         // Book-keeping first: the cooldown starts and the pot is spoken for before the add.
-        lastAddAt[coin] = block.timestamp;
-        balanceOf[coin] = 0;
-        used = abi.decode(poolManager.unlock(abi.encode(key, c.quoteIsCurrency0, tickLower, tickUpper, liquidity)), (uint256));
+        book.lastAdd = block.timestamp;
+        book.balance = 0;
+        used = abi.decode(
+            poolManager.unlock(
+                abi.encode(key, c.quoteIsCurrency0, tickLower, tickUpper, liquidity)
+            ),
+            (uint256)
+        );
 
-        balanceOf[coin] = amount - used;
-        totalFloored[coin] += used;
+        book.balance = amount - used;
+        book.floored += used;
         int24 near = c.quoteIsCurrency0 ? tickLower : tickUpper;
         // The coin is pricier at lower ticks when the quote is currency0, at higher ticks otherwise.
-        if (!hasFloor[coin] || (c.quoteIsCurrency0 ? near < floorNearTick[coin] : near > floorNearTick[coin])) {
-            floorNearTick[coin] = near;
-            hasFloor[coin] = true;
+        if (!book.hasFloor || (c.quoteIsCurrency0 ? near < book.nearTick : near > book.nearTick)) {
+            book.nearTick = near;
+            book.hasFloor = true;
         }
-        emit FloorAdded(coin, tickLower, tickUpper, liquidity, used);
+        emit MarketFloorAdded(coin, quoteAddress, id, tickLower, tickUpper, liquidity, used);
+        if (PoolId.unwrap(id) == PoolId.unwrap(hook.poolIdOf(coin))) {
+            emit FloorAdded(coin, tickLower, tickUpper, liquidity, used);
+        }
     }
 
     /// @dev Only reachable through `addFloor`.
     function unlockCallback(bytes calldata data) external returns (bytes memory) {
         if (msg.sender != address(poolManager)) revert NotPoolManager();
-        (PoolKey memory key, bool quoteIsCurrency0, int24 tickLower, int24 tickUpper, uint128 liquidity) =
-            abi.decode(data, (PoolKey, bool, int24, int24, uint128));
+        (
+            PoolKey memory key,
+            bool quoteIsCurrency0,
+            int24 tickLower,
+            int24 tickUpper,
+            uint128 liquidity
+        ) = abi.decode(data, (PoolKey, bool, int24, int24, uint128));
         (BalanceDelta delta,) = poolManager.modifyLiquidity(
             key,
             ModifyLiquidityParams({
@@ -134,7 +228,14 @@ contract FloorVault is IUnlockCallback, ReentrancyGuardTransient {
     }
 
     /// @dev Band 2x-10x cheaper than the reference price, snapped inward to the tick spacing.
-    function _band(PoolId id, bool quoteIsCurrency0) private view returns (int24 tickLower, int24 tickUpper) {
+    function _band(
+        PoolId id,
+        bool quoteIsCurrency0
+    )
+        private
+        view
+        returns (int24 tickLower, int24 tickUpper)
+    {
         (uint160 current,,,) = poolManager.getSlot0(id);
         uint160 start = hook.blockStartSqrtPriceX96(id);
         int24 spacing = LaunchMath.TICK_SPACING;

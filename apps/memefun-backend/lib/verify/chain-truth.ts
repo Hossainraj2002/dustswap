@@ -11,6 +11,8 @@ import {
 } from "viem";
 
 import type { Deployment } from "../deployment";
+import { aggregatePoolId } from "../market/derive";
+import { tweetVaultReadAbi } from "../x/attestation";
 import { COIN_SUPPLY, DEAD_ADDRESS } from "../../shared/core/constants";
 import { buybackBurnVaultAbi, feeVaultAbi, floorVaultAbi, holderRewardDistributorAbi, memeFunHookAbi } from "../../shared/abis";
 
@@ -52,6 +54,7 @@ interface CoinRow {
   burned: string;
   trades: number;
   volume_quote: string;
+  volume_usd_e_8: string;
   price_usd_e_18: string;
   holders: number;
   creator_earned: string;
@@ -84,15 +87,26 @@ export async function verifyIndexAgainstChain(input: {
     expect(String(indexed) === String(chain), `${label}: indexed ${indexed}, chain ${chain}`);
 
   const coins = await q<CoinRow>(`SELECT * FROM $S.coin WHERE launched = true ORDER BY address`);
+  const markets = await q<CoinRow & { supply_raw: string }>(`SELECT * FROM $S.market WHERE launched = true ORDER BY address, pool_id`);
+  const authors = await q<{ coin: string; pool_id: string; quote: string; earned: string; claimed: string; reclaimed: string }>(`SELECT * FROM $S.author_ledger`);
+  const tweets = await q<{ coin: string; post_id: string; author_x_user_id: string; author_share_bps: number; verify_by: number; verified_wallet: string | null }>(`SELECT * FROM $S.tweet_attribution`);
+  for (const t of tweets) {
+    const [postId, authorId, share, verifyBy, wallet] = await client.readContract({ address: d.feeVault, abi: tweetVaultReadAbi, functionName: "tweetAttribution", args: [getAddress(t.coin)] });
+    eq(`tweet ${t.coin.slice(0, 10)} postId`, t.post_id, postId);
+    eq(`tweet ${t.coin.slice(0, 10)} authorId`, t.author_x_user_id, authorId);
+    eq(`tweet ${t.coin.slice(0, 10)} share`, t.author_share_bps, share);
+    eq(`tweet ${t.coin.slice(0, 10)} treasuryUnlockAt (legacy verifyBy)`, t.verify_by, verifyBy);
+    eq(`tweet ${t.coin.slice(0, 10)} wallet`, t.verified_wallet ?? zeroAddress, wallet.toLowerCase());
+  }
+  for (const a of authors) {
+    const pending = BigInt(a.earned) - BigInt(a.claimed) - BigInt(a.reclaimed);
+    expect(pending >= 0n, `author ${a.pool_id} negative liability`);
+    eq(`author ${a.pool_id} pending`, pending, await client.readContract({ address: d.feeVault, abi: tweetVaultReadAbi,
+      functionName: "authorPendingFor", args: [getAddress(a.coin), getAddress(a.quote)] }));
+  }
   for (const c of coins) {
     const coin = getAddress(c.address);
     const tag = `${coin.slice(0, 10)}`;
-
-    // Pool price, straight from PoolManager storage (StateLibrary.getSlot0).
-    const slot = keccak256(encodeAbiParameters([{ type: "bytes32" }, { type: "uint256" }], [c.pool_id, POOLS_SLOT]));
-    const slot0 = await client.readContract({ address: d.poolManager, abi: extsloadAbi, functionName: "extsload", args: [slot] });
-    const sqrtPrice = hexToBigInt(slot0) & ((1n << 160n) - 1n);
-    eq(`${tag} sqrtPriceX96`, c.sqrt_price_x_96, sqrtPrice);
 
     // Balances: every indexed balance equals balanceOf, and all of them sum to the supply.
     const balances = await q<{ account: string; amount: string; excluded: boolean }>(
@@ -111,47 +125,62 @@ export async function verifyIndexAgainstChain(input: {
     eq(`${tag} holders`, c.holders, holders);
     eq(`${tag} burned`, c.burned, await client.readContract({ address: coin, abi: erc20Abi, functionName: "balanceOf", args: [DEAD_ADDRESS] }));
     eq(`${tag} pool coins`, c.pool_coins, await client.readContract({ address: coin, abi: erc20Abi, functionName: "balanceOf", args: [d.poolManager] }));
+    const pairs = markets.filter((m) => m.address === c.address);
+    eq(`${tag} market allocations`, pairs.reduce((sum, m) => sum + BigInt(m.supply_raw), 0n), COIN_SUPPLY);
+    eq(`${tag} aggregate pool coins`, pairs.reduce((sum, m) => sum + BigInt(m.pool_coins), 0n), c.pool_coins);
 
     // Terms that can change after launch.
     const config = await client.readContract({ address: d.hook, abi: memeFunHookAbi, functionName: "configOf", args: [coin] });
     eq(`${tag} feeBps`, c.fee_bps, config.feeBps);
     eq(`${tag} creator`, c.creator, (await client.readContract({ address: d.hook, abi: memeFunHookAbi, functionName: "creatorOf", args: [coin] })).toLowerCase());
 
-    // FeeVault ledgers, derived from Trade events by the same split the vault applies.
-    eq(
-      `${tag} creator pending`,
-      BigInt(c.creator_earned) - BigInt(c.creator_claimed),
-      await client.readContract({ address: d.feeVault, abi: feeVaultAbi, functionName: "creatorPending", args: [coin] }),
-    );
-    eq(
-      `${tag} destination pending`,
-      BigInt(c.destination_earned) - BigInt(c.destination_pulled),
-      await client.readContract({ address: d.feeVault, abi: feeVaultAbi, functionName: "destinationPending", args: [coin] }),
-    );
-
-    if (c.mode === 1) {
-      eq(`${tag} buyback spent`, c.buyback_spent, await client.readContract({ address: d.buybackBurnVault, abi: buybackBurnVaultAbi, functionName: "totalSpent", args: [coin] }));
-      eq(`${tag} buyback burned`, c.buyback_burned, await client.readContract({ address: d.buybackBurnVault, abi: buybackBurnVaultAbi, functionName: "totalBurned", args: [coin] }));
-    }
-    if (c.mode === 3) {
-      eq(`${tag} floor quote`, c.floor_quote, await client.readContract({ address: d.floorVault, abi: floorVaultAbi, functionName: "totalFloored", args: [coin] }));
-      const hasFloor = await client.readContract({ address: d.floorVault, abi: floorVaultAbi, functionName: "hasFloor", args: [coin] });
-      const nearTick = hasFloor ? await client.readContract({ address: d.floorVault, abi: floorVaultAbi, functionName: "floorNearTick", args: [coin] }) : null;
-      eq(`${tag} floor near tick`, c.floor_near_tick, nearTick);
-    }
-
     // Candles: every interval accounts for every trade, and the latest close is the coin price.
     const candles = await q<{ interval: number; trades: string; volume: string; last_close: string }>(
-      `SELECT interval, SUM(trades)::text AS trades, SUM(volume_quote)::text AS volume,
+      `SELECT interval, SUM(trades)::text AS trades, SUM(volume_usd_e_8)::text AS volume,
               (ARRAY_AGG(close_usd_e_18 ORDER BY bucket DESC))[1]::text AS last_close
-         FROM $S.candle WHERE coin = $1 GROUP BY interval ORDER BY interval`,
-      [c.address],
+         FROM $S.candle WHERE coin = $1 AND pool_id = $2 GROUP BY interval ORDER BY interval`,
+      [c.address, aggregatePoolId(c.address)],
     );
     expect(candles.length === (c.trades > 0 ? 6 : 0), `${tag} candle intervals: ${candles.length}`);
     for (const candle of candles) {
       eq(`${tag} candles(${candle.interval}) trades`, candle.trades, c.trades);
-      eq(`${tag} candles(${candle.interval}) volume`, candle.volume, c.volume_quote);
+      eq(`${tag} candles(${candle.interval}) volume`, candle.volume, c.volume_usd_e_8);
       eq(`${tag} candles(${candle.interval}) close`, candle.last_close, c.price_usd_e_18);
+    }
+  }
+
+  for (const m of markets) {
+    const coin = getAddress(m.address);
+    const quote = getAddress(m.quote);
+    const tag = `${coin.slice(0, 10)}/${quote.slice(0, 8)}`;
+    const slot = keccak256(encodeAbiParameters([{ type: "bytes32" }, { type: "uint256" }], [m.pool_id, POOLS_SLOT]));
+    const slot0 = await client.readContract({ address: d.poolManager, abi: extsloadAbi, functionName: "extsload", args: [slot] });
+    eq(`${tag} sqrtPriceX96`, m.sqrt_price_x_96, hexToBigInt(slot0) & ((1n << 160n) - 1n));
+    const config = await client.readContract({ address: d.hook, abi: memeFunHookAbi, functionName: "configFor", args: [coin, quote] });
+    eq(`${tag} feeBps`, m.fee_bps, config.feeBps);
+    eq(`${tag} creator pending`, BigInt(m.creator_earned) - BigInt(m.creator_claimed),
+      await client.readContract({ address: d.feeVault, abi: feeVaultAbi, functionName: "creatorPendingFor", args: [coin, quote] }));
+    eq(`${tag} destination pending`, BigInt(m.destination_earned) - BigInt(m.destination_pulled),
+      await client.readContract({ address: d.feeVault, abi: feeVaultAbi, functionName: "destinationPendingFor", args: [coin, quote] }));
+    if (m.mode === 1) {
+      eq(`${tag} buyback spent`, m.buyback_spent, await client.readContract({ address: d.buybackBurnVault, abi: buybackBurnVaultAbi, functionName: "totalSpentFor", args: [coin, quote] }));
+      eq(`${tag} buyback burned`, m.buyback_burned, await client.readContract({ address: d.buybackBurnVault, abi: buybackBurnVaultAbi, functionName: "totalBurnedFor", args: [coin, quote] }));
+    }
+    if (m.mode === 3) {
+      eq(`${tag} floor quote`, m.floor_quote, await client.readContract({ address: d.floorVault, abi: floorVaultAbi, functionName: "totalFlooredFor", args: [coin, quote] }));
+      const hasFloor = await client.readContract({ address: d.floorVault, abi: floorVaultAbi, functionName: "hasFloorFor", args: [coin, quote] });
+      const near = hasFloor ? await client.readContract({ address: d.floorVault, abi: floorVaultAbi, functionName: "floorNearTickFor", args: [coin, quote] }) : null;
+      eq(`${tag} floor near tick`, m.floor_near_tick, near);
+    }
+    const candles = await q<{ interval: number; trades: string; volume: string; last_close: string }>(
+      `SELECT interval, SUM(trades)::text AS trades, SUM(volume_quote)::text AS volume,
+        (ARRAY_AGG(close_usd_e_18 ORDER BY bucket DESC))[1]::text AS last_close
+       FROM $S.candle WHERE pool_id = $1 GROUP BY interval`, [m.pool_id]);
+    expect(candles.length === (m.trades > 0 ? 6 : 0), `${tag} candle intervals`);
+    for (const candle of candles) {
+      eq(`${tag} candles(${candle.interval}) trades`, candle.trades, m.trades);
+      eq(`${tag} candles(${candle.interval}) volume`, candle.volume, m.volume_quote);
+      eq(`${tag} candles(${candle.interval}) close`, candle.last_close, m.price_usd_e_18);
     }
   }
 
@@ -175,7 +204,7 @@ export async function verifyIndexAgainstChain(input: {
   // Conservation per pair asset: what the PoolManager holds equals the indexed pool quote of every
   // coin on that asset plus every ERC-6909 claim on it (fee ledgers and module balances).
   const perQuote = await q<{ quote: string; pool_quote: string }>(
-    `SELECT quote, SUM(pool_quote)::text AS pool_quote FROM $S.coin WHERE launched = true GROUP BY quote`,
+    `SELECT quote, SUM(pool_quote)::text AS pool_quote FROM $S.market WHERE launched = true GROUP BY quote`,
   );
   const claimHolders = [d.feeVault, d.buybackBurnVault, d.floorVault, d.holderRewardDistributor];
   for (const row of perQuote) {
@@ -186,7 +215,17 @@ export async function verifyIndexAgainstChain(input: {
         : await client.readContract({ address: currency, abi: erc20Abi, functionName: "balanceOf", args: [d.poolManager] });
     let claims = 0n;
     for (const holder of claimHolders) {
-      claims += await client.readContract({ address: d.poolManager, abi: erc6909BalanceAbi, functionName: "balanceOf", args: [holder as Address, BigInt(currency)] });
+      const heldClaims = await client.readContract({ address: d.poolManager, abi: erc6909BalanceAbi, functionName: "balanceOf", args: [holder as Address, BigInt(currency)] });
+      claims += heldClaims;
+      if (holder === d.feeVault) {
+        const rawPending = (earned: string, claimed: string) => BigInt(earned) - BigInt(claimed);
+        const vaultLiability = markets.filter(m => m.quote === row.quote).reduce((sum, m) => sum
+          + rawPending(m.creator_earned, m.creator_claimed) + rawPending(m.destination_earned, m.destination_pulled), 0n)
+          + platform.filter(p => p.currency === row.quote).reduce((sum, p) => sum + rawPending(p.earned, p.claimed), 0n)
+          + referrals.filter(r => r.currency === row.quote).reduce((sum, r) => sum + rawPending(r.earned, r.claimed), 0n)
+          + authors.filter(a => a.quote === row.quote).reduce((sum, a) => sum + BigInt(a.earned) - BigInt(a.claimed) - BigInt(a.reclaimed), 0n);
+        eq(`vault liability ${row.quote.slice(0, 8)} (includes author reserves)`, vaultLiability, heldClaims);
+      }
     }
     eq(`conservation ${row.quote.slice(0, 8)} (pool quote + claims = PoolManager balance)`, BigInt(row.pool_quote) + claims, held);
   }

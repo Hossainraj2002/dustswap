@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { ChevronLeft, Share, Star } from "lucide-react";
+import { launchFeeBps } from "@/core/antiSnipe";
 import { formatCompact, formatUsd, shortAddress } from "@/core/format";
 import { cn } from "@/lib/cn";
 import { useLocalStorageState, useNow } from "@/lib/hooks";
@@ -23,6 +24,9 @@ export function useWatchlist() {
 
 export function CoinHeader({ coin, onShare }: { coin: Coin; onShare: () => void }) {
   const now = useNow();
+  const feeBps = now > 0
+    ? launchFeeBps(coin.terms.feeBps, { startBps: coin.terms.snipeStartBps, durationSec: coin.terms.snipeDurationSec }, (now - coin.createdAt) / 1000)
+    : coin.terms.feeBps;
   const [watchlist, setWatchlist] = useWatchlist();
   const watched = watchlist.includes(coin.address);
   const sentinel = useRef<HTMLDivElement>(null);
@@ -76,7 +80,7 @@ export function CoinHeader({ coin, onShare }: { coin: Coin; onShare: () => void 
             <div className="mt-1 flex flex-wrap items-center gap-1.5">
               <span className="text-subhead font-semibold text-label-2">${coin.symbol}</span>
               {inProtection(coin, now) ? <ProtectionBadge /> : null}
-              <ModeBadge mode={coin.terms.mode} compact />
+              <ModeBadge mode={coin.terms.mode} compact feeBps={feeBps} />
               <PairBadge coin={coin} />
             </div>
             <div className="mt-1 flex flex-wrap items-center gap-1 text-footnote text-label-2">

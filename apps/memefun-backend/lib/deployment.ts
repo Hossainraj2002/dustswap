@@ -23,6 +23,7 @@ export interface Deployment {
   treasury: Address;
   priceKeeper: Address;
   rewardsPublisher: Address;
+  tweetAttestor?: Address;
   /** Local chain and testnets only: the test stock and the faucet that mints it. */
   stock?: Address;
   stockFaucet?: Address;
@@ -51,6 +52,7 @@ const schema = z.object({
   treasury: address,
   priceKeeper: address,
   rewardsPublisher: address,
+  tweetAttestor: address.optional(),
   stock: address.optional(),
   stockFaucet: address.optional(),
 });

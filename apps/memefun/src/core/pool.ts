@@ -1,8 +1,8 @@
 /**
- * The memefun launch pool: the coin's whole fixed supply as ONE single-sided,
- * permanently locked Uniswap v4 position starting at the opening market cap.
+ * A memefun launch pool: its allocated slice of the fixed supply in a single-sided,
+ * permanently locked Uniswap v4 position starting at the global opening token price.
  * Inside that range the price follows a constant-product curve whose virtual
- * quote reserve equals the opening market cap, so it behaves like a bonding
+ * quote reserve equals its allocated share of the opening FDV, so it behaves like a bonding
  * curve while trading on Uniswap from the first block.
  */
 import { BPS, COIN_DECIMALS, COIN_SUPPLY, COIN_SUPPLY_HUMAN, TICK_SPACING } from "./constants";
@@ -32,6 +32,8 @@ export interface LaunchPoolInput {
   openingFdvUsd: number;
   coinDecimals?: number;
   supply?: bigint;
+  /** This pool's slice of the total token supply. Does not change the opening price. */
+  allocationSupply?: bigint;
   tickSpacing?: number;
 }
 
@@ -173,7 +175,7 @@ export const MAX_LIQUIDITY_PER_TICK = ((1n << 128n) - 1n) / 8874n;
 
 /** Builds the launch position exactly as the factory will deposit it. */
 export function createLaunchPool(input: LaunchPoolInput): LaunchPool {
-  return launchPoolAt(startTickForFdv(input), input.coinIsCurrency0, input.quoteDecimals, input);
+  return launchPoolAt(startTickForFdv(input), input.coinIsCurrency0, input.quoteDecimals, { ...input, supply: input.allocationSupply ?? input.supply });
 }
 
 /**

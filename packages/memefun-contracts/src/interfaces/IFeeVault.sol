@@ -5,6 +5,15 @@ import {Currency} from "@uniswap/v4-core/src/types/Currency.sol";
 
 /// @notice The hook-facing side of FeeVault.
 interface IFeeVault {
+    /// @notice Factory-only immutable attribution, registered before any launch first buy.
+    function registerTweetAttribution(
+        address coin,
+        uint256 postId,
+        uint256 authorXUserId,
+        uint16 authorShareBps
+    )
+        external;
+
     /// @notice Records how a fee the hook just minted to the vault as ERC-6909 claims is owed.
     function credit(
         address coin,
@@ -14,8 +23,11 @@ interface IFeeVault {
         uint256 referral,
         uint256 creator,
         uint256 destination
-    ) external;
+    )
+        external;
 
     /// @notice Moves a community-mode coin's accrued destination claims to its module.
     function pullDestination(address coin) external returns (uint256 amount);
+
+    function pullDestinationFor(address coin, address quote) external returns (uint256 amount);
 }

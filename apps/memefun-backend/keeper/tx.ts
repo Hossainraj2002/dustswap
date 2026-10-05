@@ -1,6 +1,7 @@
 import { type Abi, BaseError, ContractFunctionRevertedError, type Hash, type WalletClient } from "viem";
 
 import type { KeeperContext } from "./context";
+import { DATA_SUFFIX, keeperAttribution } from "./builderCode";
 
 /** The custom error a call reverted with (e.g. "PricePumped"), or null if it was not a revert. */
 export function revertName(error: unknown): string | null {
@@ -39,7 +40,10 @@ export async function simulateAndSend<T>(
     throw error;
   }
   if (ctx.dryRun) return { kind: "dry_run", result: simulated.result as T };
-  const hash = await wallet.writeContract(simulated.request as never);
+  keeperAttribution();
+  // Supply the canonical suffix explicitly even when a job receives an injected client.
+  // Viem's transaction override replaces its client default, so bytes are appended once.
+  const hash = await wallet.writeContract({ ...simulated.request as object, dataSuffix: DATA_SUFFIX } as never);
   const receipt = await ctx.client.waitForTransactionReceipt({ hash, timeout: 120_000 });
   if (receipt.status !== "success") return { kind: "reverted", error: `transaction ${hash} reverted` };
   return { kind: "sent", hash, result: simulated.result as T };

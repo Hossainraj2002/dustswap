@@ -16,26 +16,27 @@ import {IMemeFunHook} from "../interfaces/IMemeFunHook.sol";
 import {Mode} from "../types/MemeFunTypes.sol";
 
 /// @title BuybackBurnVault
-/// @notice Destination module for burn-mode coins: their fees buy the coin back from its own
-///         pool, and every coin bought goes to 0x...dEaD, out of circulation for good.
+/// @notice Destination module for burn-mode coins: each market's fees buy the coin from that
+///         market, and every coin bought goes to 0x...dEaD, out of circulation for good.
 ///
 /// @dev Review notes:
 ///
 ///      1. PERMISSIONLESS. A memefun keeper calls `executeBuyback` on a schedule, but anyone may, so
-///         buybacks cannot stall if the keeper stops. Callers gain nothing from calling it.
+///         buybacks cannot stall if the keeper stops. The contract pays no caller incentive.
 ///
-///      2. HARD TO STEER. A buyback refuses to run if the coin was pumped earlier in the same block
+///      2. BOUNDED SPOT EXECUTION. A buyback refuses to run if the coin was pumped earlier in the same block
 ///         (live price vs. the block-start price the hook records), and each run may move the price
 ///         at most about 2% (a swap price limit; whatever is not spent waits for the next run).
-///         A 10-minute cooldown spaces runs out. Together these leave nothing for a sandwich or a
-///         pump-and-trigger to extract beyond ordinary trading fees.
+///         A 10-minute cooldown spaces runs out. These guards do not provide a time-weighted price
+///         oracle or prevent price manipulation across blocks; the next block may accept a price
+///         moved in an earlier block. Execution remains exposed to market and transaction ordering.
 ///
 ///      3. FEE-EXEMPT AND HOLDS NOTHING. The hook charges this vault no fee on its own coin's
 ///         buybacks. Quote is held as ERC-6909 claims and spent by burning them; bought coins are
 ///         taken straight to dEaD. The vault never holds the coin.
 ///
-///      4. PER-COIN ACCOUNTING. Claims are fungible per currency, so the vault tracks each coin's
-///         share and only ever spends a coin's own fees on that coin.
+///      4. PER-MARKET ACCOUNTING. Claims are fungible per currency, so the vault tracks each
+///         pool's share and spends its quote fees only in that pool. Cooldowns are also per pool.
 contract BuybackBurnVault is IUnlockCallback, ReentrancyGuardTransient {
     using StateLibrary for IPoolManager;
 
@@ -51,12 +52,23 @@ contract BuybackBurnVault is IUnlockCallback, ReentrancyGuardTransient {
     IMemeFunHook public immutable hook;
     IFeeVault public immutable feeVault;
 
-    mapping(address coin => uint256) public balanceOf;
-    mapping(address coin => uint256) public lastBuybackAt;
-    mapping(address coin => uint256) public totalSpent;
-    mapping(address coin => uint256) public totalBurned;
+    struct MarketBalance {
+        uint256 balance;
+        uint256 lastBuyback;
+        uint256 spent;
+        uint256 burned;
+    }
+    mapping(PoolId id => MarketBalance) private _markets;
 
     event Buyback(address indexed coin, uint256 quoteSpent, uint256 coinsBurned, uint256 quoteLeft);
+    event MarketBuyback(
+        address indexed coin,
+        address indexed quote,
+        PoolId indexed poolId,
+        uint256 quoteSpent,
+        uint256 coinsBurned,
+        uint256 quoteLeft
+    );
 
     error NotBurnCoin(address coin);
     error CoolingDown(uint256 nextAt);
@@ -70,18 +82,80 @@ contract BuybackBurnVault is IUnlockCallback, ReentrancyGuardTransient {
         feeVault = feeVault_;
     }
 
-    /// @notice Spends the coin's accrued fees on its own coin and burns what it buys.
-    function executeBuyback(address coin) external nonReentrant returns (uint256 spent, uint256 burned) {
-        IMemeFunHook.PoolConfig memory c = hook.configOf(coin);
-        if (c.mode != Mode.BURN || c.module != address(this)) revert NotBurnCoin(coin);
-        uint256 nextAt = lastBuybackAt[coin] + COOLDOWN;
-        if (lastBuybackAt[coin] != 0 && block.timestamp < nextAt) revert CoolingDown(nextAt);
+    function balanceOf(address coin) external view returns (uint256) {
+        return _markets[_primary(coin)].balance;
+    }
 
-        uint256 amount = balanceOf[coin] + feeVault.pullDestination(coin);
+    function lastBuybackAt(address coin) external view returns (uint256) {
+        return _markets[_primary(coin)].lastBuyback;
+    }
+
+    function totalSpent(address coin) external view returns (uint256) {
+        return _markets[_primary(coin)].spent;
+    }
+
+    function totalBurned(address coin) external view returns (uint256) {
+        return _markets[_primary(coin)].burned;
+    }
+
+    function balanceOfFor(address coin, address quote) external view returns (uint256) {
+        return _markets[hook.poolIdFor(coin, quote)].balance;
+    }
+
+    function lastBuybackAtFor(address coin, address quote) external view returns (uint256) {
+        return _markets[hook.poolIdFor(coin, quote)].lastBuyback;
+    }
+
+    function totalSpentFor(address coin, address quote) external view returns (uint256) {
+        return _markets[hook.poolIdFor(coin, quote)].spent;
+    }
+
+    function totalBurnedFor(address coin, address quote) external view returns (uint256) {
+        return _markets[hook.poolIdFor(coin, quote)].burned;
+    }
+
+    function _primary(address coin) private view returns (PoolId) {
+        return hook.creatorOf(coin) == address(0) ? PoolId.wrap(bytes32(0)) : hook.poolIdOf(coin);
+    }
+
+    /// @notice Spends the coin's accrued fees on its own coin and burns what it buys.
+    function executeBuyback(address coin)
+        external
+        nonReentrant
+        returns (uint256 spent, uint256 burned)
+    {
+        return _executeBuyback(coin, hook.poolIdOf(coin));
+    }
+
+    function executeBuybackFor(
+        address coin,
+        address quote
+    )
+        external
+        nonReentrant
+        returns (uint256 spent, uint256 burned)
+    {
+        return _executeBuyback(coin, hook.poolIdFor(coin, quote));
+    }
+
+    function _executeBuyback(
+        address coin,
+        PoolId id
+    )
+        private
+        returns (uint256 spent, uint256 burned)
+    {
+        IMemeFunHook.PoolConfig memory c = hook.configOfPool(id);
+        if (c.mode != Mode.BURN || c.module != address(this)) revert NotBurnCoin(coin);
+        MarketBalance storage book = _markets[id];
+        uint256 nextAt = book.lastBuyback + COOLDOWN;
+        if (book.lastBuyback != 0 && block.timestamp < nextAt) revert CoolingDown(nextAt);
+
+        address quoteAddress = Currency.unwrap(hook.quoteCurrencyOfPool(id));
+        uint256 amount = book.balance + feeVault.pullDestinationFor(coin, quoteAddress);
         if (amount == 0) revert NothingToBuy();
 
-        PoolKey memory key = hook.poolKeyOf(coin);
-        PoolId id = key.toId();
+        PoolKey memory key = hook.poolKeyOfPool(id);
         (uint160 current,,,) = poolManager.getSlot0(id);
         uint160 start = hook.blockStartSqrtPriceX96(id);
         // Buying moves the price toward a pricier coin: down in sqrt price when the quote is
@@ -97,14 +171,19 @@ contract BuybackBurnVault is IUnlockCallback, ReentrancyGuardTransient {
             : uint160(uint256(current) * (10_000 + MAX_IMPACT_SQRT_BPS) / 10_000);
 
         // Book-keeping first: the cooldown starts and the pot is spoken for before the swap.
-        lastBuybackAt[coin] = block.timestamp;
-        balanceOf[coin] = 0;
-        (spent, burned) = abi.decode(poolManager.unlock(abi.encode(key, zeroForOne, amount, limit)), (uint256, uint256));
+        book.lastBuyback = block.timestamp;
+        book.balance = 0;
+        (spent, burned) = abi.decode(
+            poolManager.unlock(abi.encode(key, zeroForOne, amount, limit)), (uint256, uint256)
+        );
 
-        balanceOf[coin] = amount - spent;
-        totalSpent[coin] += spent;
-        totalBurned[coin] += burned;
-        emit Buyback(coin, spent, burned, amount - spent);
+        book.balance = amount - spent;
+        book.spent += spent;
+        book.burned += burned;
+        emit MarketBuyback(coin, quoteAddress, id, spent, burned, amount - spent);
+        if (PoolId.unwrap(id) == PoolId.unwrap(hook.poolIdOf(coin))) {
+            emit Buyback(coin, spent, burned, amount - spent);
+        }
     }
 
     /// @dev Only reachable through `executeBuyback`.
@@ -114,7 +193,11 @@ contract BuybackBurnVault is IUnlockCallback, ReentrancyGuardTransient {
             abi.decode(data, (PoolKey, bool, uint256, uint160));
 
         BalanceDelta delta = poolManager.swap(
-            key, SwapParams({zeroForOne: zeroForOne, amountSpecified: -int256(amount), sqrtPriceLimitX96: limit}), ""
+            key,
+            SwapParams({
+                zeroForOne: zeroForOne, amountSpecified: -int256(amount), sqrtPriceLimitX96: limit
+            }),
+            ""
         );
         uint256 spent = uint256(-int256(zeroForOne ? delta.amount0() : delta.amount1()));
         uint256 bought = uint256(int256(zeroForOne ? delta.amount1() : delta.amount0()));

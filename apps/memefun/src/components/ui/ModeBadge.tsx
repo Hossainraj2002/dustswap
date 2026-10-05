@@ -1,5 +1,6 @@
 import { Flame, HandCoins, Layers, UsersRound, type LucideIcon } from "lucide-react";
 import type { FeeMode } from "@/core/types";
+import { formatBps } from "@/core/format";
 import { Badge } from "./display";
 
 export const MODE_META: Record<
@@ -44,12 +45,16 @@ export const MODE_META: Record<
   },
 };
 
-export function ModeBadge({ mode, compact = false }: { mode: FeeMode; compact?: boolean }) {
+export function ModeBadge({ mode, compact = false, feeBps }: { mode: FeeMode; compact?: boolean; feeBps?: number }) {
   const meta = MODE_META[mode];
   const Icon = meta.icon;
   return (
     <Badge tone={meta.tone} icon={<Icon aria-hidden />}>
       {compact ? meta.short : meta.label}
+      {feeBps !== undefined ? <>
+        <span aria-hidden>·</span>
+        <span className="mf-num" aria-label={`Current trading fee ${formatBps(feeBps)}`} title="Current fee charged on each trade">{formatBps(feeBps)}</span>
+      </> : null}
     </Badge>
   );
 }

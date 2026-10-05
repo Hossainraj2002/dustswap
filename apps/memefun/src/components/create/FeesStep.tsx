@@ -11,6 +11,8 @@ import type { CreateDraft, DraftErrors } from "@/lib/create/draft";
 import { FeeSplitBar } from "@/components/ui/FeeSplitBar";
 import { MODE_META } from "@/components/ui/ModeBadge";
 import { Slider } from "@/components/ui/Slider";
+import { AUTHOR_SHARE_MIN_BPS } from "@/core/tweet";
+import { AuthorRewardTerms } from "@/components/rewards/AuthorRewardTerms";
 
 const EXAMPLE_VOLUME_USD = 1000;
 
@@ -31,6 +33,7 @@ export function FeesStep({
   const shares = feeShareFractions(config, false);
   const feeUsd = (EXAMPLE_VOLUME_USD * draft.feeBps) / 10_000;
   const destinationLabel = MODE_META[draft.mode].destinationLabel.toLowerCase();
+  const authorShare = draft.entry === "tweet" ? (draft.tweet?.authorShareBps ?? 5000) : 0;
 
   return (
     <div className="flex flex-col gap-7">
@@ -40,7 +43,7 @@ export function FeesStep({
             <h3 id="fee-label" className="text-headline text-label">
               Trading fee
             </h3>
-            <p className="text-footnote text-label-2">Taken from every buy and sell, in {draft.quoteSymbol}. You can lower it later, never raise it.</p>
+            <p className="text-footnote text-label-2">Taken from every buy and sell, in that pool&apos;s pair asset. The same policy applies to all pools. You can lower it later, never raise it.</p>
           </div>
           <span className="mf-num text-title1 font-bold text-label">{formatBps(draft.feeBps)}</span>
         </div>
@@ -60,7 +63,16 @@ export function FeesStep({
         {showErrors && errors.feeBps ? <p className="px-1 text-footnote text-down">{errors.feeBps}</p> : null}
       </section>
 
-      <section className="flex flex-col gap-3" aria-labelledby="mode-label">
+      {draft.entry === "tweet" ? <section className="flex flex-col gap-3" aria-labelledby="author-share-label">
+        <div className="flex flex-wrap items-end justify-between gap-3 px-1">
+          <h3 id="author-share-label" className="text-headline text-label">Share creator earnings with the post author</h3>
+          <span className="mf-num text-title1 font-bold text-label">{formatBps(authorShare)}</span>
+        </div>
+        <p className="text-footnote text-label-2">Creator mode is fixed for tweet launches. After the platform share, the original post author receives this percentage of creator earnings in every pool. You receive the rest. This split cannot change after launch.</p>
+        <Slider label="Post author share" min={AUTHOR_SHARE_MIN_BPS} max={10_000} step={100} value={authorShare} onChange={(value) => draft.tweet && update({ tweet: { ...draft.tweet, authorShareBps: value } })} valueText={(value) => `${value / 100} percent of creator earnings`} />
+        <AuthorRewardTerms />
+        {showErrors && errors.tweet ? <p role="alert" className="text-footnote text-down">{errors.tweet}</p> : null}
+      </section> : <section className="flex flex-col gap-3" aria-labelledby="mode-label">
         <div className="px-1">
           <h3 id="mode-label" className="text-headline text-label">
             Where fees go
@@ -99,7 +111,8 @@ export function FeesStep({
             );
           })}
         </RadioGroup.Root>
-      </section>
+        {showErrors && errors.mode ? <p className="text-footnote text-down">{errors.mode}</p> : null}
+      </section>}
 
       {draft.mode !== "creator" ? (
         <section className="flex flex-col gap-2" aria-labelledby="keep-label">
@@ -117,10 +130,11 @@ export function FeesStep({
             min={0}
             max={settings.creatorKeepMaxBps}
             step={500}
-            value={Math.min(draft.creatorKeepBps, settings.creatorKeepMaxBps)}
+            value={draft.creatorKeepBps}
             onChange={(value) => update({ creatorKeepBps: value })}
             valueText={(value) => `${value / 100} percent`}
           />
+          {showErrors && errors.creatorKeepBps ? <p className="text-footnote text-down">{errors.creatorKeepBps}</p> : null}
         </section>
       ) : null}
 
@@ -128,12 +142,13 @@ export function FeesStep({
         <h3 id="split-example" className="text-headline text-label">
           On {formatUsd(EXAMPLE_VOLUME_USD)} of trading at {formatBps(draft.feeBps)}
         </h3>
-        <FeeSplitBar config={config} showLegend={false} />
+        <FeeSplitBar config={config} showLegend={false} authorShareBps={authorShare} />
         <dl className="grid grid-cols-1 gap-2 text-subhead sm:grid-cols-3">
           <div className="flex justify-between gap-2 sm:flex-col">
-            <dt className="text-label-2">You earn</dt>
-            <dd className="mf-num font-semibold text-label">{formatUsd(feeUsd * shares.creator)}</dd>
+            <dt className="text-label-2">{authorShare ? "You earn as launcher" : "You earn"}</dt>
+            <dd className="mf-num font-semibold text-label">{formatUsd(feeUsd * shares.creator * (1 - authorShare / 10_000))}</dd>
           </div>
+          {authorShare ? <div className="flex justify-between gap-2 sm:flex-col"><dt className="text-label-2">Post author</dt><dd className="mf-num font-semibold text-label">{formatUsd(feeUsd * shares.creator * authorShare / 10_000)}</dd></div> : null}
           {draft.mode !== "creator" ? (
             <div className="flex justify-between gap-2 sm:flex-col">
               <dt className="text-label-2">{MODE_META[draft.mode].destinationLabel}</dt>

@@ -9,6 +9,7 @@ interface FeeSplitBarProps {
   feeBps?: number;
   className?: string;
   showLegend?: boolean;
+  authorShareBps?: number;
 }
 
 interface Segment {
@@ -19,11 +20,13 @@ interface Segment {
 }
 
 /** Where every fee goes, as a stacked bar with a legend. */
-export function FeeSplitBar({ config, hasReferrer = false, feeBps, className, showLegend = true }: FeeSplitBarProps) {
+export function FeeSplitBar({ config, hasReferrer = false, feeBps, className, showLegend = true, authorShareBps = 0 }: FeeSplitBarProps) {
   const fractions = feeShareFractions(config, hasReferrer);
   const meta = MODE_META[config.mode];
+  const author = fractions.creator * authorShareBps / 10_000;
   const segments: Segment[] = [
-    { key: "creator", label: config.mode === "creator" ? "Creator" : "Creator keeps", fraction: fractions.creator, color: "var(--mf-mode-creator)" },
+    { key: "creator", label: authorShareBps ? "Launcher" : config.mode === "creator" ? "Creator" : "Creator keeps", fraction: fractions.creator - author, color: "var(--mf-mode-creator)" },
+    { key: "author", label: "Post author", fraction: author, color: "var(--mf-referral)" },
     { key: "destination", label: meta.destinationLabel, fraction: fractions.destination, color: meta.color },
     { key: "referral", label: "Referrer", fraction: fractions.referral, color: "var(--mf-referral)" },
     { key: "platform", label: "Platform", fraction: fractions.platform, color: "var(--mf-mode-platform)" },
