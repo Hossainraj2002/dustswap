@@ -37,7 +37,7 @@ export function MarketProvider({ children }: { children: ReactNode }) {
       adopt(new PreviewMarket({ now: Date.now(), empty: scenario === "empty", protectionDemo: scenario === "launch-protection" }));
     } else {
       // The live market (and the chain code behind it) loads only when it is used.
-      void import("@/lib/live/LiveMarket").then(({ LiveMarket }) => adopt(new LiveMarket()));
+      void import("@/lib/live/LiveMarket").then(({ LiveMarket }) => { if (active) adopt(new LiveMarket()); });
     }
     return () => {
       active = false;

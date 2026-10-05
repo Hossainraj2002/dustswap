@@ -5,6 +5,7 @@ import { getConnection, getWalletClient, switchChain } from "wagmi/actions";
 import { CHAIN_NAME, TARGET_CHAIN_ID } from "@/lib/chain";
 import { TxError } from "@/lib/market/Market";
 import { wagmiConfig } from "@/lib/wallet/wagmi";
+import { withBuilderAttribution } from "@/lib/wallet/attributedWallet";
 import type { TxWallet } from "./tx";
 import { toTxError } from "./txErrors";
 
@@ -34,7 +35,9 @@ export async function connectedWallet(expected?: Address, options: { onChain?: b
   }
   try {
     const client = await getWalletClient(wagmiConfig, onChain ? { chainId: TARGET_CHAIN_ID, account: connection.address } : { account: connection.address });
-    return client as unknown as TxWallet;
+    // The installed Wagmi connector client does not inherit config.dataSuffix.
+    // Keep the connector's request transport, and configure attribution on the actual sender.
+    return withBuilderAttribution(client) as unknown as TxWallet;
   } catch (error) {
     throw toTxError(error, "Your wallet is not ready. Reconnect it and try again.");
   }

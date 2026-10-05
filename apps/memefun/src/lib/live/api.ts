@@ -17,7 +17,7 @@ export class ApiError extends Error {
 
 export interface ApiClient {
   readonly baseUrl: string;
-  get<T>(path: string, init?: { signal?: AbortSignal; adminToken?: string }): Promise<T>;
+  get<T>(path: string, init?: { signal?: AbortSignal; adminToken?: string; token?: string }): Promise<T>;
   post<T>(path: string, body: unknown, auth?: { token?: string; adminToken?: string }): Promise<T>;
   upload<T>(path: string, file: Blob, filename: string, auth?: { token?: string }): Promise<T>;
 }
@@ -57,10 +57,10 @@ export function createApi(baseUrl: string, fetchFn: typeof fetch = (...args) => 
   });
   return {
     baseUrl,
-    async get<T>(path: string, init: { signal?: AbortSignal; adminToken?: string } = {}) {
+    async get<T>(path: string, init: { signal?: AbortSignal; adminToken?: string; token?: string } = {}) {
       // Only admin reads carry a header (and so a CORS preflight); everything else stays simple.
       return parse<T>(
-        await fetchFn(url(path), { signal: withTimeout(init.signal), ...(init.adminToken ? { headers: headers({ adminToken: init.adminToken }) } : {}) }),
+        await fetchFn(url(path), { signal: withTimeout(init.signal), ...(init.adminToken || init.token ? { headers: headers(init) } : {}) }),
       );
     },
     async post<T>(path: string, body: unknown, auth?: { token?: string; adminToken?: string }) {

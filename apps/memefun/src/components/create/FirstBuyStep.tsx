@@ -8,15 +8,20 @@ import { buyPresets } from "@/lib/trade/cta";
 import { useQuoteBalance } from "@/lib/market/hooks";
 import { useWallet } from "@/lib/wallet/WalletProvider";
 
-export function FirstBuyStep({ draft, update, quote, openingFdvUsd }: { draft: CreateDraft; update: (patch: Partial<CreateDraft>) => void; quote: QuoteAsset; openingFdvUsd: number }) {
+export function FirstBuyStep({ draft, update, quote, quotes = [quote], allocationSupply, openingFdvUsd }: { draft: CreateDraft; update: (patch: Partial<CreateDraft>) => void; quote: QuoteAsset; quotes?: QuoteAsset[]; allocationSupply?: bigint; openingFdvUsd: number }) {
   const wallet = useWallet();
   const balance = useQuoteBalance(wallet.address, quote.symbol);
-  const preview = previewFirstBuy(draft.firstBuy, quote, draft.feeBps, openingFdvUsd);
+  const preview = previewFirstBuy(draft.firstBuy, quote, draft.feeBps, openingFdvUsd, allocationSupply);
   const amount = Number(draft.firstBuy) || 0;
   const tooMuch = wallet.status === "connected" && amount > balance;
 
   return (
     <div className="flex flex-col gap-5">
+      {quotes.length > 1 ? <label className="flex flex-col gap-2 text-subhead text-label">First-buy pool
+        <select value={quote.symbol} onChange={(event) => update({ firstBuyQuoteSymbol: event.target.value, firstBuy: "" })} className="rounded-md bg-fill-4 p-3 text-label">
+          {quotes.map((entry) => <option key={entry.address} value={entry.symbol}>{entry.symbol}</option>)}
+        </select><span className="text-footnote text-label-2">Your first buy uses this pool. All other pools launch with no first buy.</span>
+      </label> : null}
       <div className="flex gap-3 rounded-lg bg-tint/8 p-4">
         <Zap className="mt-0.5 size-5 shrink-0 text-tint" aria-hidden />
         <p className="text-subhead text-label">

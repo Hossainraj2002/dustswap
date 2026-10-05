@@ -2,6 +2,7 @@ import type pg from "pg";
 
 import { type Queryable, big, rows } from "./db";
 import type { CoinLinks } from "../shared/core/types";
+import type { TweetImport } from "../shared/core/tweet";
 
 /**
  * memefun_app: what the backend owns that is not on chain. Used by the API (reads and writes) and
@@ -40,6 +41,7 @@ export interface ReportRecord {
 export interface RewardLeafRecord {
   epoch: bigint;
   coin: string;
+  poolId?: string | null;
   index: bigint;
   account: string;
   amount: bigint;
@@ -63,6 +65,11 @@ function metadataRecord(r: Row): MetadataRecord {
 
 export function createAppStore(db: Queryable & Pick<pg.Pool, "connect">) {
   return {
+    async tweetSources(postIds: string[]): Promise<Map<string, TweetImport>> {
+      if (postIds.length === 0) return new Map();
+      const result = await rows<{ post_id: string; payload: TweetImport }>(db, `SELECT post_id, payload FROM x_tweet_source WHERE post_id = ANY($1::text[])`, [postIds]);
+      return new Map(result.map((r) => [r.post_id, r.payload]));
+    },
     // ----------------------------------------------------------------------------- metadata
 
     async saveMetadata(m: MetadataRecord) {
@@ -249,7 +256,7 @@ export function createAppStore(db: Queryable & Pick<pg.Pool, "connect">) {
     async rewardLeavesOf(account: string): Promise<RewardLeafRecord[]> {
       const result = await rows<Row>(
         db,
-        `SELECT l.epoch, l.coin, l.idx, l.account, l.amount, l.proof
+        `SELECT l.epoch, l.coin, l.pool_id, l.idx, l.account, l.amount, l.proof
            FROM reward_leaf l JOIN reward_epoch e ON e.epoch = l.epoch
           WHERE l.account = $1 AND e.status = 'published'
           ORDER BY l.epoch DESC`,
@@ -258,6 +265,7 @@ export function createAppStore(db: Queryable & Pick<pg.Pool, "connect">) {
       return result.map((r) => ({
         epoch: big(r.epoch as string),
         coin: String(r.coin),
+        poolId: r.pool_id ? String(r.pool_id) : null,
         index: big(r.idx as string),
         account: String(r.account),
         amount: big(r.amount as string),

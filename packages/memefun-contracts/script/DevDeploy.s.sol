@@ -34,8 +34,9 @@ import {TestStockFaucet} from "./testnet/TestStockFaucet.sol";
 /// can wait on that indefinitely. Only anvil's public test mnemonic is used, and any chain other
 /// than 31337 is refused.
 contract DevDeploy is Deploy {
-    string internal constant DEV_MNEMONIC = "test test test test test test test test test test test junk";
-    uint256 internal constant LOCAL_CHAIN_ID = 31337;
+    string internal constant DEV_MNEMONIC =
+        "test test test test test test test test test test test junk";
+    uint256 internal constant LOCAL_CHAIN_ID = 31_337;
 
     // Dev account roles: indexes into anvil's default accounts.
     uint256 internal constant DEPLOYER = 0; // owner and B20 activation admin
@@ -46,8 +47,8 @@ contract DevDeploy is Deploy {
     uint256 internal constant PUBLISHER = 9; // holder-rewards publisher
     uint256 internal constant ACCOUNTS = 10;
 
-    int256 internal constant ETH_USD_E8 = 3_000e8;
-    uint64 internal constant STOCK_USD_E8 = 241_10000000;
+    int256 internal constant ETH_USD_E8 = 3000e8;
+    uint64 internal constant STOCK_USD_E8 = 24_110_000_000;
     uint32 internal constant STOCK_PRICE_MAX_AGE = 1 days;
     uint256 internal constant USDC_PER_USER = 1_000_000e6;
     uint256 internal constant STOCK_PER_USER = 10_000e8;
@@ -63,11 +64,20 @@ contract DevDeploy is Deploy {
     function run() external override returns (Deployed memory d) {
         require(block.chainid == LOCAL_CHAIN_ID, "DevDeploy: local chain 31337 only");
         _loadDevAccounts();
+        _checkRunSafety(
+            vm.envOr("DRY_RUN", false),
+            vm.isContext(VmSafe.ForgeContext.ScriptBroadcast),
+            dev[DEPLOYER],
+            dev[TREASURY]
+        );
         _ensureB20Active();
 
         LocalChain memory local = _deployLocalChain();
         d = _deploy(dev[DEPLOYER], dev[TREASURY], local.c);
-        _configure(d, local.c, dev[DEPLOYER], dev[DEPLOYER], dev[KEEPER], dev[PUBLISHER]);
+        // Public dev account 9 also signs tweet attestations on local chains only.
+        _configure(
+            d, local.c, dev[DEPLOYER], dev[DEPLOYER], dev[KEEPER], dev[PUBLISHER], dev[PUBLISHER]
+        );
         _enableStockPair(d, local.stock);
 
         string memory key = "memefun";
@@ -108,9 +118,8 @@ contract DevDeploy is Deploy {
             // Low-level on purpose: a native precompile reports no code, and Solidity's high-level
             // call to a function without return values would refuse to call it.
             vm.broadcast(dev[DEPLOYER]);
-            (bool ok,) = StdPrecompiles.ACTIVATION_REGISTRY_ADDRESS.call(
-                abi.encodeCall(IActivationRegistry.activate, (features[i]))
-            );
+            (bool ok,) = StdPrecompiles.ACTIVATION_REGISTRY_ADDRESS
+                .call(abi.encodeCall(IActivationRegistry.activate, (features[i])));
             require(ok, "DevDeploy: B20 feature activation failed");
         }
     }
@@ -118,7 +127,8 @@ contract DevDeploy is Deploy {
     function _deployLocalChain() internal returns (LocalChain memory local) {
         vm.startBroadcast(dev[DEPLOYER]);
         // v4-core's compiled PoolManager (see test/utils/Artifacts.sol), owned by the deployer.
-        local.c.poolManager = IPoolManager(deployCode("PoolManager.sol:PoolManager", abi.encode(dev[DEPLOYER])));
+        local.c.poolManager =
+            IPoolManager(deployCode("PoolManager.sol:PoolManager", abi.encode(dev[DEPLOYER])));
         TestToken usdc = new TestToken("USD Coin", "USDC", 6);
         local.c.usdc = address(usdc);
         local.c.ethUsdFeed = address(new DevPriceFeed(ETH_USD_E8));
@@ -134,7 +144,8 @@ contract DevDeploy is Deploy {
     ///      with MINT_ROLE, as on the testnet.
     function _createStock() internal returns (address stock, address faucet) {
         bytes32 salt = keccak256("memefun dev stock AAPLc");
-        address predicted = StdPrecompiles.B20_FACTORY.getB20Address(IB20Factory.B20Variant.ASSET, dev[DEPLOYER], salt);
+        address predicted = StdPrecompiles.B20_FACTORY
+            .getB20Address(IB20Factory.B20Variant.ASSET, dev[DEPLOYER], salt);
         faucet = address(new TestStockFaucet(IB20(predicted), 10e8));
         uint256 users = LAST_USER - FIRST_USER + 1;
         bytes[] memory initCalls = new bytes[](users + 2);
@@ -143,19 +154,30 @@ contract DevDeploy is Deploy {
         for (uint256 i; i < users; ++i) {
             initCalls[i + 2] = abi.encodeCall(IB20.mint, (dev[FIRST_USER + i], STOCK_PER_USER));
         }
-        stock = StdPrecompiles.B20_FACTORY.createB20(
-            IB20Factory.B20Variant.ASSET,
-            salt,
-            B20FactoryLib.encodeAssetCreateParams("Apple tokenized stock (dev)", "AAPLc", dev[DEPLOYER], 8),
-            initCalls
-        );
+        stock = StdPrecompiles.B20_FACTORY
+            .createB20(
+                IB20Factory.B20Variant.ASSET,
+                salt,
+                B20FactoryLib.encodeAssetCreateParams(
+                    "Apple tokenized stock (dev)", "AAPLc", dev[DEPLOYER], 8
+                ),
+                initCalls
+            );
         require(stock == predicted, "DevDeploy: stock address moved");
     }
 
     function _enableStockPair(Deployed memory d, address stock) internal {
         vm.startBroadcast(dev[DEPLOYER]);
         d.config.setQuoteKindEnabled(uint256(QuoteKind.STOCK), true);
-        d.config.listQuote(stock, QuoteKind.STOCK, PriceSource.MANUAL, address(0), STOCK_USD_E8, STOCK_PRICE_MAX_AGE);
+        d.config
+            .listQuote(
+                stock,
+                QuoteKind.STOCK,
+                PriceSource.MANUAL,
+                address(0),
+                STOCK_USD_E8,
+                STOCK_PRICE_MAX_AGE
+            );
         d.config.setQuoteEnabled(stock, true);
         vm.stopBroadcast();
     }

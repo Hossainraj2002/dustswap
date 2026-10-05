@@ -3,11 +3,11 @@ import { DATA_SUFFIX } from "@/lib/wallet/builderCode";
 /** Copied from apps/web/src/lib/paymaster.ts, trimmed to what memefun uses. */
 export const PAYMASTER_URL = process.env.NEXT_PUBLIC_PAYMASTER_URL || "";
 
-/** EIP-5792 capabilities: optional paymaster plus the ERC-8021 builder-code suffix. */
+/** EIP-5792 capabilities: optional paymaster plus mandatory ERC-8021 attribution. */
 export function buildBasePaymasterCapabilities() {
   return {
     ...(PAYMASTER_URL ? { paymasterService: { url: PAYMASTER_URL } } : {}),
-    dataSuffix: { value: DATA_SUFFIX, optional: true },
+    dataSuffix: { value: DATA_SUFFIX },
   };
 }
 

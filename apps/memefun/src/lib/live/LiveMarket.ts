@@ -1,10 +1,13 @@
-import { type Address, type Hash, type PublicClient, createPublicClient, erc20Abi, getAddress, http, zeroAddress } from "viem";
+import { type Address, type Hash, type PublicClient, createPublicClient, erc20Abi, getAddress, http, parseAbi, toHex, zeroAddress } from "viem";
 import { launchFeeBps } from "@/core/antiSnipe";
 import { COIN_DECIMALS, COIN_SUPPLY_HUMAN } from "@/core/constants";
+import { aggregateCoinMarkets, equalAllocations, selectCoinMarket } from "@/lib/market/markets";
 import { fromUnits, toUnits } from "@/core/format";
 import { type LaunchPool, coinPriceInQuote, livePool, minOut, quoteBuy, quoteSell } from "@/core/pool";
 import { DEFAULT_SETTINGS, type LaunchSettings } from "@/core/settings";
 import type { QuoteAsset, TradeSide } from "@/core/types";
+import { AUTHOR_RESERVE_DAYS, validateAuthorShareBps, type AuthorVerification, type TweetImport, type TweetLaunchAttestation } from "@/core/tweet";
+import type { AuthorReward, AuthorSession } from "@/lib/create/tweet";
 import { ownerCalls } from "@/lib/admin/ownerCalls";
 import { TARGET_CHAIN, TARGET_CHAIN_ID } from "@/lib/chain";
 import type { MemefunDeployment } from "@/lib/contracts/deployments";
@@ -30,11 +33,12 @@ import type {
   Position,
   Trade,
 } from "@/lib/market/types";
-import { DEFAULT_SLIPPAGE_BPS } from "@/lib/trade/cta";
+import { DEFAULT_SLIPPAGE_BPS, MAX_SLIPPAGE_BPS } from "@/lib/trade/cta";
 import { getRpcUrlsForChain, rotatingFetch } from "@/lib/wallet/rpc";
 import { ApiError, type ApiClient, createApi, dataUrlToBlob } from "./api";
 import { API_URL, DeploymentMismatch, resolveDeployment } from "./config";
 import { clearSession, loadSession, saveSession, signIn } from "./session";
+import { AuthorCompletion, type VerifiedAuthor } from "./authorCompletion";
 import type { ClaimRequest, TxContext, TxStage } from "./tx";
 
 /** Transactions (and the contract ABIs they carry) load with the first action. */
@@ -58,6 +62,13 @@ const INDEXER_WAIT_MS = 20_000;
 const LAUNCH_SLIPPAGE_BPS = 500;
 /** Transactions may wait this long in a wallet before the contracts refuse them. */
 const DEADLINE_SEC = 20 * 60;
+const treasuryAbi = parseAbi(["function treasury() view returns (address)"]);
+const poolIdentityAbi = parseAbi(["function poolIdFor(address coin, address quote) view returns (bytes32)"]);
+
+interface AuthorReserveResponse {
+  coin: Address;
+  markets: Array<{ poolId: Hash; currency: Address; symbol: string; decimals: number; pendingRaw: string }>;
+}
 
 interface Entry {
   fetchedAt: number;
@@ -140,6 +151,10 @@ export class LiveMarket implements Market {
   private readonly profiles = new Map<string, { profile: CreatorProfile | null; trades: Trade[] }>();
   private readonly positions = new Map<string, Position[]>();
   private readonly claimables = new Map<string, Claimable[]>();
+  private readonly authorSessions = new Map<string, AuthorSession | null>();
+  private authorTreasury: Address | null = null;
+  private readonly authorCompletion: AuthorCompletion;
+  private activeAuthorWallet: string | null = null;
   private readonly quoteBalances = new Map<string, Map<string, bigint>>();
   private readonly coinBalances = new Map<string, bigint>();
   private activity: ActivityItem[] = [];
@@ -155,6 +170,7 @@ export class LiveMarket implements Market {
   constructor(private readonly options: LiveMarketOptions = {}) {
     this.api = options.api ?? createApi(API_URL);
     this.now = options.now ?? Date.now;
+    this.authorCompletion = new AuthorCompletion(this.api, this.now, typeof window === "undefined" ? undefined : window);
     this.client =
       options.client ??
       (createPublicClient({
@@ -342,7 +358,7 @@ export class LiveMarket implements Market {
     for (let page = 0; page < MAX_COIN_PAGES; page++) {
       const body: { coins: Coin[]; nextCursor: string | null } = await this.api.get(`/v1/coins?sort=new&limit=200${cursor ? `&cursor=${cursor}` : ""}`);
       for (const coin of body.coins) {
-        this.coins.set(lower(coin.address), coin);
+        this.coins.set(lower(coin.address), aggregateCoinMarkets(coin));
         seen.push(lower(coin.address));
       }
       cursor = body.nextCursor;
@@ -355,7 +371,7 @@ export class LiveMarket implements Market {
   private async loadCoin(address: string) {
     try {
       const { coin } = await this.api.get<{ coin: Coin }>(`/v1/coins/${address}`);
-      this.coins.set(address, coin);
+      this.coins.set(address, aggregateCoinMarkets(coin));
       this.missing.delete(address);
     } catch (error) {
       if (error instanceof ApiError && error.status === 404) this.missing.add(address);
@@ -363,8 +379,9 @@ export class LiveMarket implements Market {
     }
   }
 
-  private async loadPool(address: string): Promise<LaunchPool> {
-    const { pool } = await this.api.get<{ pool: PoolInfo }>(`/v1/coins/${address}/pool`);
+  private async loadPool(address: string, poolId?: Hash): Promise<LaunchPool> {
+    const { pool } = await this.api.get<{ pool: PoolInfo }>(`/v1/coins/${address}/pool${poolId ? `?poolId=${poolId}` : ""}`);
+    if (poolId && lower(pool.poolId) !== lower(poolId)) throw new Error("The API returned a different pool.");
     const state = livePool({
       coinIsCurrency0: pool.coinIsCurrency0,
       quoteDecimals: pool.quoteDecimals,
@@ -374,7 +391,7 @@ export class LiveMarket implements Market {
       tick: pool.tick,
       floors: pool.floors.map((f) => ({ tickLower: f.tickLower, tickUpper: f.tickUpper, liquidity: BigInt(f.liquidity) })),
     });
-    this.pools.set(address, state);
+    this.pools.set(`${address}${poolId ? `:${lower(poolId)}` : ""}`, state);
     return state;
   }
 
@@ -422,8 +439,12 @@ export class LiveMarket implements Market {
       return;
     }
     const coin = lower(trade.coin);
-    const list = this.trades.get(coin);
-    if (list && !list.some((t) => t.id === trade.id)) this.trades.set(coin, [trade, ...list].slice(0, 500));
+    const primaryPool = this.coins.get(coin)?.markets?.[0]?.poolId;
+    for (const [key, list] of this.trades) {
+      if (key !== coin && key !== `${coin}:${trade.poolId ? lower(trade.poolId) : ""}`) continue;
+      if (key === coin && primaryPool && trade.poolId && lower(trade.poolId) !== lower(primaryPool)) continue;
+      if (!list.some((item) => item.id === trade.id)) this.trades.set(key, [trade, ...list].slice(0, 500));
+    }
     this.invalidate(`pool:${coin}`);
     this.debounce(`coin:${coin}`, 400, () => this.invalidate(`coin:${coin}`));
     this.debounce(`candles:${coin}`, 1_500, () => this.invalidate(`candles:${coin}:`));
@@ -471,10 +492,10 @@ export class LiveMarket implements Market {
     return coin ? { ...coin, featured: this.featured.some((f) => lower(f) === key) || coin.featured } : undefined;
   }
 
-  getTrades(address: string, limit = 100): Trade[] {
-    const key = lower(address);
+  getTrades(address: string, limit = 100, poolId?: Hash): Trade[] {
+    const key = `${lower(address)}${poolId ? `:${lower(poolId)}` : ""}`;
     this.read(`trades:${key}`, 20_000, async () => {
-      const { trades } = await this.api.get<{ trades: Trade[] }>(`/v1/coins/${key}/trades?limit=${Math.min(200, Math.max(60, limit))}`);
+      const { trades } = await this.api.get<{ trades: Trade[] }>(`/v1/coins/${lower(address)}/trades?limit=${Math.min(200, Math.max(60, limit))}${poolId ? `&poolId=${poolId}` : ""}`);
       this.trades.set(key, trades);
     });
     return (this.trades.get(key) ?? []).slice(0, limit);
@@ -499,10 +520,10 @@ export class LiveMarket implements Market {
     return this.activity.slice(0, limit);
   }
 
-  getCandles(address: string, interval: CandleInterval, metric: "price" | "mcap" = "price"): Candle[] {
-    const key = `candles:${lower(address)}:${interval}:${metric}`;
+  getCandles(address: string, interval: CandleInterval, metric: "price" | "mcap" = "price", poolId?: Hash): Candle[] {
+    const key = `candles:${lower(address)}:${interval}:${metric}:${poolId ?? ""}`;
     this.read(key, Math.max(15_000, Math.min(interval * 1000, 60_000)), async () => {
-      const { candles } = await this.api.get<{ candles: Candle[] }>(`/v1/coins/${lower(address)}/candles?interval=${interval}&metric=${metric}`);
+      const { candles } = await this.api.get<{ candles: Candle[] }>(`/v1/coins/${lower(address)}/candles?interval=${interval}&metric=${metric}${poolId ? `&poolId=${poolId}` : ""}`);
       this.candles.set(key, candles);
     });
     return this.candles.get(key) ?? [];
@@ -544,6 +565,8 @@ export class LiveMarket implements Market {
     this.read("settings", 30_000, () => this.loadSettings());
     return this.settings ?? DEFAULT_SETTINGS;
   }
+
+  isSettingsReady() { return this.settings !== null; }
 
   listQuotes(): QuoteAsset[] {
     this.read("settings", 30_000, () => this.loadSettings());
@@ -594,13 +617,161 @@ export class LiveMarket implements Market {
     return (this.claimables.get(key) ?? []).filter((item) => !item.claimableAt || item.claimableAt <= now);
   }
 
+  async importTweet(url: string): Promise<TweetImport> {
+    try { return await this.api.post<TweetImport>("/v1/tweets/import", { url }); }
+    catch (error) { throw error instanceof ApiError ? new TxError(error.message, "reverted") : new TxError("Could not import this public X post. Try again later.", "reverted"); }
+  }
+
+  getAuthorSession(user?: Address): AuthorSession | null {
+    this.activeAuthorWallet = user ? lower(user) : null;
+    if (!user) return null;
+    const key = lower(user);
+    const session = loadSession(user, this.now());
+    // Read hooks never open wallet sign-in prompts. Connecting X is an explicit action.
+    if (!session) { this.authorSessions.delete(key); return null; }
+    this.read(`author-session:${key}`, 10_000, async () => {
+      if (this.activeAuthorWallet !== key) return;
+      const current = loadSession(user, this.now());
+      if (!current) { this.authorSessions.delete(key); return; }
+      try {
+        const completion = await this.authorCompletion.complete(user, current.token);
+        if (completion.state === "waiting") { this.authorSessions.delete(key); return; }
+        if (completion.state === "completed") {
+          this.authorSessions.set(key, this.authorSession(user, completion.author));
+          return;
+        }
+        if (this.activeAuthorWallet !== key) return;
+        const result = await this.api.get<{ author: VerifiedAuthor | null }>("/v1/author/me", { token: current.token });
+        this.authorSessions.set(key, result.author ? this.authorSession(user, result.author) : null);
+      } catch (error) {
+        if (error instanceof ApiError && error.status === 401) { clearSession(user); this.authorSessions.delete(key); }
+        throw error;
+      }
+    });
+    return this.authorSessions.get(key) ?? null;
+  }
+
+  private authorSession(user: Address, author: VerifiedAuthor): AuthorSession {
+    return { authorId: author.id, handle: author.handle, wallet: user, simulated: false };
+  }
+
+  async beginAuthorVerification(user: Address, coin?: Address): Promise<void> {
+    try {
+      // This explicit action may sign in; synchronous read hooks never do.
+      if (this.authorCompletion.hasPending()) {
+        const completion = await this.authorCompletion.complete(user, await this.sessionToken(user));
+        if (completion.state === "completed") { this.authorSessions.set(lower(user), this.authorSession(user, completion.author)); this.emit(); return; }
+        if (completion.state === "waiting") throw new TxError("This X verification belongs to another wallet. Connect the wallet that started it, or reconnect X after the completion expires.", "reverted");
+      }
+      const origin = this.options.location?.origin ?? (typeof window !== "undefined" ? window.location.origin : undefined);
+      if (!origin) throw new TxError("Open memefun in your browser to connect X.", "reverted");
+      const returnTo = new URL("/rewards/author", origin);
+      if (coin) returnTo.searchParams.set("coin", coin);
+      const { authUrl } = await this.api.post<{ authUrl: string }>("/v1/author/connect", { returnTo: returnTo.toString() }, { token: await this.sessionToken(user) });
+      const target = new URL(authUrl);
+      if (target.protocol !== "https:" || !["x.com", "twitter.com"].includes(target.hostname) || target.username || target.password || target.port || target.pathname !== "/i/oauth2/authorize") {
+        throw new TxError("The X sign-in link could not be verified. Try again later.", "reverted");
+      }
+      if (typeof window === "undefined") throw new TxError("Open memefun in your browser to connect X.", "reverted");
+      window.location.assign(target.toString());
+    } catch (error) { throw error instanceof ApiError ? new TxError(error.message, "reverted") : error; }
+  }
+
+  async bindAuthorWallet(user: Address, coin: Address): Promise<void> {
+    try {
+      const verification = await this.api.post<AuthorVerification>("/v1/author/verification", { coin }, { token: await this.sessionToken(user) });
+      if (verification.coin.toLowerCase() !== coin.toLowerCase()) throw new TxError("The X verification is for a different coin. Try again.", "reverted");
+      await (await txModule()).sendAuthorVerification(await this.txContext(user), verification);
+      this.invalidate(`coin:${lower(coin)}`);
+      this.invalidate(`author-session:${lower(user)}`);
+      this.invalidate(`claimables:${lower(user)}`);
+      this.invalidate("coins");
+      await this.loadCoin(lower(coin)).catch(() => undefined);
+      this.emit();
+    } catch (error) { throw error instanceof ApiError ? new TxError(error.message, "reverted") : error; }
+  }
+
+  getAuthorRewards(user?: Address): AuthorReward[] {
+    if (!user) return [];
+    return this.getClaimables(user).filter(item => item.kind === "author" && item.poolId).map(item => ({ coin: item.coin, poolId: item.poolId!,
+      quoteSymbol: item.quoteSymbol, amountQuote: item.amountQuote, amountUsd: item.amountUsd,
+      ...(item.currency ? { currency: getAddress(item.currency) } : {}), ...(item.amountRaw ? { amountRaw: item.amountRaw } : {}) }));
+  }
+
+  async claimAuthorRewards(user: Address, coin: Address): Promise<Hash> {
+    const items = this.getClaimables(user).filter(item => item.kind === "author" && lower(item.coin) === lower(coin));
+    if (!items.length) throw new TxError("There are no claimable author rewards for this wallet yet. Verify it and refresh rewards.", "reverted");
+    return this.claim(user, items);
+  }
+
+  /** This read hook never requests a wallet signature or an X session. */
+  isAuthorTreasury(user?: Address): boolean {
+    if (!user) return false;
+    this.read("author-treasury", 30_000, async () => {
+      try { await this.readAuthorTreasury(); }
+      catch (error) { this.authorTreasury = null; throw error; }
+    });
+    return this.authorTreasury !== null && lower(this.authorTreasury) === lower(user);
+  }
+
+  private async readAuthorTreasury(): Promise<Address> {
+    const deployment = await this.requireDeployment();
+    const treasury = getAddress(await this.client.readContract({ address: deployment.config, abi: treasuryAbi, functionName: "treasury" }));
+    this.authorTreasury = treasury;
+    return treasury;
+  }
+
+  /** Fetch one coin explicitly; scanning every coin would consume the public API quota. */
+  async getTreasuryAuthorRewards(user: Address, coin: Address): Promise<AuthorReward[]> {
+    try {
+      if (lower(await this.readAuthorTreasury()) !== lower(user)) throw new TxError("Connect the current DustSwap treasury wallet to withdraw these rewards.", "reverted");
+      const result = await this.api.get<AuthorReserveResponse>(`/v1/coins/${lower(coin)}/author`);
+      if (lower(result.coin) !== lower(coin)) throw new TxError("The reward balance is for a different coin. Refresh and try again.", "reverted");
+      const seen = new Set<string>();
+      return result.markets.map((item): AuthorReward => {
+        if (!/^0x[0-9a-fA-F]{64}$/.test(item.poolId) || seen.has(lower(item.poolId)) || !Number.isInteger(item.decimals)
+          || item.decimals < 0 || item.decimals > 255 || !/^\d{1,78}$/.test(item.pendingRaw) || BigInt(item.pendingRaw) >= 2n ** 256n) {
+          throw new TxError("The reward balance could not be verified. Refresh and try again.", "reverted");
+        }
+        seen.add(lower(item.poolId));
+        const currency = getAddress(item.currency);
+        const amountQuote = fromUnits(BigInt(item.pendingRaw), item.decimals);
+        const cachedCoin = this.coins.get(lower(coin));
+        const quote = cachedCoin?.markets?.find(market => lower(market.poolId) === lower(item.poolId) && lower(market.quote.address) === lower(currency))?.quote
+          ?? this.quotes.find(asset => lower(asset.address) === lower(currency));
+        return { coin: getAddress(coin), poolId: item.poolId, currency, quoteSymbol: item.symbol, amountRaw: item.pendingRaw,
+          amountQuote, amountUsd: amountQuote * (quote?.usdPrice ?? 0) };
+      });
+    } catch (error) { throw error instanceof ApiError ? new TxError(error.message, "reverted") : error; }
+  }
+
+  async claimTreasuryAuthorRewards(user: Address, coin: Address, poolId: Hash): Promise<Hash> {
+    // Refresh the canonical pool currency and shared balance before opening the wallet.
+    const rewards = await this.getTreasuryAuthorRewards(user, coin);
+    const reward = rewards.find(item => lower(item.poolId) === lower(poolId));
+    if (!reward?.currency || !reward.amountRaw || BigInt(reward.amountRaw) === 0n) throw new TxError("There is nothing left to withdraw from this pool.", "reverted");
+    const deployment = await this.requireDeployment();
+    const chainPoolId = await this.client.readContract({ address: deployment.hook, abi: poolIdentityAbi, functionName: "poolIdFor", args: [coin, reward.currency] });
+    if (lower(chainPoolId) !== lower(poolId)) throw new TxError("The pool's pair asset could not be verified on chain. Refresh and try again.", "reverted");
+    const ctx = await this.txContext(user);
+    if (lower(ctx.wallet.account.address) !== lower(user)) throw new TxError("The connected wallet changed. Connect the treasury wallet and try again.", "reverted");
+    const hash = await (await txModule()).sendTreasuryAuthorWithdrawal(ctx, coin, reward.currency);
+    this.invalidate("claimables:");
+    this.invalidate(`coin:${lower(coin)}`);
+    this.invalidate("coins");
+    this.invalidate(`qbal:${lower(user)}`);
+    await this.loadCoin(lower(coin)).catch(() => undefined);
+    this.emit();
+    return hash;
+  }
+
   /* ------------------------------------------------------------------ quotes */
 
   /** The coin's pool, refreshed after every trade on it; undefined until loaded. */
-  private pool(address: string): LaunchPool | undefined {
-    const key = lower(address);
+  private pool(address: string, poolId?: Hash): LaunchPool | undefined {
+    const key = `${lower(address)}${poolId ? `:${lower(poolId)}` : ""}`;
     this.read(`pool:${key}`, 10_000, async () => {
-      await this.loadPool(key);
+      await this.loadPool(lower(address), poolId);
     });
     return this.pools.get(key);
   }
@@ -609,15 +780,17 @@ export class LiveMarket implements Market {
     return launchFeeBps(coin.terms.feeBps, { startBps: coin.terms.snipeStartBps, durationSec: coin.terms.snipeDurationSec }, (nowMs - coin.createdAt) / 1000);
   }
 
-  quote(coinAddress: string, side: TradeSide, amountIn: number, now = this.now(), payWithEth = false): MarketQuote {
+  quote(coinAddress: string, side: TradeSide, amountIn: number, now = this.now(), payWithEth = false, poolId?: Hash): MarketQuote {
     const empty: MarketQuote = { side, amountIn, amountOut: 0, feeQuote: 0, feeBps: 0, priceImpact: 0, priceAfterUsd: 0, marketCapAfterUsd: 0, ok: false };
-    const coin = this.getCoin(coinAddress);
-    if (!coin) return { ...empty, reason: "Coin not found." };
+    const found = this.getCoin(coinAddress);
+    if (!found) return { ...empty, reason: "Coin not found." };
+    let coin: Coin;
+    try { coin = selectCoinMarket(found, poolId); } catch { return { ...empty, reason: "Pool not found." }; }
     const feeBps = this.feeBpsNow(coin, now);
     if (payWithEth && side === "buy" && coin.quote.kind !== "native") {
       return { ...empty, feeBps, reason: `Pay with ${coin.quote.symbol} for this coin.` };
     }
-    const pool = this.pool(coin.address);
+    const pool = this.pool(coin.address, poolId);
     if (!(amountIn > 0)) return { ...empty, feeBps };
     if (!pool) return { ...empty, feeBps, reason: "Loading the pool." };
     const decimals = side === "buy" ? coin.quote.decimals : COIN_DECIMALS;
@@ -632,6 +805,7 @@ export class LiveMarket implements Market {
       side,
       amountIn,
       amountOut: fromUnits(q.amountOut, side === "buy" ? COIN_DECIMALS : coin.quote.decimals),
+      amountOutRaw: q.amountOut.toString(),
       feeQuote: fromUnits(q.fee, coin.quote.decimals),
       feeBps,
       priceImpact: q.priceImpact,
@@ -659,10 +833,25 @@ export class LiveMarket implements Market {
   }
 
   async trade(user: Address, coinAddress: string, side: TradeSide, amountIn: number, _minOut: number, options: TradeOptions = {}): Promise<Trade> {
+    const slippageBps = options.slippageBps ?? DEFAULT_SLIPPAGE_BPS;
+    if (!Number.isInteger(slippageBps) || slippageBps < 0 || slippageBps > MAX_SLIPPAGE_BPS) {
+      throw new TxError("Choose a valid slippage percentage up to 50%.", "reverted");
+    }
+    let displayedMinimum = 0n;
+    if (options.minAmountOutRaw !== undefined) {
+      if (typeof options.minAmountOutRaw !== "string" || !/^\d{1,78}$/.test(options.minAmountOutRaw)) {
+        throw new TxError("The minimum received could not be verified. Refresh the quote and try again.", "reverted");
+      }
+      displayedMinimum = BigInt(options.minAmountOutRaw);
+      if (displayedMinimum <= 0n || displayedMinimum > (1n << 256n) - 1n) {
+        throw new TxError("The minimum received could not be verified. Refresh the quote and try again.", "reverted");
+      }
+    }
     const key = lower(coinAddress);
     if (!this.coins.has(key)) await this.loadCoin(key);
-    const coin = this.coins.get(key);
-    if (!coin) throw new TxError("This coin is not available.", "reverted");
+    const found = this.coins.get(key);
+    if (!found) throw new TxError("This coin is not available.", "reverted");
+    const coin = selectCoinMarket(found, options.poolId);
     if (side === "buy" && options.payWithEth && coin.quote.kind !== "native") {
       throw new TxError(`Pay with ${coin.quote.symbol} for this coin.`, "reverted");
     }
@@ -671,7 +860,7 @@ export class LiveMarket implements Market {
 
     const [balance, pool, deadline] = await Promise.all([
       side === "buy" ? this.rawQuoteBalance(user, coin.quote) : this.readCoinBalance(user, coin.address),
-      this.loadPool(key),
+      this.loadPool(key, options.poolId),
       this.deadline(),
     ]);
     const raw = side === "sell" && options.max ? balance : toUnits(options.amountText ?? plain(amountIn), decimals);
@@ -683,10 +872,17 @@ export class LiveMarket implements Market {
     const feeBps = this.feeBpsNow(coin, this.now());
     const quoted = side === "buy" ? quoteBuy(pool, raw, feeBps) : quoteSell(pool, raw, feeBps);
     if (quoted.partial || quoted.amountOut === 0n) throw new TxError("That amount is more than the pool can fill. Try a smaller amount.", "reverted");
-    const minAmountOut = minOut(quoted.amountOut, options.slippageBps ?? DEFAULT_SLIPPAGE_BPS);
+    if (quoted.amountOut < displayedMinimum) {
+      throw new TxError("The price changed beyond your minimum received. Review the updated quote and try again.", "reverted");
+    }
+    const freshMinimum = minOut(quoted.amountOut, slippageBps);
+    // Keep the displayed quote's exact floor if an intervening trade moved the pool. A
+    // fresh quote may tighten protection, but must never silently loosen that promise.
+    const protectedMinimum = freshMinimum > displayedMinimum ? freshMinimum : displayedMinimum;
+    const minAmountOut = protectedMinimum > 0n ? protectedMinimum : 1n;
 
     const ctx = await this.txContext(user, options.onStage);
-    const fill = await (await txModule()).sendTrade(ctx, { side, coin: coin.address, quote: coin.quote.address, amountIn: raw, minAmountOut, referrer: options.referrer ?? null, deadline });
+    const fill = await (await txModule()).sendTrade(ctx, { side, coin: coin.address, quote: coin.quote.address, explicitPool: Boolean(options.poolId), amountIn: raw, minAmountOut, referrer: options.referrer ?? null, deadline });
 
     this.invalidate(`pool:${key}`);
     this.invalidate(`coin:${key}`);
@@ -701,6 +897,8 @@ export class LiveMarket implements Market {
     return {
       id: fill.hash,
       coin: coin.address,
+      poolId: options.poolId,
+      quote: coin.quote.address,
       ts: this.now(),
       side,
       trader: user,
@@ -727,14 +925,29 @@ export class LiveMarket implements Market {
     const settings = this.getSettings();
     if (settings.launchesPaused) throw new TxError("New launches are paused right now. Existing coins trade as normal.", "reverted");
     if (!settings.enabledModes.includes(input.mode)) throw new TxError("That fee destination is not available right now.", "reverted");
-    if (!settings.enabledQuoteKinds.includes(input.quote.kind)) throw new TxError("That pair is not available right now.", "reverted");
+    if (input.tweet && (input.mode !== "creator" || !validateAuthorShareBps(input.tweet.authorShareBps))) throw new TxError("Tweet launches use Creator fees and an author share from 20% to 100%.", "reverted");
+    const markets = input.markets?.length ? input.markets : [{ quote: input.quote, firstBuyQuote: input.firstBuyQuote, firstBuyText: input.firstBuyText }];
+    if (markets.length > 5 || new Set(markets.map((market) => lower(market.quote.address))).size !== markets.length) throw new TxError("Choose up to five different pair assets.", "reverted");
+    if (markets.some((market) => !this.quotes.some((listed) => lower(listed.address) === lower(market.quote.address)))) throw new TxError("Choose listed pair assets.", "reverted");
+    if (markets.some((market) => !settings.enabledQuoteKinds.includes(market.quote.kind))) throw new TxError("That pair is not available right now.", "reverted");
     if (input.feeBps < settings.feeMinBps || input.feeBps > settings.feeMaxBps) throw new TxError("The trading fee is outside the allowed range.", "reverted");
     if (input.mode !== "creator" && (input.creatorKeepBps < 0 || input.creatorKeepBps > settings.creatorKeepMaxBps)) {
       throw new TxError("The creator share is above the allowed limit.", "reverted");
     }
-    const firstBuy = toUnits(input.firstBuyText ?? plain(input.firstBuyQuote), input.quote.decimals);
-    if (firstBuy > 0n && firstBuy > (await this.rawQuoteBalance(user, input.quote))) {
-      throw new TxError(`Not enough ${input.quote.symbol} for the first buy.`, "insufficient");
+    const pairs = await Promise.all(markets.map(async (market) => {
+      const firstBuy = toUnits(market.firstBuyText ?? plain(market.firstBuyQuote), market.quote.decimals);
+      if (firstBuy > 0n && firstBuy > await this.rawQuoteBalance(user, market.quote)) throw new TxError(`Not enough ${market.quote.symbol} for the first buy.`, "insufficient");
+      return { quote: market.quote.address, quoteDecimals: market.quote.decimals, firstBuy };
+    }));
+    const primary = pairs[0]!;
+    let tweet: TweetLaunchAttestation | undefined;
+    if (input.tweet) {
+      try {
+        const salt = toHex(crypto.getRandomValues(new Uint8Array(32)));
+        tweet = await this.api.post<TweetLaunchAttestation>("/v1/tweets/attestation", { url: input.tweet.source.url, authorShareBps: input.tweet.authorShareBps, salt }, { token: await this.sessionToken(user) });
+        if (tweet.source.postId !== input.tweet.source.postId || tweet.source.author.id !== input.tweet.source.author.id || tweet.tweet.authorShareBps !== input.tweet.authorShareBps
+          || tweet.salt !== salt || tweet.launcher.toLowerCase() !== user.toLowerCase()) throw new TxError("The post attribution changed. Import the X post again before launching.", "reverted");
+      } catch (error) { throw error instanceof ApiError ? new TxError(error.message, "reverted") : error; }
     }
 
     // The image and the metadata go to IPFS first; the coin points at them forever.
@@ -765,18 +978,30 @@ export class LiveMarket implements Market {
       name: input.name,
       symbol: input.symbol,
       contractURI,
-      quote: input.quote.address,
-      quoteDecimals: input.quote.decimals,
+      quote: primary.quote,
+      quoteDecimals: primary.quoteDecimals,
       mode: input.mode,
       feeBps: input.feeBps,
       creatorKeepBps: input.creatorKeepBps,
-      firstBuy,
+      firstBuy: primary.firstBuy,
+      pairs,
       slippageBps: LAUNCH_SLIPPAGE_BPS,
       deadline,
+      ...(tweet ? { tweet, salt: tweet.salt } : {}),
     });
     this.invalidate("coins");
     this.invalidate(`qbal:${lower(user)}`);
-    return (await this.waitForCoin(result.coin)) ?? this.provisionalCoin(user, input, result.coin, settings);
+    const indexed = await this.waitForCoin(result.coin);
+    if (indexed) return indexed;
+    const provisional = this.provisionalCoin(user, input, result.coin, settings);
+    if (result.markets?.length) provisional.markets = result.markets.map((market, i) => ({
+      poolId: market.poolId, quote: markets[i]!.quote, supplyRaw: equalAllocations(markets.length)[i]!.toString(), supplyFraction: 1 / markets.length,
+      poolCoins: Number(equalAllocations(markets.length)[i]!) / 1e18 - Number(market.coinsBought) / 1e18,
+      priceQuote: provisional.priceUsd / markets[i]!.quote.usdPrice, priceUsd: provisional.priceUsd,
+      liquidityUsd: settings.openingFdvUsd / markets.length, volume24hUsd: 0, volumeTotalUsd: 0,
+      change5m: 0, change1h: 0, change24h: 0, stats: { ...provisional.stats },
+    }));
+    return provisional;
   }
 
   /** The indexed coin, once the indexer has it (usually within seconds). */
@@ -799,6 +1024,9 @@ export class LiveMarket implements Market {
   private provisionalCoin(user: Address, input: LaunchInput, address: Address, settings: LaunchSettings): Coin {
     const now = this.now();
     return {
+      ...(input.tweet ? { tweet: { postId: input.tweet.source.postId, authorXUserId: input.tweet.source.author.id, authorShareBps: input.tweet.authorShareBps,
+        treasuryUnlockAt: now + AUTHOR_RESERVE_DAYS * 86_400_000, treasuryUnlocked: false,
+        verifyBy: now + AUTHOR_RESERVE_DAYS * 86_400_000, source: input.tweet.source } } : {}),
       address,
       name: input.name,
       symbol: input.symbol,
@@ -861,12 +1089,13 @@ export class LiveMarket implements Market {
     };
   }
 
-  async claim(user: Address, items: Claimable[], _outcome?: TxOutcome, onStage?: (stage: TxStage) => void): Promise<Hash> {
+  async claim(user: Address, items: Claimable[], _outcome?: TxOutcome, onStage?: (stage: TxStage) => void, to?: Address): Promise<Hash> {
     const requests: ClaimRequest[] = items.map((item) => {
       if (!item.currency || !item.amountRaw) throw new TxError("These rewards are still loading. Try again in a moment.", "reverted");
       return {
         kind: item.kind,
         coin: item.coin,
+        poolId: item.poolId,
         currency: getAddress(item.currency),
         amount: BigInt(item.amountRaw),
         ...(item.kind === "holders"
@@ -875,11 +1104,27 @@ export class LiveMarket implements Market {
       };
     });
     const ctx = await this.txContext(user, onStage);
-    const hash = await (await txModule()).sendClaims(ctx, requests);
+    const hash = await (await txModule()).sendClaims(ctx, requests, to);
     this.invalidate(`claimables:${lower(user)}`);
     this.invalidate(`qbal:${lower(user)}`);
     return hash;
   }
+
+  private async creatorAction(user: Address, coin: Address, action: "lowerFee" | "proposeCreator" | "acceptCreator", value?: Address | number, onStage?: (stage: TxStage) => void): Promise<Hash> {
+    const hash = await (await txModule()).sendCreatorAction(await this.txContext(user, onStage), coin, action, value);
+    this.invalidate(`coin:${lower(coin)}`);
+    this.invalidate("coins");
+    this.invalidate("claimables:");
+    this.invalidate("profile:");
+    this.invalidate(`pool:${lower(coin)}`);
+    await this.loadCoin(lower(coin)).catch(() => undefined);
+    this.emit();
+    return hash;
+  }
+
+  lowerFee(user: Address, coin: Address, feeBps: number, onStage?: (stage: TxStage) => void) { return this.creatorAction(user, coin, "lowerFee", feeBps, onStage); }
+  proposeCreator(user: Address, coin: Address, proposed: Address, onStage?: (stage: TxStage) => void) { return this.creatorAction(user, coin, "proposeCreator", proposed, onStage); }
+  acceptCreator(user: Address, coin: Address, onStage?: (stage: TxStage) => void) { return this.creatorAction(user, coin, "acceptCreator", undefined, onStage); }
 
   async addComment(author: Address, coinAddress: string, body: string): Promise<Comment> {
     const text = body.replace(/\s+/g, " ").trim();

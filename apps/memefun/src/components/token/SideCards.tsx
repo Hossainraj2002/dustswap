@@ -14,7 +14,6 @@ import { AddressAvatar } from "@/components/ui/AddressAvatar";
 import { Button } from "@/components/ui/Button";
 import { CoinAvatar } from "@/components/ui/CoinAvatar";
 import { Badge, ProgressBar } from "@/components/ui/display";
-import { FeeSplitBar } from "@/components/ui/FeeSplitBar";
 import { MODE_META } from "@/components/ui/ModeBadge";
 import { coinRing } from "@/components/coin/ring";
 
@@ -72,7 +71,7 @@ export function ModeImpactCard({ coin }: { coin: Coin }) {
   switch (coin.terms.mode) {
     case "creator":
       body = (
-        <Metric label="Creator has earned" value={formatQuoteAmount(stats.creatorEarnedQuote, symbol)} sub={formatUsd(stats.creatorEarnedQuote * quote.usdPrice)} />
+        <Metric label={coin.tweet ? "Launcher has earned" : "Creator has earned"} value={formatQuoteAmount(stats.creatorEarnedQuote, symbol)} sub={formatUsd(stats.creatorEarnedQuote * quote.usdPrice)} />
       );
       break;
     case "burn": {
@@ -116,10 +115,11 @@ export function ModeImpactCard({ coin }: { coin: Coin }) {
           <Metric label="Floor liquidity" value={formatQuoteAmount(stats.floorQuote, symbol)} sub={formatUsd(stats.floorQuote * quote.usdPrice)} />
           <Metric
             small
-            label="Price the floor can hold"
+            label="Price this pool's floor can hold"
             value={formatUsd(stats.floorPriceUsd * COIN_SUPPLY_HUMAN, { compact: true }) + " market cap"}
             sub={stats.floorPriceUsd > 0 ? `${formatPercent(below)} under the current price` : "Grows with every trade"}
           />
+          {coin.markets && coin.markets.length > 1 ? <p className="text-footnote text-label-2">This floor belongs to the {symbol} pool. Its bids have limited capacity; other pools have independent floors.</p> : null}
         </>
       );
       break;
@@ -136,14 +136,10 @@ export function ModeImpactCard({ coin }: { coin: Coin }) {
           <h2 id={`mode-${coin.address}`} className="text-headline text-label">
             {meta.label}
           </h2>
-          <p className="text-footnote text-label-2">{meta.description}</p>
+          <p className="text-footnote text-label-2">{coin.tweet ? "Creator earnings are split between the launcher and original post author." : meta.description}</p>
         </div>
       </div>
       {body}
-      <FeeSplitBar
-        config={{ mode: coin.terms.mode, platformShareBps: coin.terms.platformShareBps, referralShareBps: coin.terms.referralShareBps, creatorKeepBps: coin.terms.creatorKeepBps }}
-        feeBps={coin.terms.feeBps}
-      />
     </section>
   );
 }

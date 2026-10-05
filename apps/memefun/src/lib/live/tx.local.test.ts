@@ -29,6 +29,8 @@ import type { MemefunDeployment } from "@/lib/contracts/deployments";
 import { TxError } from "@/lib/market/Market";
 import { MAX_TICK_DRIFT, sendClaims, sendDrip, sendLaunch, sendOwnerCalls, sendTrade, type TxContext } from "./tx";
 import { REVERT_MESSAGES } from "./txErrors";
+import { BUILDER_CODE, DATA_SUFFIX } from "@/lib/wallet/builderCode";
+import { Attribution } from "ox/erc8021";
 
 const RPC = process.env.MEMEFUN_LOCAL_RPC ?? "http://127.0.0.1:8545";
 const chain = defineChain({ id: 31337, name: "Local chain", nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 }, rpcUrls: { default: { http: [RPC] } } });
@@ -42,7 +44,7 @@ const hookAbi = parseAbi(["function creatorOf(address coin) view returns (addres
 
 function contextFor(account: ReturnType<typeof privateKeyToAccount> | typeof owner): TxContext {
   const wallet = createWalletClient({ account, chain, transport: http(RPC) });
-  return { wallet, client: client as never, deployment, dataSuffix: "0x6d656d6566756e" };
+  return { wallet, client: client as never, deployment };
 }
 
 async function deadline() {
@@ -191,6 +193,7 @@ describe("memefun transactions on a local chain", () => {
   it("appends the builder code to every transaction", async () => {
     const fill = await sendTrade(ctx, { side: "buy", coin: ethCoin, quote: zeroAddress, amountIn: parseEther("0.001"), minAmountOut: 1n, deadline: await deadline() });
     const tx = await client.getTransaction({ hash: fill.hash });
-    expect(tx.input.endsWith("6d656d6566756e")).toBe(true);
+    expect(tx.input.endsWith(DATA_SUFFIX.slice(2))).toBe(true);
+    expect(Attribution.fromData(tx.input)?.codes).toEqual([BUILDER_CODE]);
   });
 });

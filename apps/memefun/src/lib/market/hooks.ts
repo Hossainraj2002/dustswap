@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo } from "react";
-import type { Address } from "@/core/types";
+import type { Address, Hash } from "@/core/types";
 import { useWallet } from "@/lib/wallet/WalletProvider";
 import { useMarket } from "./MarketProvider";
 import type { CandleInterval } from "./types";
@@ -22,9 +22,9 @@ export function useCoin(address: string | undefined) {
   );
 }
 
-export function useTrades(address: string | undefined, limit = 60) {
+export function useTrades(address: string | undefined, limit = 60, poolId?: Hash) {
   const { market, version } = useMarket();
-  return useMemo(() => (address && market ? market.getTrades(address, limit) : []), [market, version, address, limit]); // eslint-disable-line react-hooks/exhaustive-deps
+  return useMemo(() => (address && market ? market.getTrades(address, limit, poolId) : []), [market, version, address, limit, poolId]); // eslint-disable-line react-hooks/exhaustive-deps
 }
 
 export function useHolders(address: string | undefined, limit = 25) {
@@ -41,11 +41,11 @@ export function useComments(address: string | undefined) {
   return useMemo(() => (address && market ? market.getComments(address) : []), [market, version, address]); // eslint-disable-line react-hooks/exhaustive-deps
 }
 
-export function useCandles(address: string | undefined, interval: CandleInterval, metric: "price" | "mcap") {
+export function useCandles(address: string | undefined, interval: CandleInterval, metric: "price" | "mcap", poolId?: Hash) {
   const { market, version } = useMarket();
   return useMemo(
-    () => (address && market ? market.getCandles(address, interval, metric) : []),
-    [market, version, address, interval, metric], // eslint-disable-line react-hooks/exhaustive-deps
+    () => (address && market ? market.getCandles(address, interval, metric, poolId) : []),
+    [market, version, address, interval, metric, poolId], // eslint-disable-line react-hooks/exhaustive-deps
   );
 }
 
@@ -76,7 +76,10 @@ export function useModeration() {
 
 export function useLaunchSettings() {
   const { market, version } = useMarket();
-  return useMemo(() => market?.getSettings(), [market, version]); // eslint-disable-line react-hooks/exhaustive-deps
+  return useMemo(() => {
+    const settings = market?.getSettings();
+    return market?.isSettingsReady() ? settings : undefined;
+  }, [market, version]); // eslint-disable-line react-hooks/exhaustive-deps
 }
 
 export function usePositions(owner: Address | null | undefined) {

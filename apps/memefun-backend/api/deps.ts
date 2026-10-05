@@ -5,10 +5,14 @@ import { createAppStore } from "../lib/app-store";
 import { chainSettings } from "../lib/chain";
 import { createAppPool, createReadPool } from "../lib/db";
 import { loadDeployment } from "../lib/deployment";
-import { envList, optionalEnv, requireEnv } from "../lib/env";
+import { envInt, envList, optionalEnv, requireEnv } from "../lib/env";
 import { lc } from "../lib/indexer/addresses";
 import { createMediaStore } from "../lib/media";
 import { migrate } from "../lib/migrate";
+import { createTweetAttestor } from "../lib/x/attestation";
+import { createXOAuth } from "../lib/x/oauth";
+import { createTweetProvider } from "../lib/x/provider";
+import { createXStore } from "../lib/x/store";
 import type { AppDeps } from "./app";
 import { normalizeOrigins } from "./http";
 import { createSettingsReader } from "./read/settings";
@@ -49,6 +53,20 @@ export async function createDeps(): Promise<Running> {
   const sessions = createSessions(sessionSecret);
   // IP hashes use a salt derived from the session secret unless one is given.
   const ipSalt = optionalEnv("IP_HASH_SALT") ?? createHmac("sha256", sessionSecret).update("memefun ip salt").digest("hex");
+  const xStore = createXStore(appPool);
+  const getxKey = optionalEnv("GETX_API_KEY") ?? optionalEnv("GETXAPI_API_KEY") ?? optionalEnv("GETXAPI_KEY");
+  const xClientId = optionalEnv("X_CLIENT_ID");
+  const xRedirectUri = optionalEnv("X_REDIRECT_URI");
+  const author = {
+    store: xStore,
+    provider: createTweetProvider(getxKey ? { apiKey: getxKey, dailyLimit: envInt("GETX_TWEET_DAILY_LIMIT", 100, { min: 0, max: 10_000 }) } : null, xStore),
+    oauth: createXOAuth(xClientId && xRedirectUri ? { clientId: xClientId, clientSecret: optionalEnv("X_CLIENT_SECRET"), redirectUri: xRedirectUri,
+      dailyLimit: envInt("X_AUTHOR_VERIFY_DAILY_LIMIT", 10, { min: 0, max: 10_000 }) } : null, xStore),
+    attestor: createTweetAttestor(optionalEnv("TWEET_ATTESTOR_PRIVATE_KEY"), client, deployment),
+    sessions, snapshot, origins: allowedOrigins, deployment, ipSalt,
+  };
+  const xPrune = setInterval(() => { void xStore.prune().catch(() => console.error("[memefun api] X state cleanup failed")); }, 60_000);
+  xPrune.unref();
 
   snapshot.start(2_000);
   hub.start(1_000);
@@ -63,7 +81,9 @@ export async function createDeps(): Promise<Running> {
     media,
     allowedOrigins,
     deployment,
+    author,
     async dispose() {
+      clearInterval(xPrune);
       snapshot.stop();
       hub.stop();
       await Promise.allSettled([readPool.end(), appPool.end()]);

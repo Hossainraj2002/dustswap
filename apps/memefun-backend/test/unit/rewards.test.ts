@@ -2,7 +2,7 @@ import { StandardMerkleTree } from "@openzeppelin/merkle-tree";
 import { getAddress, keccak256, concat } from "viem";
 import { describe, expect, it } from "vitest";
 
-import { LEAF_ENCODING, buildRewardTree, leafHash } from "../../lib/rewards/tree";
+import { LEAF_ENCODING, POOL_LEAF_ENCODING, buildRewardTree, leafHash } from "../../lib/rewards/tree";
 import { EPOCH_LENGTH_SEC, allocate, latestBoundary, timeWeightedBalances } from "../../lib/rewards/twab";
 
 const A = "0x00000000000000000000000000000000000000a1";
@@ -111,6 +111,24 @@ describe("reward tree", () => {
     { epoch: 3n, coin: getAddress("0xb200000000000000000000233ba0DF815CEc70E8"), index: 1n, account: getAddress(B), amount: 456n },
     { epoch: 3n, coin: getAddress("0xB200000000000000000000Fed34484312760f647"), index: 0n, account: getAddress(A), amount: 789n },
   ];
+
+  it("binds new rewards to one pool and uses the contract's versioned six-field encoding", () => {
+    const poolA = `0x${"11".repeat(32)}` as `0x${string}`;
+    const poolB = `0x${"22".repeat(32)}` as `0x${string}`;
+    const a = { ...leaves[0]!, poolId: poolA };
+    const b = { ...leaves[0]!, poolId: poolB };
+    expect(leafHash(a)).not.toBe(leafHash(b));
+    expect(leafHash(a)).not.toBe(leafHash(leaves[0]!));
+    const tree = buildRewardTree([a, b]);
+    expect(StandardMerkleTree.verify(tree.root, [...POOL_LEAF_ENCODING],
+      ["1", a.epoch.toString(), poolA, a.index.toString(), a.account, a.amount.toString()], tree.proofs[0]!)).toBe(true);
+    expect(StandardMerkleTree.verify(tree.root, [...POOL_LEAF_ENCODING],
+      ["1", a.epoch.toString(), poolB, a.index.toString(), a.account, a.amount.toString()], tree.proofs[0]!)).toBe(false);
+  });
+
+  it("refuses to mix legacy and pool-bound proofs in a root", () => {
+    expect(() => buildRewardTree([leaves[0]!, { ...leaves[1]!, poolId: `0x${"11".repeat(32)}` }])).toThrow("cannot mix");
+  });
 
   it("hashes leaves as keccak256(keccak256(abi.encode(...))), the distributor's leaf()", () => {
     const tree = StandardMerkleTree.of(

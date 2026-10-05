@@ -13,11 +13,12 @@
 import { BPS, COIN_SUPPLY_HUMAN, DEAD_ADDRESS } from "@/core/constants";
 import { launchFeeBps } from "@/core/antiSnipe";
 import { feeShareFractions } from "@/core/fees";
+import { toUnits } from "@/core/format";
 import { crossedMilestone, milestoneProgress } from "@/core/milestones";
 import { DEFAULT_SETTINGS, type LaunchSettings } from "@/core/settings";
-import type { Address, CoinLinks, CoinTerms, FeeMode, QuoteAsset, TradeSide } from "@/core/types";
+import type { Address, Hash, CoinLinks, CoinTerms, FeeMode, QuoteAsset, TradeSide } from "@/core/types";
 import { ETH, PREVIEW_STOCKS, QUOTES, USDC } from "@/lib/market/quotes";
-import { type LaunchInput, type Market, type MarketQuote, type MarketStatus, TxError } from "@/lib/market/Market";
+import { type LaunchInput, type Market, type MarketQuote, type MarketStatus, type TradeOptions, type TxStage, TxError } from "@/lib/market/Market";
 import type {
   ActivityItem,
   Candle,
@@ -31,6 +32,8 @@ import type {
   Position,
   Trade,
 } from "@/lib/market/types";
+import { aggregateCoinMarkets, equalAllocations } from "@/lib/market/markets";
+import { AUTHOR_TREASURY_UNLOCK_DAYS, authorTreasuryUnlockAt, parseTweetUrl, validAuthorShare, type AuthorReward, type AuthorSession, type TweetImport } from "@/lib/create/tweet";
 import { PREVIEW_COINS, PREVIEW_COMMENTS, PREVIEW_CREATOR_NAMES } from "./catalog";
 import { mascotDataUri } from "./mascot";
 import { between, createRng, hashString, logNormal, pick, seededAddress, seededHash } from "./random";
@@ -41,6 +44,7 @@ export type PreviewQuote = MarketQuote;
 
 /** Estimated cost of the ETH to pair-asset hop for pay-with-ETH buys. */
 export const ROUTE_COST_BPS = 30;
+export const PREVIEW_TREASURY: Address = "0x000000000000000000000000000000000000d057";
 
 export type { LaunchInput } from "@/lib/market/Market";
 
@@ -49,6 +53,8 @@ export const PreviewTxError = TxError;
 
 interface SimCoin {
   coin: Coin;
+  poolId: Hash;
+  allocationSupply: bigint;
   x: number;
   y: number;
   k: number;
@@ -61,13 +67,16 @@ interface SimCoin {
   comments: Comment[];
   floorAdds: number;
   nextBuybackUsd: number;
+  authorEarnedQuote: number;
+  authorClaimedQuote: number;
+  authorReclaimedQuote: number;
 }
 
 interface UserState {
   balances: Map<string, number>;
   costBasisUsd: Map<Address, number>;
-  holderRewards: Map<Address, number>;
-  referralRewards: Map<Address, number>;
+  holderRewards: Map<string, number>;
+  referralRewards: Map<string, number>;
   claimedCreator: Map<Address, number>;
   createdCoins: Set<Address>;
 }
@@ -127,6 +136,7 @@ function emptyStats(now: number): ModeStats {
 export class PreviewMarket implements Market {
   readonly kind = "preview" as const;
   private readonly coins = new Map<Address, SimCoin>();
+  private readonly marketSims = new Map<Address, SimCoin[]>();
   private readonly order: Address[] = [];
   private activity: ActivityItem[] = [];
   private readonly listeners = new Set<() => void>();
@@ -140,11 +150,14 @@ export class PreviewMarket implements Market {
   private hiddenCoins = new Set<Address>();
   private featuredCoins = new Set<Address>();
   private banner = "";
+  private authorSessions = new Map<Address, AuthorSession>();
   private readonly rng: () => number;
+  readonly treasury: Address;
 
   constructor(
-    private readonly options: { now: number; seed?: number; empty?: boolean; protectionDemo?: boolean },
+    private readonly options: { now: number; seed?: number; empty?: boolean; protectionDemo?: boolean; treasury?: Address },
   ) {
+    this.treasury = options.treasury ?? PREVIEW_TREASURY;
     this.rng = createRng(options.seed ?? 20261001);
     this.buildCreators();
     if (!options.empty) this.buildHistory();
@@ -182,17 +195,18 @@ export class PreviewMarket implements Market {
     const result: Coin[] = [];
     for (const address of this.order) {
       const sim = this.coins.get(address);
-      if (sim && (includeHidden || !this.hiddenCoins.has(address))) result.push(sim.coin);
+      if (sim && (includeHidden || !this.hiddenCoins.has(address))) result.push(this.coinView(sim));
     }
     return result;
   }
 
   getCoin(address: string): Coin | undefined {
-    return this.findSim(address)?.coin;
+    const sim = this.findSim(address);
+    return sim ? this.coinView(sim) : undefined;
   }
 
-  getTrades(address: string, limit = 100): Trade[] {
-    const sim = this.findSim(address);
+  getTrades(address: string, limit = 100, poolId?: Hash): Trade[] {
+    const sim = this.findSim(address, poolId);
     if (!sim) return [];
     return sim.trades.slice(-limit).reverse();
   }
@@ -208,6 +222,8 @@ export class PreviewMarket implements Market {
   getSettings(): LaunchSettings {
     return this.settings;
   }
+
+  isSettingsReady() { return true; }
 
   async updateSettings(next: LaunchSettings) {
     this.settings = { ...next, enabledModes: [...next.enabledModes], enabledQuoteKinds: [...next.enabledQuoteKinds] };
@@ -247,8 +263,8 @@ export class PreviewMarket implements Market {
     this.emit();
   }
 
-  getCandles(address: string, interval: CandleInterval, metric: "price" | "mcap" = "price"): Candle[] {
-    const sim = this.findSim(address);
+  getCandles(address: string, interval: CandleInterval, metric: "price" | "mcap" = "price", poolId?: Hash): Candle[] {
+    const sim = this.findSim(address, poolId);
     if (!sim) return [];
     const now = Date.now();
     const seconds = interval;
@@ -298,9 +314,10 @@ export class PreviewMarket implements Market {
     const sim = this.findSim(address);
     if (!sim) return [];
     const holders: Holder[] = [
-      { address: sim.coin.address, balance: sim.y, pct: sim.y / COIN_SUPPLY_HUMAN, label: "pool" },
+      { address: sim.coin.address, balance: this.simsOf(sim).reduce((sum, entry) => sum + entry.y, 0), pct: this.simsOf(sim).reduce((sum, entry) => sum + entry.y, 0) / COIN_SUPPLY_HUMAN, label: "pool" },
     ];
-    if (sim.burned > 0) holders.push({ address: DEAD_ADDRESS, balance: sim.burned, pct: sim.burned / COIN_SUPPLY_HUMAN, label: "burn" });
+    const burned = this.simsOf(sim).reduce((sum, entry) => sum + entry.burned, 0);
+    if (burned > 0) holders.push({ address: DEAD_ADDRESS, balance: burned, pct: burned / COIN_SUPPLY_HUMAN, label: "burn" });
     const wallets = [...sim.balances.entries()]
       .filter(([, balance]) => balance >= 1)
       .sort((a, b) => b[1] - a[1]);
@@ -329,8 +346,8 @@ export class PreviewMarket implements Market {
     for (const coinAddress of coins) {
       const sim = this.coins.get(coinAddress);
       if (!sim) continue;
-      earnedUsd += sim.coin.stats.creatorEarnedQuote * sim.coin.quote.usdPrice;
-      volumeUsd += sim.coin.volumeTotalUsd;
+      earnedUsd += this.simsOf(sim).reduce((sum, entry) => sum + entry.coin.stats.creatorEarnedQuote * entry.coin.quote.usdPrice, 0);
+      volumeUsd += this.coinView(sim).volumeTotalUsd;
     }
     return {
       address: (creator?.address ?? address) as Address,
@@ -386,7 +403,7 @@ export class PreviewMarket implements Market {
       if (!sim) continue;
       const balance = sim.balances.get(address) ?? 0;
       if (balance < 1) continue;
-      const valueUsd = balance * sim.coin.priceUsd;
+      const valueUsd = balance * this.coinView(sim).priceUsd;
       const costBasisUsd = user?.costBasisUsd.get(coinAddress) ?? valueUsd;
       positions.push({ coin: coinAddress, balance, costBasisUsd, valueUsd, pnlUsd: valueUsd - costBasisUsd });
     }
@@ -400,36 +417,57 @@ export class PreviewMarket implements Market {
     for (const coinAddress of this.order) {
       const sim = this.coins.get(coinAddress);
       if (!sim) continue;
-      const { quote } = sim.coin;
-      if (sim.coin.creator === address) {
-        const claimable = sim.coin.stats.creatorEarnedQuote - sim.coin.stats.creatorClaimedQuote;
-        if (claimable > 0) items.push({ coin: coinAddress, kind: "creator", amountQuote: claimable, quoteSymbol: quote.symbol, amountUsd: claimable * quote.usdPrice });
+      for (const pool of this.simsOf(sim)) {
+        const { quote } = pool.coin;
+        const poolId = this.marketSims.has(coinAddress) ? pool.poolId : undefined;
+        const claimable = pool.coin.stats.creatorEarnedQuote - pool.coin.stats.creatorClaimedQuote;
+        if (pool.coin.creator.toLowerCase() === address.toLowerCase() && claimable > 0) items.push({ coin: coinAddress, poolId, kind: "creator", amountQuote: claimable, quoteSymbol: quote.symbol, amountUsd: claimable * quote.usdPrice });
+        const authorPending = this.authorPending(pool);
+        if (pool.coin.tweet?.authorWallet?.toLowerCase() === address.toLowerCase() && authorPending > 0) items.push({ coin: coinAddress, poolId, kind: "author", amountQuote: authorPending, quoteSymbol: quote.symbol, amountUsd: authorPending * quote.usdPrice });
+        const holder = user.holderRewards.get(this.rewardKey(pool)) ?? 0;
+        if (holder > 0) items.push({ coin: coinAddress, poolId, kind: "holders", amountQuote: holder, quoteSymbol: quote.symbol, amountUsd: holder * quote.usdPrice, epoch: pool.coin.stats.epochs });
+        const referral = user.referralRewards.get(this.rewardKey(pool)) ?? 0;
+        if (referral > 0) items.push({ coin: coinAddress, poolId, kind: "referral", amountQuote: referral, quoteSymbol: quote.symbol, amountUsd: referral * quote.usdPrice });
       }
-      const holder = user.holderRewards.get(coinAddress) ?? 0;
-      if (holder > 0) items.push({ coin: coinAddress, kind: "holders", amountQuote: holder, quoteSymbol: quote.symbol, amountUsd: holder * quote.usdPrice, epoch: sim.coin.stats.epochs });
-      const referral = user.referralRewards.get(coinAddress) ?? 0;
-      if (referral > 0) items.push({ coin: coinAddress, kind: "referral", amountQuote: referral, quoteSymbol: quote.symbol, amountUsd: referral * quote.usdPrice });
     }
     return items.sort((a, b) => b.amountUsd - a.amountUsd);
   }
 
-  async claim(address: Address, items: Claimable[], outcome: "ok" | "rejected" | "reverted" = "ok"): Promise<`0x${string}`> {
+  async claim(address: Address, items: Claimable[], outcome: "ok" | "rejected" | "reverted" = "ok", _onStage?: (stage: TxStage) => void, to = address): Promise<`0x${string}`> {
     await wait(700);
     if (outcome === "rejected") throw new TxError("You rejected the request in your wallet.", "rejected");
     await wait(900);
     if (outcome === "reverted") throw new TxError("The claim did not go through. Nothing was paid out. Try again.", "reverted");
+    // Validate the whole author batch before paying anything, as a reverted chain claim would.
+    const authorPools = new Set<SimCoin>();
+    for (const item of items.filter((entry) => entry.kind === "author")) {
+      const pool = this.findSim(item.coin, item.poolId);
+      if (!pool || pool.coin.tweet?.authorWallet?.toLowerCase() !== address.toLowerCase()) throw new TxError("Only the verified author wallet can claim.", "reverted");
+      if (authorPools.has(pool)) throw new TxError("Choose each author reward pool once.", "reverted");
+      if (this.authorPending(pool) <= 0) throw new TxError("There are no unpaid author rewards to claim.", "reverted");
+      authorPools.add(pool);
+    }
     const user = this.ensureUser(address);
     for (const item of items) {
-      const sim = this.coins.get(item.coin);
+      const sim = this.findSim(item.coin, item.poolId);
       if (!sim) continue;
+      let payout = item.amountQuote;
       if (item.kind === "creator") {
+        if (sim.coin.creator.toLowerCase() !== address.toLowerCase()) throw new TxError("Only the current creator can claim.", "reverted");
         sim.coin = { ...sim.coin, stats: { ...sim.coin.stats, creatorClaimedQuote: sim.coin.stats.creatorEarnedQuote } };
+      } else if (item.kind === "author") {
+        if (sim.coin.tweet?.authorWallet?.toLowerCase() !== address.toLowerCase()) throw new TxError("Only the verified author wallet can claim.", "reverted");
+        payout = this.authorPending(sim);
+        if (payout <= 0) throw new TxError("There are no unpaid author rewards to claim.", "reverted");
+        sim.authorClaimedQuote += payout;
       } else if (item.kind === "holders") {
-        user.holderRewards.delete(item.coin);
+        user.holderRewards.delete(this.rewardKey(sim));
       } else {
-        user.referralRewards.delete(item.coin);
+        user.referralRewards.delete(this.rewardKey(sim));
       }
-      user.balances.set(item.quoteSymbol, (user.balances.get(item.quoteSymbol) ?? 0) + item.amountQuote);
+      const recipient = item.kind === "holders" || item.kind === "author" ? user : this.ensureUser(to);
+      const payoutSymbol = item.kind === "author" ? sim.coin.quote.symbol : item.quoteSymbol;
+      recipient.balances.set(payoutSymbol, (recipient.balances.get(payoutSymbol) ?? 0) + payout);
     }
     this.emit();
     return seededHash(Math.random);
@@ -447,21 +485,21 @@ export class PreviewMarket implements Market {
   }
 
   /** Converts an ETH amount into the coin's pair asset for pay-with-ETH buys. */
-  routeEthToQuote(coinAddress: string, ethAmount: number): number {
-    const sim = this.findSim(coinAddress);
+  routeEthToQuote(coinAddress: string, ethAmount: number, poolId?: Hash): number {
+    const sim = this.findSim(coinAddress, poolId);
     if (!sim || sim.coin.quote.symbol === "ETH") return ethAmount;
     return ((ethAmount * ETH.usdPrice) / sim.coin.quote.usdPrice) * (1 - ROUTE_COST_BPS / BPS);
   }
 
-  quote(coinAddress: string, side: TradeSide, amountIn: number, now = Date.now(), payWithEth = false): PreviewQuote {
-    const sim = this.findSim(coinAddress);
+  quote(coinAddress: string, side: TradeSide, amountIn: number, now = Date.now(), payWithEth = false, poolId?: Hash): PreviewQuote {
+    const sim = this.findSim(coinAddress, poolId);
     const empty: PreviewQuote = { side, amountIn, amountOut: 0, feeQuote: 0, feeBps: 0, priceImpact: 0, priceAfterUsd: 0, marketCapAfterUsd: 0, ok: false };
     if (!sim) return { ...empty, reason: "Coin not found." };
     const feeBps = this.currentFeeBps(sim, now);
     if (!(amountIn > 0)) return { ...empty, feeBps };
     if (side === "buy" && payWithEth && sim.coin.quote.symbol !== "ETH") {
-      const routed = this.routeEthToQuote(coinAddress, amountIn);
-      return { ...this.quote(coinAddress, "buy", routed, now), amountIn, routedQuoteIn: routed };
+      const routed = this.routeEthToQuote(coinAddress, amountIn, poolId);
+      return { ...this.quote(coinAddress, "buy", routed, now, false, poolId), amountIn, routedQuoteIn: routed };
     }
     const spot = sim.x / sim.y;
     const usd = sim.coin.quote.usdPrice;
@@ -485,7 +523,7 @@ export class PreviewMarket implements Market {
         ok: out > 0,
       };
     }
-    const circulating = COIN_SUPPLY_HUMAN - sim.y - sim.burned;
+    const circulating = Number(sim.allocationSupply) / 1e18 - sim.y - sim.burned;
     if (amountIn > circulating + 1e-6) return { ...empty, feeBps, reason: "More than the pool can take back." };
     const y2 = sim.y + amountIn;
     const x2 = Math.max(sim.x0, sim.k / y2);
@@ -513,9 +551,9 @@ export class PreviewMarket implements Market {
     side: TradeSide,
     amountIn: number,
     minOut: number,
-    options: { outcome?: "ok" | "rejected" | "reverted"; referrer?: Address; payWithEth?: boolean } = {},
+    options: TradeOptions = {},
   ): Promise<Trade> {
-    const sim = this.findSim(coinAddress);
+    const sim = this.findSim(coinAddress, options.poolId);
     if (!sim) throw new TxError("This coin is not available.", "reverted");
     const state = this.ensureUser(user);
     const quoteSymbol = sim.coin.quote.symbol;
@@ -531,11 +569,11 @@ export class PreviewMarket implements Market {
     if (options.outcome === "reverted") {
       throw new TxError("The price moved more than your slippage allows, so the trade was cancelled. Nothing was spent except network fee.", "reverted");
     }
-    const quoted = this.quote(coinAddress, side, amountIn, Date.now(), routed);
+    const quoted = this.quote(coinAddress, side, amountIn, Date.now(), routed, options.poolId);
     if (quoted.amountOut < minOut) {
       throw new TxError("The price moved more than your slippage allows, so the trade was cancelled.", "reverted");
     }
-    const swapIn = routed ? this.routeEthToQuote(coinAddress, amountIn) : amountIn;
+    const swapIn = routed ? this.routeEthToQuote(coinAddress, amountIn, options.poolId) : amountIn;
     const trade = this.applyTrade(sim, side, user, swapIn, Date.now(), { referred: Boolean(options.referrer) });
     if (side === "buy") {
       const spentSymbol = routed ? "ETH" : quoteSymbol;
@@ -554,60 +592,48 @@ export class PreviewMarket implements Market {
   }
 
   async launch(user: Address, input: LaunchInput, outcome: "ok" | "rejected" | "reverted" = "ok"): Promise<Coin> {
-    // The same checks the factory enforces on chain, so the UI cannot drift from them.
-    if (this.settings.launchesPaused) throw new TxError("New launches are paused right now. Existing coins trade as normal.", "reverted");
-    if (!this.settings.enabledModes.includes(input.mode)) throw new TxError("That fee destination is not available right now.", "reverted");
-    if (!this.settings.enabledQuoteKinds.includes(input.quote.kind)) throw new TxError("That pair is not available right now.", "reverted");
-    if (input.feeBps < this.settings.feeMinBps || input.feeBps > this.settings.feeMaxBps) {
-      throw new TxError("The trading fee is outside the allowed range.", "reverted");
-    }
-    if (input.mode !== "creator" && (input.creatorKeepBps < 0 || input.creatorKeepBps > this.settings.creatorKeepMaxBps)) {
-      throw new TxError("The creator share is above the allowed limit.", "reverted");
-    }
+    if (input.tweet && (input.mode !== "creator" || !validAuthorShare(input.tweet.authorShareBps))) throw new TxError("Tweet launches need creator mode and an author share from 20% to 100%.", "reverted");
+    if (this.settings.launchesPaused) throw new TxError("New launches are paused right now.", "reverted");
+    if (!this.settings.enabledModes.includes(input.mode)) throw new TxError("That fee destination is not available.", "reverted");
+    const markets = input.markets?.length ? input.markets : [{ quote: input.quote, firstBuyQuote: input.firstBuyQuote, firstBuyText: input.firstBuyText }];
+    const allocations = equalAllocations(markets.length);
+    if (new Set(markets.map((market) => market.quote.address.toLowerCase())).size !== markets.length) throw new TxError("Choose different pair assets.", "reverted");
+    if (markets.some((market) => !QUOTES.some((quote) => quote.address.toLowerCase() === market.quote.address.toLowerCase()) || !this.settings.enabledQuoteKinds.includes(market.quote.kind))) throw new TxError("Choose listed, enabled pair assets.", "reverted");
+    if (input.feeBps < this.settings.feeMinBps || input.feeBps > this.settings.feeMaxBps) throw new TxError("The trading fee is outside the allowed range.", "reverted");
+    if (input.mode !== "creator" && (input.creatorKeepBps < 0 || input.creatorKeepBps > this.settings.creatorKeepMaxBps)) throw new TxError("The creator share is above the allowed limit.", "reverted");
     const state = this.ensureUser(user);
-    const quoteBalance = state.balances.get(input.quote.symbol) ?? 0;
-    if (input.firstBuyQuote > quoteBalance + 1e-12) {
-      throw new TxError(`Not enough ${input.quote.symbol} for the first buy.`, "insufficient");
-    }
+    for (const market of markets) if (market.firstBuyQuote < 0 || market.firstBuyQuote > (state.balances.get(market.quote.symbol) ?? 0)) throw new TxError(`Not enough ${market.quote.symbol} for the first buy.`, "insufficient");
     await wait(700);
     if (outcome === "rejected") throw new TxError("You rejected the request in your wallet.", "rejected");
     await wait(1400);
-    if (outcome === "reverted") throw new TxError("The launch did not go through and nothing was created. You were only charged network fee.", "reverted");
+    if (outcome === "reverted") throw new TxError("The launch did not go through and nothing was created.", "reverted");
     const now = Date.now();
-    const sim = this.createSim({
-      address: seededAddress(Math.random, "b20"),
-      name: input.name,
-      symbol: input.symbol,
-      description: input.description,
-      image: input.image,
-      links: input.links,
-      creator: user,
-      createdAt: now,
-      quote: input.quote,
-      terms: {
-        feeBps: input.feeBps,
-        mode: input.mode,
-        creatorKeepBps: input.mode === "creator" ? 0 : input.creatorKeepBps,
-        platformShareBps: this.settings.platformShareBps,
-        referralShareBps: this.settings.referralShareBps,
-        snipeStartBps: this.settings.snipeStartBps,
-        snipeDurationSec: this.settings.snipeDurationSec,
-      },
-      openingFdvUsd: this.settings.openingFdvUsd,
-      archetype: "newborn",
-      peak: 3,
-      seed: hashString(input.name + now),
-    });
-    state.createdCoins.add(sim.coin.address);
-    if (input.firstBuyQuote > 0) {
-      this.applyTrade(sim, "buy", user, input.firstBuyQuote, now, { firstBuy: true });
-      state.balances.set(input.quote.symbol, quoteBalance - input.firstBuyQuote);
-      state.costBasisUsd.set(sim.coin.address, input.firstBuyQuote * input.quote.usdPrice);
+    const address = seededAddress(Math.random, "b20");
+    const terms = { feeBps: input.feeBps, mode: input.mode, creatorKeepBps: input.mode === "creator" ? 0 : input.creatorKeepBps,
+      platformShareBps: this.settings.platformShareBps, referralShareBps: this.settings.referralShareBps,
+      snipeStartBps: this.settings.snipeStartBps, snipeDurationSec: this.settings.snipeDurationSec };
+    const pools = markets.map((market, i) => this.createSim({ address, name: input.name, symbol: input.symbol, description: input.description,
+      image: input.image, links: input.links, creator: user, createdAt: now, quote: market.quote, terms: { ...terms },
+      openingFdvUsd: this.settings.openingFdvUsd, archetype: "newborn", peak: 3, seed: hashString(input.name + now + market.quote.address),
+      allocationSupply: allocations[i], register: i === 0 }));
+    this.marketSims.set(address, pools);
+    if (input.tweet) for (const pool of pools) pool.coin = { ...pool.coin, tweet: { ...input.tweet, postId: input.tweet.source.postId,
+      authorXUserId: input.tweet.source.author.id, treasuryUnlockAt: now + AUTHOR_TREASURY_UNLOCK_DAYS * 86400_000,
+      treasuryUnlocked: false, verifyBy: now + AUTHOR_TREASURY_UNLOCK_DAYS * 86400_000 } };
+    for (const pool of pools) pool.balances = pools[0]!.balances;
+    state.createdCoins.add(address);
+    for (let i = 0; i < pools.length; i++) {
+      const market = markets[i]!;
+      const pool = pools[i]!;
+      if (market.firstBuyQuote > 0) {
+        this.applyTrade(pool, "buy", user, market.firstBuyQuote, now, { firstBuy: true });
+        state.balances.set(market.quote.symbol, (state.balances.get(market.quote.symbol) ?? 0) - market.firstBuyQuote);
+        state.costBasisUsd.set(address, (state.costBasisUsd.get(address) ?? 0) + market.firstBuyQuote * market.quote.usdPrice);
+      }
     }
-    this.refreshCoin(sim, now);
-    this.pushActivity({ id: `launch-${sim.coin.address}`, kind: "launch", coin: sim.coin.address, ts: now });
-    this.emit();
-    return sim.coin;
+    for (const pool of pools) this.refreshCoin(pool, now);
+    this.pushActivity({ id: `launch-${address}`, kind: "launch", coin: address, ts: now });
+    this.emit(); return this.coinView(pools[0]!);
   }
 
   /**
@@ -639,7 +665,7 @@ export class PreviewMarket implements Market {
     const lower = trader.toLowerCase();
     const result: Trade[] = [];
     for (const sim of this.coins.values()) {
-      for (const trade of sim.trades) if (trade.trader.toLowerCase() === lower) result.push(trade);
+      for (const pool of this.simsOf(sim)) for (const trade of pool.trades) if (trade.trader.toLowerCase() === lower) result.push(trade);
     }
     return result.sort((a, b) => b.ts - a.ts).slice(0, limit);
   }
@@ -651,7 +677,133 @@ export class PreviewMarket implements Market {
 
   /* ------------------------------------------------------------ internals */
 
-  private findSim(address: string): SimCoin | undefined {
+  private simsOf(sim: SimCoin): SimCoin[] { return this.marketSims.get(sim.coin.address) ?? [sim]; }
+
+  async importTweet(url: string): Promise<TweetImport> {
+    const parsed = parseTweetUrl(url);
+    const response = await fetch("/api/tweets/import", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url: parsed.url }) });
+    const body = await response.json();
+    if (!response.ok) throw new TxError(body.error?.message ?? body.message ?? "The public post could not be imported. Try again later.", "reverted");
+    return body as TweetImport;
+  }
+  getAuthorSession(user?: Address) { return user ? this.authorSessions.get(user) ?? null : null; }
+  async beginAuthorVerification(user: Address, coin?: Address) {
+    const post = (coin ? this.getCoin(coin) : this.listCoins().find((entry) => entry.tweet))?.tweet?.source;
+    if (!post) throw new TxError("Launch a tweet coin in preview before trying author verification.", "reverted");
+    this.authorSessions.set(user, { authorId: post.author.id, handle: post.author.handle, simulated: true });
+    this.emit();
+  }
+  async bindAuthorWallet(user: Address, coinAddress: Address) {
+    const session = this.getAuthorSession(user);
+    if (!session) throw new TxError("Verify the post author's X account first.", "reverted");
+    const matching = this.listCoins().filter((coin) => coin.address === coinAddress && coin.tweet?.authorXUserId === session.authorId);
+    if (!matching.length) throw new TxError("This X account is not the source post's author.", "reverted");
+    if (matching.some((coin) => coin.tweet!.authorWallet && coin.tweet!.authorWallet.toLowerCase() !== user.toLowerCase())) throw new TxError("Author earnings are already bound to another wallet.", "reverted");
+    for (const coin of matching) for (const pool of this.simsOf(this.coins.get(coin.address)!)) pool.coin = { ...pool.coin, tweet: { ...pool.coin.tweet!, authorWallet: user } };
+    this.authorSessions.set(user, { ...session, wallet: user });
+    this.emit();
+  }
+  getAuthorRewards(user?: Address): AuthorReward[] {
+    if (!user) return [];
+    const session = this.getAuthorSession(user);
+    const rewards: AuthorReward[] = [];
+    for (const sim of this.coins.values()) {
+      if (!sim.coin.tweet || (sim.coin.tweet.authorXUserId !== session?.authorId && sim.coin.tweet.authorWallet?.toLowerCase() !== user.toLowerCase())) continue;
+      for (const pool of this.simsOf(sim)) {
+        const amountQuote = this.authorPending(pool);
+        if (amountQuote > 0) rewards.push({ coin: sim.coin.address, poolId: pool.poolId, currency: pool.coin.quote.address, quoteSymbol: pool.coin.quote.symbol, amountQuote, amountUsd: amountQuote * pool.coin.quote.usdPrice });
+      }
+    }
+    return rewards;
+  }
+  async claimAuthorRewards(user: Address, coin: Address): Promise<Hash> {
+    const sim = this.coins.get(coin);
+    if (!sim?.coin.tweet || sim.coin.tweet.authorWallet?.toLowerCase() !== user.toLowerCase()) throw new TxError("Verify the author's X account and bind its earning wallet before claiming.", "reverted");
+    const pools = this.simsOf(sim).filter((pool) => this.authorPending(pool) > 0);
+    if (!pools.length) throw new TxError("There are no unpaid author rewards to claim.", "reverted");
+    const state = this.ensureUser(user);
+    for (const pool of pools) {
+      const pending = this.authorPending(pool);
+      state.balances.set(pool.coin.quote.symbol, (state.balances.get(pool.coin.quote.symbol) ?? 0) + pending);
+      pool.authorClaimedQuote += pending;
+    }
+    this.emit(); return seededHash(Math.random);
+  }
+
+  isAuthorTreasury(user?: Address): boolean { return Boolean(user && user.toLowerCase() === this.treasury.toLowerCase()); }
+
+  async getTreasuryAuthorRewards(user: Address, coin: Address): Promise<AuthorReward[]> {
+    if (!this.isAuthorTreasury(user)) throw new TxError("Only the treasury can view its withdrawal controls.", "reverted");
+    const sim = this.coins.get(coin);
+    if (!sim?.coin.tweet) throw new TxError("This coin has no post-author rewards.", "reverted");
+    return this.simsOf(sim).map((pool) => {
+      const amountQuote = this.authorPending(pool);
+      return { coin, poolId: pool.poolId, currency: pool.coin.quote.address, quoteSymbol: pool.coin.quote.symbol, amountQuote,
+        amountUsd: amountQuote * pool.coin.quote.usdPrice, amountRaw: toUnits(amountQuote.toFixed(pool.coin.quote.decimals), pool.coin.quote.decimals).toString() };
+    });
+  }
+
+  claimTreasuryAuthorRewards(user: Address, coin: Address, poolId: Hash): Promise<Hash> { return this.reclaimAuthorRewards(user, coin, poolId); }
+
+  /** Preview of the treasury-only, fixed-recipient withdrawal from the same author pot. */
+  async reclaimAuthorRewards(caller: Address, coin: Address, poolId: Hash): Promise<Hash> {
+    if (caller.toLowerCase() !== this.treasury.toLowerCase()) throw new TxError("Only the treasury can withdraw unpaid author rewards.", "reverted");
+    const pool = this.findSim(coin, poolId);
+    if (!pool?.coin.tweet) throw new TxError("This pool has no post-author rewards.", "reverted");
+    if (Date.now() < authorTreasuryUnlockAt(pool.coin.tweet)) throw new TxError("Treasury withdrawals unlock 180 days after launch.", "reverted");
+    const pending = this.authorPending(pool);
+    if (pending <= 0) throw new TxError("There are no unpaid author rewards to withdraw.", "reverted");
+    pool.authorReclaimedQuote += pending;
+    const treasury = this.ensureUser(this.treasury);
+    treasury.balances.set(pool.coin.quote.symbol, (treasury.balances.get(pool.coin.quote.symbol) ?? 0) + pending);
+    for (const market of this.simsOf(this.coins.get(pool.coin.address)!)) market.coin = { ...market.coin, tweet: { ...market.coin.tweet!, reclaimed: true } };
+    this.emit(); return seededHash(Math.random);
+  }
+
+  private authorPending(sim: SimCoin): number { return Math.max(0, sim.authorEarnedQuote - sim.authorClaimedQuote - sim.authorReclaimedQuote); }
+  private rewardKey(sim: SimCoin): string { return this.marketSims.has(sim.coin.address) ? sim.poolId : sim.coin.address; }
+  private coinView(sim: SimCoin): Coin {
+    const coin = sim.coin.tweet ? { ...sim.coin, tweet: { ...sim.coin.tweet, treasuryUnlocked: Date.now() >= authorTreasuryUnlockAt(sim.coin.tweet) } } : sim.coin;
+    const pools = this.marketSims.get(sim.coin.address);
+    if (!pools) return coin;
+    const markets = pools.map((pool) => ({ poolId: pool.poolId, quote: pool.coin.quote, supplyRaw: pool.allocationSupply.toString(),
+      supplyFraction: Number(pool.allocationSupply) / 1e18 / COIN_SUPPLY_HUMAN, poolCoins: pool.y,
+      priceQuote: pool.coin.priceQuote, priceUsd: pool.coin.priceUsd, liquidityUsd: pool.coin.liquidityUsd,
+      volume24hUsd: pool.coin.volume24hUsd, volumeTotalUsd: pool.coin.volumeTotalUsd, change5m: pool.coin.change5m,
+      change1h: pool.coin.change1h, change24h: pool.coin.change24h, stats: pool.coin.stats }));
+    return aggregateCoinMarkets({ ...coin, markets, stats: { ...sim.coin.stats, burnedCoins: pools.reduce((sum, pool) => sum + pool.burned, 0) },
+      buys24h: pools.reduce((sum, pool) => sum + pool.coin.buys24h, 0), sells24h: pools.reduce((sum, pool) => sum + pool.coin.sells24h, 0),
+      devSold: pools.some((pool) => pool.coin.devSold),
+      lastTradeAt: Math.max(...pools.map((pool) => pool.coin.lastTradeAt)), momentum: pools.reduce((sum, pool) => sum + pool.coin.momentum, 0) });
+  }
+
+  async lowerFee(user: Address, coin: Address, feeBps: number): Promise<Hash> {
+    const sim = this.findSim(coin);
+    if (!sim || sim.coin.creator.toLowerCase() !== user.toLowerCase()) throw new TxError("Only the current creator can lower this fee.", "reverted");
+    if (!Number.isInteger(feeBps) || feeBps < 0 || feeBps >= sim.coin.terms.feeBps) throw new TxError("The new fee must be lower than the current fee.", "reverted");
+    for (const pool of this.simsOf(sim)) pool.coin = { ...pool.coin, terms: { ...pool.coin.terms, feeBps } };
+    this.emit(); return seededHash(Math.random);
+  }
+
+  async proposeCreator(user: Address, coin: Address, proposed: Address): Promise<Hash> {
+    const sim = this.findSim(coin);
+    if (!sim || sim.coin.creator.toLowerCase() !== user.toLowerCase()) throw new TxError("Only the current creator can propose a transfer.", "reverted");
+    for (const pool of this.simsOf(sim)) pool.coin = { ...pool.coin, pendingCreator: /^0x0{40}$/i.test(proposed) ? null : proposed };
+    this.emit(); return seededHash(Math.random);
+  }
+
+  async acceptCreator(user: Address, coin: Address): Promise<Hash> {
+    const sim = this.findSim(coin);
+    if (!sim || sim.coin.pendingCreator?.toLowerCase() !== user.toLowerCase()) throw new TxError("Only the proposed wallet can accept this transfer.", "reverted");
+    for (const pool of this.simsOf(sim)) pool.coin = { ...pool.coin, creator: user, pendingCreator: null };
+    this.ensureUser(user); this.emit(); return seededHash(Math.random);
+  }
+
+  private findSim(address: string, poolId?: Hash): SimCoin | undefined {
+    if (poolId) {
+      const primary = this.findSim(address);
+      return primary ? this.simsOf(primary).find((sim) => sim.poolId.toLowerCase() === poolId.toLowerCase()) : undefined;
+    }
     const direct = this.coins.get(address as Address);
     if (direct) return direct;
     const lower = address.toLowerCase();
@@ -685,9 +837,12 @@ export class PreviewMarket implements Market {
     archetype: Archetype;
     peak: number;
     seed: number;
+    allocationSupply?: bigint;
+    register?: boolean;
   }): SimCoin {
-    const x0 = input.openingFdvUsd / input.quote.usdPrice;
-    const y = COIN_SUPPLY_HUMAN;
+    const allocationSupply = input.allocationSupply ?? BigInt(COIN_SUPPLY_HUMAN) * 10n ** 18n;
+    const y = Number(allocationSupply) / 1e18;
+    const x0 = input.openingFdvUsd / input.quote.usdPrice * y / COIN_SUPPLY_HUMAN;
     const priceQuote = x0 / y;
     const coin: Coin = {
       address: input.address,
@@ -729,6 +884,8 @@ export class PreviewMarket implements Market {
     };
     const sim: SimCoin = {
       coin,
+      poolId: seededHash(createRng(input.seed)),
+      allocationSupply,
       x: x0,
       y,
       k: x0 * y,
@@ -741,9 +898,14 @@ export class PreviewMarket implements Market {
       comments: [],
       floorAdds: 0,
       nextBuybackUsd: BUYBACK_THRESHOLD_USD,
+      authorEarnedQuote: 0,
+      authorClaimedQuote: 0,
+      authorReclaimedQuote: 0,
     };
-    this.coins.set(coin.address, sim);
-    this.order.unshift(coin.address);
+    if (input.register !== false) {
+      this.coins.set(coin.address, sim);
+      this.order.unshift(coin.address);
+    }
     return sim;
   }
 
@@ -792,8 +954,10 @@ export class PreviewMarket implements Market {
 
     const priceQuote = sim.x / sim.y;
     const trade: Trade = {
-      id: `${sim.coin.address}-${ts}-${sim.trades.length}`,
+      id: `${sim.coin.address}-${sim.poolId}-${ts}-${sim.trades.length}`,
       coin: sim.coin.address,
+      poolId: sim.poolId,
+      quote: sim.coin.quote.address,
       ts,
       side,
       trader,
@@ -831,7 +995,10 @@ export class PreviewMarket implements Market {
     stats.feesTotalQuote += feeQuote;
     stats.platformQuote += feeQuote * shares.platform;
     stats.referralQuote += feeQuote * shares.referral;
-    stats.creatorEarnedQuote += feeQuote * shares.creator;
+    const creatorAllocation = feeQuote * shares.creator;
+    const authorAllocation = sim.coin.tweet ? creatorAllocation * sim.coin.tweet.authorShareBps / BPS : 0;
+    stats.creatorEarnedQuote += creatorAllocation - authorAllocation;
+    sim.authorEarnedQuote += authorAllocation;
     const destination = feeQuote * shares.destination;
     if (terms.mode === "burn") stats.burnBudgetQuote += destination;
     if (terms.mode === "holders") stats.epochPendingQuote += destination;
@@ -841,7 +1008,7 @@ export class PreviewMarket implements Market {
     if (hasReferrer) {
       // Some referred trades in preview are attributed to demo wallets that shared links.
       for (const [address, user] of this.users) {
-        if (Math.random() < 0.05) user.referralRewards.set(sim.coin.address, (user.referralRewards.get(sim.coin.address) ?? 0) + feeQuote * shares.referral);
+        if (Math.random() < 0.05) user.referralRewards.set(this.rewardKey(sim), (user.referralRewards.get(this.rewardKey(sim)) ?? 0) + feeQuote * shares.referral);
         void address;
       }
     }
@@ -853,7 +1020,7 @@ export class PreviewMarket implements Market {
       sim.floorAdds += 1;
       this.updateFloor(sim);
       if (sim.floorAdds % 25 === 0 && ts >= this.options.now - 600_000) {
-        this.pushActivity({ id: `floor-${sim.coin.address}-${ts}`, kind: "floor", coin: sim.coin.address, ts, amountQuote: sim.coin.stats.floorQuote });
+        this.pushActivity({ id: `floor-${sim.poolId}-${ts}`, kind: "floor", coin: sim.coin.address, poolId: sim.poolId, quote: sim.coin.quote.address, ts, amountQuote: sim.coin.stats.floorQuote });
       }
     }
   }
@@ -875,12 +1042,12 @@ export class PreviewMarket implements Market {
       stats: { ...sim.coin.stats, burnBudgetQuote: 0, burnedCoins: sim.burned, buybacks: sim.coin.stats.buybacks + 1 },
     };
     if (ts >= this.options.now - 600_000) {
-      this.pushActivity({ id: `burn-${sim.coin.address}-${ts}`, kind: "burn", coin: sim.coin.address, ts, amountQuote: budget, amountCoins: bought });
+      this.pushActivity({ id: `burn-${sim.poolId}-${ts}`, kind: "burn", coin: sim.coin.address, poolId: sim.poolId, quote: sim.coin.quote.address, ts, amountQuote: budget, amountCoins: bought });
     }
   }
 
   private updateFloor(sim: SimCoin) {
-    const circulating = COIN_SUPPLY_HUMAN - sim.y - sim.burned;
+    const circulating = Number(sim.allocationSupply) / 1e18 - sim.y - sim.burned;
     const floorPriceUsd = circulating > 1 ? (sim.coin.stats.floorQuote / circulating) * sim.coin.quote.usdPrice : 0;
     sim.coin = { ...sim.coin, stats: { ...sim.coin.stats, floorPriceUsd } };
   }
@@ -892,13 +1059,13 @@ export class PreviewMarket implements Market {
     while (stats.nextEpochAt <= now) {
       const pending = stats.epochPendingQuote;
       if (pending > 0) {
-        const circulating = Math.max(1, COIN_SUPPLY_HUMAN - sim.y - sim.burned);
+        const circulating = Math.max(1, this.simsOf(sim).reduce((sum, entry) => sum + Number(entry.allocationSupply) / 1e18 - entry.y - entry.burned, 0));
         for (const [address, user] of this.users) {
           const held = sim.balances.get(address) ?? 0;
-          if (held > 0) user.holderRewards.set(sim.coin.address, (user.holderRewards.get(sim.coin.address) ?? 0) + pending * (held / circulating));
+          if (held > 0) user.holderRewards.set(this.rewardKey(sim), (user.holderRewards.get(this.rewardKey(sim)) ?? 0) + pending * (held / circulating));
         }
         if (stats.nextEpochAt >= this.options.now - 600_000) {
-          this.pushActivity({ id: `payout-${sim.coin.address}-${stats.nextEpochAt}`, kind: "payout", coin: sim.coin.address, ts: stats.nextEpochAt, amountQuote: pending });
+          this.pushActivity({ id: `payout-${sim.poolId}-${stats.nextEpochAt}`, kind: "payout", coin: sim.coin.address, poolId: sim.poolId, quote: sim.coin.quote.address, ts: stats.nextEpochAt, amountQuote: pending });
         }
       }
       stats = {
@@ -913,7 +1080,7 @@ export class PreviewMarket implements Market {
   }
 
   private marketCapUsd(sim: SimCoin) {
-    return (sim.x / sim.y) * sim.coin.quote.usdPrice * (COIN_SUPPLY_HUMAN - sim.burned);
+    return (sim.x / sim.y) * sim.coin.quote.usdPrice * (COIN_SUPPLY_HUMAN - this.simsOf(sim).reduce((sum, pool) => sum + pool.burned, 0));
   }
 
   private priceAt(sim: SimCoin, ts: number): number {
@@ -1006,7 +1173,7 @@ export class PreviewMarket implements Market {
       change1h,
       change24h: change(86_400_000),
       holders: wallets.length,
-      circulating: Math.max(0, COIN_SUPPLY_HUMAN - sim.y - sim.burned),
+      circulating: Math.max(0, this.simsOf(sim).reduce((sum, entry) => sum + Number(entry.allocationSupply) / 1e18 - entry.y - entry.burned, 0)),
       buys24h: buys,
       sells24h: sells,
       lastTradeAt: sim.trades.length > 0 ? (sim.trades[sim.trades.length - 1] as Trade).ts : sim.coin.createdAt,

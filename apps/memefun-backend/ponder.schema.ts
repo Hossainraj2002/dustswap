@@ -1,5 +1,39 @@
 import { index, onchainTable, primaryKey } from "ponder";
 
+/** Tweet attribution is emitted before pool registration, so it owns a separate coin-keyed row. */
+export const tweetAttribution = onchainTable("tweet_attribution", (t) => ({
+  coin: t.hex().primaryKey(),
+  postId: t.bigint().notNull(),
+  authorXUserId: t.bigint().notNull(),
+  authorShareBps: t.integer().notNull(),
+  verifyBy: t.integer().notNull(),
+  verifiedWallet: t.hex(),
+  verifiedAt: t.integer(),
+}), (table) => ({ authorIdx: index().on(table.authorXUserId), walletIdx: index().on(table.verifiedWallet) }));
+
+/** Independent author liabilities for each quote currency; no cross-market raw-unit sum. */
+export const authorLedger = onchainTable("author_ledger", (t) => ({
+  poolId: t.hex().primaryKey(),
+  coin: t.hex().notNull(),
+  quote: t.hex().notNull(),
+  earned: t.bigint().notNull(),
+  claimed: t.bigint().notNull(),
+  reclaimed: t.bigint().notNull(),
+}), (table) => ({ coinIdx: index().on(table.coin) }));
+
+export const authorSettlement = onchainTable("author_settlement", (t) => ({
+  id: t.text().primaryKey(),
+  coin: t.hex().notNull(),
+  poolId: t.hex().notNull(),
+  quote: t.hex().notNull(),
+  authorXUserId: t.bigint().notNull(),
+  kind: t.text().notNull(),
+  to: t.hex().notNull(),
+  amount: t.bigint().notNull(),
+  timestamp: t.integer().notNull(),
+  txHash: t.hex().notNull(),
+}), (table) => ({ coinIdx: index().on(table.coin), poolIdx: index().on(table.poolId) }));
+
 /**
  * Everything memefun's contracts say, as tables. Token amounts are raw integers (Postgres
  * NUMERIC via `bigint`), never floats. USD values carry their scale in the name: `UsdE8` is
@@ -46,6 +80,7 @@ export const coin = onchainTable(
     poolId: t.hex().notNull(),
     /** Earns creator fees and may lower the fee; changes through a two-step transfer. */
     creator: t.hex().notNull(),
+    pendingCreator: t.hex(),
     /** Who launched the coin (never changes). */
     launcher: t.hex().notNull(),
     quote: t.hex().notNull(),
@@ -133,12 +168,114 @@ export const coin = onchainTable(
   }),
 );
 
+/** Per-pool state and raw quote ledgers. address identifies the shared coin; poolId identifies this market. */
+export const market = onchainTable(
+  "market",
+  (t) => ({
+    address: t.hex().notNull(),
+    poolId: t.hex().primaryKey(),
+    /** Earns creator fees and may lower the fee; changes through a two-step transfer. */
+    creator: t.hex().notNull(),
+    pendingCreator: t.hex(),
+    /** Who launched the coin (never changes). */
+    launcher: t.hex().notNull(),
+    quote: t.hex().notNull(),
+    quoteIsCurrency0: t.boolean().notNull(),
+    /** 0 creator, 1 burn, 2 holders, 3 floor (MemeFunTypes.Mode). */
+    mode: t.integer().notNull(),
+    module: t.hex().notNull(),
+    feeBps: t.integer().notNull(),
+    launchFeeBps: t.integer().notNull(),
+    platformShareBps: t.integer().notNull(),
+    referralShareBps: t.integer().notNull(),
+    creatorKeepBps: t.integer().notNull(),
+    protectionStartBps: t.integer().notNull(),
+    protectionDurationSec: t.integer().notNull(),
+    createdAt: t.integer().notNull(),
+    createdBlock: t.bigint().notNull(),
+
+    supplyRaw: t.bigint().notNull(),
+    hasMarketEvents: t.boolean().notNull(),
+
+    // From `Launched`, emitted at the end of the launch transaction.
+    launched: t.boolean().notNull(),
+    name: t.text().notNull(),
+    symbol: t.text().notNull(),
+    contractUri: t.text().notNull(),
+    startTick: t.integer().notNull(),
+    liquidity: t.bigint().notNull(),
+    launchQuoteUsdE8: t.bigint().notNull(),
+    openingFdvUsdE8: t.bigint().notNull(),
+    launchTx: t.hex(),
+    /** The first buy's Trade arrives before `Launched`; it is applied once the coin is complete. */
+    pendingFirstBuy: t.text(),
+
+    // Pool state.
+    sqrtPriceX96: t.bigint().notNull(),
+    tick: t.integer().notNull(),
+    /** Quote held by the pool across all its positions (launch position and floor bands). */
+    poolQuote: t.bigint().notNull(),
+    /** Coins held by the PoolManager for this pool. */
+    poolCoins: t.bigint().notNull(),
+    /** Coins at dEaD: launch dust, buybacks, and anything else sent there. */
+    burned: t.bigint().notNull(),
+
+    // Market.
+    priceUsdE18: t.bigint().notNull(),
+    marketCapUsdE8: t.bigint().notNull(),
+    athMarketCapUsdE8: t.bigint().notNull(),
+    volumeQuote: t.bigint().notNull(),
+    volumeUsdE8: t.bigint().notNull(),
+    trades: t.integer().notNull(),
+    buys: t.integer().notNull(),
+    sells: t.integer().notNull(),
+    lastTradeAt: t.integer().notNull(),
+    holders: t.integer().notNull(),
+
+    // Fee ledgers, in quote units (FeeVault credits are derived from Trade with the same split).
+    feesTotal: t.bigint().notNull(),
+    platformFees: t.bigint().notNull(),
+    referralFees: t.bigint().notNull(),
+    creatorEarned: t.bigint().notNull(),
+    creatorClaimed: t.bigint().notNull(),
+    destinationEarned: t.bigint().notNull(),
+    destinationPulled: t.bigint().notNull(),
+
+    // Fee destinations.
+    buybacks: t.integer().notNull(),
+    buybackSpent: t.bigint().notNull(),
+    buybackBurned: t.bigint().notNull(),
+    floorAdds: t.integer().notNull(),
+    floorQuote: t.bigint().notNull(),
+    floorNearTick: t.integer(),
+    holdersReserved: t.bigint().notNull(),
+    holdersClaimed: t.bigint().notNull(),
+    holdersReturned: t.bigint().notNull(),
+    epochs: t.integer().notNull(),
+
+    // Launch fairness signals.
+    devSold: t.boolean().notNull(),
+    snipers: t.integer().notNull(),
+    sameBlockBuys: t.integer().notNull(),
+  }),
+  (table) => ({
+    coinQuoteIdx: index().on(table.address, table.quote),
+    creatorIdx: index().on(table.creator),
+    launcherIdx: index().on(table.launcher),
+    createdIdx: index().on(table.createdAt),
+    mcapIdx: index().on(table.marketCapUsdE8),
+    lastTradeIdx: index().on(table.lastTradeAt),
+  }),
+);
+
 /** One row per swap on a memefun pool (the hook's Trade event), from the trader's side. */
 export const trade = onchainTable(
   "trade",
   (t) => ({
     id: t.text().primaryKey(),
     coin: t.hex().notNull(),
+    poolId: t.hex().notNull(),
+    quote: t.hex().notNull(),
     /** Who traded: the MemeFunRouter user, the creator for a first buy, the tx sender for known routers. */
     trader: t.hex().notNull(),
     /** The hook's `trader` field as emitted. */
@@ -169,6 +306,7 @@ export const trade = onchainTable(
   }),
   (table) => ({
     coinOrderIdx: index().on(table.coin, table.blockNumber, table.logIndex),
+    poolOrderIdx: index().on(table.poolId, table.blockNumber, table.logIndex),
     traderIdx: index().on(table.trader, table.timestamp),
     timeIdx: index().on(table.timestamp),
     orderIdx: index().on(table.blockNumber, table.logIndex),
@@ -223,6 +361,7 @@ export const candle = onchainTable(
   "candle",
   (t) => ({
     coin: t.hex().notNull(),
+    poolId: t.hex().notNull(),
     interval: t.integer().notNull(),
     bucket: t.integer().notNull(),
     openUsdE18: t.bigint().notNull(),
@@ -238,7 +377,7 @@ export const candle = onchainTable(
     trades: t.integer().notNull(),
     buys: t.integer().notNull(),
   }),
-  (table) => ({ pk: primaryKey({ columns: [table.coin, table.interval, table.bucket] }) }),
+  (table) => ({ pk: primaryKey({ columns: [table.poolId, table.interval, table.bucket] }), coinIdx: index().on(table.coin, table.interval, table.bucket) }),
 );
 
 /** FeeVault referral ledger: per referrer and pair asset, as the vault keeps it. */
@@ -265,6 +404,8 @@ export const creatorClaim = onchainTable(
   (t) => ({
     id: t.text().primaryKey(),
     coin: t.hex().notNull(),
+    poolId: t.hex().notNull(),
+    quote: t.hex().notNull(),
     creator: t.hex().notNull(),
     to: t.hex().notNull(),
     amount: t.bigint().notNull(),
@@ -279,6 +420,8 @@ export const buyback = onchainTable(
   (t) => ({
     id: t.text().primaryKey(),
     coin: t.hex().notNull(),
+    poolId: t.hex().notNull(),
+    quote: t.hex().notNull(),
     quoteSpent: t.bigint().notNull(),
     coinsBurned: t.bigint().notNull(),
     quoteLeft: t.bigint().notNull(),
@@ -294,6 +437,8 @@ export const floorAdd = onchainTable(
   (t) => ({
     id: t.text().primaryKey(),
     coin: t.hex().notNull(),
+    poolId: t.hex().notNull(),
+    quote: t.hex().notNull(),
     tickLower: t.integer().notNull(),
     tickUpper: t.integer().notNull(),
     liquidity: t.bigint().notNull(),
@@ -321,13 +466,15 @@ export const epochCoin = onchainTable(
   (t) => ({
     epoch: t.bigint().notNull(),
     coin: t.hex().notNull(),
+    poolId: t.hex().notNull(),
+    quote: t.hex().notNull(),
     total: t.bigint().notNull(),
     claimed: t.bigint().notNull(),
     claims: t.integer().notNull(),
     released: t.boolean().notNull(),
     returned: t.bigint().notNull(),
   }),
-  (table) => ({ pk: primaryKey({ columns: [table.epoch, table.coin] }), coinIdx: index().on(table.coin) }),
+  (table) => ({ pk: primaryKey({ columns: [table.epoch, table.poolId] }), coinIdx: index().on(table.coin) }),
 );
 
 export const holderClaim = onchainTable(
@@ -336,6 +483,8 @@ export const holderClaim = onchainTable(
     id: t.text().primaryKey(),
     epoch: t.bigint().notNull(),
     coin: t.hex().notNull(),
+    poolId: t.hex().notNull(),
+    quote: t.hex().notNull(),
     index: t.bigint().notNull(),
     account: t.hex().notNull(),
     amount: t.bigint().notNull(),
@@ -385,6 +534,8 @@ export const activity = onchainTable(
     id: t.text().primaryKey(),
     kind: t.text().notNull(),
     coin: t.hex().notNull(),
+    poolId: t.hex(),
+    currency: t.hex(),
     amountQuote: t.bigint(),
     amountCoins: t.bigint(),
     milestoneUsd: t.integer(),

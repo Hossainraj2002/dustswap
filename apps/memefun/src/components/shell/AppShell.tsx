@@ -65,6 +65,9 @@ function Sidebar({ pathname, onSearch }: { pathname: string; onSearch: () => voi
           Create coin
         </Link>
       </Button>
+      <Button asChild size="md" fullWidth variant="tinted" className="mb-3">
+        <Link href="/create/tweet">Launch by tweet</Link>
+      </Button>
       <button
         type="button"
         onClick={onSearch}

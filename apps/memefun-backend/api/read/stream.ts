@@ -13,6 +13,7 @@ type LiveEvent = { event: "trade"; coin: string; data: TradeView } | { event: "a
 
 interface Subscriber {
   coin: string | null;
+  poolId?: string | null;
   send: (event: LiveEvent) => void;
 }
 
@@ -71,7 +72,7 @@ export class LiveHub {
         if (after(order, this.tradeCursor)) this.tradeCursor = order;
         const coin = state.byAddress.get(t.coin);
         if (coin?.hidden) continue;
-        const decimals = state.quotes.get(state.records.get(t.coin)?.quote ?? "")?.decimals ?? 18;
+        const decimals = state.quotes.get(t.quote ?? state.records.get(t.coin)?.quote ?? "")?.decimals ?? 18;
         events.push({ event: "trade", coin: t.coin, data: deriveTrade(t, decimals), order });
       }
       const newActivity = (await store.activity({ limit: 200, after: this.activityCursor })).reverse();
@@ -80,7 +81,7 @@ export class LiveHub {
         if (after(order, this.activityCursor)) this.activityCursor = order;
         const coin = state.byAddress.get(a.coin);
         if (coin?.hidden) continue;
-        const decimals = state.quotes.get(state.records.get(a.coin)?.quote ?? "")?.decimals ?? 18;
+        const decimals = state.quotes.get(a.currency ?? state.records.get(a.coin)?.quote ?? "")?.decimals ?? 18;
         events.push({
           event: "activity",
           coin: a.coin,
@@ -88,6 +89,8 @@ export class LiveHub {
             id: a.id,
             kind: a.kind as ActivityItem["kind"],
             coin: getAddress(a.coin),
+            ...(a.poolId ? { poolId: a.poolId as `0x${string}` } : {}),
+            ...(a.currency ? { quote: getAddress(a.currency) } : {}),
             ts: a.timestamp * 1000,
             ...(a.amountQuote !== null ? { amountQuote: toNumber.units(a.amountQuote, decimals) } : {}),
             ...(a.amountCoins !== null ? { amountCoins: toNumber.coins(a.amountCoins) } : {}),
@@ -100,6 +103,7 @@ export class LiveHub {
       for (const { order: _order, ...event } of events) {
         for (const subscriber of this.subscribers) {
           if (subscriber.coin && subscriber.coin !== event.coin) continue;
+          if (subscriber.poolId && event.event === "trade" && event.data.poolId !== subscriber.poolId) continue;
           subscriber.send(event);
         }
       }
@@ -118,6 +122,8 @@ export function mountStream(app: Hono, hub: LiveHub) {
   const perIp = new Map<string, number>();
   app.get("/v1/stream", (c) => {
     const coin = c.req.query("coin") ? parseAddress(c.req.query("coin"), "coin") : null;
+    const poolId = c.req.query("poolId")?.toLowerCase() ?? null;
+    if (poolId && !/^0x[0-9a-f]{64}$/.test(poolId)) throw new HttpError(400, "invalid_pool", "poolId must be a pool ID.");
     const ip = clientIp(c);
     if (hub.size >= MAX_CLIENTS) throw new HttpError(503, "stream_full", "Live updates are at capacity. The page refreshes on its own.");
     if ((perIp.get(ip) ?? 0) >= MAX_PER_IP) throw new HttpError(429, "too_many_streams", "Too many live connections from this network.");
@@ -128,6 +134,7 @@ export function mountStream(app: Hono, hub: LiveHub) {
       let id = 0;
       const unsubscribe = hub.subscribe({
         coin,
+        poolId,
         send: (event) => void stream.writeSSE({ event: event.event, data: JSON.stringify(event.data), id: String(++id) }).catch(() => undefined),
       });
       try {

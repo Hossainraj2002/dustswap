@@ -1,10 +1,10 @@
-import { type Address, getAddress } from "viem";
+import { type Address, type Hex, getAddress } from "viem";
 
 import { rows } from "../../lib/db";
 import { protocolAddresses } from "../../lib/deployment";
 import { DEAD, ZERO, lc } from "../../lib/indexer/addresses";
 import { indexedUntil } from "../../lib/indexer/status";
-import { type RewardLeaf, buildRewardTree } from "../../lib/rewards/tree";
+import { type RewardLeaf, POOL_LEAF_ENCODING, buildRewardTree } from "../../lib/rewards/tree";
 import { EPOCH_LENGTH_SEC, type TransferEvent, allocate, latestBoundary, timeWeightedBalances } from "../../lib/rewards/twab";
 import { feeVaultAbi, holderRewardDistributorAbi } from "../../shared/abis";
 import type { KeeperContext } from "../context";
@@ -26,6 +26,8 @@ import { simulateAndSend } from "../tx";
  */
 interface HolderCoin {
   address: string;
+  quote: string;
+  pool_id: Hex;
   decimals: number;
   price_usd_e_8: string;
 }
@@ -97,28 +99,34 @@ export async function runEpochs(ctx: KeeperContext): Promise<EpochResult> {
   const excluded = new Set<string>([ZERO, DEAD, ...protocolAddresses(d).map(lc)]);
   const coins = await rows<HolderCoin>(
     ctx.index,
-    `SELECT c.address, q.decimals, q.price_usd_e_8 FROM coin c JOIN quote q ON q.address = c.quote
-      WHERE c.launched = true AND c.mode = 2 AND c.created_at < $1 ORDER BY c.address`,
+    `SELECT c.address, m.pool_id, m.quote, q.decimals, q.price_usd_e_8 FROM coin c JOIN market m ON m.address = c.address JOIN quote q ON q.address = m.quote
+      WHERE c.launched = true AND c.mode = 2 AND c.created_at < $1 ORDER BY c.address, m.pool_id`,
     [windowEnd],
   );
 
   const leaves: RewardLeaf[] = [];
-  const perCoin: Array<{ coin: Address; pot: bigint; total: bigint; holders: number }> = [];
+  const weightsByCoin = new Map<string, Map<string, bigint>>();
+  const perCoin: Array<{ coin: Address; poolId: Hex; pot: bigint; total: bigint; holders: number }> = [];
   for (const c of coins) {
     const coin = getAddress(c.address);
+    const quote = getAddress(c.quote);
     const [available, pending] = await Promise.all([
-      ctx.client.readContract({ address: d.holderRewardDistributor, abi: holderRewardDistributorAbi, functionName: "available", args: [coin] }),
-      ctx.client.readContract({ address: d.feeVault, abi: feeVaultAbi, functionName: "destinationPending", args: [coin] }),
+      ctx.client.readContract({ address: d.holderRewardDistributor, abi: holderRewardDistributorAbi, functionName: "availableFor", args: [coin, quote] }),
+      ctx.client.readContract({ address: d.feeVault, abi: feeVaultAbi, functionName: "destinationPendingFor", args: [coin, quote] }),
     ]);
     const pot = available + pending;
     if (pot === 0n) continue;
-    const { weights } = timeWeightedBalances({
+    let weights = weightsByCoin.get(c.address);
+    if (!weights) {
+    weights = timeWeightedBalances({
       startBalances: await balancesBefore(ctx, c.address, windowStart),
       transfers: await transfersIn(ctx, c.address, windowStart, windowEnd),
       windowStart,
       windowEnd,
       excluded: new Set([...excluded, lc(c.address)]),
-    });
+    }).weights;
+    weightsByCoin.set(c.address, weights);
+    }
     // Dust: shares worth under $0.01 are not worth claiming; with no price, 1 raw unit.
     const price = BigInt(c.price_usd_e_8);
     const minAmount = price > 0n ? (ctx.thresholds.rewardDustUsdE8 * 10n ** BigInt(c.decimals)) / price : 1n;
@@ -127,9 +135,9 @@ export async function runEpochs(ctx: KeeperContext): Promise<EpochResult> {
     let total = 0n;
     allocations.forEach((a, i) => {
       total += a.amount;
-      leaves.push({ epoch, coin, index: BigInt(i), account: getAddress(a.account), amount: a.amount });
+      leaves.push({ epoch, coin, poolId: c.pool_id, index: BigInt(i), account: getAddress(a.account), amount: a.amount });
     });
-    perCoin.push({ coin, pot, total, holders: allocations.length });
+    perCoin.push({ coin, poolId: c.pool_id, pot, total, holders: allocations.length });
   }
 
   if (leaves.length === 0) {
@@ -140,7 +148,7 @@ export async function runEpochs(ctx: KeeperContext): Promise<EpochResult> {
 
   const tree = buildRewardTree(leaves);
   const document = new TextEncoder().encode(
-    JSON.stringify({ epoch: epoch.toString(), windowStart, windowEnd, root: tree.root, leafEncoding: ["uint64", "address", "uint256", "address", "uint256"], tree: tree.dump }),
+    JSON.stringify({ epoch: epoch.toString(), windowStart, windowEnd, root: tree.root, leafEncoding: POOL_LEAF_ENCODING, tree: tree.dump }),
   );
   const leavesDoc = await ctx.media.put(document, "application/json");
 
@@ -152,9 +160,10 @@ export async function runEpochs(ctx: KeeperContext): Promise<EpochResult> {
       [epoch.toString(), windowStart, windowEnd, tree.root, leaves.length, leavesDoc.uri],
     );
     for (const c of perCoin) {
-      await client.query(`INSERT INTO reward_epoch_coin (epoch, coin, pot, total, holders) VALUES ($1, $2, $3, $4, $5)`, [
+      await client.query(`INSERT INTO reward_epoch_coin (epoch, coin, pool_id, pot, total, holders) VALUES ($1, $2, $3, $4, $5, $6)`, [
         epoch.toString(),
         lc(c.coin),
+        c.poolId,
         c.pot.toString(),
         c.total.toString(),
         c.holders,
@@ -162,9 +171,10 @@ export async function runEpochs(ctx: KeeperContext): Promise<EpochResult> {
     }
     for (let i = 0; i < leaves.length; i += 1) {
       const leaf = leaves[i]!;
-      await client.query(`INSERT INTO reward_leaf (epoch, coin, idx, account, amount, proof) VALUES ($1, $2, $3, $4, $5, $6::jsonb)`, [
+      await client.query(`INSERT INTO reward_leaf (epoch, coin, pool_id, idx, account, amount, proof) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)`, [
         epoch.toString(),
         lc(leaf.coin),
+        leaf.poolId,
         leaf.index.toString(),
         lc(leaf.account),
         leaf.amount.toString(),
@@ -190,14 +200,19 @@ async function deleteEpoch(ctx: KeeperContext, epoch: bigint) {
 
 async function publish(ctx: KeeperContext, epoch: bigint): Promise<EpochResult> {
   const [row] = await rows<{ root: `0x${string}` }>(ctx.appPool, `SELECT root FROM reward_epoch WHERE epoch = $1`, [epoch.toString()]);
-  const coins = await rows<{ coin: string; total: string }>(ctx.appPool, `SELECT coin, total::text AS total FROM reward_epoch_coin WHERE epoch = $1 ORDER BY coin`, [epoch.toString()]);
+  const coins = await rows<{ coin: string; pool_id: Hex | null; total: string }>(ctx.appPool, `SELECT coin, pool_id, total::text AS total FROM reward_epoch_coin WHERE epoch = $1 ORDER BY coin, pool_id`, [epoch.toString()]);
   if (!row || coins.length === 0) throw new Error(`epoch ${epoch} has nothing stored to publish`);
-  const outcome = await simulateAndSend(ctx, ctx.wallets.publisher, {
-    address: ctx.deployment.holderRewardDistributor,
-    abi: holderRewardDistributorAbi,
-    functionName: "publishEpoch",
-    args: [epoch, row.root, coins.map((c) => getAddress(c.coin)), coins.map((c) => BigInt(c.total))],
-  });
+  const poolFormat = Boolean(coins[0]!.pool_id);
+  if (coins.some((c) => Boolean(c.pool_id) !== poolFormat)) throw new Error(`epoch ${epoch} mixes proof formats`);
+  const outcome = poolFormat
+    ? await simulateAndSend(ctx, ctx.wallets.publisher, {
+        address: ctx.deployment.holderRewardDistributor, abi: holderRewardDistributorAbi, functionName: "publishEpochFor",
+        args: [epoch, row.root, coins.map((c) => c.pool_id!), coins.map((c) => BigInt(c.total))],
+      })
+    : await simulateAndSend(ctx, ctx.wallets.publisher, {
+        address: ctx.deployment.holderRewardDistributor, abi: holderRewardDistributorAbi, functionName: "publishEpoch",
+        args: [epoch, row.root, coins.map((c) => getAddress(c.coin)), coins.map((c) => BigInt(c.total))],
+      });
   if (outcome.kind === "no_wallet") return { status: "waiting", reason: "no publisher key configured", epoch };
   if (outcome.kind === "dry_run") {
     // A dry run must not leave a built epoch that a real run would then publish unseen.

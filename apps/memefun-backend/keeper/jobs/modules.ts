@@ -8,6 +8,8 @@ import { simulateAndSend } from "../tx";
 
 interface ModeCoin {
   address: string;
+  quote: string;
+  pool_id: string;
   decimals: number;
   price_usd_e_8: string;
 }
@@ -19,7 +21,7 @@ const MAX_PER_RUN = 20;
 async function coinsInMode(ctx: KeeperContext, mode: number) {
   return rows<ModeCoin>(
     ctx.index,
-    `SELECT c.address, q.decimals, q.price_usd_e_8 FROM coin c JOIN quote q ON q.address = c.quote
+    `SELECT c.address, m.quote, m.pool_id, q.decimals, q.price_usd_e_8 FROM coin c JOIN market m ON m.address = c.address JOIN quote q ON q.address = m.quote
       WHERE c.launched = true AND c.mode = $1 ORDER BY c.last_trade_at DESC`,
     [mode],
   );
@@ -39,10 +41,11 @@ export async function runBuybacks(ctx: KeeperContext): Promise<{ executed: numbe
   for (const c of (await coinsInMode(ctx, 1)).slice(0, 500)) {
     if (executed >= MAX_PER_RUN) break;
     const coin = getAddress(c.address);
+    const quote = getAddress(c.quote);
     const [pending, leftover, last] = await Promise.all([
-      ctx.client.readContract({ address: d.feeVault, abi: feeVaultAbi, functionName: "destinationPending", args: [coin] }),
-      ctx.client.readContract({ address: d.buybackBurnVault, abi: buybackBurnVaultAbi, functionName: "balanceOf", args: [coin] }),
-      ctx.client.readContract({ address: d.buybackBurnVault, abi: buybackBurnVaultAbi, functionName: "lastBuybackAt", args: [coin] }),
+      ctx.client.readContract({ address: d.feeVault, abi: feeVaultAbi, functionName: "destinationPendingFor", args: [coin, quote] }),
+      ctx.client.readContract({ address: d.buybackBurnVault, abi: buybackBurnVaultAbi, functionName: "balanceOfFor", args: [coin, quote] }),
+      ctx.client.readContract({ address: d.buybackBurnVault, abi: buybackBurnVaultAbi, functionName: "lastBuybackAtFor", args: [coin, quote] }),
     ]);
     const budgetUsdE8 = quoteValueUsdE8(pending + leftover, c.decimals, BigInt(c.price_usd_e_8));
     if (budgetUsdE8 < ctx.thresholds.buybackMinUsdE8) continue;
@@ -51,8 +54,8 @@ export async function runBuybacks(ctx: KeeperContext): Promise<{ executed: numbe
     const outcome = await simulateAndSend<readonly [bigint, bigint]>(ctx, ctx.wallets.keeper, {
       address: d.buybackBurnVault,
       abi: buybackBurnVaultAbi,
-      functionName: "executeBuyback",
-      args: [coin],
+      functionName: "executeBuybackFor",
+      args: [coin, quote],
     });
     if (outcome.kind === "no_wallet") {
       ctx.log("buyback.no_wallet", { coin });
@@ -62,7 +65,7 @@ export async function runBuybacks(ctx: KeeperContext): Promise<{ executed: numbe
       skipped += 1;
       // PricePumped is the contract protecting the buyback: try again next round.
       const expected = ["PricePumped", "CoolingDown", "NothingToBuy"].includes(outcome.error);
-      await ctx.app.logKeeperRun({ job: "buyback", target: c.address, status: expected ? "skipped" : "failed", detail: { reason: outcome.error } });
+      await ctx.app.logKeeperRun({ job: "buyback", target: c.pool_id, status: expected ? "skipped" : "failed", detail: { reason: outcome.error } });
       ctx.log("buyback.skipped", { coin, reason: outcome.error });
       continue;
     }
@@ -70,7 +73,7 @@ export async function runBuybacks(ctx: KeeperContext): Promise<{ executed: numbe
     executed += 1;
     await ctx.app.logKeeperRun({
       job: "buyback",
-      target: c.address,
+      target: c.pool_id,
       status: outcome.kind === "sent" ? "ok" : "dry_run",
       detail: { spent, burned, budgetUsdE8 },
       txHash: outcome.kind === "sent" ? outcome.hash : null,
@@ -92,10 +95,11 @@ export async function runFloors(ctx: KeeperContext): Promise<{ executed: number;
   for (const c of (await coinsInMode(ctx, 3)).slice(0, 500)) {
     if (executed >= MAX_PER_RUN) break;
     const coin = getAddress(c.address);
+    const quote = getAddress(c.quote);
     const [pending, leftover, last] = await Promise.all([
-      ctx.client.readContract({ address: d.feeVault, abi: feeVaultAbi, functionName: "destinationPending", args: [coin] }),
-      ctx.client.readContract({ address: d.floorVault, abi: floorVaultAbi, functionName: "balanceOf", args: [coin] }),
-      ctx.client.readContract({ address: d.floorVault, abi: floorVaultAbi, functionName: "lastAddAt", args: [coin] }),
+      ctx.client.readContract({ address: d.feeVault, abi: feeVaultAbi, functionName: "destinationPendingFor", args: [coin, quote] }),
+      ctx.client.readContract({ address: d.floorVault, abi: floorVaultAbi, functionName: "balanceOfFor", args: [coin, quote] }),
+      ctx.client.readContract({ address: d.floorVault, abi: floorVaultAbi, functionName: "lastAddAtFor", args: [coin, quote] }),
     ]);
     if (quoteValueUsdE8(pending + leftover, c.decimals, BigInt(c.price_usd_e_8)) < ctx.thresholds.floorMinUsdE8) continue;
     if (last !== 0n && BigInt(now) < last + BigInt(FLOOR_COOLDOWN)) continue;
@@ -103,8 +107,8 @@ export async function runFloors(ctx: KeeperContext): Promise<{ executed: number;
     const outcome = await simulateAndSend<readonly [number, number, bigint, bigint]>(ctx, ctx.wallets.keeper, {
       address: d.floorVault,
       abi: floorVaultAbi,
-      functionName: "addFloor",
-      args: [coin],
+      functionName: "addFloorFor",
+      args: [coin, quote],
     });
     if (outcome.kind === "no_wallet") {
       ctx.log("floor.no_wallet", { coin });
@@ -113,7 +117,7 @@ export async function runFloors(ctx: KeeperContext): Promise<{ executed: number;
     if (outcome.kind === "reverted") {
       skipped += 1;
       const expected = ["CoolingDown", "NothingToAdd", "BandOutOfRange"].includes(outcome.error);
-      await ctx.app.logKeeperRun({ job: "floor", target: c.address, status: expected ? "skipped" : "failed", detail: { reason: outcome.error } });
+      await ctx.app.logKeeperRun({ job: "floor", target: c.pool_id, status: expected ? "skipped" : "failed", detail: { reason: outcome.error } });
       ctx.log("floor.skipped", { coin, reason: outcome.error });
       continue;
     }
@@ -121,7 +125,7 @@ export async function runFloors(ctx: KeeperContext): Promise<{ executed: number;
     executed += 1;
     await ctx.app.logKeeperRun({
       job: "floor",
-      target: c.address,
+      target: c.pool_id,
       status: outcome.kind === "sent" ? "ok" : "dry_run",
       detail: { tickLower, tickUpper, used },
       txHash: outcome.kind === "sent" ? outcome.hash : null,

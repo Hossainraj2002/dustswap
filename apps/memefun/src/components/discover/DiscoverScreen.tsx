@@ -70,17 +70,19 @@ export function DiscoverScreen() {
 
   const visible = useMemo(() => {
     const filtered = coins.filter((coin) => {
-      if (stocksRestricted && coin.quote.kind === "stock") return false;
-      if (pair === "eth" && coin.quote.symbol !== "ETH") return false;
-      if (pair === "usdc" && coin.quote.symbol !== "USDC") return false;
-      if (pair === "stocks" && coin.quote.kind !== "stock") return false;
+      const quotes = coin.markets?.map((market) => market.quote) ?? [coin.quote];
+      const available = quotes.filter((quote) => !(stocksRestricted && quote.kind === "stock"));
+      if (!available.length) return false;
+      if (pair === "eth" && !available.some((quote) => quote.symbol === "ETH")) return false;
+      if (pair === "usdc" && !available.some((quote) => quote.symbol === "USDC")) return false;
+      if (pair === "stocks" && !available.some((quote) => quote.kind === "stock")) return false;
       if (mode && coin.terms.mode !== mode) return false;
       return true;
     });
     return sortCoins(filtered, sort);
   }, [coins, mode, pair, sort, stocksRestricted]);
 
-  const king = useMemo(() => [...coins].filter((coin) => !(stocksRestricted && coin.quote.kind === "stock")).sort((a, b) => b.momentum - a.momentum)[0], [coins, stocksRestricted]);
+  const king = useMemo(() => [...coins].filter((coin) => (coin.markets?.map((market) => market.quote) ?? [coin.quote]).some((quote) => !(stocksRestricted && quote.kind === "stock"))).sort((a, b) => b.momentum - a.momentum)[0], [coins, stocksRestricted]);
   const newest = useMemo(() => [...coins].sort((a, b) => b.createdAt - a.createdAt).slice(0, 5), [coins]);
 
   const header = (

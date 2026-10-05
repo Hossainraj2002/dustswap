@@ -11,6 +11,7 @@ import {
   nextEpochAt,
   openingMarketCapUsdE8,
   sparklineFrom,
+  weightedMarketPrice,
 } from "../../lib/market/derive";
 import { getSqrtPriceAtTick } from "../../shared/core/uniswap/tickMath";
 import { startTickExact } from "../../shared/core/pool";
@@ -83,6 +84,37 @@ const derive = (overrides: Partial<CoinRecord> = {}, extra: Partial<Parameters<t
   });
 
 describe("deriveCoin", () => {
+  it("values mixed-decimal markets in USD and counts the shared token once", () => {
+    const supply = 10n ** 27n;
+    const usdc = { address: "0x00000000000000000000000000000000000000c0", kind: 1, decimals: 6, symbol: "USDC", name: "USD Coin", priceUsdE8: 100_000_000n };
+    const secondTick = startTickExact({ coinIsCurrency0: false, quoteDecimals: 6, quoteUsdE8: usdc.priceUsdE8, openingFdvUsdE8: 10_000n * 10n ** 8n });
+    const first = { ...record({ poolCoins: supply / 4n, poolQuote: 10n ** 18n, creatorEarned: 10n ** 18n, volumeUsdE8: 10n ** 8n }),
+      poolId: `0x${"11".repeat(32)}`, supplyRaw: supply / 2n };
+    const second = { ...record({ quote: usdc.address, startTick: secondTick, sqrtPriceX96: getSqrtPriceAtTick(secondTick),
+      launchQuoteUsdE8: usdc.priceUsdE8, poolCoins: supply * 3n / 4n, poolQuote: 2_000_000n, creatorEarned: 2_000_000n, volumeUsdE8: 2n * 10n ** 8n }),
+      poolId: `0x${"22".repeat(32)}`, supplyRaw: supply / 2n };
+    const a = deriveCoin({ coin: first, quote, windows: EMPTY_WINDOWS, holders: { top10: 0n, creatorBalance: 0n }, metadata: null, flags: { hidden: false, featured: false }, nowSec: 1_000_100 });
+    const b = deriveCoin({ coin: second, quote: usdc, windows: EMPTY_WINDOWS, holders: { top10: 0n, creatorBalance: 0n }, metadata: null, flags: { hidden: false, featured: false }, nowSec: 1_000_100 });
+    const coin = derive({ poolCoins: supply, holders: 7 }, { markets: [
+      { coin: first, quote, windows: { ...EMPTY_WINDOWS, volume24hUsdE8: 10n ** 8n } },
+      { coin: second, quote: usdc, windows: { ...EMPTY_WINDOWS, volume24hUsdE8: 2n * 10n ** 8n } },
+    ] });
+    expect(coin.markets).toHaveLength(2);
+    expect(coin.priceUsd).toBeCloseTo(a.priceUsd / 4 + b.priceUsd * 3 / 4, 14);
+    expect(coin.marketCapUsd).toBeCloseTo(coin.priceUsd * 1e9, 6);
+    expect(coin.liquidityUsd).toBeCloseTo(a.liquidityUsd + b.liquidityUsd, 6);
+    expect(coin.volume24hUsd).toBe(3);
+    expect(coin.volumeTotalUsd).toBe(3);
+    expect(coin.holders).toBe(7);
+    expect(coin.circulating).toBe(0);
+    expect(coin.markets?.map((m) => m.stats.creatorEarnedQuote)).toEqual([1, 2]);
+    expect(coin.markets?.map((m) => m.supplyFraction)).toEqual([0.5, 0.5]);
+  });
+
+  it("uses the primary price if no pool holds coins", () => {
+    expect(weightedMarketPrice([{ poolCoins: 0n, priceUsdE18: 20n }, { poolCoins: 0n, priceUsdE18: 40n }], 10n)).toBe(10n);
+    expect(weightedMarketPrice([{ poolCoins: 1n, priceUsdE18: 10n }, { poolCoins: 3n, priceUsdE18: 30n }], 99n)).toBe(25n);
+  });
   it("a fresh coin sits at its opening market cap with everything in the pool", () => {
     const coin = derive();
     expect(coin.marketCapUsd).toBeGreaterThanOrEqual(4_999.99);

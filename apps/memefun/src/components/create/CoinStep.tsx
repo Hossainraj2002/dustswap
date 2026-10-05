@@ -15,9 +15,10 @@ interface StepProps {
   update: (patch: Partial<CreateDraft>) => void;
   errors: DraftErrors;
   showErrors: boolean;
+  showImagePicker?: boolean;
 }
 
-export function CoinStep({ draft, update, errors, showErrors }: StepProps) {
+export function CoinStep({ draft, update, errors, showErrors, showImagePicker = true }: StepProps) {
   const fileInput = useRef<HTMLInputElement>(null);
   const [imageError, setImageError] = useState<string | null>(null);
   const [processing, setProcessing] = useState(false);
@@ -54,7 +55,7 @@ export function CoinStep({ draft, update, errors, showErrors }: StepProps) {
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="flex flex-col gap-2">
+      {showImagePicker ? <div className="flex flex-col gap-2">
         <span className="px-1 text-footnote font-semibold text-label-2">Image</span>
         <div
           onDragOver={(event) => {
@@ -114,7 +115,7 @@ export function CoinStep({ draft, update, errors, showErrors }: StepProps) {
             {imageError ?? shown("image")}
           </p>
         ) : null}
-      </div>
+      </div> : null}
 
       <div className="grid grid-cols-1 gap-5 sm:grid-cols-[1fr_200px]">
         <TextField

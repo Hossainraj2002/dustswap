@@ -1,7 +1,7 @@
 import { StandardMerkleTree } from "@openzeppelin/merkle-tree";
 import pg from "pg";
 import sharp from "sharp";
-import { encodeAbiParameters, erc20Abi, getAddress, keccak256, maxUint256, parseEther, toHex, zeroAddress } from "viem";
+import { encodeAbiParameters, erc20Abi, keccak256, maxUint256, parseEther, toHex, zeroAddress } from "viem";
 import { createSiweMessage } from "viem/siwe";
 import { afterAll, beforeAll, describe, expect, inject, it } from "vitest";
 
@@ -16,9 +16,10 @@ import { priceUsdE18 } from "../../lib/market/math";
 import { EPOCH_LENGTH_SEC, latestBoundary } from "../../lib/rewards/twab";
 import { verifyIndexAgainstChain } from "../../lib/verify/chain-truth";
 import { COIN_SUPPLY } from "../../shared/core/constants";
+import { AUTHOR_VERIFICATION_TYPES, TWEET_LAUNCH_TYPES } from "../../shared/core/tweet";
 import { livePool, quoteBuy, quoteSell } from "../../shared/core/pool";
 import { activeLiquidity } from "../../shared/core/uniswap/swap";
-import { holderRewardDistributorAbi, memeFunFactoryAbi, memeFunRouterAbi } from "../../shared/abis";
+import { feeVaultAbi, holderRewardDistributorAbi, memeFunConfigAbi, memeFunFactoryAbi, memeFunHookAbi, memeFunRouterAbi } from "../../shared/abis";
 
 const e2e = inject("e2e");
 const d = loadDeployment(LOCAL_CHAIN_ID);
@@ -289,8 +290,8 @@ describe("memefun backend, end to end", () => {
       await wallet("frank").writeContract({
         address: d.holderRewardDistributor,
         abi: holderRewardDistributorAbi,
-        functionName: "claim",
-        args: [{ epoch: 1n, coin: getAddress(reward.coin), index: BigInt(reward.index), account: holder, amount: BigInt(reward.amountRaw), proof: reward.proof }],
+        functionName: "claimFor",
+        args: [{ epoch: 1n, poolId: reward.poolId, index: BigInt(reward.index), account: holder, amount: BigInt(reward.amountRaw), proof: reward.proof }],
       }),
     );
     const usdcAfter = await publicClient.readContract({ address: d.usdc, abi: erc20Abi, functionName: "balanceOf", args: [holder] });
@@ -399,6 +400,226 @@ describe("memefun backend, end to end", () => {
     await waitIndexed(await publicClient.getBlockNumber());
     const report = await verifyIndex();
     expect(report.coins).toBe(7);
+  });
+
+  it("one three-pair launch indexes separate trades and earnings, then transfers all creator authority", async () => {
+    const creator = wallet("dave");
+    const salt = keccak256(toHex("e2e-three-markets"));
+    const address = await publicClient.readContract({ address: d.factory, abi: memeFunFactoryAbi, functionName: "predictCoin", args: [creator.account.address, salt] });
+    const quotes = [zeroAddress, d.usdc, d.stock!] as const;
+    const firstBuys = [parseEther("0.02"), 75_000_000n, 100_000_000n];
+    // Earlier reward tests move chain time past the dev stock's NAV freshness window.
+    const stockQuote = await publicClient.readContract({ address: d.config, abi: memeFunConfigAbi, functionName: "quote", args: [d.stock!] });
+    await send(await wallet("priceKeeper").writeContract({ address: d.config, abi: memeFunConfigAbi, functionName: "setManualPrice", args: [d.stock!, stockQuote.priceUsdE8] }));
+    for (const quote of quotes.slice(1)) {
+      await send(await creator.writeContract({ address: quote, abi: erc20Abi, functionName: "approve", args: [d.factory, maxUint256] }));
+    }
+    await send(await creator.writeContract({
+      address: d.factory, abi: memeFunFactoryAbi, functionName: "launchMulti",
+      args: [{ name: "Three Markets", symbol: "THREE", contractURI: "ipfs://e2e-three-markets", quote: zeroAddress,
+        mode: 0, feeBps: 100, creatorKeepBps: 0, salt, firstBuyAmount: firstBuys[0]!, firstBuyMinCoins: 0n,
+        expectedStartTick: 0, maxTickDrift: 0xffffff, deadline: BigInt((await chainNow()) + 3_600) },
+      quotes.map((quote, i) => ({ quote, firstBuyAmount: firstBuys[i]!, firstBuyMinCoins: 0n, expectedStartTick: 0, maxTickDrift: 0xffffff }))],
+      value: firstBuys[0]!,
+    }));
+    await waitIndexed(await publicClient.getBlockNumber());
+    let coin = (await api(`/v1/coins/${address}`)).body.coin;
+    expect(coin.symbol).toBe("THREE");
+    const markets = coin.markets as Json[];
+    expect(markets).toHaveLength(3);
+    expect(new Set(markets.map((m) => m.poolId)).size).toBe(3);
+    expect(markets.reduce((sum, m) => sum + BigInt(m.supplyRaw), 0n)).toBe(COIN_SUPPLY);
+    for (const [i, quote] of quotes.entries()) {
+      const market = markets.find((m) => m.quote.address.toLowerCase() === quote.toLowerCase());
+      expect(BigInt(market.supplyRaw)).toBe(i === quotes.length - 1 ? COIN_SUPPLY - 2n * (COIN_SUPPLY / 3n) : COIN_SUPPLY / 3n);
+    }
+    expect((await api(`/v1/coins/${address}/pools`)).body.markets).toHaveLength(3);
+
+    // The same coin is priced independently in 18-, 6-, and 8-decimal assets.
+    await warpTo((await chainNow()) + coin.terms.snipeDurationSec + 5);
+    const amounts = [parseEther("0.003"), 10_000_000n, 10_000_000n];
+    for (const [i, quote] of quotes.entries()) {
+      const market = markets.find((m) => m.quote.address.toLowerCase() === quote.toLowerCase())!;
+      const pool = (await api(`/v1/coins/${address}/pool?poolId=${market.poolId}`)).body.pool;
+      expect(pool.quote.toLowerCase()).toBe(quote.toLowerCase());
+      const expected = quoteBuy(livePool({ ...pool, liquidity: BigInt(pool.liquidity), sqrtPriceX96: BigInt(pool.sqrtPriceX96),
+        floors: pool.floors.map((f: Json) => ({ ...f, liquidity: BigInt(f.liquidity) })) }), amounts[i]!, coin.terms.feeBps);
+      if (quote !== zeroAddress) await send(await wallet("erin").writeContract({ address: quote, abi: erc20Abi, functionName: "approve", args: [d.router, maxUint256] }));
+      const params = { coin: address, amountIn: amounts[i]!, minAmountOut: expected.amountOut, recipient: zeroAddress, referrer: zeroAddress, deadline: BigInt((await chainNow()) + 3_600) };
+      const value = quote === zeroAddress ? amounts[i]! : 0n;
+      const simulation = await publicClient.simulateContract({ address: d.router, abi: memeFunRouterAbi, functionName: "buyFor", args: [params, quote], account: devAccount("erin"), value });
+      expect(simulation.result).toBe(expected.amountOut);
+      await send(await wallet("erin").writeContract({ address: d.router, abi: memeFunRouterAbi, functionName: "buyFor", args: [params, quote], value }));
+    }
+    await waitIndexed(await publicClient.getBlockNumber());
+    coin = (await api(`/v1/coins/${address}`)).body.coin;
+    expect(coin.volumeTotalUsd).toBeCloseTo((coin.markets as Json[]).reduce((sum, m) => sum + m.volumeTotalUsd, 0), 6);
+    expect(coin.liquidityUsd).toBeCloseTo((coin.markets as Json[]).reduce((sum, m) => sum + m.liquidityUsd, 0), 6);
+    for (const market of markets) {
+      const trades = (await api(`/v1/coins/${address}/trades?poolId=${market.poolId}`)).body.trades as Json[];
+      expect(trades).toHaveLength(2);
+      expect(trades.every((t) => t.poolId === market.poolId && t.quote.toLowerCase() === market.quote.address.toLowerCase())).toBe(true);
+    }
+    const other = await coinBySymbol("FROG");
+    expect((await api(`/v1/coins/${address}/pool?poolId=${other.markets[0].poolId}`)).status).toBe(404);
+
+    await send(await creator.writeContract({ address: d.hook, abi: memeFunHookAbi, functionName: "lowerFee", args: [address, 50n] }));
+    await send(await creator.writeContract({ address: d.hook, abi: memeFunHookAbi, functionName: "proposeCreator", args: [address, devAccount("bob").address] }));
+    await waitIndexed(await publicClient.getBlockNumber());
+    expect((await api(`/v1/coins/${address}`)).body.coin.pendingCreator).toBe(devAccount("bob").address);
+    await send(await creator.writeContract({ address: d.hook, abi: memeFunHookAbi, functionName: "proposeCreator", args: [address, zeroAddress] }));
+    await waitIndexed(await publicClient.getBlockNumber());
+    expect((await api(`/v1/coins/${address}`)).body.coin.pendingCreator).toBeNull();
+    await send(await creator.writeContract({ address: d.hook, abi: memeFunHookAbi, functionName: "proposeCreator", args: [address, devAccount("bob").address] }));
+    await send(await wallet("bob").writeContract({ address: d.hook, abi: memeFunHookAbi, functionName: "acceptCreator", args: [address] }));
+    await waitIndexed(await publicClient.getBlockNumber());
+    coin = (await api(`/v1/coins/${address}`)).body.coin;
+    expect(coin.creator).toBe(devAccount("bob").address);
+    expect(coin.terms.feeBps).toBe(50);
+    expect(coin.terms.mode).toBe("creator");
+    const claimables = (await api(`/v1/claimables/${devAccount("bob").address}`)).body.claimables as Json[];
+    expect(claimables.filter((c) => c.kind === "creator" && c.coin === address)).toHaveLength(3);
+    const former = (await api(`/v1/claimables/${creator.account.address}`)).body.claimables as Json[];
+    expect(former.some((c) => c.kind === "creator" && c.coin === address)).toBe(false);
+
+    const pending = await Promise.all(quotes.map((quote) => publicClient.readContract({ address: d.feeVault, abi: feeVaultAbi, functionName: "creatorPendingFor", args: [address, quote] })));
+    expect(pending.every((amount) => amount > 0n)).toBe(true);
+    const recipient = devAccount("alice").address;
+    const before = await publicClient.readContract({ address: d.usdc, abi: erc20Abi, functionName: "balanceOf", args: [recipient] });
+    await send(await wallet("bob").writeContract({ address: d.feeVault, abi: feeVaultAbi, functionName: "claimCreatorFor", args: [address, d.usdc, recipient] }));
+    const after = await publicClient.readContract({ address: d.usdc, abi: erc20Abi, functionName: "balanceOf", args: [recipient] });
+    expect(after - before).toBe(pending[1]);
+    expect(await publicClient.readContract({ address: d.feeVault, abi: feeVaultAbi, functionName: "creatorPendingFor", args: [address, zeroAddress] })).toBe(pending[0]);
+    expect(await publicClient.readContract({ address: d.feeVault, abi: feeVaultAbi, functionName: "creatorPendingFor", args: [address, d.stock!] })).toBe(pending[2]);
+    await waitIndexed(await publicClient.getBlockNumber());
+    expect((await verifyIndex()).coins).toBe(8);
+  });
+
+  it("a tweet launch reserves both currencies and lets the verified author claim before treasury unlock", async () => {
+    const launcher = wallet("dave");
+    const salt = keccak256(toHex("e2e-tweet-author"));
+    const address = await publicClient.readContract({ address: d.factory, abi: memeFunFactoryAbi, functionName: "predictCoin", args: [launcher.account.address, salt] });
+    const deadline = BigInt((await chainNow()) + 3_600);
+    const tweet = { postId: 2019264360682778716n, authorXUserId: 44196397n, authorShareBps: 5000 };
+    const signature = await wallet("publisher").signTypedData({ domain: { name: "MemeFunFactory", version: "1", chainId: LOCAL_CHAIN_ID, verifyingContract: d.factory },
+      types: TWEET_LAUNCH_TYPES, primaryType: "TweetLaunch", message: { launcher: launcher.account.address, salt, ...tweet, deadline } });
+    await send(await launcher.writeContract({ address: d.usdc, abi: erc20Abi, functionName: "approve", args: [d.factory, 25_000_000n] }));
+    const pairs = [{ quote: zeroAddress, firstBuyAmount: parseEther("0.01"), firstBuyMinCoins: 0n, expectedStartTick: 0, maxTickDrift: 0xffffff },
+      { quote: d.usdc, firstBuyAmount: 25_000_000n, firstBuyMinCoins: 0n, expectedStartTick: 0, maxTickDrift: 0xffffff }];
+    await send(await launcher.writeContract({ address: d.factory, abi: memeFunFactoryAbi, functionName: "launchTweetMulti",
+      args: [{ name: "Tweet Cat", symbol: "XCAT", contractURI: "ipfs://e2e-tweet-cat", ...pairs[0]!, mode: 0, feeBps: 100, creatorKeepBps: 0, salt, deadline }, pairs, tweet, deadline, signature], value: pairs[0]!.firstBuyAmount }));
+    await waitIndexed(await publicClient.getBlockNumber());
+    const coin = (await api(`/v1/coins/${address}`)).body.coin;
+    expect(coin.tweet).toMatchObject({ postId: tweet.postId.toString(), authorXUserId: tweet.authorXUserId.toString(), authorShareBps: 5000 });
+    const pending = await Promise.all([zeroAddress, d.usdc].map(quote => publicClient.readContract({ address: d.feeVault, abi: feeVaultAbi, functionName: "authorPendingFor", args: [address, quote] })));
+    expect(pending.every(amount => amount > 0n)).toBe(true);
+    const reserved = await api(`/v1/coins/${address}/author`);
+    expect(reserved.status).toBe(200);
+    expect(reserved.body.status).toBe("unverified");
+    expect(reserved.body.treasuryUnlocked).toBe(false);
+    expect(reserved.body.treasuryUnlockAt).toBe(coin.tweet.treasuryUnlockAt);
+    expect((await api(`/v1/claimables/${launcher.account.address}`)).body.claimables.some((c: Json) => c.kind === "author" && c.coin === address)).toBe(false);
+    await expect(publicClient.simulateContract({ address: d.feeVault, abi: feeVaultAbi, functionName: "claimAuthorFor", args: [address, d.usdc, launcher.account.address], account: launcher.account })).rejects.toThrow();
+    await expect(publicClient.simulateContract({ address: d.feeVault, abi: feeVaultAbi, functionName: "reclaimExpiredAuthorFor", args: [address, d.usdc], account: devAccount("treasury") })).rejects.toThrow();
+
+    const author = wallet("alice");
+    const authorSignature = await wallet("publisher").signTypedData({ domain: { name: "MemeFunFeeVault", version: "1", chainId: LOCAL_CHAIN_ID, verifyingContract: d.feeVault },
+      types: AUTHOR_VERIFICATION_TYPES, primaryType: "AuthorVerification", message: { coin: address, authorXUserId: tweet.authorXUserId, wallet: author.account.address, deadline } });
+    await send(await author.writeContract({ address: d.feeVault, abi: feeVaultAbi, functionName: "verifyAuthor", args: [address, author.account.address, deadline, authorSignature] }));
+    await waitIndexed(await publicClient.getBlockNumber());
+    const claimables = (await api(`/v1/claimables/${author.account.address}`)).body.claimables.filter((c: Json) => c.kind === "author" && c.coin === address) as Json[];
+    expect(claimables).toHaveLength(2);
+    expect(new Set(claimables.map(c => c.currency.toLowerCase()))).toEqual(new Set([zeroAddress, d.usdc.toLowerCase()]));
+    const balance = await publicClient.readContract({ address: d.usdc, abi: erc20Abi, functionName: "balanceOf", args: [author.account.address] });
+    await send(await author.writeContract({ address: d.feeVault, abi: feeVaultAbi, functionName: "claimAuthorFor", args: [address, d.usdc, author.account.address] }));
+    expect(await publicClient.readContract({ address: d.usdc, abi: erc20Abi, functionName: "balanceOf", args: [author.account.address] })).toBe(balance + pending[1]!);
+    expect(await publicClient.readContract({ address: d.feeVault, abi: feeVaultAbi, functionName: "authorPendingFor", args: [address, zeroAddress] })).toBe(pending[0]);
+    await waitIndexed(await publicClient.getBlockNumber());
+    expect((await verifyIndex()).coins).toBe(9);
+  });
+
+  it("after180days authors can bind late and both author and treasury withdraw the same replenishing balance", async () => {
+    const launcher = wallet("dave");
+    const salt = keccak256(toHex("e2e-shared-tweet-author-balance"));
+    const address = await publicClient.readContract({ address: d.factory, abi: memeFunFactoryAbi, functionName: "predictCoin", args: [launcher.account.address, salt] });
+    const deadline = BigInt((await chainNow()) + 3_600);
+    const tweet = { postId: 2019264360682778717n, authorXUserId: 44196398n, authorShareBps: 10000 };
+    const signature = await wallet("publisher").signTypedData({ domain: { name: "MemeFunFactory", version: "1", chainId: LOCAL_CHAIN_ID, verifyingContract: d.factory },
+      types: TWEET_LAUNCH_TYPES, primaryType: "TweetLaunch", message: { launcher: launcher.account.address, salt, ...tweet, deadline } });
+    const pair = { quote: zeroAddress, firstBuyAmount: parseEther("0.01"), firstBuyMinCoins: 0n, expectedStartTick: 0, maxTickDrift: 0xffffff };
+    await send(await launcher.writeContract({ address: d.factory, abi: memeFunFactoryAbi, functionName: "launchTweetMulti",
+      args: [{ name: "Unverified Tweet", symbol: "XWAIT", contractURI: "ipfs://e2e-tweet-wait", ...pair, mode: 0, feeBps: 100, creatorKeepBps: 0, salt, deadline }, [pair], tweet, deadline, signature], value: pair.firstBuyAmount }));
+    await waitIndexed(await publicClient.getBlockNumber());
+    const attribution = await publicClient.readContract({ address: d.feeVault, abi: feeVaultAbi, functionName: "tweetAttribution", args: [address] });
+    const reserved = await publicClient.readContract({ address: d.feeVault, abi: feeVaultAbi, functionName: "authorPendingFor", args: [address, zeroAddress] });
+    expect(reserved).toBeGreaterThan(0n);
+    expect(await publicClient.readContract({ address: d.feeVault, abi: feeVaultAbi, functionName: "creatorPendingFor", args: [address, zeroAddress] })).toBe(0n);
+    await expect(publicClient.simulateContract({ address: d.feeVault, abi: feeVaultAbi, functionName: "reclaimExpiredAuthorFor", args: [address, zeroAddress], account: devAccount("treasury") })).rejects.toThrow();
+    await warpTo(Number(attribution[3]));
+    const treasury = wallet("treasury");
+    await expect(publicClient.simulateContract({ address: d.feeVault, abi: feeVaultAbi, functionName: "reclaimExpiredAuthorFor", args: [address, zeroAddress], account: devAccount("frank") })).rejects.toThrow();
+    expect(await publicClient.readContract({ address: d.feeVault, abi: feeVaultAbi, functionName: "authorPendingFor", args: [address, zeroAddress] })).toBe(reserved);
+
+    // The previous coin is already verified and has paid its author in USDC. Its remaining ETH
+    // balance becomes treasury-withdrawable too; verification and a prior claim give no exemption.
+    const verified = await coinBySymbol("XCAT");
+    const verifiedEth = await publicClient.readContract({ address: d.feeVault, abi: feeVaultAbi, functionName: "authorPendingFor", args: [verified.address, zeroAddress] });
+    expect(verifiedEth).toBeGreaterThan(0n);
+    const treasuryBefore = await publicClient.getBalance({ address: treasury.account.address });
+    const swept = await send(await treasury.writeContract({ address: d.feeVault, abi: feeVaultAbi, functionName: "reclaimExpiredAuthorFor", args: [verified.address, zeroAddress] }));
+    expect(await publicClient.getBalance({ address: treasury.account.address })).toBe(treasuryBefore + verifiedEth - swept.gasUsed * swept.effectiveGasPrice);
+    await expect(publicClient.simulateContract({ address: d.feeVault, abi: feeVaultAbi, functionName: "claimAuthorFor", args: [verified.address, zeroAddress, devAccount("alice").address], account: devAccount("alice") })).rejects.toThrow();
+
+    // A different author binds after day180 and claims the original unpaid reserve before the
+    // treasury withdraws it. The same pending balance, rather than an expiry bucket, is paid.
+    const lateAuthor = wallet("bob");
+    const lateDeadline = BigInt((await chainNow()) + 3_600);
+    const lateSignature = await wallet("publisher").signTypedData({ domain: { name: "MemeFunFeeVault", version: "1", chainId: LOCAL_CHAIN_ID, verifyingContract: d.feeVault },
+      types: AUTHOR_VERIFICATION_TYPES, primaryType: "AuthorVerification", message: { coin: address, authorXUserId: tweet.authorXUserId, wallet: lateAuthor.account.address, deadline: lateDeadline } });
+    await send(await lateAuthor.writeContract({ address: d.feeVault, abi: feeVaultAbi, functionName: "verifyAuthor", args: [address, lateAuthor.account.address, lateDeadline, lateSignature] }));
+    const lateBefore = await publicClient.getBalance({ address: lateAuthor.account.address });
+    const claimed = await send(await lateAuthor.writeContract({ address: d.feeVault, abi: feeVaultAbi, functionName: "claimAuthorFor", args: [address, zeroAddress, lateAuthor.account.address] }));
+    expect(await publicClient.getBalance({ address: lateAuthor.account.address })).toBe(lateBefore + reserved - claimed.gasUsed * claimed.effectiveGasPrice);
+    await expect(publicClient.simulateContract({ address: d.feeVault, abi: feeVaultAbi, functionName: "reclaimExpiredAuthorFor", args: [address, zeroAddress], account: treasury.account })).rejects.toThrow();
+
+    const params = { coin: address, amountIn: parseEther("0.005"), minAmountOut: 0n, recipient: zeroAddress, referrer: zeroAddress, deadline: BigInt((await chainNow()) + 3_600) };
+    const platformBefore = await publicClient.readContract({ address: d.feeVault, abi: feeVaultAbi, functionName: "platformPending", args: [zeroAddress] });
+    const feeBefore = await publicClient.readContract({ address: d.poolManager, abi: [{ type: "function", name: "balanceOf", stateMutability: "view", inputs: [{ name: "owner", type: "address" }, { name: "id", type: "uint256" }], outputs: [{ type: "uint256" }] }] as const, functionName: "balanceOf", args: [d.feeVault, 0n] });
+    await send(await wallet("erin").writeContract({ address: d.router, abi: memeFunRouterAbi, functionName: "buyFor", args: [params, zeroAddress], value: params.amountIn }));
+    const newReserve = await publicClient.readContract({ address: d.feeVault, abi: feeVaultAbi, functionName: "authorPendingFor", args: [address, zeroAddress] });
+    const feeAfter = await publicClient.readContract({ address: d.poolManager, abi: [{ type: "function", name: "balanceOf", stateMutability: "view", inputs: [{ name: "owner", type: "address" }, { name: "id", type: "uint256" }], outputs: [{ type: "uint256" }] }] as const, functionName: "balanceOf", args: [d.feeVault, 0n] });
+    const platformAfter = await publicClient.readContract({ address: d.feeVault, abi: feeVaultAbi, functionName: "platformPending", args: [zeroAddress] });
+    expect(newReserve).toBeGreaterThan(0n);
+    expect(platformAfter - platformBefore + newReserve).toBe(feeAfter - feeBefore); // No automatic author-to-platform redirect.
+    const repeatBefore = await publicClient.getBalance({ address: treasury.account.address });
+    const repeatSweep = await send(await treasury.writeContract({ address: d.feeVault, abi: feeVaultAbi, functionName: "reclaimExpiredAuthorFor", args: [address, zeroAddress] }));
+    expect(await publicClient.getBalance({ address: treasury.account.address })).toBe(repeatBefore + newReserve - repeatSweep.gasUsed * repeatSweep.effectiveGasPrice);
+    expect(await publicClient.readContract({ address: d.feeVault, abi: feeVaultAbi, functionName: "authorPendingFor", args: [address, zeroAddress] })).toBe(0n);
+
+    // A treasury withdrawal does not forfeit future author fees. Test ERC20 accounting as well:
+    // first the treasury takes new USDC, then the author claims fees from a later trade.
+    const buyer = wallet("erin");
+    await send(await buyer.writeContract({ address: d.usdc, abi: erc20Abi, functionName: "approve", args: [d.router, maxUint256] }));
+    const usdcBuy = { ...params, coin: verified.address, amountIn: 5_000_000n };
+    await send(await buyer.writeContract({ address: d.router, abi: memeFunRouterAbi, functionName: "buyFor", args: [usdcBuy, d.usdc] }));
+    const usdcReserve = await publicClient.readContract({ address: d.feeVault, abi: feeVaultAbi, functionName: "authorPendingFor", args: [verified.address, d.usdc] });
+    expect(usdcReserve).toBeGreaterThan(0n);
+    const treasuryUsdc = await publicClient.readContract({ address: d.usdc, abi: erc20Abi, functionName: "balanceOf", args: [treasury.account.address] });
+    await send(await treasury.writeContract({ address: d.feeVault, abi: feeVaultAbi, functionName: "reclaimExpiredAuthorFor", args: [verified.address, d.usdc] }));
+    expect(await publicClient.readContract({ address: d.usdc, abi: erc20Abi, functionName: "balanceOf", args: [treasury.account.address] })).toBe(treasuryUsdc + usdcReserve);
+    await send(await buyer.writeContract({ address: d.router, abi: memeFunRouterAbi, functionName: "buyFor", args: [{ ...usdcBuy, amountIn: 2_000_000n }, d.usdc] }));
+    const later = await publicClient.readContract({ address: d.feeVault, abi: feeVaultAbi, functionName: "authorPendingFor", args: [verified.address, d.usdc] });
+    expect(later).toBeGreaterThan(0n);
+    const alice = wallet("alice");
+    const authorUsdc = await publicClient.readContract({ address: d.usdc, abi: erc20Abi, functionName: "balanceOf", args: [alice.account.address] });
+    await waitIndexed(await publicClient.getBlockNumber());
+    expect((await api(`/v1/claimables/${alice.account.address}`)).body.claimables.some((c: Json) => c.kind === "author" && c.coin === verified.address && BigInt(c.amountRaw) === later)).toBe(true);
+    await send(await alice.writeContract({ address: d.feeVault, abi: feeVaultAbi, functionName: "claimAuthorFor", args: [verified.address, d.usdc, alice.account.address] }));
+    expect(await publicClient.readContract({ address: d.usdc, abi: erc20Abi, functionName: "balanceOf", args: [alice.account.address] })).toBe(authorUsdc + later);
+    await waitIndexed(await publicClient.getBlockNumber());
+    expect((await api(`/v1/coins/${address}/author`)).body).toMatchObject({ status: "verified", treasuryUnlocked: true, verifiedWallet: lateAuthor.account.address });
+    expect((await api(`/v1/coins/${verified.address}`)).body.coin.tweet).toMatchObject({ treasuryUnlocked: true, reclaimed: true, authorWallet: alice.account.address });
+    expect((await verifyIndex()).coins).toBe(10);
   });
 });
 

@@ -1,6 +1,6 @@
 # memefun contracts
 
-On-chain system for [memefun.dustswap.wtf](https://memefun.dustswap.wtf), a meme-coin launchpad on Base. Every coin is a native **B20** token with no admin and a fixed supply of 1,000,000,000. The whole supply is locked forever in one **Uniswap v4** position. A v4 hook takes a fee on every trade in the pair asset (ETH, USDC or a Coinbase tokenized stock), and the coin's chosen destination receives it.
+On-chain system for [memefun.dustswap.wtf](https://memefun.dustswap.wtf), a meme-coin launchpad on Base. Every coin is a native **B20** token with no admin and a fixed supply of 1,000,000,000. A launch locks that supply forever across one to five **Uniswap v4** positions, one per selected pair asset. A v4 hook takes a fee on every trade in the pair asset (ETH, USDC or a listed tokenized stock), and the coin's chosen destination receives it.
 
 This package is separate from `packages/contracts` on purpose. Uniswap v4 needs solc 0.8.26 and the cancun EVM, while the live DustSwap routers there must stay on paris.
 
@@ -12,14 +12,14 @@ This includes the memefun owner:
 - Remove or move a coin's launch liquidity, add foreign liquidity to its pool, or donate to it. The hook rejects all of these from every caller.
 - Raise a coin's fee, or change its fee destination, splits or launch protection. These terms are snapshotted at launch, and only the creator can lower the fee.
 - Stop trading. There is no pause on existing coins.
-- Move anyone else's pending fees.
+- Withdraw creator or referral fees without the corresponding claim right. X-author reserves follow the shared treasury rule below.
 
 ## What the owner (a Safe) can do
 
 - Change launch settings for **new** coins: creation fee, fee range, platform and referral shares, creator-keep limit, launch protection, and opening market cap. Every one is bounded by a compile-time cap.
 - Pause **new** launches.
 - List and price pair assets, switch pair kinds and fee destinations on or off for new launches, and point a destination at a new module for new launches.
-- Set the treasury, the price keeper and the rewards publisher.
+- Set the treasury, price keeper, rewards publisher and tweet attestor. These roles also affect existing rewards and author verification.
 - Veto a holder-reward epoch within 12 hours of publication.
 
 ## Bounded trust
@@ -28,26 +28,46 @@ This includes the memefun owner:
 |---|---|---|
 | Price keeper | Update a tokenized stock's USD price, which is used only to place new coins' opening price | +/-20% per update, staleness limit, and the creator's tick-drift guard at launch |
 | Rewards publisher | Publish holder-reward Merkle roots | Each coin's reserved total (claims can never exceed it), the 12-hour owner veto, and public recomputability from Transfer events |
-| Keeper | Trigger buybacks and floor adds | Nothing to abuse: both are permissionless, guarded against same-block pumps, rate-limited and impact-capped |
+| Keeper | Trigger buybacks and floor adds | Permissionless with cooldowns and same-block spot guards; buybacks have an impact cap. These do not prevent price manipulation across blocks. |
+| Tweet attestor | Attest original post identity and bind an unverified author wallet | EIP-712 chain/contract domain, identity, caller wallet, expiry and one-time binding. A compromised attestor can still misbind an unverified author. |
+| Treasury | Claim platform fees, and unpaid author rewards after launch +180 days | Author reserves are protected for the first 180 days. Afterwards author and treasury claim the same unpaid pot; each withdrawal reduces the other party's available balance. |
 
 ## Contracts
 
 | Contract | Role |
 |---|---|
 | `MemeFunConfig` | Every owner setting, with hard caps. The only contract the admin page writes. Setter names match `apps/memefun/src/lib/admin/ownerCalls.ts`. |
-| `MemeFunFactory` | Launches a coin in one transaction: creates the admin-less B20, prices the opening exactly, registers the pool's frozen terms, initializes the pool, locks the whole supply as one position, and runs the optional first buy. |
-| `MemeFunHook` | The v4 hook and coin registry. Locks liquidity, takes the fee in the pair asset for all four swap types, applies launch protection, and honors referrals only from `MemeFunRouter`. |
+| `MemeFunFactory` | Launches a coin in one transaction: creates the admin-less B20, prices each market, registers frozen fee terms, initializes one to five pools, locks their supply allocations, and runs optional first buys. |
+| `MemeFunHook` | The v4 hook and coin/market registry. Locks liquidity, takes the fee in each pair asset for all four swap types, applies launch protection, and honors referrals only from `MemeFunRouter`. |
 | `FeeVault` | Holds every fee as ERC-6909 claims and pays creators, referrers and the treasury when they claim (pull, never push). |
 | `MemeFunRouter` | The app's exact-input buy and sell, with minimum output, deadline, referrer, and ERC-2612 permit variants. It never holds funds. |
 | `BuybackBurnVault` | Burn mode. A permissionless buyback with a cooldown, a same-block pump guard and an impact cap. Every coin bought goes to `0x...dEaD`. |
 | `FloorVault` | Floor mode. Turns fees into permanent, quote-only bid liquidity 50-90% under the price; the floor ratchets up. |
-| `HolderRewardDistributor` | Holders mode. One Merkle root per epoch for all coins, a 12-hour veto, per-coin caps, and 90-day expiry back to the pot. |
+| `HolderRewardDistributor` | Holders mode. One Merkle root per epoch, a 12-hour veto, per-market payout caps, and 90-day expiry back to the relevant pair's pot. Legacy primary-market epochs retain their original leaf format. |
 
 **Libraries.**
 - `FeeMath` and `LaunchMath` are integer-exact mirrors of `apps/memefun/src/core`; golden vectors prove parity (see Tests).
 - `HookDataLib` encodes and decodes the router's hookData.
 
 ## Fee mechanics
+
+### Creator controls after launch
+
+The creator can lower the trading fee, including to zero. A reduction applies to every market of the coin; it cannot raise any market's rate. Creator, Burn, Holders and Floor modes, their splits, and launch protection remain fixed.
+
+Changing a payout address and transferring the creator role are different operations:
+
+- A creator fee claim may pay a chosen wallet without transferring control.
+- `proposeCreator` nominates a new creator wallet; that wallet must call `acceptCreator`. The current creator may cancel a pending proposal. An accepted transfer moves fee-lowering authority and all unclaimed creator earnings, across every pair asset, to the new creator.
+- The platform owner may change the protocol treasury wallet, but cannot take over a coin's creator role. Global fee defaults and split changes apply only to future launches.
+
+### Multiple pairs
+
+`launch` preserves the single-pair entry point. `launchMulti` creates the same token across one to five distinct pair assets that the quote registry permits. The token supply is split equally, with integer rounding accounted for. The opening token price uses the full fixed supply and the configured opening FDV; selecting five pairs does not multiply the opening market cap by five. Each market receives its own supply allocation, permanently locked position, and optional first buy. The entire transaction reverts if any market fails validation, pricing, funding or slippage checks.
+
+The first selected pair remains the primary market for legacy read and action wrappers. Explicit market functions select a registered pair; an arbitrary quote cannot redirect trading or fees. Creator and module balances are kept per coin and pair asset, so ETH, 6-decimal stablecoin units and stock units are never added together. Fee policy and creator control are shared by all markets.
+
+These changes require a deployment of the updated contracts and matching indexer/app ABIs. Existing single-pair tokens cannot acquire another launch pool by withdrawing their permanently locked supply.
 
 The fee is the rate *r* times the trade's gross quote amount, rounded **up**, and always taken in the pair asset:
 
@@ -95,15 +115,19 @@ cd ../../apps/memefun && pnpm vectors        # regenerate golden vectors from th
 | `test/unit/Vectors.t.sol` | 720 golden vectors from the app's TypeScript (fees, splits, protection schedule, launch positions across 6/8/18 decimals and both orderings, including the reduced-precision branch) match the contracts to the wei. |
 | `test/fuzz/*` | Fee rounding is minimal and never short. Splits conserve every wei. Protection never rises. Every opening is at or at most one spacing above target. The supply always fits the pool. A 1,000-run end-to-end fee-engine fuzz covers every swap type, both orderings, any fee, and inside or after protection. |
 | `test/unit/Launch.t.sol` | Admin-less coins with no role anywhere, the exact opening price, supply locked with dust to dEaD, first buys at the base fee, snapshotted terms, and every validation. |
+| `test/unit/MultiLaunch.t.sol` | Two, three and five markets conserve supply and share opening FDV; exact deposits, atomic failures, finite-range refunds, creator transfers and lower fees, per-market module pots, and separate legacy/pool reward formats. |
 | `test/unit/Fees.t.sol` | All four swap types on both orderings, launch protection, referrals (router only, self-referral dropped), the builder-code calldata suffix, fee lowering to 0, and the `Trade` event (trader side, plus the exact post-swap price and tick on both orderings). |
 | `test/unit/VaultAndLocks.t.sol` | Claims pay only their owner, a reentrant or ETH-rejecting recipient cannot hurt anyone, and liquidity cannot be removed, added, donated or re-initialized. |
-| `test/unit/Modules.t.sol` | Buyback (no fee, cooldown, same-block pump guard, impact cap), floor (quote-only bands, pump-proof, ratchet), holder rewards (veto window, epoch caps, expiry, replay). |
+| `test/unit/Modules.t.sol` | Buyback (no fee, cooldown, same-block pump guard, impact cap), floor (quote-only bands, same-block reference, ratchet), holder rewards (veto window, epoch caps, expiry, replay). A prior-block moved price is accepted. |
 | `test/unit/AdminAndEdges.t.sol` | The owner's whole surface and its caps, keeper bounds, oracle guards, permits, and edge reverts. |
 | `test/attack/Attacks.t.sol` | 99% protection on exact-out, dust swaps, direct callback calls, stray ETH, and spoofed exemptions. |
-| `test/invariant/*` | 7 invariants over 256 runs x 64 calls (launches, all swap types, buybacks, floors, epochs, claims, fee cuts, settings changes, time), with fail-on-revert: fixed supply and no roles, launch liquidity untouched, terms frozen except a falling fee, vault claims equal its ledgers, module books exact, no stray funds, settings within caps. |
+| `test/attack/MultiPairIsolation.t.sol` | Unknown-pair routing, late first-buy failure rolling back every market, wrong-module calls, and atomic rollback of mixed-currency reward batches. |
+| `test/invariant/*` | Seven property assertions plus one call-summary function, over 256 runs x 64 calls. `fail_on_revert=false`. The handler currently launches single-pair, non-tweet coins: fixed supply/no roles, unchanged launch liquidity, frozen terms except falling fee, vault/module solvency, no stray funds and settings caps. Multi-pair and author-pot stateful invariants remain to be added. |
 | `test/fork/MainnetFork.t.sol` | On a Base mainnet fork with real precompiles: the real PoolManager, Chainlink, USDC and Coinbase's **AAPLc**, and trades through **Uniswap's own Universal Router** paying the same fee. |
 
-**Results (2026-10-03):**
+**Multi-market verification (2026-10-04):** 156 stock-Forge tests pass, including eight invariants at 256 runs x 64 calls and ten fuzz cases at 1,000 runs each. All production runtime and initcode sizes fit deployment limits. The backend's 11-test integration suite also passes against fresh local Base Rust B20 precompiles, including a three-market launch, exact router quotes, creator controls and reward claims. The five mainnet fork entries used their offline guards in this run.
+
+**Previous single-market snapshot (2026-10-03; fork, coverage and gas figures below were measured before this update):**
 - **Stock forge:** 139 tests pass.
 - **Live B20 precompiles:** the same tests pass (136 on 2026-10-02, plus the faucet suite since).
 - **Mainnet fork:** 5 of 5 pass.
@@ -125,7 +149,7 @@ Successful calls on the reference mocks; Base's precompiles differ slightly. Eve
 
 ### Contract sizes
 
-The largest is `MemeFunFactory` at 14.6 KB, leaving a 10 KB margin under the 24,576-byte limit.
+The 2026-10-05 audit-fix build measured `MemeFunFactory` at 20,828 runtime bytes, leaving 3,748 bytes under the 24,576-byte limit. Recheck the exact release artifacts after changes. Oversized Base Solidity mocks are test-only and are not deployed by `Deploy.s.sol`.
 
 ## Static analysis
 
@@ -173,7 +197,9 @@ Every cross-reference is therefore an immutable; there is no initializer to fron
 - sets the keeper and publisher roles if given;
 - starts the two-step ownership handoff to `OWNER`, which must call `acceptOwnership()`.
 
-**Environment variables:** `OWNER`, `TREASURY`, `PRICE_KEEPER`, `REWARDS_PUBLISHER`, `DEPLOYER`. Keys only ever come from an encrypted keystore (`--account`); none belong in this repo.
+**Environment variables:** `OWNER`, `TREASURY`, `PRICE_KEEPER`, `REWARDS_PUBLISHER`, `TWEET_ATTESTOR`, `DEPLOYER`, RPC URLs and optionally `ETHERSCAN_API_KEY` for Etherscan V2. See `.env.example`. Keys only ever come from an encrypted keystore (`--account`); none belong in this repo. Supply a rewards publisher or disable Holder mode before allowing public launches.
+
+Simulations print the candidate record without saving it. `DRY_RUN=true` combined with `--broadcast` is refused. A broadcast record still needs receipt, runtime-code, immutable-reference and actual first-block checks before export. The serialized owner is the intended owner; inspect `owner()`/`pendingOwner()` and complete the handoff.
 
 ```bash
 # Dry run on a simulated Base Sepolia fork, with a smoke launch, nothing broadcast:

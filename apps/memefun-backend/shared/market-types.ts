@@ -1,5 +1,6 @@
 // SYNCED from apps/memefun/src/lib/market/types.ts by scripts/sync-shared.ts. Edit the original, then run pnpm sync-shared.
 import type { Address, CoinLinks, CoinTerms, Hash, QuoteAsset, TradeSide } from "./core/types";
+import type { TweetAttribution } from "./core/tweet";
 
 export interface ModeStats {
   /** Every fee this coin has paid, in quote units. */
@@ -24,6 +25,7 @@ export interface ModeStats {
 }
 
 export interface Coin {
+  tweet?: TweetAttribution;
   address: Address;
   name: string;
   symbol: string;
@@ -33,6 +35,11 @@ export interface Coin {
   creator: Address;
   createdAt: number;
   quote: QuoteAsset;
+  /** Independent pools for this one token. Legacy single-pool responses may omit this. */
+  markets?: CoinMarket[];
+  pendingCreator?: Address | null;
+  /** Selected pool on a market-specific view; discovery keeps aggregate USD metrics. */
+  selectedPoolId?: Hash;
   terms: CoinTerms;
   /** Coin price in quote units and in USD. */
   priceQuote: number;
@@ -72,9 +79,28 @@ export interface Coin {
   featured?: boolean;
 }
 
+export interface CoinMarket {
+  poolId: Hash;
+  quote: QuoteAsset;
+  supplyRaw: string;
+  supplyFraction: number;
+  poolCoins?: number;
+  priceQuote: number;
+  priceUsd: number;
+  liquidityUsd: number;
+  volume24hUsd: number;
+  volumeTotalUsd: number;
+  change5m: number;
+  change1h: number;
+  change24h: number;
+  stats: ModeStats;
+}
+
 export interface Trade {
   id: string;
   coin: Address;
+  poolId?: Hash;
+  quote?: Address;
   ts: number;
   side: TradeSide;
   trader: Address;
@@ -114,6 +140,8 @@ export interface ActivityItem {
   id: string;
   kind: ActivityKind;
   coin: Address;
+  poolId?: Hash;
+  quote?: Address;
   ts: number;
   trade?: Trade;
   amountQuote?: number;
@@ -149,7 +177,8 @@ export interface Position {
 
 export interface Claimable {
   coin: Address;
-  kind: "creator" | "holders" | "referral";
+  poolId?: Hash;
+  kind: "creator" | "holders" | "referral" | "author";
   amountQuote: number;
   quoteSymbol: string;
   amountUsd: number;

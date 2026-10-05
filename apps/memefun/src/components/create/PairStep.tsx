@@ -1,149 +1,61 @@
 "use client";
 
-import { RadioGroup } from "radix-ui";
 import { Check, Lock } from "lucide-react";
-import { formatUsd } from "@/core/format";
-import { cn } from "@/lib/cn";
-import { IS_TESTNET } from "@/lib/chain";
-import { ETH, USDC } from "@/lib/market/quotes";
+import { formatCoinAmount, formatPercent, formatUsd } from "@/core/format";
 import type { QuoteAsset, QuoteKind } from "@/core/types";
-import type { CreateDraft } from "@/lib/create/draft";
+import { cn } from "@/lib/cn";
+import { selectedQuoteSymbols, type CreateDraft } from "@/lib/create/draft";
+import { equalAllocations, MAX_MARKETS } from "@/lib/market/markets";
 import { usePreview } from "@/lib/preview/scenario";
-import { Badge } from "@/components/ui/display";
+import { SegmentedControl } from "@/components/ui/SegmentedControl";
+import { IS_TESTNET } from "@/lib/chain";
 
-/** Regular US equity session, the hours the stock NAV feeds update. */
 export function usMarketOpen(date = new Date()): boolean {
   const parts = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", weekday: "short", hour: "numeric", minute: "numeric", hour12: false }).formatToParts(date);
   const get = (type: string) => parts.find((part) => part.type === type)?.value ?? "";
-  const weekday = get("weekday");
   const minutes = Number(get("hour")) * 60 + Number(get("minute"));
-  return !["Sat", "Sun"].includes(weekday) && minutes >= 9 * 60 + 30 && minutes < 16 * 60;
+  return !["Sat", "Sun"].includes(get("weekday")) && minutes >= 570 && minutes < 960;
 }
 
-function OptionCard({ value, selected, disabled, title, subtitle, badge, children }: { value: string; selected: boolean; disabled?: boolean; title: string; subtitle: string; badge?: React.ReactNode; children?: React.ReactNode }) {
-  return (
-    <RadioGroup.Item
-      value={value}
-      disabled={disabled}
-      className={cn(
-        "flex w-full items-center gap-3 rounded-lg p-4 text-left transition-[box-shadow,background-color] disabled:opacity-50",
-        selected ? "bg-tint/8 shadow-[0_0_0_2px_var(--mf-tint)]" : "bg-bg-elevated shadow-[0_0_0_1px_var(--mf-separator)] hover:bg-fill-4",
-      )}
-    >
-      {children}
-      <span className="flex min-w-0 flex-1 flex-col">
-        <span className="flex items-center gap-2 text-headline text-label">
-          {title}
-          {badge}
-        </span>
-        <span className="text-subhead text-label-2">{subtitle}</span>
-      </span>
-      <span className={cn("flex size-6 shrink-0 items-center justify-center rounded-full", selected ? "bg-tint-fill text-on-tint" : "shadow-[inset_0_0_0_1.5px_var(--mf-label-3)]")}>
-        {selected ? <Check className="size-3.5" strokeWidth={3} aria-hidden /> : null}
-      </span>
-    </RadioGroup.Item>
-  );
-}
-
-export function PairStep({
-  draft,
-  update,
-  openingFdvUsd,
-  enabledKinds,
-  quotes,
-}: {
-  draft: CreateDraft;
-  update: (patch: Partial<CreateDraft>) => void;
-  openingFdvUsd: number;
-  enabledKinds: QuoteKind[];
-  /** Every listed pair asset; the stocks among them fill the stock picker. */
-  quotes: QuoteAsset[];
+export function PairStep({ draft, update, openingFdvUsd, enabledKinds, quotes }: {
+  draft: CreateDraft; update: (patch: Partial<CreateDraft>) => void; openingFdvUsd: number; enabledKinds: QuoteKind[]; quotes: QuoteAsset[];
 }) {
   const { stocksRestricted } = usePreview();
-  const stocks = quotes.filter((quote) => quote.kind === "stock");
-  const stocksOff = !enabledKinds.includes("stock") || stocks.length === 0;
-  const stockSelected = stocks.some((stock) => stock.symbol === draft.quoteSymbol);
-  const open = usMarketOpen();
-
+  const selected = selectedQuoteSymbols(draft);
+  const choose = (symbol: string) => {
+    const next = draft.launchMode === "single" ? [symbol] : selected.includes(symbol) ? selected.filter((entry) => entry !== symbol) : [...selected, symbol];
+    if (!next.length || next.length > MAX_MARKETS) return;
+    const firstBuyQuoteSymbol = next.includes(draft.firstBuyQuoteSymbol) ? draft.firstBuyQuoteSymbol : next[0]!;
+    update({ quoteSymbols: next, quoteSymbol: next[0]!, firstBuyQuoteSymbol, firstBuy: firstBuyQuoteSymbol === draft.firstBuyQuoteSymbol ? draft.firstBuy : "" });
+  };
   return (
     <div className="flex flex-col gap-5">
-      <p className="text-subhead text-label-2">
-        Your coin trades against this asset, and every trading fee is paid in it. Every pair opens at the same {formatUsd(openingFdvUsd, { compact: true })} market cap.
-      </p>
-      <RadioGroup.Root
-        value={stockSelected ? "stocks" : draft.quoteSymbol}
-        onValueChange={(value) => update({ quoteSymbol: value === "stocks" ? (stocks[0]?.symbol ?? "ETH") : value })}
-        aria-label="Pair asset"
-        className="flex flex-col gap-3"
-      >
-        <OptionCard
-          value={ETH.symbol}
-          selected={draft.quoteSymbol === "ETH"}
-          disabled={!enabledKinds.includes("native")}
-          title="ETH"
-          subtitle={enabledKinds.includes("native") ? "Deepest liquidity on Base. Fees are paid in ETH." : "Not available right now."}
-          badge={<Badge tone="tint">Recommended</Badge>}
-        >
-          <QuoteGlyph label="ETH" />
-        </OptionCard>
-        <OptionCard
-          value={USDC.symbol}
-          selected={draft.quoteSymbol === "USDC"}
-          disabled={!enabledKinds.includes("stable")}
-          title="USDC"
-          subtitle={enabledKinds.includes("stable") ? "Stable value. Fees are paid in USDC." : "Not available right now."}
-        >
-          <QuoteGlyph label="$" />
-        </OptionCard>
-        <OptionCard
-          value="stocks"
-          selected={stockSelected}
-          disabled={stocksRestricted || stocksOff}
-          title="Tokenized stock"
-          subtitle={
-            stocksRestricted ? "Not available in your region." : stocksOff ? "Not available right now." : "Pair with a Coinbase tokenized stock. Fees are paid in that stock."
-          }
-          badge={stocksRestricted || stocksOff ? <Lock className="size-4 text-label-2" aria-hidden /> : null}
-        >
-          <QuoteGlyph label="S" />
-        </OptionCard>
-      </RadioGroup.Root>
-
-      {stockSelected && !stocksRestricted && !stocksOff ? (
-        <div className="flex flex-col gap-3">
-          <RadioGroup.Root value={draft.quoteSymbol} onValueChange={(value) => update({ quoteSymbol: value })} aria-label="Stock" className="mf-card overflow-hidden [&>*+*]:hairline-t">
-            {stocks.map((stock) => (
-              <RadioGroup.Item key={stock.symbol} value={stock.symbol} className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-fill-4 data-[state=checked]:bg-tint/8">
-                <QuoteGlyph label={stock.symbol.slice(0, 1)} small />
-                <span className="flex min-w-0 flex-1 flex-col">
-                  <span className="text-body font-semibold text-label">{stock.symbol}</span>
-                  <span className="truncate text-footnote text-label-2">{stock.name}</span>
-                </span>
-                <span className="flex flex-col items-end">
-                  <span className="mf-num text-subhead text-label">{formatUsd(stock.usdPrice)}</span>
-                  <span className={cn("text-caption1 font-semibold", open ? "text-up" : "text-label-2")}>{open ? "Market open" : "Market closed"}</span>
-                </span>
-                <span className={cn("flex size-5 shrink-0 items-center justify-center rounded-full", draft.quoteSymbol === stock.symbol ? "bg-tint-fill text-on-tint" : "shadow-[inset_0_0_0_1.5px_var(--mf-label-3)]")}>
-                  {draft.quoteSymbol === stock.symbol ? <Check className="size-3" strokeWidth={3} aria-hidden /> : null}
-                </span>
-              </RadioGroup.Item>
-            ))}
-          </RadioGroup.Root>
-          <p className="rounded-md bg-fill-4 px-3 py-2 text-footnote text-label-2">
-            {IS_TESTNET
-              ? "This is a test stock with no value, for trying stock pairs on the testnet. Get some free from the test stock faucet at the top of the page."
-              : "Stock prices come from Chainlink and hold their last value outside US market hours. Pairing with a stock gives no ownership of the company. Coinbase tokenized stocks are only offered outside the United States."}
-          </p>
-        </div>
-      ) : null}
+      <SegmentedControl label="Number of pools" value={draft.launchMode} onChange={(launchMode) => update({ launchMode,
+        quoteSymbols: launchMode === "single" ? [draft.quoteSymbol] : draft.quoteSymbols,
+        firstBuyQuoteSymbol: launchMode === "single" ? draft.quoteSymbol : draft.firstBuyQuoteSymbol,
+        firstBuy: launchMode === "single" && draft.quoteSymbol !== draft.firstBuyQuoteSymbol ? "" : draft.firstBuy })}
+        segments={[{ value: "single", label: "Single pair" }, { value: "multi", label: "Multiple pairs" }]} fullWidth />
+      <p className="text-subhead text-label-2">One token, {draft.launchMode === "multi" ? `up to ${MAX_MARKETS} independent pools` : "one pool"}. Fees are paid in each pool&apos;s pair asset. The token opens at {formatUsd(openingFdvUsd)} total market cap.</p>
+      {draft.launchMode === "multi" ? <p className="rounded-md bg-fill-4 p-3 text-footnote text-label-2">{selected.length} / {MAX_MARKETS} pools selected. The fixed 1 billion token supply is split equally between them, with any final unit in the last pool. Every pool starts at the same token price and shares one fee policy.</p> : null}
+      <div className="flex flex-col gap-3" role="group" aria-label="Pair assets">
+        {quotes.map((quote) => {
+          const checked = selected.includes(quote.symbol);
+          const restricted = stocksRestricted && quote.kind === "stock";
+          const disabled = restricted || !enabledKinds.includes(quote.kind) || (!checked && draft.launchMode === "multi" && selected.length >= MAX_MARKETS);
+          return <button key={quote.address} type="button" aria-pressed={checked} disabled={disabled} onClick={() => choose(quote.symbol)}
+            className={cn("flex min-h-16 items-center gap-3 rounded-lg p-4 text-left disabled:opacity-50", checked ? "bg-tint/8 shadow-[0_0_0_2px_var(--mf-tint)]" : "bg-bg-elevated shadow-[0_0_0_1px_var(--mf-separator)]")}>
+            <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-fill-3 font-bold text-label">{quote.symbol.slice(0, 1)}</span>
+            <span className="flex min-w-0 flex-1 flex-col"><span className="text-headline text-label">{quote.symbol}</span><span className="text-footnote text-label-2">{restricted ? "Not available in your region" : `${quote.name} · ${formatUsd(quote.usdPrice)}`}</span>
+              {checked ? <span className="text-footnote text-label-2">{formatPercent(1 / selected.length)} of supply · {formatCoinAmount(Number(equalAllocations(selected.length)[selected.indexOf(quote.symbol)]!) / 1e18)} tokens</span> : null}
+            </span>
+            {restricted ? <Lock className="size-5 text-label-2" aria-hidden /> : <span className={cn("flex size-6 items-center justify-center rounded-full", checked ? "bg-tint-fill text-on-tint" : "border border-separator")}>{checked ? <Check className="size-4" aria-hidden /> : null}</span>}
+          </button>;
+        })}
+      </div>
+      <p className="text-footnote text-label-2">Only listed pair assets are available. Select a chosen pair to remove it; at least one pool is required.</p>
+      {quotes.some((quote) => selected.includes(quote.symbol) && quote.kind === "stock") ? <p className="rounded-md bg-fill-4 p-3 text-footnote text-label-2">
+        {IS_TESTNET ? "Test stock pairs have no value. Get test stock from the faucet to try a first buy." : "Stock pair prices use Chainlink and retain their last value outside US market hours. Pairing gives no ownership of the company. Coinbase tokenized stocks are offered outside the United States."}
+      </p> : null}
     </div>
-  );
-}
-
-function QuoteGlyph({ label, small }: { label: string; small?: boolean }) {
-  return (
-    <span className={cn("flex shrink-0 items-center justify-center rounded-full bg-fill-3 font-rounded font-bold text-label", small ? "size-9 text-subhead" : "size-11 text-callout")} aria-hidden>
-      {label}
-    </span>
   );
 }

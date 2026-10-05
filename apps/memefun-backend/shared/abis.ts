@@ -762,6 +762,19 @@ export const memeFunConfigAbi = [
   },
   {
     "type": "function",
+    "name": "setTweetAttestor",
+    "inputs": [
+      {
+        "name": "account",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "transferOwnership",
     "inputs": [
       {
@@ -776,6 +789,19 @@ export const memeFunConfigAbi = [
   {
     "type": "function",
     "name": "treasury",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "tweetAttestor",
     "inputs": [],
     "outputs": [
       {
@@ -1348,6 +1374,32 @@ export const memeFunFactoryAbi = [
   },
   {
     "type": "function",
+    "name": "MAX_AUTHOR_SHARE_BPS",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "MAX_MARKETS",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "MAX_NAME_BYTES",
     "inputs": [],
     "outputs": [
@@ -1387,6 +1439,32 @@ export const memeFunFactoryAbi = [
   },
   {
     "type": "function",
+    "name": "MIN_AUTHOR_SHARE_BPS",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "TWEET_LAUNCH_TYPEHASH",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "config",
     "inputs": [],
     "outputs": [
@@ -1394,6 +1472,49 @@ export const memeFunFactoryAbi = [
         "name": "",
         "type": "address",
         "internalType": "contract MemeFunConfig"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "eip712Domain",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "fields",
+        "type": "bytes1",
+        "internalType": "bytes1"
+      },
+      {
+        "name": "name",
+        "type": "string",
+        "internalType": "string"
+      },
+      {
+        "name": "version",
+        "type": "string",
+        "internalType": "string"
+      },
+      {
+        "name": "chainId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "verifyingContract",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "salt",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "extensions",
+        "type": "uint256[]",
+        "internalType": "uint256[]"
       }
     ],
     "stateMutability": "view"
@@ -1522,6 +1643,294 @@ export const memeFunFactoryAbi = [
   },
   {
     "type": "function",
+    "name": "launchMulti",
+    "inputs": [
+      {
+        "name": "base",
+        "type": "tuple",
+        "internalType": "struct MemeFunFactory.LaunchParams",
+        "components": [
+          {
+            "name": "name",
+            "type": "string",
+            "internalType": "string"
+          },
+          {
+            "name": "symbol",
+            "type": "string",
+            "internalType": "string"
+          },
+          {
+            "name": "contractURI",
+            "type": "string",
+            "internalType": "string"
+          },
+          {
+            "name": "quote",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "mode",
+            "type": "uint8",
+            "internalType": "enum Mode"
+          },
+          {
+            "name": "feeBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "creatorKeepBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "salt",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "firstBuyAmount",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "firstBuyMinCoins",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "expectedStartTick",
+            "type": "int24",
+            "internalType": "int24"
+          },
+          {
+            "name": "maxTickDrift",
+            "type": "uint24",
+            "internalType": "uint24"
+          },
+          {
+            "name": "deadline",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ]
+      },
+      {
+        "name": "pairs",
+        "type": "tuple[]",
+        "internalType": "struct MemeFunFactory.PairParams[]",
+        "components": [
+          {
+            "name": "quote",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "firstBuyAmount",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "firstBuyMinCoins",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "expectedStartTick",
+            "type": "int24",
+            "internalType": "int24"
+          },
+          {
+            "name": "maxTickDrift",
+            "type": "uint24",
+            "internalType": "uint24"
+          }
+        ]
+      }
+    ],
+    "outputs": [
+      {
+        "name": "coin",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "poolIds",
+        "type": "bytes32[]",
+        "internalType": "PoolId[]"
+      },
+      {
+        "name": "coinsBought",
+        "type": "uint256[]",
+        "internalType": "uint256[]"
+      }
+    ],
+    "stateMutability": "payable"
+  },
+  {
+    "type": "function",
+    "name": "launchTweetMulti",
+    "inputs": [
+      {
+        "name": "base",
+        "type": "tuple",
+        "internalType": "struct MemeFunFactory.LaunchParams",
+        "components": [
+          {
+            "name": "name",
+            "type": "string",
+            "internalType": "string"
+          },
+          {
+            "name": "symbol",
+            "type": "string",
+            "internalType": "string"
+          },
+          {
+            "name": "contractURI",
+            "type": "string",
+            "internalType": "string"
+          },
+          {
+            "name": "quote",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "mode",
+            "type": "uint8",
+            "internalType": "enum Mode"
+          },
+          {
+            "name": "feeBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "creatorKeepBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "salt",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "firstBuyAmount",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "firstBuyMinCoins",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "expectedStartTick",
+            "type": "int24",
+            "internalType": "int24"
+          },
+          {
+            "name": "maxTickDrift",
+            "type": "uint24",
+            "internalType": "uint24"
+          },
+          {
+            "name": "deadline",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ]
+      },
+      {
+        "name": "pairs",
+        "type": "tuple[]",
+        "internalType": "struct MemeFunFactory.PairParams[]",
+        "components": [
+          {
+            "name": "quote",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "firstBuyAmount",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "firstBuyMinCoins",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "expectedStartTick",
+            "type": "int24",
+            "internalType": "int24"
+          },
+          {
+            "name": "maxTickDrift",
+            "type": "uint24",
+            "internalType": "uint24"
+          }
+        ]
+      },
+      {
+        "name": "tweet",
+        "type": "tuple",
+        "internalType": "struct MemeFunFactory.TweetParams",
+        "components": [
+          {
+            "name": "postId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "authorXUserId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "authorShareBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          }
+        ]
+      },
+      {
+        "name": "attestationDeadline",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "signature",
+        "type": "bytes",
+        "internalType": "bytes"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "coin",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "poolIds",
+        "type": "bytes32[]",
+        "internalType": "PoolId[]"
+      },
+      {
+        "name": "coinsBought",
+        "type": "uint256[]",
+        "internalType": "uint256[]"
+      }
+    ],
+    "stateMutability": "payable"
+  },
+  {
+    "type": "function",
     "name": "poolManager",
     "inputs": [],
     "outputs": [
@@ -1575,6 +1984,12 @@ export const memeFunFactoryAbi = [
       }
     ],
     "stateMutability": "nonpayable"
+  },
+  {
+    "type": "event",
+    "name": "EIP712DomainChanged",
+    "inputs": [],
+    "anonymous": false
   },
   {
     "type": "event",
@@ -1703,6 +2118,137 @@ export const memeFunFactoryAbi = [
     "anonymous": false
   },
   {
+    "type": "event",
+    "name": "MarketLaunched",
+    "inputs": [
+      {
+        "name": "coin",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "quote",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "poolId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "PoolId"
+      },
+      {
+        "name": "allocation",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "deposited",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "record",
+        "type": "tuple",
+        "indexed": false,
+        "internalType": "struct MemeFunFactory.LaunchRecord",
+        "components": [
+          {
+            "name": "poolId",
+            "type": "bytes32",
+            "internalType": "PoolId"
+          },
+          {
+            "name": "mode",
+            "type": "uint8",
+            "internalType": "enum Mode"
+          },
+          {
+            "name": "module",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "feeBps",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "platformShareBps",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "referralShareBps",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "creatorKeepBps",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "protectionStartBps",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "protectionDurationSec",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "startTick",
+            "type": "int24",
+            "internalType": "int24"
+          },
+          {
+            "name": "liquidity",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "quoteUsdE8",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "openingFdvUsdE8",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "firstBuyQuote",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "firstBuyCoins",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ]
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "error",
+    "name": "AmountTooLarge",
+    "inputs": [
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
     "type": "error",
     "name": "CoinSetupFailed",
     "inputs": []
@@ -1720,6 +2266,17 @@ export const memeFunFactoryAbi = [
         "name": "maxBps",
         "type": "uint256",
         "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "DuplicateQuote",
+    "inputs": [
+      {
+        "name": "quote",
+        "type": "address",
+        "internalType": "address"
       }
     ]
   },
@@ -1772,6 +2329,28 @@ export const memeFunFactoryAbi = [
   },
   {
     "type": "error",
+    "name": "InvalidAuthorShare",
+    "inputs": [
+      {
+        "name": "shareBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "InvalidMarketCount",
+    "inputs": [
+      {
+        "name": "count",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "InvalidName",
     "inputs": []
   },
@@ -1782,7 +2361,22 @@ export const memeFunFactoryAbi = [
   },
   {
     "type": "error",
+    "name": "InvalidShortString",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "InvalidSymbol",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidTweetAttestation",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidTweetIdentity",
     "inputs": []
   },
   {
@@ -1814,6 +2408,11 @@ export const memeFunFactoryAbi = [
   {
     "type": "error",
     "name": "OpeningPriceOutOfRange",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "PrimaryPairMismatch",
     "inputs": []
   },
   {
@@ -1858,6 +2457,27 @@ export const memeFunFactoryAbi = [
         "internalType": "int24"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "StringTooLong",
+    "inputs": [
+      {
+        "name": "str",
+        "type": "string",
+        "internalType": "string"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "TweetAttestorDisabled",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "TweetRequiresCreatorMode",
+    "inputs": []
   },
   {
     "type": "error",
@@ -2725,6 +3345,92 @@ export const memeFunHookAbi = [
   },
   {
     "type": "function",
+    "name": "configFor",
+    "inputs": [
+      {
+        "name": "coin",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "quote",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "tuple",
+        "internalType": "struct IMemeFunHook.PoolConfig",
+        "components": [
+          {
+            "name": "coin",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "quoteIsCurrency0",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "mode",
+            "type": "uint8",
+            "internalType": "enum Mode"
+          },
+          {
+            "name": "feeBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "platformShareBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "referralShareBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "creatorKeepBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "protectionStartBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "module",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "launchedAt",
+            "type": "uint40",
+            "internalType": "uint40"
+          },
+          {
+            "name": "protectionDurationSec",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "seeded",
+            "type": "bool",
+            "internalType": "bool"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "configOf",
     "inputs": [
       {
@@ -3073,6 +3779,25 @@ export const memeFunHookAbi = [
   },
   {
     "type": "function",
+    "name": "moduleOfPool",
+    "inputs": [
+      {
+        "name": "id",
+        "type": "bytes32",
+        "internalType": "PoolId"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "pendingCreatorOf",
     "inputs": [
       {
@@ -3086,6 +3811,30 @@ export const memeFunHookAbi = [
         "name": "",
         "type": "address",
         "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "poolIdFor",
+    "inputs": [
+      {
+        "name": "coin",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "quote",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "PoolId"
       }
     ],
     "stateMutability": "view"
@@ -3111,6 +3860,76 @@ export const memeFunHookAbi = [
   },
   {
     "type": "function",
+    "name": "poolIdsOf",
+    "inputs": [
+      {
+        "name": "coin",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes32[]",
+        "internalType": "PoolId[]"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "poolKeyFor",
+    "inputs": [
+      {
+        "name": "coin",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "quote",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "tuple",
+        "internalType": "struct PoolKey",
+        "components": [
+          {
+            "name": "currency0",
+            "type": "address",
+            "internalType": "Currency"
+          },
+          {
+            "name": "currency1",
+            "type": "address",
+            "internalType": "Currency"
+          },
+          {
+            "name": "fee",
+            "type": "uint24",
+            "internalType": "uint24"
+          },
+          {
+            "name": "tickSpacing",
+            "type": "int24",
+            "internalType": "int24"
+          },
+          {
+            "name": "hooks",
+            "type": "address",
+            "internalType": "contract IHooks"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "poolKeyOf",
     "inputs": [
       {
@@ -3124,6 +3943,98 @@ export const memeFunHookAbi = [
         "name": "",
         "type": "tuple",
         "internalType": "struct PoolKey",
+        "components": [
+          {
+            "name": "currency0",
+            "type": "address",
+            "internalType": "Currency"
+          },
+          {
+            "name": "currency1",
+            "type": "address",
+            "internalType": "Currency"
+          },
+          {
+            "name": "fee",
+            "type": "uint24",
+            "internalType": "uint24"
+          },
+          {
+            "name": "tickSpacing",
+            "type": "int24",
+            "internalType": "int24"
+          },
+          {
+            "name": "hooks",
+            "type": "address",
+            "internalType": "contract IHooks"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "poolKeyOfPool",
+    "inputs": [
+      {
+        "name": "id",
+        "type": "bytes32",
+        "internalType": "PoolId"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "tuple",
+        "internalType": "struct PoolKey",
+        "components": [
+          {
+            "name": "currency0",
+            "type": "address",
+            "internalType": "Currency"
+          },
+          {
+            "name": "currency1",
+            "type": "address",
+            "internalType": "Currency"
+          },
+          {
+            "name": "fee",
+            "type": "uint24",
+            "internalType": "uint24"
+          },
+          {
+            "name": "tickSpacing",
+            "type": "int24",
+            "internalType": "int24"
+          },
+          {
+            "name": "hooks",
+            "type": "address",
+            "internalType": "contract IHooks"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "poolKeysOf",
+    "inputs": [
+      {
+        "name": "coin",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "keys",
+        "type": "tuple[]",
+        "internalType": "struct PoolKey[]",
         "components": [
           {
             "name": "currency0",
@@ -3194,6 +4105,25 @@ export const memeFunHookAbi = [
         "name": "coin",
         "type": "address",
         "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "Currency"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "quoteCurrencyOfPool",
+    "inputs": [
+      {
+        "name": "id",
+        "type": "bytes32",
+        "internalType": "PoolId"
       }
     ],
     "outputs": [
@@ -3693,12 +4623,49 @@ export const memeFunHookAbi = [
   },
   {
     "type": "error",
+    "name": "TermsMismatch",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "TooManyMarkets",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "UnknownCoin",
     "inputs": [
       {
         "name": "coin",
         "type": "address",
         "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "UnknownPair",
+    "inputs": [
+      {
+        "name": "coin",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "quote",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "UnknownPool",
+    "inputs": [
+      {
+        "name": "id",
+        "type": "bytes32",
+        "internalType": "PoolId"
       }
     ]
   }
@@ -3771,6 +4738,150 @@ export const memeFunRouterAbi = [
       }
     ],
     "stateMutability": "payable"
+  },
+  {
+    "type": "function",
+    "name": "buyFor",
+    "inputs": [
+      {
+        "name": "p",
+        "type": "tuple",
+        "internalType": "struct MemeFunRouter.TradeParams",
+        "components": [
+          {
+            "name": "coin",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "amountIn",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "minAmountOut",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "recipient",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "referrer",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "deadline",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ]
+      },
+      {
+        "name": "quote",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "amountOut",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "payable"
+  },
+  {
+    "type": "function",
+    "name": "buyForWithPermit",
+    "inputs": [
+      {
+        "name": "p",
+        "type": "tuple",
+        "internalType": "struct MemeFunRouter.TradeParams",
+        "components": [
+          {
+            "name": "coin",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "amountIn",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "minAmountOut",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "recipient",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "referrer",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "deadline",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ]
+      },
+      {
+        "name": "quote",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "permit",
+        "type": "tuple",
+        "internalType": "struct MemeFunRouter.Permit",
+        "components": [
+          {
+            "name": "value",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "deadline",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "v",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "r",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "s",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          }
+        ]
+      }
+    ],
+    "outputs": [
+      {
+        "name": "amountOut",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable"
   },
   {
     "type": "function",
@@ -3934,6 +5045,150 @@ export const memeFunRouterAbi = [
   },
   {
     "type": "function",
+    "name": "sellFor",
+    "inputs": [
+      {
+        "name": "p",
+        "type": "tuple",
+        "internalType": "struct MemeFunRouter.TradeParams",
+        "components": [
+          {
+            "name": "coin",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "amountIn",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "minAmountOut",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "recipient",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "referrer",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "deadline",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ]
+      },
+      {
+        "name": "quote",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "amountOut",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "sellForWithPermit",
+    "inputs": [
+      {
+        "name": "p",
+        "type": "tuple",
+        "internalType": "struct MemeFunRouter.TradeParams",
+        "components": [
+          {
+            "name": "coin",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "amountIn",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "minAmountOut",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "recipient",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "referrer",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "deadline",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ]
+      },
+      {
+        "name": "quote",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "permit",
+        "type": "tuple",
+        "internalType": "struct MemeFunRouter.Permit",
+        "components": [
+          {
+            "name": "value",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "deadline",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "v",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "r",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "s",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          }
+        ]
+      }
+    ],
+    "outputs": [
+      {
+        "name": "amountOut",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "sellWithPermit",
     "inputs": [
       {
@@ -4036,6 +5291,17 @@ export const memeFunRouterAbi = [
   },
   {
     "type": "error",
+    "name": "AmountTooLarge",
+    "inputs": [
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "EthTransferFailed",
     "inputs": []
   },
@@ -4128,10 +5394,200 @@ export const feeVaultAbi = [
   },
   {
     "type": "function",
+    "name": "AUTHOR_TREASURY_LOCK_PERIOD",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "AUTHOR_VERIFICATION_PERIOD",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "AUTHOR_VERIFICATION_TYPEHASH",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "MAX_AUTHOR_SHARE_BPS",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "MIN_AUTHOR_SHARE_BPS",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "authorPending",
+    "inputs": [
+      {
+        "name": "coin",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "authorPendingFor",
+    "inputs": [
+      {
+        "name": "coin",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "quote",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "claimAuthor",
+    "inputs": [
+      {
+        "name": "coin",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "to",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "claimAuthorFor",
+    "inputs": [
+      {
+        "name": "coin",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "quote",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "to",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "claimCreator",
     "inputs": [
       {
         "name": "coin",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "to",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "claimCreatorFor",
+    "inputs": [
+      {
+        "name": "coin",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "quote",
         "type": "address",
         "internalType": "address"
       },
@@ -4251,6 +5707,30 @@ export const feeVaultAbi = [
   },
   {
     "type": "function",
+    "name": "creatorPendingFor",
+    "inputs": [
+      {
+        "name": "coin",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "quote",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "credit",
     "inputs": [
       {
@@ -4307,6 +5787,73 @@ export const feeVaultAbi = [
         "name": "",
         "type": "uint256",
         "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "destinationPendingFor",
+    "inputs": [
+      {
+        "name": "coin",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "quote",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "eip712Domain",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "fields",
+        "type": "bytes1",
+        "internalType": "bytes1"
+      },
+      {
+        "name": "name",
+        "type": "string",
+        "internalType": "string"
+      },
+      {
+        "name": "version",
+        "type": "string",
+        "internalType": "string"
+      },
+      {
+        "name": "chainId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "verifyingContract",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "salt",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "extensions",
+        "type": "uint256[]",
+        "internalType": "uint256[]"
       }
     ],
     "stateMutability": "view"
@@ -4377,6 +5924,73 @@ export const feeVaultAbi = [
   },
   {
     "type": "function",
+    "name": "pullDestinationFor",
+    "inputs": [
+      {
+        "name": "coin",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "quote",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "reclaimExpiredAuthor",
+    "inputs": [
+      {
+        "name": "coin",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "reclaimExpiredAuthorFor",
+    "inputs": [
+      {
+        "name": "coin",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "quote",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "referralPending",
     "inputs": [
       {
@@ -4401,6 +6015,73 @@ export const feeVaultAbi = [
   },
   {
     "type": "function",
+    "name": "registerTweetAttribution",
+    "inputs": [
+      {
+        "name": "coin",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "postId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "authorXUserId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "authorShareBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "tweetAttribution",
+    "inputs": [
+      {
+        "name": "coin",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "postId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "authorXUserId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "authorShareBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "verifyBy",
+        "type": "uint40",
+        "internalType": "uint40"
+      },
+      {
+        "name": "verifiedWallet",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "unlockCallback",
     "inputs": [
       {
@@ -4417,6 +6098,139 @@ export const feeVaultAbi = [
       }
     ],
     "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "verifyAuthor",
+    "inputs": [
+      {
+        "name": "coin",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "wallet",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "deadline",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "signature",
+        "type": "bytes",
+        "internalType": "bytes"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "event",
+    "name": "AuthorClaimed",
+    "inputs": [
+      {
+        "name": "coin",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "quote",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "authorXUserId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "wallet",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      },
+      {
+        "name": "to",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "AuthorRewardsReclaimed",
+    "inputs": [
+      {
+        "name": "coin",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "quote",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "authorXUserId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "treasury",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "AuthorVerified",
+    "inputs": [
+      {
+        "name": "coin",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "authorXUserId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "wallet",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
   },
   {
     "type": "event",
@@ -4470,6 +6284,43 @@ export const feeVaultAbi = [
         "type": "address",
         "indexed": true,
         "internalType": "address"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "EIP712DomainChanged",
+    "inputs": [],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "MarketDestinationPulled",
+    "inputs": [
+      {
+        "name": "coin",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "quote",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "poolId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "PoolId"
       },
       {
         "name": "amount",
@@ -4537,13 +6388,107 @@ export const feeVaultAbi = [
     "anonymous": false
   },
   {
+    "type": "event",
+    "name": "TweetAttributed",
+    "inputs": [
+      {
+        "name": "coin",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "postId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "authorXUserId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "authorShareBps",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "verifyBy",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "error",
+    "name": "AttestationExpired",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "AuthorAlreadyVerified",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "AuthorReserveNotExpired",
+    "inputs": [
+      {
+        "name": "verifyBy",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
     "type": "error",
     "name": "ClaimTransferFailed",
     "inputs": []
   },
   {
     "type": "error",
+    "name": "InvalidAuthorAttestation",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidAuthorShare",
+    "inputs": [
+      {
+        "name": "shareBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "InvalidShortString",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidTweetIdentity",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NotAuthorWallet",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "NotCreator",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NotFactory",
     "inputs": []
   },
   {
@@ -4559,6 +6504,11 @@ export const feeVaultAbi = [
   {
     "type": "error",
     "name": "NotPoolManager",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NotTreasury",
     "inputs": []
   },
   {
@@ -4584,6 +6534,38 @@ export const feeVaultAbi = [
         "name": "value",
         "type": "uint256",
         "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "StringTooLong",
+    "inputs": [
+      {
+        "name": "str",
+        "type": "string",
+        "internalType": "string"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "TweetAlreadyAttributed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "TweetAttestorDisabled",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "UnknownTweet",
+    "inputs": [
+      {
+        "name": "coin",
+        "type": "address",
+        "internalType": "address"
       }
     ]
   },
@@ -4689,10 +6671,63 @@ export const buybackBurnVaultAbi = [
   },
   {
     "type": "function",
+    "name": "balanceOfFor",
+    "inputs": [
+      {
+        "name": "coin",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "quote",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "executeBuyback",
     "inputs": [
       {
         "name": "coin",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "spent",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "burned",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "executeBuybackFor",
+    "inputs": [
+      {
+        "name": "coin",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "quote",
         "type": "address",
         "internalType": "address"
       }
@@ -4758,6 +6793,30 @@ export const buybackBurnVaultAbi = [
   },
   {
     "type": "function",
+    "name": "lastBuybackAtFor",
+    "inputs": [
+      {
+        "name": "coin",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "quote",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "poolManager",
     "inputs": [],
     "outputs": [
@@ -4790,10 +6849,58 @@ export const buybackBurnVaultAbi = [
   },
   {
     "type": "function",
+    "name": "totalBurnedFor",
+    "inputs": [
+      {
+        "name": "coin",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "quote",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "totalSpent",
     "inputs": [
       {
         "name": "coin",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "totalSpentFor",
+    "inputs": [
+      {
+        "name": "coin",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "quote",
         "type": "address",
         "internalType": "address"
       }
@@ -4835,6 +6942,49 @@ export const buybackBurnVaultAbi = [
         "type": "address",
         "indexed": true,
         "internalType": "address"
+      },
+      {
+        "name": "quoteSpent",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "coinsBurned",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "quoteLeft",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "MarketBuyback",
+    "inputs": [
+      {
+        "name": "coin",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "quote",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "poolId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "PoolId"
       },
       {
         "name": "quoteSpent",
@@ -5009,10 +7159,73 @@ export const floorVaultAbi = [
   },
   {
     "type": "function",
+    "name": "addFloorFor",
+    "inputs": [
+      {
+        "name": "coin",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "quote",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "tickLower",
+        "type": "int24",
+        "internalType": "int24"
+      },
+      {
+        "name": "tickUpper",
+        "type": "int24",
+        "internalType": "int24"
+      },
+      {
+        "name": "liquidity",
+        "type": "uint128",
+        "internalType": "uint128"
+      },
+      {
+        "name": "used",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "balanceOf",
     "inputs": [
       {
         "name": "coin",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "balanceOfFor",
+    "inputs": [
+      {
+        "name": "coin",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "quote",
         "type": "address",
         "internalType": "address"
       }
@@ -5060,10 +7273,58 @@ export const floorVaultAbi = [
   },
   {
     "type": "function",
+    "name": "floorNearTickFor",
+    "inputs": [
+      {
+        "name": "coin",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "quote",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "int24",
+        "internalType": "int24"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "hasFloor",
     "inputs": [
       {
         "name": "coin",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "hasFloorFor",
+    "inputs": [
+      {
+        "name": "coin",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "quote",
         "type": "address",
         "internalType": "address"
       }
@@ -5111,6 +7372,30 @@ export const floorVaultAbi = [
   },
   {
     "type": "function",
+    "name": "lastAddAtFor",
+    "inputs": [
+      {
+        "name": "coin",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "quote",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "poolManager",
     "inputs": [],
     "outputs": [
@@ -5128,6 +7413,30 @@ export const floorVaultAbi = [
     "inputs": [
       {
         "name": "coin",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "totalFlooredFor",
+    "inputs": [
+      {
+        "name": "coin",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "quote",
         "type": "address",
         "internalType": "address"
       }
@@ -5169,6 +7478,55 @@ export const floorVaultAbi = [
         "type": "address",
         "indexed": true,
         "internalType": "address"
+      },
+      {
+        "name": "tickLower",
+        "type": "int24",
+        "indexed": false,
+        "internalType": "int24"
+      },
+      {
+        "name": "tickUpper",
+        "type": "int24",
+        "indexed": false,
+        "internalType": "int24"
+      },
+      {
+        "name": "liquidity",
+        "type": "uint128",
+        "indexed": false,
+        "internalType": "uint128"
+      },
+      {
+        "name": "quoteUsed",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "MarketFloorAdded",
+    "inputs": [
+      {
+        "name": "coin",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "quote",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "poolId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "PoolId"
       },
       {
         "name": "tickLower",
@@ -5315,6 +7673,30 @@ export const holderRewardDistributorAbi = [
   },
   {
     "type": "function",
+    "name": "availableFor",
+    "inputs": [
+      {
+        "name": "coin",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "quote",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "claim",
     "inputs": [
       {
@@ -5331,6 +7713,51 @@ export const holderRewardDistributorAbi = [
             "name": "coin",
             "type": "address",
             "internalType": "address"
+          },
+          {
+            "name": "index",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "account",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "amount",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "proof",
+            "type": "bytes32[]",
+            "internalType": "bytes32[]"
+          }
+        ]
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "claimFor",
+    "inputs": [
+      {
+        "name": "c",
+        "type": "tuple",
+        "internalType": "struct HolderRewardDistributor.PoolClaim",
+        "components": [
+          {
+            "name": "epoch",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "poolId",
+            "type": "bytes32",
+            "internalType": "PoolId"
           },
           {
             "name": "index",
@@ -5405,6 +7832,51 @@ export const holderRewardDistributorAbi = [
   },
   {
     "type": "function",
+    "name": "claimManyFor",
+    "inputs": [
+      {
+        "name": "claims",
+        "type": "tuple[]",
+        "internalType": "struct HolderRewardDistributor.PoolClaim[]",
+        "components": [
+          {
+            "name": "epoch",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "poolId",
+            "type": "bytes32",
+            "internalType": "PoolId"
+          },
+          {
+            "name": "index",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "account",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "amount",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "proof",
+            "type": "bytes32[]",
+            "internalType": "bytes32[]"
+          }
+        ]
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "config",
     "inputs": [],
     "outputs": [
@@ -5442,6 +7914,49 @@ export const holderRewardDistributorAbi = [
   },
   {
     "type": "function",
+    "name": "epochClaimedFor",
+    "inputs": [
+      {
+        "name": "epoch",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "poolId",
+        "type": "bytes32",
+        "internalType": "PoolId"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "epochPoolLeaves",
+    "inputs": [
+      {
+        "name": "epoch",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "epochReleased",
     "inputs": [
       {
@@ -5466,6 +7981,30 @@ export const holderRewardDistributorAbi = [
   },
   {
     "type": "function",
+    "name": "epochReleasedFor",
+    "inputs": [
+      {
+        "name": "epoch",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "poolId",
+        "type": "bytes32",
+        "internalType": "PoolId"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "epochTotal",
     "inputs": [
       {
@@ -5477,6 +8016,30 @@ export const holderRewardDistributorAbi = [
         "name": "coin",
         "type": "address",
         "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "epochTotalFor",
+    "inputs": [
+      {
+        "name": "epoch",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "poolId",
+        "type": "bytes32",
+        "internalType": "PoolId"
       }
     ],
     "outputs": [
@@ -5574,6 +8137,35 @@ export const holderRewardDistributorAbi = [
   },
   {
     "type": "function",
+    "name": "isClaimedFor",
+    "inputs": [
+      {
+        "name": "epoch",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "poolId",
+        "type": "bytes32",
+        "internalType": "PoolId"
+      },
+      {
+        "name": "index",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "lastEpoch",
     "inputs": [],
     "outputs": [
@@ -5598,6 +8190,45 @@ export const holderRewardDistributorAbi = [
         "name": "coin",
         "type": "address",
         "internalType": "address"
+      },
+      {
+        "name": "index",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "account",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "pure"
+  },
+  {
+    "type": "function",
+    "name": "leafFor",
+    "inputs": [
+      {
+        "name": "epoch",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "poolId",
+        "type": "bytes32",
+        "internalType": "PoolId"
       },
       {
         "name": "index",
@@ -5667,6 +8298,34 @@ export const holderRewardDistributorAbi = [
   },
   {
     "type": "function",
+    "name": "publishEpochFor",
+    "inputs": [
+      {
+        "name": "epoch",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "root",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "poolIds",
+        "type": "bytes32[]",
+        "internalType": "PoolId[]"
+      },
+      {
+        "name": "totals",
+        "type": "uint256[]",
+        "internalType": "uint256[]"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "releaseEpoch",
     "inputs": [
       {
@@ -5678,6 +8337,24 @@ export const holderRewardDistributorAbi = [
         "name": "coins",
         "type": "address[]",
         "internalType": "address[]"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "releaseEpochFor",
+    "inputs": [
+      {
+        "name": "epoch",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "poolIds",
+        "type": "bytes32[]",
+        "internalType": "PoolId[]"
       }
     ],
     "outputs": [],
@@ -5822,6 +8499,111 @@ export const holderRewardDistributorAbi = [
     "anonymous": false
   },
   {
+    "type": "event",
+    "name": "MarketClaimed",
+    "inputs": [
+      {
+        "name": "epoch",
+        "type": "uint64",
+        "indexed": true,
+        "internalType": "uint64"
+      },
+      {
+        "name": "coin",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "poolId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "PoolId"
+      },
+      {
+        "name": "index",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "account",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "MarketEpochPublished",
+    "inputs": [
+      {
+        "name": "epoch",
+        "type": "uint64",
+        "indexed": true,
+        "internalType": "uint64"
+      },
+      {
+        "name": "root",
+        "type": "bytes32",
+        "indexed": false,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "poolIds",
+        "type": "bytes32[]",
+        "indexed": false,
+        "internalType": "PoolId[]"
+      },
+      {
+        "name": "totals",
+        "type": "uint256[]",
+        "indexed": false,
+        "internalType": "uint256[]"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "MarketEpochReleased",
+    "inputs": [
+      {
+        "name": "epoch",
+        "type": "uint64",
+        "indexed": true,
+        "internalType": "uint64"
+      },
+      {
+        "name": "coin",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "poolId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "PoolId"
+      },
+      {
+        "name": "returned",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
     "type": "error",
     "name": "AlreadyClaimed",
     "inputs": []
@@ -5844,6 +8626,17 @@ export const holderRewardDistributorAbi = [
         "name": "coin",
         "type": "address",
         "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "DuplicatePool",
+    "inputs": [
+      {
+        "name": "poolId",
+        "type": "bytes32",
+        "internalType": "PoolId"
       }
     ]
   },
@@ -5949,5 +8742,10 @@ export const holderRewardDistributorAbi = [
         "internalType": "uint64"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "WrongLeafFormat",
+    "inputs": []
   }
 ] as const;

@@ -1,12 +1,16 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { PublicClient } from "viem";
 import { mnemonicToAccount } from "viem/accounts";
 import { fromUnits } from "@/core/format";
-import { launchPoolAt, livePool, quoteBuy } from "@/core/pool";
+import { COIN_SUPPLY } from "@/core/constants";
+import { USDC } from "@/lib/market/quotes";
+import { applyQuote, createLaunchPool, launchPoolAt, livePool, minOut, quoteBuy, quoteSell, type LaunchPool } from "@/core/pool";
 import type { Coin } from "@/lib/market/types";
 import { createApi } from "./api";
 import { type EventSourceLike, LiveMarket, type PoolInfo } from "./LiveMarket";
-import type { TxContext } from "./tx";
+import { sendTrade, type TxContext, type TradeFill } from "./tx";
+
+vi.mock("./tx", () => ({ sendTrade: vi.fn() }));
 
 const COIN = "0xb200000000000000000000000000000000000001";
 const OTHER = "0xb200000000000000000000000000000000000002";
@@ -149,6 +153,7 @@ function market(api: FakeApi, extra: Partial<ConstructorParameters<typeof LiveMa
 afterEach(() => {
   for (const m of markets) m.stop();
   markets = [];
+  vi.clearAllMocks();
 });
 
 function baseApi() {
@@ -162,6 +167,33 @@ function baseApi() {
 }
 
 describe("LiveMarket", () => {
+  it("waits for real settings and keeps selected pools, candles and streamed trades separate", async () => {
+    const base = coin(COIN);
+    const markets = [{ poolId: "0x01" as const, quote: base.quote }, { poolId: "0x02" as const, quote: USDC }].map((market) => ({ ...market,
+      supplyRaw: (COIN_SUPPLY / 2n).toString(), supplyFraction: 0.5, poolCoins: 500000000,
+      priceQuote: base.priceUsd / market.quote.usdPrice, priceUsd: base.priceUsd, liquidityUsd: 2500,
+      volume24hUsd: 0, volumeTotalUsd: 0, change5m: 0, change1h: 0, change24h: 0, stats: base.stats }));
+    const api = baseApi().on(`/v1/coins/${COIN}`, { coin: { ...base, markets } })
+      .on(`/v1/coins/${COIN}/pool`, (url: URL) => ({ body: { pool: { ...POOL, poolId: url.searchParams.get("poolId") ?? "0x01" } } }))
+      .on(`/v1/coins/${COIN}/trades`, (url: URL) => ({ body: { trades: [{ id: url.searchParams.get("poolId"), coin: COIN, ts: 1 }] } }))
+      .on(`/v1/coins/${COIN}/candles`, { candles: [] });
+    const { m, stream } = market(api);
+    expect(m.isSettingsReady()).toBe(false);
+    m.getCoin(COIN); await settle();
+    expect(m.isSettingsReady()).toBe(true);
+    m.quote(COIN, "buy", 0.01, Date.now(), false, "0x01");
+    m.quote(COIN, "buy", 25, Date.now(), false, "0x02");
+    m.getTrades(COIN, 100, "0x01"); m.getTrades(COIN, 100, "0x02"); m.getTrades(COIN);
+    m.getCandles(COIN, 300, "price", "0x02");
+    await settle();
+    expect(api.calls.some((call) => call.path.endsWith("/pool?poolId=0x02"))).toBe(true);
+    expect(api.calls.some((call) => call.path.includes("/candles?interval=300&metric=price&poolId=0x02"))).toBe(true);
+    stream.emit("trade", { id: "new", poolId: "0x02", coin: COIN, trader: USER, ts: 2 });
+    expect(m.getTrades(COIN, 100, "0x01").map((trade) => trade.id)).toEqual(["0x01"]);
+    expect(m.getTrades(COIN).map((trade) => trade.id)).not.toContain("new");
+    expect(m.getTrades(COIN, 100, "0x02").map((trade) => trade.id)).toEqual(["new", "0x02"]);
+    expect(m.quote(COIN, "buy", 1, Date.now(), false, "0x03").reason).toBe("Pool not found.");
+  });
   it("lists coins from the API and re-renders once they land", async () => {
     const api = baseApi();
     const { m } = market(api);
@@ -201,6 +233,7 @@ describe("LiveMarket", () => {
     const expected = quoteBuy(livePool({ ...POOL, liquidity: launch.liquidity, sqrtPriceX96: launch.sqrtPriceX96, floors: [] }), 10n ** 17n, 100);
     expect(quoted.ok).toBe(true);
     expect(quoted.amountOut).toBe(fromUnits(expected.amountOut, 18));
+    expect(quoted.amountOutRaw).toBe(expected.amountOut.toString());
     expect(quoted.feeQuote).toBe(0.001);
     // Selling into a fresh pool has nothing to fill.
     expect(m.quote(COIN, "sell", 1_000).ok).toBe(false);
@@ -277,5 +310,94 @@ describe("LiveMarket", () => {
     expect(JSON.parse(posts[1]!.body!)).toEqual({ body: "gm" });
     expect(m.getComments(COIN)[0]?.id).toBe("1");
     await expect(m.addComment(account.address, COIN, " ")).rejects.toThrow("Write something first.");
+  });
+});
+
+function tradeFixture(state: LaunchPool = launch, quote = coin(COIN).quote) {
+  let current = state;
+  const api = baseApi().on(`/v1/coins/${COIN}`, { coin: coin(COIN, { quote }) })
+    .on(`/v1/coins/${COIN}/pool`, () => ({ body: { pool: {
+      ...POOL, quote: quote.address, quoteDecimals: quote.decimals, startTick: current.startTick,
+      liquidity: current.liquidity.toString(), sqrtPriceX96: current.sqrtPriceX96.toString(), tick: current.tick,
+    } } }));
+  const txContext = vi.fn(async () => ({}) as TxContext);
+  const { m } = market(api, { txContext, client: {
+    ...client, getBalance: async () => 2n * 10n ** 18n, readContract: async () => 2n * 10n ** 18n,
+  } as unknown as PublicClient });
+  vi.mocked(sendTrade).mockResolvedValue({ hash: `0x${"11".repeat(32)}`, isBuy: true,
+    quoteAmount: 10n ** 17n, coinAmount: 1n, fee: 0n, feeBps: 100,
+    sqrtPriceX96: state.sqrtPriceX96, tick: state.tick, blockNumber: 1n,
+  } as TradeFill);
+  return { m, txContext, movePool: (next: LaunchPool) => { current = next; } };
+}
+
+describe("live trade minimum received", () => {
+  const amount = 10n ** 17n;
+  const displayQuote = quoteBuy(launch, amount, 100);
+  const displayedMinimum = minOut(displayQuote.amountOut, 500);
+
+  it("preserves the displayed raw minimum after an unfavorable pool change within tolerance", async () => {
+    const moved = applyQuote(launch, quoteBuy(launch, 5n * 10n ** 15n, 100));
+    const freshOutput = quoteBuy(moved, amount, 100).amountOut;
+    expect(freshOutput).toBeLessThan(displayQuote.amountOut);
+    expect(freshOutput).toBeGreaterThan(displayedMinimum);
+    const { m } = tradeFixture(moved);
+    await m.trade(USER, COIN, "buy", 0.1, 0, { amountText: "0.1", slippageBps: 500, minAmountOutRaw: displayedMinimum.toString() });
+    expect(sendTrade).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ minAmountOut: displayedMinimum }));
+  });
+
+  it("rejects a fresh output below the displayed floor before opening the wallet", async () => {
+    const moved = applyQuote(launch, quoteBuy(launch, 10n ** 18n, 100));
+    const { m, txContext } = tradeFixture(moved);
+    await expect(m.trade(USER, COIN, "buy", 0.1, 0, { slippageBps: 500, minAmountOutRaw: displayedMinimum.toString() }))
+      .rejects.toThrow("price changed beyond your minimum");
+    expect(txContext).not.toHaveBeenCalled();
+    expect(sendTrade).not.toHaveBeenCalled();
+  });
+
+  it("tightens the floor when a fresh quote is more favorable", async () => {
+    const previouslyMoved = applyQuote(launch, quoteBuy(launch, 5n * 10n ** 15n, 100));
+    const previousMinimum = minOut(quoteBuy(previouslyMoved, amount, 100).amountOut, 500);
+    expect(previousMinimum).toBeLessThan(displayedMinimum);
+    const { m } = tradeFixture();
+    await m.trade(USER, COIN, "buy", 0.1, 0, { slippageBps: 500, minAmountOutRaw: previousMinimum.toString() });
+    expect(sendTrade).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ minAmountOut: displayedMinimum }));
+  });
+
+  it.each(["", "0", "-1", "1.5", "1e18", " 1", "1 ", ((1n << 256n)).toString()])
+    ("rejects an invalid exact raw floor %j before opening the wallet", async (minAmountOutRaw) => {
+      const { m, txContext } = tradeFixture();
+      await expect(m.trade(USER, COIN, "buy", 0.1, 0, { minAmountOutRaw })).rejects.toThrow("minimum received could not be verified");
+      expect(txContext).not.toHaveBeenCalled();
+      expect(sendTrade).not.toHaveBeenCalled();
+    });
+
+  it.each([-1, 0.5, 5001, NaN, Infinity])("rejects invalid slippage %j before opening the wallet", async (slippageBps) => {
+    const { m, txContext } = tradeFixture();
+    await expect(m.trade(USER, COIN, "buy", 0.1, 0, { slippageBps })).rejects.toThrow("valid slippage percentage");
+    expect(txContext).not.toHaveBeenCalled();
+    expect(sendTrade).not.toHaveBeenCalled();
+  });
+
+  it("checks insufficient funds before opening the wallet", async () => {
+    const { m, txContext } = tradeFixture();
+    await expect(m.trade(USER, COIN, "buy", 3, 0, { minAmountOutRaw: "1" })).rejects.toThrow("Not enough ETH");
+    expect(txContext).not.toHaveBeenCalled();
+    expect(sendTrade).not.toHaveBeenCalled();
+  });
+
+  it("retains the legacy default when no exact floor or slippage was provided", async () => {
+    const { m } = tradeFixture();
+    await m.trade(USER, COIN, "buy", 0.1, 0);
+    expect(sendTrade).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ minAmountOut: minOut(displayQuote.amountOut, 200) }));
+  });
+
+  it("never submits zero minimum for a one-unit quote after integer rounding", async () => {
+    const usdcLaunch = createLaunchPool({ coinIsCurrency0: false, quoteDecimals: 6, quoteUsd: 1, openingFdvUsd: 5000 });
+    const seeded = applyQuote(usdcLaunch, quoteBuy(usdcLaunch, 10n * 10n ** 6n, 100));
+    expect(quoteSell(seeded, 5n * 10n ** 17n, 100).amountOut).toBe(1n);
+    const { m } = tradeFixture(seeded, USDC);
+    await m.trade(USER, COIN, "sell", 0.5, 0, { amountText: "0.5", slippageBps: 5000 });
+    expect(sendTrade).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ minAmountOut: 1n }));
   });
 });
