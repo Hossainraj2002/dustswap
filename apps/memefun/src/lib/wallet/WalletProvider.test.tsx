@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 import { StrictMode, type ReactNode } from "react";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render } from "@testing-library/react";
+import { act, cleanup, render } from "@testing-library/react";
 import type { MemefunWallet } from "./walletState";
 import { WalletProvider, useWallet } from "./WalletProvider";
 import { consumePendingConnect, requestConnectWhenReady } from "./walletState";
@@ -21,6 +21,7 @@ const view = vi.hoisted(() => {
     wallet: null as MemefunWallet | null,
     configs: [] as { appearance: { theme: string } }[],
     renders: 0,
+    toastError: vi.fn(),
   };
 });
 
@@ -43,6 +44,7 @@ vi.mock("@privy-io/wagmi", () => ({ WagmiProvider: ({ children }: { children: Re
 vi.mock("wagmi", () => ({ useAccount: () => ({ ...view.account }) }));
 vi.mock("./wagmi", () => ({ MEMEFUN_CHAINS: [{ id: 84532 }], wagmiConfig: {} }));
 vi.mock("./ethereumProviders", () => ({ ensureOkxEip6963Shim: vi.fn() }));
+vi.mock("sonner", () => ({ toast: { error: (message: string) => view.toastError(message) } }));
 vi.mock("./useWalletConnection", () => ({
   PRIVY_WALLET_LIST: ["metamask"],
   WalletConnectionProvider: ({ children }: { children: ReactNode }) => children,
@@ -81,6 +83,7 @@ beforeEach(() => {
   view.wallet = null;
   view.configs = [];
   view.renders = 0;
+  view.toastError.mockClear();
   consumePendingConnect();
 });
 afterEach(cleanup);
@@ -149,5 +152,14 @@ describe("real wallet host updates", () => {
     mounted.rerender(<StrictMode>{page()}</StrictMode>);
     expect(view.connect).toHaveBeenCalledOnce();
     expect(view.renders).toBeLessThan(8);
+  });
+
+  it("reports a replayed connection failure without an unhandled rejection", async () => {
+    view.connect.mockRejectedValue(new Error("Your wallet connection is still loading. Please try again."));
+    requestConnectWhenReady();
+    await act(async () => { render(page()); });
+    expect(view.connect).toHaveBeenCalledOnce();
+    expect(view.toastError).toHaveBeenCalledWith("Your wallet connection is still loading. Please try again.");
+    expect(wallet().status).toBe("disconnected");
   });
 });

@@ -129,12 +129,29 @@ export function createAppStore(db: Queryable & Pick<pg.Pool, "connect">) {
       return Number(r?.n ?? 0) > 0;
     },
 
-    /** Uploads in the last `sinceSec` seconds by this wallet, or else by this network. */
-    async recentUploads(by: { wallet: string | null; ipHash: string }, sinceSec: number): Promise<number> {
-      const [r] = by.wallet
-        ? await rows<{ n: string }>(db, `SELECT COUNT(*) AS n FROM upload WHERE uploader = $1 AND created_at > now() - make_interval(secs => $2)`, [by.wallet, sinceSec])
-        : await rows<{ n: string }>(db, `SELECT COUNT(*) AS n FROM upload WHERE ip_hash = $1 AND created_at > now() - make_interval(secs => $2)`, [by.ipHash, sinceSec]);
-      return Number(r?.n ?? 0);
+    /** Atomically reserve each processing attempt, independent of CID deduplication or success. */
+    async reserveUpload(by: { wallet: string | null; ipHash: string }, limit: number, sinceSec: number): Promise<boolean> {
+      if (!Number.isSafeInteger(limit) || limit < 1 || !Number.isSafeInteger(sinceSec) || sinceSec < 1) throw new Error("invalid upload quota");
+      const key = by.wallet ? `wallet:${by.wallet.toLowerCase()}` : `ip:${by.ipHash}`;
+      // Anonymous quotas count all attempts from the network, including authenticated uploads.
+      const keys = [...new Set([`ip:${by.ipHash}`, key])].sort();
+      const client = await db.connect();
+      try {
+        await client.query("BEGIN");
+        for (const quotaKey of keys) await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [`upload:${quotaKey}`]);
+        await client.query("DELETE FROM upload_reservation WHERE quota_key = ANY($1::text[]) AND created_at <= clock_timestamp() - make_interval(secs => $2)", [keys, sinceSec]);
+        const [usage] = await rows<{ n: string }>(client,
+          "SELECT COUNT(*) AS n FROM upload_reservation WHERE quota_key = $1 AND created_at > clock_timestamp() - make_interval(secs => $2)", [key, sinceSec]);
+        const allowed = Number(usage?.n ?? 0) < limit;
+        if (allowed) await client.query("INSERT INTO upload_reservation (quota_key) SELECT unnest($1::text[])", [keys]);
+        await client.query("COMMIT");
+        return allowed;
+      } catch (error) {
+        await client.query("ROLLBACK").catch(() => undefined);
+        throw error;
+      } finally {
+        client.release();
+      }
     },
 
     async recordUpload(upload: { cid: string; kind: "image" | "metadata"; bytes: number; uploader: string | null; ipHash: string }) {

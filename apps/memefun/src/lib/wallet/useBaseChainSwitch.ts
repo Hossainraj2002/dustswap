@@ -30,16 +30,13 @@ function hasChainEventMethods(value: RequestCapableProvider): value is ChainEven
 }
 
 function parseProviderChainId(value: unknown) {
-  if (typeof value === "number" && Number.isFinite(value)) {
+  if (typeof value === "number" && Number.isSafeInteger(value) && value > 0) {
     return value;
   }
 
-  if (typeof value === "string") {
-    const parsed = value.startsWith("0x")
-      ? Number.parseInt(value, 16)
-      : Number.parseInt(value, 10);
-
-    return Number.isFinite(parsed) ? parsed : null;
+  if (typeof value === "string" && /^(?:0x[0-9a-f]+|[0-9]+)$/i.test(value)) {
+    const parsed = Number(value);
+    return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
   }
 
   return null;
@@ -148,7 +145,7 @@ export function useBaseChainSwitch() {
   const [observedChainId, setObservedChainId] = useState<number | null>(null);
 
   const effectiveChainId = observedChainId ?? chainId ?? null;
-  const isOnBase = effectiveChainId === TARGET_CHAIN_ID;
+  const isOnBase = isConnected && effectiveChainId === TARGET_CHAIN_ID;
 
   const getRequestProvider = useCallback(async () => {
     const connectorProvider = await connector?.getProvider?.().catch(() => null);
@@ -161,10 +158,8 @@ export function useBaseChainSwitch() {
       return walletClient;
     }
 
-    if (typeof window !== "undefined" && hasRequestMethod(window.ethereum)) {
-      return window.ethereum;
-    }
-
+    // A browser may have several injected wallets. Only the selected connector
+    // or its wallet client is allowed to confirm/switch the signing chain.
     return null;
   }, [connector, walletClient]);
 
@@ -204,6 +199,7 @@ export function useBaseChainSwitch() {
 
       if (hasChainEventMethods(provider)) {
         const handleChainChanged = (nextChainId: unknown) => {
+          if (disposed) return;
           const parsed = parseProviderChainId(nextChainId);
           if (parsed) {
             setObservedChainId(parsed);
@@ -230,10 +226,6 @@ export function useBaseChainSwitch() {
       throw new Error("Connect your wallet first.");
     }
 
-    if (isOnBase) {
-      return true;
-    }
-
     setIsSwitching(true);
 
     try {
@@ -242,7 +234,7 @@ export function useBaseChainSwitch() {
         ? await readProviderChainId(provider).catch(() => null)
         : null;
 
-      if ((providerChainId ?? chainId) === TARGET_CHAIN_ID) {
+      if ((provider ? providerChainId : chainId) === TARGET_CHAIN_ID) {
         setObservedChainId(TARGET_CHAIN_ID);
         return true;
       }
@@ -253,10 +245,14 @@ export function useBaseChainSwitch() {
         });
 
         if (provider) {
-          await waitForProviderChainId(provider, TARGET_CHAIN_ID);
+          if (!await waitForProviderChainId(provider, TARGET_CHAIN_ID)) {
+            throw new Error(`Your wallet has not switched to ${CHAIN_NAME}. Please switch it and try again.`);
+          }
+        } else if (switchedChain?.id !== TARGET_CHAIN_ID) {
+          throw new Error(`Your wallet has not switched to ${CHAIN_NAME}. Please switch it and try again.`);
         }
 
-        setObservedChainId(switchedChain?.id ?? TARGET_CHAIN_ID);
+        setObservedChainId(TARGET_CHAIN_ID);
         return true;
       } catch (error) {
         if (isUserRejectedRequest(error)) {
@@ -275,7 +271,9 @@ export function useBaseChainSwitch() {
       }
 
       await requestBaseChainFromProvider(provider);
-      await waitForProviderChainId(provider, TARGET_CHAIN_ID);
+      if (!await waitForProviderChainId(provider, TARGET_CHAIN_ID)) {
+        throw new Error(`Your wallet has not switched to ${CHAIN_NAME}. Please switch it and try again.`);
+      }
       setObservedChainId(TARGET_CHAIN_ID);
       return true;
     } catch (error) {
@@ -283,7 +281,7 @@ export function useBaseChainSwitch() {
     } finally {
       setIsSwitching(false);
     }
-  }, [chainId, getRequestProvider, isConnected, isOnBase, switchChainAsync]);
+  }, [chainId, getRequestProvider, isConnected, switchChainAsync]);
 
   return {
     isOnBase,

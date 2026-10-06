@@ -1,13 +1,15 @@
 # memefun app
 
-The memefun web app (Next.js 15, hosted on Railway with an optional Cloudflare Workers build through OpenNext). Apple HIG styling, Base Blue, light and dark.
+The memefun web app for the deployed Base mainnet contracts (Next.js 15, hosted on Railway with an optional Cloudflare Workers build through OpenNext). Apple HIG styling, Base Blue, light and dark.
 
 ## Two modes
 
-- **Preview** (the default): every screen runs on a simulated market in the browser (`src/lib/preview`), with a scenario switcher for reviewing states. Nothing touches a chain.
-- **Live**: the memefun API (`apps/memefun-backend`) and the chain (`src/lib/live`). It switches on when the build has an API URL and contract addresses for its chain. `NEXT_PUBLIC_MEMEFUN_PREVIEW=1` forces preview.
+- **Live**: the memefun API (`apps/memefun-backend`) and the deployed contracts (`src/lib/live`). It switches on when the build has an API URL and contract addresses for its chain. The mainnet chain is Base, `8453`, and live transactions use real funds.
+- **Preview**: screens run on a simulated market in the browser (`src/lib/preview`), with a scenario switcher for reviewing states. Launches and transactions are simulated. It is used when live configuration is absent, or when `NEXT_PUBLIC_MEMEFUN_PREVIEW=1` forces it.
 
 Both implement the same `Market` interface (`src/lib/market/Market.ts`), so screens never know which one they have.
+
+The Base mainnet deployment is recorded in `src/lib/contracts/deployments.ts` at block `52231158`. Automated code review has been performed. A professional independent audit has not been completed; automated review is not an independent audit report.
 
 | Variable | Meaning |
 |---|---|
@@ -49,7 +51,7 @@ A token may launch with one pair or up to five distinct listed pair assets. Mult
 
 Fee modes and splits are fixed at launch. Creators can lower the shared fee across every pair and transfer creator control through proposal and acceptance by the receiving wallet. A fee claim's payout address is independent of that role transfer. Transferring creator control also transfers unclaimed creator earnings; it does not change the destination mode or take module rewards.
 
-The updated multi-pair contract ABI requires matching deployed contracts and backend data. Public preview mode simulates these actions; enabling the controls in preview does not deploy contracts or send real funds.
+The multi-pair contract ABI requires matching deployed contracts and backend data. Live mode submits these actions to the configured deployment. Preview mode remains available for simulation and does not deploy contracts or send real funds.
 
 ## Launch by tweet
 
@@ -80,7 +82,7 @@ Live mode against the local stack: `pnpm dev:chain` and `pnpm dev` in `apps/meme
 
 ## Deploying
 
-- **Current public preview:** the Railway service `memefun-web` in the `memefun-testnet` project serves https://memefun.dustswap.wtf through a DNS-only Cloudflare CNAME. It builds this folder (`pnpm build`) and runs `pnpm exec next start --hostname 0.0.0.0 --port $PORT`. Its `NEXT_PUBLIC_*` variables live on the service. Preview remains forced until public contracts, the API/keeper and real wallet integration are ready. Railway sends no visitor country, so the stock-pair geofence is open there; that only matters once real stocks are listed.
+- **Mainnet frontend:** the Railway service `memefun-web` serves https://memefun.dustswap.wtf through a DNS-only Cloudflare CNAME. It builds this folder (`pnpm build`) and runs `pnpm exec next start --hostname 0.0.0.0 --port $PORT`. Its `NEXT_PUBLIC_*` variables live on the service. Mainnet builds use chain `8453`, the matching API and committed deployment addresses, with `NEXT_PUBLIC_MEMEFUN_PREVIEW` unset or `0`. Mainnet stock selection requires a verified allowed visitor country; missing country information keeps it disabled.
 - **Optional Cloudflare Workers deployment:** `.github/workflows/deploy-memefun.yml` builds the OpenNext worker. It stays off until the repository variable `MEMEFUN_TESTNET_DEPLOY` is `on`, and it needs the `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` secrets. The current Railway deployment does not require this workflow.
 
 Production builds must use the service's reviewed variables. If uploading local source, stage only source files and required assets in an isolated directory, excluding `.env*`, local deployment records, dependencies and build output; a laptop's `.env.local` must never enter the bundle.

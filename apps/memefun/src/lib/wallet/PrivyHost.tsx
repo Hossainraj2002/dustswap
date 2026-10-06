@@ -5,6 +5,7 @@ import { type Chain as PrivyChain } from "@privy-io/chains";
 import { PrivyProvider, type PrivyClientConfig } from "@privy-io/react-auth";
 import { WagmiProvider as PrivyWagmiProvider } from "@privy-io/wagmi";
 import { useAccount } from "wagmi";
+import { toast } from "sonner";
 import type { Address } from "@/core/types";
 import { ensureOkxEip6963Shim } from "./ethereumProviders";
 import { useBaseChainSwitch } from "./useBaseChainSwitch";
@@ -105,7 +106,11 @@ function Bridge({ onChange }: { onChange: (wallet: MemefunWallet) => void }) {
 
   // A Connect tap that happened while this host was still loading.
   useEffect(() => {
-    if (consumePendingConnect()) void connect();
+    if (consumePendingConnect()) {
+      void connect().catch((error: unknown) => {
+        toast.error(error instanceof Error ? error.message : "Your wallet could not connect. Please try again.");
+      });
+    }
   }, [connect]);
 
   return null;

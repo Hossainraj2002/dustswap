@@ -2,6 +2,7 @@ import { cidV1Raw, parseIpfsUri } from "../../lib/cid";
 import { rows } from "../../lib/db";
 import { processCoinImage } from "../../lib/media/image";
 import { type SanitizedMetadata, sanitizeMetadata } from "../../lib/media/metadata";
+import { FetchRejected, fetchPublicHttps, type HttpsDependencies } from "../../lib/media/public-https";
 import { IMAGE_MAX_BYTES } from "../../shared/core/validation";
 import type { KeeperContext } from "../context";
 
@@ -15,45 +16,10 @@ const MAX_JSON_BYTES = 64 * 1024;
 const BACKOFF_SEC = [60, 300, 1_800, 7_200, 86_400];
 const MAX_ATTEMPTS = 8;
 
-export class FetchRejected extends Error {}
-
-/** Reads at most `limit` bytes; anything larger is refused rather than truncated. */
-async function readCapped(response: Response, limit: number): Promise<Uint8Array> {
-  const declared = Number(response.headers.get("content-length") ?? "0");
-  if (declared > limit) throw new FetchRejected(`too large (${declared} bytes)`);
-  const reader = response.body?.getReader();
-  if (!reader) return new Uint8Array();
-  const chunks: Uint8Array[] = [];
-  let size = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    size += value.byteLength;
-    if (size > limit) {
-      await reader.cancel();
-      throw new FetchRejected(`too large (over ${limit} bytes)`);
-    }
-    chunks.push(value);
-  }
-  const out = new Uint8Array(size);
-  let offset = 0;
-  for (const chunk of chunks) {
-    out.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return out;
-}
-
-async function fetchHttps(url: string, limit: number, fetchFn: typeof fetch): Promise<Uint8Array> {
-  const parsed = new URL(url);
-  if (parsed.protocol !== "https:" || parsed.username || parsed.password) throw new FetchRejected("only plain https URLs are fetched");
-  const response = await fetchFn(parsed.toString(), { redirect: "error", signal: AbortSignal.timeout(8_000) });
-  if (!response.ok) throw new Error(`HTTP ${response.status}`);
-  return readCapped(response, limit);
-}
+export { FetchRejected };
 
 /** The bytes behind a URI, from our media store (IPFS), the web, or inline data. */
-export async function loadUri(ctx: Pick<KeeperContext, "media">, uri: string, limit: number, fetchFn: typeof fetch = fetch): Promise<Uint8Array> {
+export async function loadUri(ctx: Pick<KeeperContext, "media">, uri: string, limit: number, https: HttpsDependencies = {}): Promise<Uint8Array> {
   const ipfs = parseIpfsUri(uri);
   if (ipfs) {
     if (ipfs.path) throw new FetchRejected("IPFS paths inside directories are not supported");
@@ -69,16 +35,16 @@ export async function loadUri(ctx: Pick<KeeperContext, "media">, uri: string, li
     if (bytes.byteLength > limit) throw new FetchRejected("too large");
     return new Uint8Array(bytes);
   }
-  if (uri.startsWith("https://")) return fetchHttps(uri, limit, fetchFn);
+  if (uri.startsWith("https://")) return fetchPublicHttps(uri, limit, https);
   throw new FetchRejected("unsupported URI scheme");
 }
 
 export async function resolveMetadata(
   ctx: Pick<KeeperContext, "media">,
   contractUri: string,
-  fetchFn: typeof fetch = fetch,
+  https: HttpsDependencies = {},
 ): Promise<{ cid: string; doc: SanitizedMetadata; imageUri: string | null }> {
-  const raw = await loadUri(ctx, contractUri, MAX_JSON_BYTES, fetchFn);
+  const raw = await loadUri(ctx, contractUri, MAX_JSON_BYTES, https);
   let json: unknown;
   try {
     json = JSON.parse(new TextDecoder().decode(raw));
@@ -89,7 +55,7 @@ export async function resolveMetadata(
   let imageUri: string | null = null;
   if (doc.image) {
     try {
-      const { webp } = await processCoinImage(await loadUri(ctx, doc.image, IMAGE_MAX_BYTES, fetchFn));
+      const { webp } = await processCoinImage(await loadUri(ctx, doc.image, IMAGE_MAX_BYTES, https));
       imageUri = (await ctx.media.put(webp, "image/webp")).uri;
     } catch {
       // A bad or unreachable image costs the coin its picture, not its metadata.

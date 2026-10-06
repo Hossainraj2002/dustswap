@@ -79,7 +79,7 @@ export function writeRoutes(deps: WriteDeps) {
 
   const quota = async (wallet: string | null, ipHash: string) => {
     const limit = wallet ? UPLOADS_PER_HOUR.signedIn : UPLOADS_PER_HOUR.anonymous;
-    if ((await deps.app.recentUploads({ wallet, ipHash }, HOUR)) >= limit) {
+    if (!(await deps.app.reserveUpload({ wallet, ipHash }, limit, HOUR))) {
       throw new HttpError(429, "upload_quota", "Upload limit reached for this hour. Try again later.");
     }
   };

@@ -10,6 +10,7 @@ import { createPriceSource, decimalToE8, devPriceSource, httpPriceSource, readJs
 import { LocalMediaStore } from "../../lib/media/local";
 import { PinataR2MediaStore } from "../../lib/media/remote";
 import type { MediaObject } from "../../lib/media/store";
+import { fakeHttps } from "./https-fixture";
 
 describe("stock prices", () => {
   it("parse decimal USD exactly", () => {
@@ -92,9 +93,9 @@ describe("metadata job", () => {
   const dir = mkdtempSync(join(tmpdir(), "memefun-keeper-"));
   afterAll(() => rmSync(dir, { recursive: true, force: true }));
   const media = new LocalMediaStore(dir, "http://localhost:42069");
-  const noFetch = (async () => {
+  const noFetch = fakeHttps((async () => {
     throw new Error("no network in tests");
-  }) as typeof fetch;
+  }) as typeof fetch);
 
   it("reads ipfs, inline data and https, and refuses everything else", async () => {
     const stored = await media.put(new TextEncoder().encode('{"description":"gm"}'), "application/json");
@@ -109,7 +110,7 @@ describe("metadata job", () => {
 
   it("refuses an https document bigger than the cap, even without a content-length", async () => {
     const big = (async () => new Response(new ReadableStream({ start(c) { c.enqueue(new Uint8Array(70_000)); c.close(); } }), { status: 200 })) as typeof fetch;
-    await expect(loadUri({ media }, "https://example.com/meta.json", 65_536, big)).rejects.toThrow("too large");
+    await expect(loadUri({ media }, "https://example.com/meta.json", 65_536, fakeHttps(big))).rejects.toThrow("too large");
   });
 
   it("sanitizes the document and re-encodes its image into our store", async () => {

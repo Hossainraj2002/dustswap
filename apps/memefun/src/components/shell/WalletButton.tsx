@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { LogOut, TriangleAlert, UserRound, Gift } from "lucide-react";
 import { formatQuoteAmount, formatUsd, shortAddress } from "@/core/format";
@@ -16,8 +16,33 @@ import { Badge, List, ListRow } from "@/components/ui/display";
 import { Sheet } from "@/components/ui/Sheet";
 import { ThemeSegmented } from "./ThemeSegmented";
 
-export function WalletButton({ className }: { className?: string }) {
+const walletButtonWidth = CHAIN_NAME === "Base" ? "w-[164px]" : "w-[216px]";
+
+function useConnectAction() {
   const wallet = useWallet();
+  const [canRetry, setCanRetry] = useState(false);
+  const [attempt, setAttempt] = useState(0);
+  useEffect(() => {
+    setCanRetry(false);
+    if (wallet.status !== "connecting") return;
+    const timer = window.setTimeout(() => setCanRetry(true), 15_000);
+    return () => window.clearTimeout(timer);
+  }, [wallet.status, attempt]);
+  const connect = async () => {
+    try {
+      setCanRetry(false);
+      setAttempt((value) => value + 1);
+      if (wallet.status === "connecting" && canRetry) await wallet.disconnect();
+      await wallet.connect();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Your wallet could not connect. Please try again.");
+    }
+  };
+  return { wallet, connect, canRetry, loading: wallet.status === "connecting" && !canRetry };
+}
+
+export function WalletButton({ className }: { className?: string }) {
+  const { wallet, connect, canRetry, loading } = useConnectAction();
   const [open, setOpen] = useState(false);
 
   if (wallet.status !== "connected" || !wallet.address) {
@@ -25,12 +50,12 @@ export function WalletButton({ className }: { className?: string }) {
       <Button
         size="sm"
         variant="filled"
-        loading={wallet.status === "connecting"}
+        loading={loading}
         loadingLabel="Connecting"
-        onClick={() => void wallet.connect()}
-        className={className}
+        onClick={() => void connect()}
+        className={cn(walletButtonWidth, "shrink-0", className)}
       >
-        Connect
+        {canRetry ? "Retry connection" : "Connect"}
       </Button>
     );
   }
@@ -46,7 +71,7 @@ export function WalletButton({ className }: { className?: string }) {
         onClick={() => {
           wallet.switchToBase().catch((error: unknown) => toast.error(error instanceof Error ? error.message : `Switch to ${CHAIN_NAME} in your wallet.`));
         }}
-        className={className}
+        className={cn(walletButtonWidth, "shrink-0", className)}
       >
         Switch to {CHAIN_NAME}
       </Button>
@@ -60,7 +85,8 @@ export function WalletButton({ className }: { className?: string }) {
         onClick={() => setOpen(true)}
         aria-label={`Account ${shortAddress(wallet.address)}`}
         className={cn(
-          "relative inline-flex h-[34px] items-center gap-2 rounded-full bg-fill-3 pl-1 pr-3 text-subhead font-semibold text-label transition-colors hover:bg-fill-2",
+          walletButtonWidth,
+          "relative inline-flex h-[34px] shrink-0 items-center justify-center gap-2 rounded-full bg-fill-3 pl-1 pr-3 text-subhead font-semibold text-label transition-colors hover:bg-fill-2",
           "before:absolute before:inset-x-0 before:-inset-y-[5px] before:content-['']",
           className,
         )}
@@ -140,12 +166,12 @@ function AccountSheet({ open, onOpenChange }: { open: boolean; onOpenChange: (op
 }
 
 export function ConnectHint({ action }: { action: string }) {
-  const wallet = useWallet();
+  const { connect, canRetry, loading } = useConnectAction();
   return (
     <div className="flex flex-col items-center gap-3 py-6 text-center">
       <p className="text-subhead text-label-2">Connect a wallet to {action}.</p>
-      <Button onClick={() => void wallet.connect()} loading={wallet.status === "connecting"} loadingLabel="Connecting">
-        Connect wallet
+      <Button onClick={() => void connect()} loading={loading} loadingLabel="Connecting">
+        {canRetry ? "Retry connection" : "Connect wallet"}
       </Button>
       <Link href="/how-it-works" className="text-footnote font-semibold text-tint">
         How memefun works

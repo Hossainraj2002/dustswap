@@ -270,6 +270,14 @@ function PrivyWalletConnectionProvider({ children }: { children: ReactNode }) {
   const { setActiveWallet } = useSetActiveWallet();
   const { address: wagmiAddress, status: wagmiStatus } = useAccount();
   const { disconnectAsync } = useDisconnect();
+  // The SDK replaces this callback whenever its connector/connection map changes.
+  // Those changes must not restart our activation schedule.
+  const setActiveWalletRef = useRef(setActiveWallet);
+  setActiveWalletRef.current = setActiveWallet;
+  const activationAttemptsRef = useRef({ address: null as string | null, count: 0 });
+  const [activationVersion, setActivationVersion] = useState(0);
+  const openingRef = useRef<Promise<void> | null>(null);
+  const connectionGenerationRef = useRef(0);
   // ── Sticky manual-disconnect latch ───────────────────────────────────────
   // When the user clicks "Disconnect" we must keep the Privy→wagmi
   // reconciliation effect OFF until they intentionally connect again. A plain
@@ -321,20 +329,16 @@ function PrivyWalletConnectionProvider({ children }: { children: ReactNode }) {
         await disconnectAsync().catch(() => {});
         return;
       }
+      if (connectedWallet.type !== "ethereum") return;
+      const selectedAddress = connectedWallet.address.toLowerCase();
+      // Duplicate SDK notifications for the same selection aren't new attempts.
+      if (!reconcilePausedRef.current && allowedReconcileAddressRef.current === selectedAddress) return;
+      activationAttemptsRef.current = { address: selectedAddress, count: 0 };
+      setActivationVersion((version) => version + 1);
       setAllowedAddress(connectedWallet.address);
-      // The user intentionally selected this wallet, so reconnect wagmi to it.
+      // One activation schedule owns this choice. Starting a second activation
+      // here races both the retry effect and Privy's own connector bootstrap.
       resumeReconcile();
-      if (connectedWallet.type === "ethereum") {
-        try {
-          // Fast path: bind the just-connected wallet to wagmi immediately.
-          // The reconciliation effect below is the safety net when this call
-          // lands before the wagmi connector is set up, or on reconnectOnMount.
-          await setActiveWallet(connectedWallet as ConnectedWallet);
-        } catch {
-          // Swallow: reconciliation will retry. Leaving a dead Privy↔wagmi
-          // state here is what previously caused "Connect a wallet first".
-        }
-      }
     },
   });
 
@@ -345,70 +349,83 @@ function PrivyWalletConnectionProvider({ children }: { children: ReactNode }) {
   readyRef.current = ready;
 
   const openWalletModal = useCallback(
-    async (description?: string, walletList?: WalletListEntry[]) => {
-      // Opening the picker is not a completed wallet choice. Keep reconciliation
-      // paused until Privy's onSuccess returns the wallet the user selected.
-      clearManualDisconnected();
-      pauseReconcile();
-      setAllowedAddress(null);
-      await disconnectAsync().catch(() => {});
-      if (!readyRef.current) {
-        const deadline = Date.now() + 4000;
-        while (!readyRef.current && Date.now() < deadline) {
-          await new Promise((resolve) => setTimeout(resolve, 50));
+    (description?: string, walletList?: WalletListEntry[]) => {
+      if (openingRef.current) return openingRef.current;
+      const generation = ++connectionGenerationRef.current;
+      const opening = (async () => {
+        // Opening the picker is not a completed wallet choice. Keep reconciliation
+        // paused until Privy's onSuccess returns the wallet the user selected.
+        clearManualDisconnected();
+        pauseReconcile();
+        setAllowedAddress(null);
+        await disconnectAsync().catch(() => {});
+        if (!readyRef.current) {
+          const deadline = Date.now() + 4000;
+          while (!readyRef.current && Date.now() < deadline) {
+            await new Promise((resolve) => setTimeout(resolve, 50));
+          }
         }
-      }
-      // On mobile, give an in-app wallet browser time to inject its provider
-      // before we decide the wallet list. OKX's in-app browser announces via
-      // EIP-6963 / window.okxwallet after load; if we read too early,
-      // getRuntimeWalletList() misses OKX and keeps the WalletConnect okx_wallet
-      // entry that strands the user on "Waiting for OKX Wallet…" (the reported
-      // failure). The wait returns the instant a provider appears, so a desktop
-      // extension or an already-injected in-app browser sees no delay — only a
-      // plain browser (which never injects) waits out the window. We allow a
-      // generous window so a slightly-late OKX injection is still caught.
-      // Install the EIP-6963 responder early (idempotent; usually a no-op now
-      // because OKX injects a beat after load).
-      ensureOkxEip6963Shim();
-      let okxAnnounced = false;
-      if (isMobileRuntime()) {
-        // Wait for OKX's in-app browser to inject its provider…
-        await waitForInjectedProvider(WALLET_INJECTION_WAIT_MS);
-        // …then PROACTIVELY announce it to Privy's EIP-6963 (mipd) store. mipd
-        // only auto-requests providers once at startup (before OKX exists), so
-        // this post-injection announcement is the one that actually lands OKX in
-        // Privy — making the picker offer the NATIVE injected OKX instead of the
-        // WalletConnect relay that stalls on "Waiting for OKX Wallet…".
-        okxAnnounced = ensureOkxEip6963Shim();
-        // Give Privy's reactive mipd subscription a beat to fold OKX into its
-        // connector list before we open the picker.
-        if (okxAnnounced) {
-          await new Promise((resolve) => setTimeout(resolve, 150));
+        if (!readyRef.current) {
+          throw new Error("Your wallet connection is still loading. Please try again.");
         }
-      }
-      const nextWalletList = getRuntimeWalletList(walletList ?? PRIVY_WALLET_LIST);
-      // Lightweight, PII-free trace so an OKX-in-app-browser connect can be
-      // diagnosed if it still misbehaves. Visible in the console for remote
-      // inspection, and — only when the page is opened with ?wldebug=1 — shown
-      // on-screen via alert() so it can be screenshotted from a phone where the
-      // console is not reachable. The query flag is opt-in; normal users never
-      // see it.
-      const okxInjected =
-        typeof window !== "undefined" &&
-        !!(window as { okxwallet?: unknown }).okxwallet;
-      const walletModalTrace = `[memefun] wallet modal: mobile=${isMobileRuntime()} injected=${hasAnyInjectedEthereumProvider()} okxApp=${isOkxAppBrowser()} okxwallet=${okxInjected} okxAnnounced=${okxAnnounced} list=${nextWalletList.join(",")}`;
-      console.info(walletModalTrace);
-      if (
-        typeof window !== "undefined" &&
-        window.location.search.includes("wldebug=1")
-      ) {
-        window.alert(walletModalTrace);
-      }
-      connectWallet({
-        description,
-        walletList: nextWalletList,
-        walletChainType: "ethereum-only",
-      });
+        // On mobile, give an in-app wallet browser time to inject its provider
+        // before we decide the wallet list. OKX's in-app browser announces via
+        // EIP-6963 / window.okxwallet after load; if we read too early,
+        // getRuntimeWalletList() misses OKX and keeps the WalletConnect okx_wallet
+        // entry that strands the user on "Waiting for OKX Wallet…" (the reported
+        // failure). The wait returns the instant a provider appears, so a desktop
+        // extension or an already-injected in-app browser sees no delay — only a
+        // plain browser (which never injects) waits out the window. We allow a
+        // generous window so a slightly-late OKX injection is still caught.
+        // Install the EIP-6963 responder early (idempotent; usually a no-op now
+        // because OKX injects a beat after load).
+        ensureOkxEip6963Shim();
+        let okxAnnounced = false;
+        if (isMobileRuntime()) {
+          // Wait for OKX's in-app browser to inject its provider…
+          await waitForInjectedProvider(WALLET_INJECTION_WAIT_MS);
+          // …then PROACTIVELY announce it to Privy's EIP-6963 (mipd) store. mipd
+          // only auto-requests providers once at startup (before OKX exists), so
+          // this post-injection announcement is the one that actually lands OKX in
+          // Privy — making the picker offer the NATIVE injected OKX instead of the
+          // WalletConnect relay that stalls on "Waiting for OKX Wallet…".
+          okxAnnounced = ensureOkxEip6963Shim();
+          // Give Privy's reactive mipd subscription a beat to fold OKX into its
+          // connector list before we open the picker.
+          if (okxAnnounced) {
+            await new Promise((resolve) => setTimeout(resolve, 150));
+          }
+        }
+        const nextWalletList = getRuntimeWalletList(walletList ?? PRIVY_WALLET_LIST);
+        if (generation !== connectionGenerationRef.current || manualDisconnectRef.current) return;
+        // Lightweight, PII-free trace so an OKX-in-app-browser connect can be
+        // diagnosed if it still misbehaves. Visible in the console for remote
+        // inspection, and — only when the page is opened with ?wldebug=1 — shown
+        // on-screen via alert() so it can be screenshotted from a phone where the
+        // console is not reachable. The query flag is opt-in; normal users never
+        // see it.
+        const okxInjected =
+          typeof window !== "undefined" &&
+          !!(window as { okxwallet?: unknown }).okxwallet;
+        const walletModalTrace = `[memefun] wallet modal: mobile=${isMobileRuntime()} injected=${hasAnyInjectedEthereumProvider()} okxApp=${isOkxAppBrowser()} okxwallet=${okxInjected} okxAnnounced=${okxAnnounced} list=${nextWalletList.join(",")}`;
+        console.info(walletModalTrace);
+        if (
+          typeof window !== "undefined" &&
+          window.location.search.includes("wldebug=1")
+        ) {
+          window.alert(walletModalTrace);
+        }
+        connectWallet({
+          description,
+          walletList: nextWalletList,
+          walletChainType: "ethereum-only",
+        });
+      })();
+      openingRef.current = opening;
+      void opening.finally(() => {
+        if (openingRef.current === opening) openingRef.current = null;
+      }).catch(() => {});
+      return opening;
     },
     [clearManualDisconnected, connectWallet, disconnectAsync, pauseReconcile, setAllowedAddress]
   );
@@ -477,14 +494,16 @@ function PrivyWalletConnectionProvider({ children }: { children: ReactNode }) {
     let cancelled = false;
 
     void (async () => {
-      for (const delayMs of WALLET_RECONCILE_RETRY_DELAYS_MS) {
+      const attempts = activationAttemptsRef.current;
+      while (attempts.address === targetAddress && attempts.count < WALLET_RECONCILE_RETRY_DELAYS_MS.length) {
+        const delayMs = WALLET_RECONCILE_RETRY_DELAYS_MS[attempts.count]!;
         if (cancelled) {
           return;
         }
         if (delayMs > 0) {
           await new Promise((resolve) => setTimeout(resolve, delayMs));
         }
-        if (cancelled || reconcilePausedRef.current) {
+        if (cancelled || reconcilePausedRef.current || activationAttemptsRef.current !== attempts) {
           return;
         }
         if (allowedReconcileAddressRef.current !== targetAddress) {
@@ -496,7 +515,8 @@ function PrivyWalletConnectionProvider({ children }: { children: ReactNode }) {
           return;
         }
         try {
-          await setActiveWallet(candidate);
+          attempts.count++;
+          await setActiveWalletRef.current(candidate);
         } catch {
           // Connector likely not set up yet; the next retry picks it up.
         }
@@ -508,7 +528,7 @@ function PrivyWalletConnectionProvider({ children }: { children: ReactNode }) {
     };
     // `needsReconcile` flips to false as soon as wagmi reports the target as
     // connected, which cancels the in-flight retry loop via the cleanup above.
-  }, [needsReconcile, targetAddress, setActiveWallet]);
+  }, [needsReconcile, targetAddress, activationVersion]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -520,6 +540,7 @@ function PrivyWalletConnectionProvider({ children }: { children: ReactNode }) {
         return;
       }
       manualDisconnectRef.current = true;
+      connectionGenerationRef.current++;
       pauseReconcile();
       setAllowedAddress(null);
       void Promise.allSettled(
@@ -535,6 +556,7 @@ function PrivyWalletConnectionProvider({ children }: { children: ReactNode }) {
   }, [disconnectAsync, pauseReconcile, setAllowedAddress]);
 
   const disconnectWallet = useCallback(async () => {
+    connectionGenerationRef.current++;
     // Latch reconciliation OFF and keep it off — do NOT reset in a finally.
     // It stays paused until the user explicitly connects again (openWalletModal
     // / connect onSuccess). This is what makes "Disconnect" actually stick.

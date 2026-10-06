@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { KeyRound, ShieldCheck, TriangleAlert } from "lucide-react";
 import { HARD_CAPS } from "@/core/constants";
@@ -35,6 +35,7 @@ function toDisplay(spec: SettingSpec, value: number): string {
 }
 
 function fromDisplay(spec: SettingSpec, text: string): number {
+  if (!text.trim()) return Number.NaN;
   const parsed = Number(text);
   if (!Number.isFinite(parsed)) return Number.NaN;
   return spec.unit === "bps" ? Math.round(parsed * 100) : parsed;
@@ -91,13 +92,15 @@ export function AdminScreen() {
 
   // Follow live settings until the admin starts editing.
   const dirtyKeys = useMemo(() => diffSettings(current, draft), [current, draft]);
+  const previousSettings = useRef(current);
   useEffect(() => {
-    if (dirtyKeys.length === 0) setDraft(current);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    const previous = previousSettings.current;
+    previousSettings.current = current;
+    setDraft((existing) => diffSettings(previous, existing).length === 0 ? current : existing);
   }, [current]);
 
   const issues = validateSettings(draft);
-  const calls = ownerCalls(current, draft);
+  const calls = issues.length === 0 ? ownerCalls(current, draft) : [];
 
   const unlock = () => {
     if (!tokenInput.trim()) return;
@@ -155,7 +158,7 @@ export function AdminScreen() {
     setDraft((existing) => ({ ...existing, enabledQuoteKinds: on ? [...existing.enabledQuoteKinds, kind] : existing.enabledQuoteKinds.filter((entry) => entry !== kind) }));
 
   const sign = async () => {
-    if (!market) return;
+    if (!market || issues.length > 0 || calls.length === 0 || signing) return;
     setSigning(true);
     try {
       // Preview simulates the wallet step; live sends one owner transaction per change.
@@ -267,7 +270,7 @@ export function AdminScreen() {
             </span>
             <h2 className="text-headline text-label">How changes work</h2>
             <ul className="flex flex-col gap-2 text-footnote text-label-2">
-              <li>On-chain settings are signed by the owner Safe. This page prepares the calls.</li>
+              <li>On-chain settings are signed by the contract owner. This page prepares the calls.</li>
               <li>Every value is capped in the contract, so a mistake here cannot exceed the hard limits.</li>
               <li>Each coin copies these settings when it launches and keeps them forever.</li>
               <li>Hard caps: fee {HARD_CAPS.feeMaxBps / 100}%, platform share {HARD_CAPS.platformShareMaxBps / 100}%, launch protection {HARD_CAPS.snipeStartMaxBps / 100}% for {HARD_CAPS.snipeDurationMaxSec}s.</li>
@@ -310,9 +313,9 @@ export function AdminScreen() {
         open={reviewing}
         onOpenChange={setReviewing}
         title="Review changes"
-        description="These owner calls will be prepared for the Safe. They apply to new launches only."
+        description="These calls need the contract owner's signature. They apply to new launches only."
         footer={
-          <Button size="lg" fullWidth loading={signing} loadingLabel="Waiting for owner signature" onClick={() => void sign()}>
+          <Button size="lg" fullWidth disabled={issues.length > 0 || calls.length === 0} loading={signing} loadingLabel="Waiting for owner signature" onClick={() => void sign()}>
             Sign as owner
           </Button>
         }

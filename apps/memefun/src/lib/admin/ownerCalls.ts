@@ -2,9 +2,8 @@ import type { LaunchSettings } from "@/core/settings";
 import type { FeeMode, QuoteKind } from "@/core/types";
 
 /**
- * Turns a settings change into the owner calls the factory will need. The
- * function names are the planned Phase 2 interface; on mainnet the owner is a
- * Safe, so the admin page prepares these for the Safe to sign.
+ * Turns validated settings changes into MemeFunConfig calls for the contract
+ * owner to sign. The admin page validates the draft before preparing these calls.
  */
 export interface OwnerCall {
   fn: string;

@@ -21,6 +21,7 @@ import { PinataR2MediaStore, type ObjectBucket } from "../../lib/media/remote";
 import type { MediaObject, MediaStore } from "../../lib/media/store";
 import { publicBucketUrl, storedMetadataCid } from "../../lib/media/urls";
 import { getSqrtPriceAtTick } from "../../shared/core/uniswap/tickMath";
+import { fakeHttps } from "./https-fixture";
 
 const BASE = "https://api.memefun.test";
 const CID = cidV1Raw(new TextEncoder().encode("valid identifier"));
@@ -35,7 +36,7 @@ function memoryBucket(): ObjectBucket & { objects: Map<string, MediaObject> } {
 function fixture(chainId = 8453, media: MediaStore = new BucketMediaStore(memoryBucket(), BASE)) {
   const uploads = new Map<string, "image" | "metadata">(), docs = new Map<string, MetadataRecord>();
   const appStore = {
-    recentUploads: async () => 0,
+    reserveUpload: async () => true,
     hasUpload: vi.fn(async (cid: string, kind: "image" | "metadata") => uploads.get(cid) === kind),
     recordUpload: vi.fn(async (upload: { cid: string; kind: "image" | "metadata" }) => { uploads.set(upload.cid, upload.kind); }),
     saveMetadata: vi.fn(async (doc: MetadataRecord) => { docs.set(doc.cid, doc); }),
@@ -110,7 +111,7 @@ describe("mainnet bucket metadata publication", () => {
     expect(cidV1Raw(imageBytes)).toBe(image.cid);
     expect((await sharp(imageBytes).metadata()).width).toBe(512);
     const fetchFn = (async (url: string | URL | Request) => f.app.request(String(url))) as typeof fetch;
-    const resolved = await resolveMetadata({ media: f.media }, result.contractURI, fetchFn);
+    const resolved = await resolveMetadata({ media: f.media }, result.contractURI, fakeHttps(fetchFn));
     expect(resolved.cid).toBe(result.cid);
     expect(resolved.doc.image).toBe(image.url);
     expect(parseIpfsUri(resolved.imageUri!)?.cid).toBe(image.cid);

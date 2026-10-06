@@ -65,7 +65,7 @@ const faqs = [
   },
   {
     q: "Are the contracts audited?",
-    a: "The contracts will be reviewed by an independent auditor before memefun goes live on Base mainnet, and the report will be published. Until then you are looking at a preview with simulated data.",
+    a: "The contracts are deployed on Base mainnet. Automated code review has been performed, but a professional independent audit has not been completed. Live mode uses real funds; preview mode uses simulated market data and transactions.",
   },
 ];
 
