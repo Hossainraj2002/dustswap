@@ -8,6 +8,7 @@ import { parseIpfsUri } from "../../lib/cid";
 import { ImageRejected, processCoinImage } from "../../lib/media/image";
 import { buildMetadata, encodeMetadata } from "../../lib/media/metadata";
 import type { MediaStore } from "../../lib/media/store";
+import { publicBucketUrl } from "../../lib/media/urls";
 import { IMAGE_MAX_BYTES } from "../../shared/core/validation";
 import type { Comment } from "../../shared/market-types";
 import { HttpError, RateLimiter, clientIp, enforce, hashIp, parseAddress } from "../http";
@@ -16,11 +17,19 @@ import { type AuthVariables, optionalAuth, requireAuth } from "./auth";
 import type { Sessions } from "./session";
 
 export interface WriteDeps {
+  chainId: number;
   app: AppStore;
   media: MediaStore;
   snapshot: MarketSnapshot;
   sessions: Sessions;
   ipSalt: string;
+}
+
+/** Bucket CIDs are not publicly pinned: the mainnet document must use our own retrievable URL. */
+function publishedBucketUrl(media: MediaStore, cid: string, value?: string): string {
+  const url = publicBucketUrl(media, cid, value);
+  if (!url) throw new HttpError(503, "media_public_url", "The public media address is unavailable. Try again later.");
+  return url;
 }
 
 const HOUR = 3_600;
@@ -130,10 +139,19 @@ export function writeRoutes(deps: WriteDeps) {
     if (!built.ok) throw new HttpError(422, "metadata_invalid", "Some fields need attention.", built.errors);
 
     // Only images that came through POST /v1/media/image, so every coin image was re-encoded by us.
-    const imageCid = parseIpfsUri(built.metadata.image)!.cid;
+    const imageRef = parseIpfsUri(built.metadata.image)!;
+    const imageCid = imageRef.cid;
+    if (imageRef.path) throw new HttpError(422, "image_unknown", "Upload the image first.", { image: "Upload the image first." });
     if (!(await deps.app.hasUpload(imageCid, "image"))) throw new HttpError(422, "image_unknown", "Upload the image first.", { image: "Upload the image first." });
 
-    const stored = await deps.media.put(encodeMetadata(built.metadata), "application/json");
+    const publishBucket = deps.chainId === 8453 && deps.media.kind === "bucket";
+    const metadata = publishBucket ? { ...built.metadata, image: publishedBucketUrl(deps.media, imageCid) } : built.metadata;
+    if (publishBucket) {
+      const image = await deps.media.get(imageCid);
+      if (!image || image.contentType !== "image/webp") throw new HttpError(422, "image_unknown", "Upload the image first.", { image: "Upload the image first." });
+    }
+    const stored = await deps.media.put(encodeMetadata(metadata), "application/json");
+    const contractURI = publishBucket ? publishedBucketUrl(deps.media, stored.cid, stored.url) : stored.uri;
     await deps.app.saveMetadata({
       cid: stored.cid,
       name: built.metadata.name,
@@ -144,7 +162,7 @@ export function writeRoutes(deps: WriteDeps) {
       source: "api",
     });
     await deps.app.recordUpload({ cid: stored.cid, kind: "metadata", bytes: stored.bytes, uploader: wallet, ipHash });
-    return c.json({ cid: stored.cid, contractURI: stored.uri, url: stored.url, metadata: built.metadata }, 201);
+    return c.json({ cid: stored.cid, contractURI, url: stored.url, metadata }, 201);
   });
 
   // ------------------------------------------------------------------------------- comments

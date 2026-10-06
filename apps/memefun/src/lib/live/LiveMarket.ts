@@ -994,7 +994,7 @@ export class LiveMarket implements Market {
       } catch (error) { throw error instanceof ApiError ? new TxError(error.message, "reverted") : error; }
     }
 
-    // The image and the metadata go to IPFS first; the coin points at them forever.
+    // Upload the image and metadata before creating its permanent reference.
     onStage?.("upload");
     let contractURI: string;
     try {

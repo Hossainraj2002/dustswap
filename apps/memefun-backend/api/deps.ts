@@ -80,7 +80,7 @@ export async function createDeps(): Promise<Running> {
 
   return {
     read: { snapshot, store, app, settings, pairCatalog, poolManager: lc(deployment.poolManager) },
-    write: { app, media, snapshot, sessions, ipSalt },
+    write: { app, media, snapshot, sessions, ipSalt, chainId: chain.id },
     auth: { pool: appPool, sessions, client, chainId: chain.id, domains, ipSalt },
     admin: { token: optionalEnv("ADMIN_TOKEN"), app, index: readPool, snapshot },
     hub,

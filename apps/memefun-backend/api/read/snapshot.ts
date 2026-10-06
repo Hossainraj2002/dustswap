@@ -13,6 +13,7 @@ import {
 } from "../../lib/market/derive";
 import { priceUsdE18 } from "../../lib/market/math";
 import type { MediaStore } from "../../lib/media/store";
+import { storedMetadataCid } from "../../lib/media/urls";
 import type { Coin } from "../../shared/market-types";
 import { getSqrtPriceAtTick } from "../../shared/core/uniswap/tickMath";
 import type { ReadStore } from "./store";
@@ -231,7 +232,7 @@ export class MarketSnapshot {
     const resolved = await this.deps.app.coinMetadataCids();
     const cidFor = new Map<string, string>();
     for (const c of missing) {
-      const cid = resolved.get(c.address) ?? parseIpfsUri(c.contractUri)?.cid;
+      const cid = resolved.get(c.address) ?? storedMetadataCid(c.contractUri, this.deps.media);
       if (cid) cidFor.set(c.contractUri, cid);
     }
     const docs = await this.deps.app.metadataByCids([...new Set(cidFor.values())]);
