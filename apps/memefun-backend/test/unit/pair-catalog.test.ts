@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { AbiDecodingZeroDataError, BaseError, ContractFunctionRevertedError, getAddress, type PublicClient } from "viem";
 import { Hono } from "hono";
-import { createPairCatalog, marketReferences, STOCK_FEEDS } from "../../lib/market/pair-catalog";
+import { createPairCatalog, marketReferences, STOCK_FEEDS, STOCK_ORACLE_REGISTRY } from "../../lib/market/pair-catalog";
 import { eligibleQuoteAsset, quoteEligibility, readableFeedRound } from "../../lib/market/readiness";
 import type { QuoteRecord } from "../../lib/market/derive";
 import type { LaunchSettings } from "../../shared/core/settings";
@@ -19,7 +19,10 @@ const issuerStock = { contract_address: APPLE, name: "Apple", symbol: "AAPLc", d
   nav_price_updated_at: new Date(NOW - 60_000).toISOString(), multiplier: 1.2 };
 const pair = (token = TOKEN) => ({ chainId: "base", baseToken: { address: token, name: "Meme", symbol: "MEME" },
   priceUsd: "0.0123", liquidity: { usd: 150_000 }, volume: { h24: 15_000 }, txns: { h24: { buys: 20, sells: 20 } }, pairCreatedAt: NOW - 86_400_000 });
-const client = { multicall: vi.fn(async () => [18, "MEME", "Meme", 10n ** 25n].map((result) => ({ status: "success", result }))) } as unknown as PublicClient;
+const client = { multicall: vi.fn(async ({ contracts }: { contracts: Array<{ functionName: string }> }) => contracts.map(({ functionName }) => ({ status: "success",
+  result: functionName === "getOracleParams" ? [10n ** 18n, false] : functionName === "uiMultiplier" ? 10n ** 18n
+    : ({ decimals: 18, symbol: "MEME", name: "Meme", totalSupply: 10n ** 25n } as Record<string, unknown>)[functionName],
+}))) } as unknown as PublicClient;
 const response = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status });
 
 describe("quote readiness", () => {
@@ -84,8 +87,8 @@ describe("market discovery validation", () => {
 });
 
 describe("pair catalog", () => {
-  function fixture({ apiKey, registered = [], stock = issuerStock, failure = false }: {
-    apiKey?: string; registered?: QuoteRecord[]; stock?: typeof issuerStock & { paused_features?: number[] }; failure?: boolean;
+  function fixture({ apiKey, registered = [], stock = issuerStock, failure = false, oracleClient = client }: {
+    apiKey?: string; registered?: QuoteRecord[]; stock?: typeof issuerStock & { paused_features?: number[] }; failure?: boolean; oracleClient?: PublicClient;
   } = {}) {
     const requests: Array<{ url: string; key?: string }> = [];
     const fetchFn = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
@@ -97,7 +100,7 @@ describe("pair catalog", () => {
       if (url.includes("alpha-tokens")) return response([TOKEN]);
       return response([pair(), pair(APPLE)]);
     }) as typeof fetch;
-    const catalog = createPairCatalog({ chainId: 8453, client, fetchFn, apiKey, clock: () => NOW,
+    const catalog = createPairCatalog({ chainId: 8453, client: oracleClient, fetchFn, apiKey, clock: () => NOW,
       registry: async () => ({ quotes: registered, settings, nowSec: NOW / 1000 }) });
     return { catalog, requests, fetchFn };
   }
@@ -141,6 +144,42 @@ describe("pair catalog", () => {
     expect((await fixture({ stock, registered: [{ ...manual, source: 1, feed: APPLE }] }).catalog.get()).stocks[0]).toMatchObject({ launchable: true, feed: APPLE });
     expect((await fixture({ stock: { ...stock, total_supply: 0 }, registered: [manual] }).catalog.get()).stocks[0]!.launchable).toBe(false);
     expect((await fixture({ stock: { ...stock, paused_features: [1] }, registered: [manual] }).catalog.get()).stocks[0]!.launchable).toBe(false);
+  });
+  it("checks the issuer's separate corporate-action pause even while the feed and issuer cache are fresh", async () => {
+    let paused = false;
+    const multicall = vi.fn(async ({ contracts }: { contracts: Array<{ functionName: string }> }) => contracts.map(({ functionName }) => ({ status: "success",
+      result: functionName === "getOracleParams" ? [10n ** 18n, paused] : functionName === "uiMultiplier" ? 10n ** 18n
+        : ({ decimals: 18, symbol: "MEME", name: "Meme", totalSupply: 10n ** 25n } as Record<string, unknown>)[functionName],
+    })));
+    const { catalog, fetchFn } = fixture({ registered: [apple], oracleClient: { multicall } as unknown as PublicClient });
+    expect((await catalog.get()).stocks[0]!.launchable).toBe(true);
+    const providerRequests = vi.mocked(fetchFn).mock.calls.length; paused = true;
+    expect((await catalog.get()).stocks[0]).toMatchObject({ launchable: false, usdPrice: 250, priceUpdatedAt: NOW - 60_000,
+      unavailableReason: "This stock's price oracle is paused." });
+    expect(vi.mocked(fetchFn).mock.calls.length).toBe(providerRequests);
+    expect(multicall.mock.calls.flatMap(([input]) => input.contracts).filter((contract) => contract.functionName === "getOracleParams")).toHaveLength(2);
+    expect(multicall.mock.calls.some(([input]) => input.contracts.some((contract) => "address" in contract && contract.address === STOCK_ORACLE_REGISTRY))).toBe(true);
+  });
+  it("keeps stocks disabled for failed, malformed or inconsistent live issuer oracle state", async () => {
+    const states = [
+      [{ status: "failure" }, { status: "success", result: 10n ** 18n }],
+      [{ status: "success", result: [10n ** 18n, false] }, { status: "failure" }],
+      [{ status: "success", result: [0n, false] }, { status: "success", result: 10n ** 18n }],
+      [{ status: "success", result: [10n ** 18n, "false"] }, { status: "success", result: 10n ** 18n }],
+      [{ status: "success", result: [10n ** 18n, false] }, { status: "success", result: 2n * 10n ** 18n }],
+    ];
+    for (const state of states) {
+      const oracleClient = { multicall: vi.fn(async () => state) } as unknown as PublicClient;
+      expect((await fixture({ registered: [apple], oracleClient }).catalog.get()).stocks[0]!.launchable).toBe(false);
+    }
+    const oracleClient = { multicall: vi.fn(async () => { throw new Error("RPC details must not escape"); }) } as unknown as PublicClient;
+    const result = await fixture({ registered: [apple], oracleClient }).catalog.get();
+    expect(result.stocks[0]).toMatchObject({ launchable: false, unavailableReason: "The stock's oracle availability could not be verified. Try again later." });
+    expect(JSON.stringify(result)).not.toContain("RPC details");
+  });
+  it("rejects a fixed stock price even when a documented oracle exists", async () => {
+    expect((await fixture({ registered: [{ ...apple, source: 0 }] }).catalog.get()).stocks[0]).toMatchObject({ launchable: false,
+      unavailableReason: "A current stock price oracle is not configured." });
   });
   it("degrades to registry without inventing stale provider data", async () => {
     const result = await fixture({ registered: [apple], failure: true }).catalog.get();

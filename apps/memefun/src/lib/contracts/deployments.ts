@@ -23,6 +23,20 @@ export interface MemefunDeployment {
 }
 
 export const DEPLOYMENTS: Readonly<Record<number, MemefunDeployment>> = {
+  8453: {
+    chainId: 8453,
+    deployedAtBlock: 52231158,
+    poolManager: "0x498581fF718922c3f8e6A244956aF099B2652b2b",
+    config: "0x1a9BfE7281C4d357d1a58b0833C2438bAc340b12",
+    feeVault: "0xfe62622b5757dF8d8f6547bB227b5D339a92042D",
+    factory: "0xEb462A3B379266e2860959b821A98bBD2F289BB2",
+    router: "0x9378BE418785C1fF49EE302197Be876371FC5f39",
+    hook: "0x87a4E12530071269F0671a2f064aFFfbFE74EAeC",
+    buybackBurnVault: "0x7a24F98e23b1c147c1cB2c70ca5937A282f8754a",
+    floorVault: "0x452dC6a3dD5D5D7339b6A1bBdD61dB9d652e0268",
+    holderRewardDistributor: "0x5d3fb4713160c9f51A5ce4d6c997f8eF23A0d24A",
+    usdc: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+  },
   84532: {
     chainId: 84532,
     deployedAtBlock: 47708210,

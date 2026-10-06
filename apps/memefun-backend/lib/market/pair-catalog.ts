@@ -19,6 +19,39 @@ export const STOCK_FEEDS: Record<string, Address> = {
   "0xb2000000000000000000007b9fcbd005511acbd5": "0x6A634B235903C4ad6376892180d6fF8612e3Fa68",
   "0xb2000000000000000000001e800a7f5189430cd0": "0xFaf869185383a24F8cb00e27BdA6b63B9905DCb4",
 };
+// The issuer's corporate-action pause is separate from paused B20 token functions.
+// Source and ABI: Base's stock integration docs and the verified registry contract.
+export const STOCK_ORACLE_REGISTRY = "0x3f3E8cf41cdd3b1D118c16471aB0113DfDDd5CaD" as const;
+const stockOracleAbi = [{ type: "function", name: "getOracleParams", stateMutability: "view",
+  inputs: [{ name: "token", type: "address" }], outputs: [{ name: "multiplier", type: "uint256" }, { name: "paused", type: "bool" }] }] as const;
+const stockUnitsAbi = [{ type: "function", name: "uiMultiplier", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] }] as const;
+const stockOracleUnavailable = "The stock's oracle availability could not be verified. Try again later.";
+
+/** Read mutable issuer state for every request; a cached unpaused flag cannot renew eligibility. */
+async function stockOracleReasons(client: PublicClient, tokens: Address[]): Promise<Map<string, string | undefined>> {
+  const reasons = new Map<string, string | undefined>(tokens.map((token) => [token.toLowerCase(), stockOracleUnavailable]));
+  for (let offset = 0; offset < tokens.length; offset += 15) {
+    const batch = tokens.slice(offset, offset + 15); let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const timeout = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("Stock oracle read timed out")), 8_000); timer.unref(); });
+      const results = await Promise.race([client.multicall({ allowFailure: true, contracts: batch.flatMap((token) => [
+        { address: STOCK_ORACLE_REGISTRY, abi: stockOracleAbi, functionName: "getOracleParams" as const, args: [token] as const },
+        { address: token, abi: stockUnitsAbi, functionName: "uiMultiplier" as const },
+      ]) }), timeout]);
+      for (let i = 0; i < batch.length; i++) {
+        const params = results[i * 2], units = results[i * 2 + 1];
+        if (params?.status !== "success" || units?.status !== "success") continue;
+        const value: unknown = params.result, multiplier: unknown = units.result;
+        if (!Array.isArray(value) || value.length !== 2 || typeof value[0] !== "bigint" || value[0] <= 0n || typeof value[1] !== "boolean"
+          || typeof multiplier !== "bigint" || multiplier <= 0n) continue;
+        reasons.set(batch[i]!.toLowerCase(), value[1] ? "This stock's price oracle is paused."
+          : value[0] !== multiplier ? "The stock's oracle token units could not be verified." : undefined);
+      }
+    } catch { /* Unavailable, incomplete or malformed issuer state must keep stocks disabled. */ }
+    finally { if (timer) clearTimeout(timer); }
+  }
+  return reasons;
+}
 
 const address = z.string().regex(/^0x[0-9a-fA-F]{40}$/).transform((s) => getAddress(s.toLowerCase()));
 const nonnegative = z.number().finite().nonnegative().max(1e18);
@@ -179,6 +212,10 @@ export function createPairCatalog(options: { chainId: number; client: PublicClie
           registered: true, ready: false, enabled: q.enabled === true, source: "registry" }))],
         sources: { coinbase: { status: "not_applicable", count: 0 }, o1: { status: "not_applicable", complete: false, keyConfigured: false } } };
       const [stockResult, tokenResult] = await Promise.all([stocks(), tokenLoaders[sort]()]);
+      const oracleReasons = await stockOracleReasons(options.client, stockResult.records.filter((stock) => {
+        const q = registered.get(stock.contract_address.toLowerCase());
+        return q?.kind === 2 && [1, 2].includes(q.source ?? -1) && quoteEligibility(q, registry.settings, registry.nowSec).launchable;
+      }).map((stock) => stock.contract_address));
       const stockEntries = stockResult.records.map((stock): PairCatalogEntry => {
         const key = stock.contract_address.toLowerCase(), indexed = registered.get(key);
         // The current owner-configured registry can add legitimate feeds or fresh manual prices
@@ -188,8 +225,9 @@ export function createPairCatalog(options: { chainId: number; client: PublicClie
         const configuredFeed = indexed?.source === 1 ? address.safeParse(indexed.feed) : undefined;
         const feed = configuredFeed?.success ? configuredFeed.data : STOCK_FEEDS[key], reference = stockResult.references.get(key);
         const reason = stock.paused_features?.length ? "This stock has paused token features." : !(stock.total_supply && stock.total_supply > 0)
-          ? "The issuer has not reported circulating supply for this stock." : !feed && !configuredPrice
-            ? "A verified launch oracle is not configured for this stock." : undefined;
+          ? "The issuer has not reported circulating supply for this stock." : indexed?.kind === 2 && indexed.source === 0
+            ? "A current stock price oracle is not configured." : oracleReasons.get(key) ?? (!feed && !configuredPrice
+              ? "A verified launch oracle is not configured for this stock." : undefined);
         return finish({ address: stock.contract_address, symbol: stock.symbol, name: stock.name, decimals: stock.decimals, kind: "stock",
           usdPrice: stock.nav_price ?? reference?.priceUsd ?? 0, feed, priceUpdatedAt: time(stock.nav_price_updated_at, clock()), iconUrl: safeIcon(stock.icon_url),
           isin: stock.isin, supply: stock.total_supply?.toString(), marketReference: reference, source: "coinbase", reason,
