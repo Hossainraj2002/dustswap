@@ -22,6 +22,7 @@ import { JustLaunched } from "./JustLaunched";
 import { LiveTape } from "./LiveTape";
 import { Spotlight } from "./Spotlight";
 import { TopCreators } from "./TopCreators";
+import { LaunchCampaignBanner } from "@/components/rewards/LaunchCampaign";
 
 type Sort = "trending" | "new" | "top" | "movers";
 type PairFilter = "all" | "eth" | "usdc" | "stocks";
@@ -105,6 +106,7 @@ export function DiscoverScreen() {
     return (
       <>
         {header}
+        <LaunchCampaignBanner />
         <DiscoverSkeleton />
       </>
     );
@@ -114,6 +116,7 @@ export function DiscoverScreen() {
     return (
       <>
         {header}
+        <LaunchCampaignBanner />
         <div className="mf-card">
           <EmptyState
             icon={<Sparkles aria-hidden />}
@@ -133,6 +136,7 @@ export function DiscoverScreen() {
   return (
     <>
       {header}
+      <LaunchCampaignBanner />
       <div className="flex flex-col gap-6">
         {moderation.banner ? (
           <p role="status" className="flex items-start gap-3 rounded-lg bg-tint/10 p-4 text-subhead text-label">

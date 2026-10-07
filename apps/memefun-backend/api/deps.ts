@@ -4,7 +4,7 @@ import { createPublicClient, fallback, http } from "viem";
 import { createAppStore } from "../lib/app-store";
 import { chainSettings } from "../lib/chain";
 import { createAppPool, createReadPool } from "../lib/db";
-import { loadDeployment } from "../lib/deployment";
+import { loadDeployment, protocolAddresses } from "../lib/deployment";
 import { envInt, envList, optionalEnv, requireEnv } from "../lib/env";
 import { lc } from "../lib/indexer/addresses";
 import { createMediaStore } from "../lib/media";
@@ -14,6 +14,9 @@ import { createXOAuth } from "../lib/x/oauth";
 import { createTweetProvider } from "../lib/x/provider";
 import { createXStore } from "../lib/x/store";
 import { createPairCatalog } from "../lib/market/pair-catalog";
+import { launchCampaignConfig } from "../lib/launch-campaign/config";
+import { createCampaignStore } from "../lib/launch-campaign/store";
+import { createLaunchCampaign } from "../lib/launch-campaign/service";
 import type { AppDeps } from "./app";
 import { normalizeOrigins } from "./http";
 import { createSettingsReader } from "./read/settings";
@@ -73,6 +76,10 @@ export async function createDeps(): Promise<Running> {
   };
   const xPrune = setInterval(() => { void xStore.prune().catch(() => console.error("[memefun api] X state cleanup failed")); }, 60_000);
   xPrune.unref();
+  const campaignStore = createCampaignStore(readPool, appPool, protocolAddresses(deployment).filter(a => a.toLowerCase() !== deployment.router.toLowerCase()));
+  const campaign = { campaign: createLaunchCampaign(launchCampaignConfig(), client, deployment, campaignStore), sessions, ipSalt };
+  const campaignPrune = setInterval(() => { void campaignStore.prune().catch(() => console.error("[memefun api] campaign quota cleanup failed")); }, 60_000);
+  campaignPrune.unref();
 
   snapshot.start(2_000);
   hub.start(1_000);
@@ -88,8 +95,10 @@ export async function createDeps(): Promise<Running> {
     allowedOrigins,
     deployment,
     author,
+    campaign,
     async dispose() {
       clearInterval(xPrune);
+      clearInterval(campaignPrune);
       snapshot.stop();
       hub.stop();
       await Promise.allSettled([readPool.end(), appPool.end()]);

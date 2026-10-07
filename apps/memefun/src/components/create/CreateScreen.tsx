@@ -21,6 +21,7 @@ import { equalAllocations } from "@/lib/market/markets";
 import { usePreview } from "@/lib/preview/scenario";
 import { useWallet } from "@/lib/wallet/WalletProvider";
 import { PageHeader } from "@/components/shell/PageHeader";
+import { LaunchCampaignBanner } from "@/components/rewards/LaunchCampaign";
 import { Button } from "@/components/ui/Button";
 import { CoinStep } from "./CoinStep";
 import { FeesStep } from "./FeesStep";
@@ -241,6 +242,7 @@ export function CreateScreen({ entry = "manual" }: { entry?: CreateDraft["entry"
         }
       />
       <div className="mb-5">
+        <LaunchCampaignBanner />
         {entry === "manual" ? <Link href="/create/tweet" className="mb-4 inline-flex min-h-11 items-center text-subhead font-semibold text-tint">Launch by tweet</Link> : null}
         <Stepper current={step} furthest={furthest} disabled={launching || preparingTweet} onSelect={(id) => goTo(STEPS.findIndex((entry) => entry.id === id))} />
       </div>

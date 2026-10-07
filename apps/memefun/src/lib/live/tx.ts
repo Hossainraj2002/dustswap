@@ -22,6 +22,7 @@ import {
   zeroAddress,
 } from "viem";
 import { launchPoolAt, minOut, quoteBuy, startTickExact } from "@/core/pool";
+import type { LaunchCampaignClaimTicket, LaunchCampaignSummary } from "@/core/campaign";
 import { equalAllocations } from "@/lib/market/markets";
 import type { FeeMode } from "@/core/types";
 import { AUTHOR_VERIFICATION_TYPES, TWEET_LAUNCH_TYPES, validateAuthorShareBps, validXId, type AuthorVerification, type TweetLaunchAttestation } from "@/core/tweet";
@@ -62,6 +63,23 @@ const RECEIPT_TIMEOUT_MS = 180_000;
 type Request = Parameters<TxWallet["writeContract"]>[0];
 
 const faucetAbi = parseAbi(["function drip()", "function nextDripAt(address account) view returns (uint256)"]);
+export const launchCampaignAbi = parseAbi([
+  "function claim(address wallet,uint16 slot,address coin,uint256 launchBlock,uint256 tradeBlock,uint256 deadline,bytes signature)",
+]);
+
+export async function sendLaunchCampaignClaim(ctx: TxContext, summary: Extract<LaunchCampaignSummary, { enabled: true }>, ticket: LaunchCampaignClaimTicket): Promise<Hash> {
+  if (ctx.wallet.chain.id !== summary.chainId || account(ctx).toLowerCase() !== ticket.wallet.toLowerCase()
+    || !Number.isInteger(ticket.slot) || ticket.slot < 0 || ticket.slot >= 1000
+    || !Number.isSafeInteger(ticket.deadline) || ticket.deadline <= 0
+    || !/^\d+$/.test(ticket.launchBlock) || !/^\d+$/.test(ticket.tradeBlock)) {
+    throw new TxError("This reward ticket does not match the connected wallet or campaign. Refresh and try again.", "reverted");
+  }
+  try {
+    const { request } = await ctx.client.simulateContract({ account: ctx.wallet.account, address: summary.contract, abi: launchCampaignAbi,
+      functionName: "claim", args: [ticket.wallet, ticket.slot, ticket.coin, BigInt(ticket.launchBlock), BigInt(ticket.tradeBlock), BigInt(ticket.deadline), ticket.signature] });
+    return (await submit(ctx, request as Request, "The launch reward could not be claimed. Refresh your eligibility and try again.")).hash;
+  } catch (error) { throw toTxError(error, "The launch reward could not be claimed. Refresh your eligibility and try again."); }
+}
 const permitAbi = parseAbi([
   "function nonces(address owner) view returns (uint256)",
   "function DOMAIN_SEPARATOR() view returns (bytes32)",

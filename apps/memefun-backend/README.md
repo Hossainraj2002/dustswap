@@ -110,6 +110,8 @@ Ponder adds `/health`, `/ready` (503 until historical indexing is done), `/statu
 
 ## Environment
 
+The optional platform-token campaign is configured separately. See [Launch reward setup](LAUNCH-REWARDS.md) for funding, activation, eligibility and dedicated signing-key requirements. It is disabled by default and needs no frontend secret.
+
 See `.env.example`. The essentials:
 
 | Variable | Used by | Notes |

@@ -1,5 +1,6 @@
 import { type Address, type Hash, type PublicClient, createPublicClient, erc20Abi, getAddress, http, parseAbi, toHex, zeroAddress } from "viem";
 import { launchFeeBps } from "@/core/antiSnipe";
+import type { LaunchCampaignClaimTicket, LaunchCampaignSummary, LaunchCampaignWalletStatus } from "@/core/campaign";
 import { COIN_DECIMALS, COIN_SUPPLY_HUMAN } from "@/core/constants";
 import { aggregateCoinMarkets, equalAllocations, selectCoinMarket } from "@/lib/market/markets";
 import { fromUnits, toUnits } from "@/core/format";
@@ -1209,6 +1210,33 @@ export class LiveMarket implements Market {
     const session = await signIn(this.api, wallet, TARGET_CHAIN_ID, this.options.location);
     saveSession(session);
     return session.token;
+  }
+
+  async readLaunchCampaign(): Promise<LaunchCampaignSummary> {
+    try { return await this.api.get<LaunchCampaignSummary>("/v1/launch-campaign"); }
+    catch (error) {
+      // A web release may precede the optional API feature. Never affect normal trading.
+      if (error instanceof ApiError && error.status === 404) return { enabled: false };
+      throw error;
+    }
+  }
+
+  readLaunchCampaignWallet(address: Address): Promise<LaunchCampaignWalletStatus> {
+    return this.api.get(`/v1/launch-campaign/wallets/${lower(address)}`);
+  }
+
+  async claimLaunchCampaign(user: Address, onStage?: (stage: TxStage) => void): Promise<Hash> {
+    const summary = await this.readLaunchCampaign();
+    if (!summary.enabled) throw new TxError("The launch reward campaign is not active.", "reverted");
+    const getTicket = async () => this.api.post<LaunchCampaignClaimTicket>("/v1/launch-campaign/claim-ticket", {}, { token: await this.sessionToken(user) });
+    let ticket: LaunchCampaignClaimTicket;
+    try { ticket = await getTicket(); }
+    catch (error) {
+      if (!(error instanceof ApiError) || error.status !== 401) throw error;
+      clearSession(user);
+      ticket = await getTicket(); // Only authentication is retried, before any chain submission.
+    }
+    return (await txModule()).sendLaunchCampaignClaim(await this.txContext(user, onStage), summary, ticket);
   }
 
   /** Testnets: mints the day's test stock to the connected wallet. */

@@ -21,6 +21,7 @@ import { CoinAvatar } from "@/components/ui/CoinAvatar";
 import { CopyButton } from "@/components/ui/CopyButton";
 import { List, ListRow } from "@/components/ui/display";
 import { AuthorRewardTerms } from "./AuthorRewardTerms";
+import { LaunchCampaignClaimCard } from "./LaunchCampaign";
 
 const KIND_LABEL: Record<Claimable["kind"], string> = {
   creator: "Creator earnings",
@@ -76,6 +77,7 @@ export function RewardsScreen() {
   return (
     <>
       <PageHeader title="Rewards" subtitle="Fees you have earned as a creator, post author, holder or referrer." />
+      <LaunchCampaignClaimCard />
       <section className="mf-card mb-5 flex flex-wrap items-center justify-between gap-3 p-4"><div><h2 className="text-headline text-label">Earn from your original X posts</h2><p className="text-footnote text-label-2">Verify your X account and author wallet to claim a tweet coin&apos;s reserved share.</p></div><Button asChild variant="tinted"><Link href="/rewards/author">Post author earnings</Link></Button></section>
       {wallet.status !== "connected" || !wallet.address ? (
         <div className="mf-card">

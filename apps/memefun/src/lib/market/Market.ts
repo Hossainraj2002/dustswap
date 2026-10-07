@@ -1,4 +1,5 @@
 import type { LaunchSettings } from "@/core/settings";
+import type { LaunchCampaignSummary, LaunchCampaignWalletStatus } from "@/core/campaign";
 import type { Address, CoinLinks, FeeMode, Hash, QuoteAsset, TradeSide } from "@/core/types";
 import type { AuthorReward, AuthorSession, TweetDraft, TweetImport } from "@/lib/create/tweet";
 import type { PairCatalogSort } from "./pairs";
@@ -56,6 +57,9 @@ export interface Market {
   getCoinBalance(address: Address, coin: string): number;
   getPositions(address: Address): Position[];
   getClaimables(address: Address): Claimable[];
+  readLaunchCampaign?(): Promise<LaunchCampaignSummary>;
+  readLaunchCampaignWallet?(address: Address): Promise<LaunchCampaignWalletStatus>;
+  claimLaunchCampaign?(user: Address, onStage?: (stage: TxStage) => void): Promise<Hash>;
 
   quote(coinAddress: string, side: TradeSide, amountIn: number, now?: number, payWithEth?: boolean, poolId?: Hash): MarketQuote;
   trade(user: Address, coinAddress: string, side: TradeSide, amountIn: number, minOut: number, options?: TradeOptions): Promise<Trade>;
