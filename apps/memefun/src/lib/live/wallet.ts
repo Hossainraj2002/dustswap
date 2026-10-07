@@ -6,6 +6,7 @@ import { CHAIN_NAME, TARGET_CHAIN_ID } from "@/lib/chain";
 import { TxError } from "@/lib/market/Market";
 import { wagmiConfig } from "@/lib/wallet/wagmi";
 import { withBuilderAttribution } from "@/lib/wallet/attributedWallet";
+import { requiresWalletAttribution } from "@/lib/wallet/walletAccount";
 import type { TxWallet } from "./tx";
 import { toTxError } from "./txErrors";
 
@@ -21,23 +22,32 @@ export { DATA_SUFFIX } from "@/lib/wallet/builderCode";
  */
 export async function connectedWallet(expected?: Address, options: { onChain?: boolean } = {}): Promise<TxWallet> {
   const connection = getConnection(wagmiConfig);
-  if (!connection.address || connection.status !== "connected") throw new TxError("Connect your wallet first.", "reverted");
+  if (!connection.address || !connection.connector || connection.status !== "connected") throw new TxError("Connect your wallet first.", "reverted");
   if (expected && connection.address.toLowerCase() !== expected.toLowerCase()) {
     throw new TxError("Your wallet switched accounts. Check the connected account and try again.", "reverted");
   }
+  const connector = connection.connector;
+  const checkSelectedWallet = () => {
+    const selected = getConnection(wagmiConfig);
+    if (selected.status !== "connected" || selected.connector?.uid !== connector.uid || selected.address?.toLowerCase() !== connection.address?.toLowerCase()) {
+      throw new TxError("Your selected wallet changed. Check the connected wallet and try again.", "reverted");
+    }
+  };
   const onChain = options.onChain ?? true;
   if (onChain && connection.chainId !== TARGET_CHAIN_ID) {
     try {
-      await switchChain(wagmiConfig, { chainId: TARGET_CHAIN_ID });
+      await switchChain(wagmiConfig, { chainId: TARGET_CHAIN_ID, connector });
+      checkSelectedWallet();
     } catch (error) {
       throw toTxError(error, `Switch your wallet to ${CHAIN_NAME} and try again.`);
     }
   }
   try {
-    const client = await getWalletClient(wagmiConfig, onChain ? { chainId: TARGET_CHAIN_ID, account: connection.address } : { account: connection.address });
+    const client = await getWalletClient(wagmiConfig, { connector, account: connection.address, ...(onChain ? { chainId: TARGET_CHAIN_ID } : {}) });
+    checkSelectedWallet();
     // The installed Wagmi connector client does not inherit config.dataSuffix.
     // Keep the connector's request transport, and configure attribution on the actual sender.
-    return withBuilderAttribution(client) as unknown as TxWallet;
+    return withBuilderAttribution(client, { requiresWalletAttribution: requiresWalletAttribution(connection.connector, connection.address) }) as unknown as TxWallet;
   } catch (error) {
     throw toTxError(error, "Your wallet is not ready. Reconnect it and try again.");
   }

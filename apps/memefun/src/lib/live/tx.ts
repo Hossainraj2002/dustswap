@@ -8,6 +8,8 @@ import {
   type TransactionReceipt,
   type Transport,
   type WalletClient,
+  BaseError,
+  UnsupportedNonOptionalCapabilityError,
   domainSeparator,
   encodeFunctionData,
   erc20Abi,
@@ -39,7 +41,7 @@ import { revertName, toTxError } from "./txErrors";
  * comes back as a plain message; then sent with the builder-code suffix; then awaited, and a
  * reverted receipt is an error too. Token approvals cover exactly the amount, never unlimited.
  */
-export type TxWallet = WalletClient<Transport, Chain, Account>;
+export type TxWallet = WalletClient<Transport, Chain, Account> & { requiresWalletAttribution?: boolean };
 
 export type { TxStage } from "@/lib/market/Market";
 
@@ -84,9 +86,9 @@ function account(ctx: TxContext): Address {
 }
 
 /**
- * A contract/delegated wallet needs attribution on its outer transaction/user operation.
- * A verified EOA can append directly. Capability errors never authorize a contract wallet
- * to fall back to a nested suffix that Base may not index.
+ * Wallet-side attribution belongs on the transaction/user operation, not an inner call.
+ * EOAs (including EIP-7702 delegated EOAs) can append directly to transaction calldata.
+ * Atomic batching support describes batching, not whether an account is a smart account.
  */
 async function usesAttributedCalls(ctx: TxContext): Promise<boolean> {
   // Locally signing accounts send the actual transaction calldata.
@@ -100,16 +102,21 @@ async function usesAttributedCalls(ctx: TxContext): Promise<boolean> {
     if (isUserRejectedRequest(error)) throw new TxError("You rejected the request in your wallet.", "rejected");
     // A legacy EOA provider may not implement EIP-5792. Verify its chain code below.
   }
-  const chainCapabilities = capabilities as { dataSuffix?: { supported?: boolean }; atomic?: { status?: string; supported?: boolean } } | undefined;
+  const chainCapabilities = capabilities as { dataSuffix?: { supported?: boolean } } | undefined;
   if (chainCapabilities?.dataSuffix?.supported === true) return true;
-  const atomic = chainCapabilities?.atomic;
-  if (atomic?.supported === true || atomic?.status === "supported" || atomic?.status === "ready") {
-    throw new TxError("This wallet cannot provide the required transaction attribution. Connect an EOA wallet or a wallet that supports Base builder codes.", "reverted");
+  // An undeployed smart account has no chain code, and its provider can translate
+  // eth_sendTransaction into a user operation. Missing cached capabilities aren't
+  // proof of unsupported attribution: ask through the mandatory wallet-side capability.
+  if (ctx.wallet.requiresWalletAttribution) {
+    return true;
   }
   let code: Hex | undefined;
   try { code = await ctx.client.getCode({ address: account(ctx) }); }
   catch { throw new TxError("The wallet's transaction support could not be checked. Try again before submitting.", "reverted"); }
-  if (code && code !== "0x") {
+  // EIP-7702 explicitly permits a delegated EOA to originate ordinary transactions.
+  // Only the exact 23-byte delegation designator qualifies; arbitrary contract code doesn't.
+  const delegatedEoa = code !== undefined && /^0xef0100[0-9a-f]{40}$/i.test(code);
+  if (code && code !== "0x" && !delegatedEoa) {
     throw new TxError("This smart wallet cannot provide the required transaction attribution. Connect an EOA wallet or a wallet that supports Base builder codes.", "reverted");
   }
   return false;
@@ -125,13 +132,18 @@ async function sendAttributedCall(ctx: TxContext, request: Request, fallback: st
       chain: ctx.wallet.chain,
       calls: [{ to: request.address, data: encodeFunctionData({ abi: request.abi, functionName: request.functionName, args: request.args }), value: request.value }],
       capabilities: { dataSuffix: { value: DATA_SUFFIX } },
-      forceAtomic: true,
+      // One call needs no batching guarantee. dataSuffix support does not imply atomic support.
+      forceAtomic: false,
       experimental_fallback: false,
     });
     ctx.onStage?.("pending");
     if (!result.id || typeof result.id !== "string") throw new TxError(UNCERTAIN_CALLS, "reverted");
     id = result.id;
   } catch (error) {
+    const cause = error instanceof BaseError ? error.walk(e => e instanceof UnsupportedNonOptionalCapabilityError) : error;
+    if (cause instanceof UnsupportedNonOptionalCapabilityError || (cause && typeof cause === "object" && "code" in cause && cause.code === 5700)) {
+      throw new TxError("This wallet does not support the required Base builder attribution. Connect a compatible wallet and try again.", "reverted");
+    }
     // Never retry through eth_sendTransaction: a wallet may have accepted an ambiguous call.
     throw toTxError(error, UNCERTAIN_CALLS);
   }

@@ -3,6 +3,7 @@ import { getAddress, type EIP1193Provider } from "viem";
 import type { Config } from "wagmi";
 import { connect, disconnect } from "wagmi/actions";
 import { injected } from "wagmi/connectors";
+import { rememberWalletAccount } from "./walletAccount";
 
 type Listener = (...args: unknown[]) => void;
 type EventProvider = Pick<EIP1193Provider, "request"> & {
@@ -120,6 +121,8 @@ export async function activatePrivyWallet(
       }
       await connect(config, { connector: injected({ target: { id, name: wallet.meta.name, provider: adapted }, shimDisconnect: false }) });
       check();
+      const activated = config.state.current && config.state.connections.get(config.state.current);
+      if (activated && activated.connector.id === id) rememberWalletAccount(activated.connector, wallet);
       committed = true;
       for (const [event, handlers] of listeners) for (const wrapper of handlers.values()) provider!.on?.(event, wrapper);
     })();

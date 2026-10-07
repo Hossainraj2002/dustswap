@@ -4,10 +4,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createConfig, createStorage, http } from "wagmi";
 import { disconnect, getAccount, getWalletClient } from "wagmi/actions";
 import { baseSepolia } from "wagmi/chains";
-import type { Address, Hex } from "viem";
+import { encodeAbiParameters, encodeEventTopics, encodeFunctionData, parseAbiParameters, zeroAddress, type Address, type Hex } from "viem";
+import { memeFunHookAbi, memeFunRouterAbi } from "@/lib/contracts/abis";
+import { sendTrade, type TxContext } from "@/lib/live/tx";
 import { activatePrivyWallet } from "./activateWallet";
 import { withBuilderAttribution } from "./attributedWallet";
 import { DATA_SUFFIX } from "./builderCode";
+import { requiresWalletAttribution } from "./walletAccount";
 
 const ALICE = "0x0000000000000000000000000000000000000001" as const;
 const BOB = "0x0000000000000000000000000000000000000002" as const;
@@ -77,6 +80,16 @@ afterEach(() => {
 });
 
 describe("native selected Privy wallet activation", () => {
+  it.each(["base_account", "coinbase_smart_wallet", "coinbase_wallet", "metamask"])("preserves selected %s account metadata without confusing a different wallet/address", async walletClientType => {
+    const config = configuration();
+    const selectedWallet = { ...wallet(provider()), walletClientType };
+    await activatePrivyWallet(config, selectedWallet, () => true);
+    const connector = getAccount(config).connector;
+    expect(requiresWalletAttribution(connector, ALICE)).toBe(walletClientType === "base_account" || walletClientType === "coinbase_smart_wallet");
+    expect(requiresWalletAttribution(connector, BOB)).toBe(false);
+    expect(requiresWalletAttribution({}, ALICE)).toBe(false);
+  });
+
   it("replaces a connected provider rather than retaining a hidden second connection", async () => {
     const first = provider(), second = provider();
     const config = configuration();
@@ -113,6 +126,35 @@ describe("native selected Privy wallet activation", () => {
     expect(selected.request.mock.calls.map(([call]) => call.method)).not.toContain("eth_requestAccounts");
     expect(selected.request.mock.calls.map(([call]) => call.method)).not.toContain("wallet_requestPermissions");
     expect(unrelated.request).not.toHaveBeenCalled();
+  });
+
+  it("submits an attributed ETH buy through the selected atomic-ready external provider", async () => {
+    const selected = provider([BOB, ALICE]);
+    const originalRequest = selected.request.getMockImplementation()!;
+    selected.request.mockImplementation(call => call.method === "wallet_getCapabilities"
+      ? Promise.resolve({ "0x14a34": { atomic: { status: "ready" } } })
+      : originalRequest(call));
+    const config = configuration();
+    await activatePrivyWallet(config, wallet(selected, ALICE, "metamask"), () => true);
+    const client = withBuilderAttribution(await getWalletClient(config));
+    const amountIn = 100_000_000_000_000n;
+    const args = { coin: TOKEN, amountIn, minAmountOut: 1n, recipient: zeroAddress, referrer: zeroAddress, deadline: 10_000n };
+    const topics = encodeEventTopics({ abi: memeFunHookAbi, eventName: "Trade", args: { id: `0x${"01".repeat(32)}`, coin: TOKEN, trader: ALICE } });
+    const data = encodeAbiParameters(parseAbiParameters("bool isBuy,uint256 quoteAmount,uint256 coinAmount,uint256 fee,uint256 feeBps,address referrer,uint160 sqrtPriceX96,int24 tick"),
+      [true, amountIn, 1_000n, amountIn / 100n, 100n, zeroAddress, 2n ** 96n, 0]);
+    const ctx = { wallet: client,
+      deployment: { router: TOKEN },
+      client: {
+        getCode: async () => `0xef0100${"11".repeat(20)}`,
+        simulateContract: async (request: unknown) => ({ request }),
+        waitForTransactionReceipt: async () => ({ status: "success", transactionHash: HASH, blockNumber: 1n, logs: [{ address: TOKEN, topics, data }] }),
+      },
+    } as unknown as TxContext;
+    await expect(sendTrade(ctx, { side: "buy", coin: TOKEN, quote: zeroAddress, amountIn, minAmountOut: 1n, deadline: 10_000n })).resolves.toMatchObject({ hash: HASH });
+    const sent = selected.request.mock.calls.filter(([call]) => call.method === "eth_sendTransaction");
+    expect(sent).toHaveLength(1);
+    expect(sent[0]![0].params).toEqual([expect.objectContaining({ from: ALICE, to: TOKEN, data: `${encodeFunctionData({ abi: memeFunRouterAbi, functionName: "buy", args: [args] })}${DATA_SUFFIX.slice(2)}` })]);
+    expect(selected.request.mock.calls.some(([call]) => call.method === "wallet_sendCalls")).toBe(false);
   });
 
   it("refuses an unavailable selected account instead of choosing the provider's first account", async () => {
