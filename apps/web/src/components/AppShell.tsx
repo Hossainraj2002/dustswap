@@ -40,22 +40,37 @@ interface NavItem {
   icon: ComponentType<SVGProps<SVGSVGElement>>;
   label: string;
   route: string;
+  external?: boolean;
   // Core-product tab: rendered as a branded gradient tile with the DustSweep
   // mark instead of the standard outline icon, so it stands out in the nav.
   brand?: boolean;
+}
+
+function MemeFunIcon() {
+  return (
+    <Image
+      src="/memefun-logo.png"
+      alt=""
+      width={28}
+      height={28}
+      priority
+      className="h-7 w-7 rounded-md"
+    />
+  );
 }
 
 // Quests and Leaderboard are hidden from navigation for now. Their pages, routes and data are
 // untouched and still reachable at /quests and /leaderboard; only the nav entries are gone.
 // To restore, re-add the two lines below with QuestsIcon and LeaderboardIcon. Both bars size
 // themselves from this array, so nothing else needs changing.
-const NAV_ITEMS = [
+const NAV_ITEMS: NavItem[] = [
+  { icon: MemeFunIcon, label: 'MemeFun', route: 'https://memefun.dustswap.wtf/', external: true },
   { icon: ProfileIcon, label: 'Profile', route: '/profile' },
   { icon: SpinIcon, label: 'Spin', route: '/spin' },
   { icon: DustSweepIcon, label: 'Dust Sweep', route: '/dustsweep', brand: true },
   { icon: SwapIcon, label: 'Swap', route: '/swap' },
   { icon: ClaimIcon, label: 'Claim', route: '/claim' },
-] satisfies NavItem[];
+];
 
 function isActiveRoute(pathname: string, route: string) {
   return pathname === route || pathname.startsWith(`${route}/`);
@@ -145,6 +160,9 @@ function MobileShellNav({
             <Link
               key={item.route}
               href={item.route}
+              target={item.external ? '_blank' : undefined}
+              rel={item.external ? 'noopener noreferrer' : undefined}
+              prefetch={item.external ? false : undefined}
               className={navLinkClassName}
             >
               <AppShellIcon
@@ -331,6 +349,9 @@ export function AppShell({ children }: AppShellProps) {
                 <Link
                   key={item.route}
                   href={item.route}
+                  target={item.external ? '_blank' : undefined}
+                  rel={item.external ? 'noopener noreferrer' : undefined}
+                  prefetch={item.external ? false : undefined}
                   className={`group flex items-center gap-3 rounded-[18px] px-3 py-3 transition-all duration-200 ${
                     isLightShell
                       ? active
