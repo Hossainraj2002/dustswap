@@ -91,6 +91,22 @@ export function validateFeesStep(draft: CreateDraft, settings: LaunchSettings): 
   return errors;
 }
 
+/** The optional buy must be representable in the selected pool's quote asset. */
+export function validateFirstBuyStep(draft: CreateDraft, quote: QuoteAsset, balance?: number): DraftErrors {
+  const text = draft.firstBuy.trim();
+  if (!text) return {};
+  const amount = Number(text);
+  if (!/^(?:\d+(?:\.\d*)?|\.\d+)$/.test(text) || !Number.isFinite(amount) || amount < 0) {
+    return { firstBuy: "Enter a valid amount." };
+  }
+  const fraction = text.split(".")[1] ?? "";
+  if (fraction.slice(quote.decimals).replace(/0/g, "")) {
+    return { firstBuy: `${quote.symbol} supports up to ${quote.decimals} decimal places.` };
+  }
+  if (balance !== undefined && amount > balance) return { firstBuy: `Not enough ${quote.symbol}.` };
+  return {};
+}
+
 export interface FirstBuyPreview {
   coins: number;
   supplyFraction: number;

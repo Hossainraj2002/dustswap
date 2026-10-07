@@ -25,6 +25,8 @@ export function TweetImportPanel({ draft, update, onBusy }: { draft: CreateDraft
   const [url, setUrl] = useState(draft.tweet?.source.url ?? "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const sourceUrl = draft.tweet?.source.url;
+  useEffect(() => { setUrl(sourceUrl ?? ""); }, [sourceUrl]);
   useEffect(() => { onBusy?.(busy); return () => onBusy?.(false); }, [busy, onBusy]);
   const imported = draft.tweet?.imported;
   const importPost = async () => {

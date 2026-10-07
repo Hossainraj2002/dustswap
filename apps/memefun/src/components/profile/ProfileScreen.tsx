@@ -18,7 +18,7 @@ import { AddressAvatar } from "@/components/ui/AddressAvatar";
 import { Button } from "@/components/ui/Button";
 import { CoinAvatar } from "@/components/ui/CoinAvatar";
 import { CopyButton } from "@/components/ui/CopyButton";
-import { Badge, EmptyState } from "@/components/ui/display";
+import { Badge, EmptyState, Skeleton } from "@/components/ui/display";
 import { IconButton } from "@/components/ui/IconButton";
 import { Tabs } from "@/components/ui/Tabs";
 
@@ -85,7 +85,9 @@ export function ProfileScreen({ address }: { address: string }) {
             value: "created",
             label: "Created",
             count: created.length,
-            content: !ready ? null : created.length === 0 ? (
+            content: !ready ? (
+              <div className="mf-card mt-3 p-4" aria-busy="true" aria-label="Loading created coins"><Skeleton className="h-32 w-full rounded-lg" /></div>
+            ) : created.length === 0 ? (
               <EmptyState
                 className="mf-card mt-3"
                 icon={<Sparkles aria-hidden />}

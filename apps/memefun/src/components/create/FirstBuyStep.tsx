@@ -9,7 +9,7 @@ import { useQuoteBalance } from "@/lib/market/hooks";
 import { useWallet } from "@/lib/wallet/WalletProvider";
 import { pairId } from "@/lib/market/pairs";
 
-export function FirstBuyStep({ draft, update, quote, quotes = [quote], allocationSupply, openingFdvUsd }: { draft: CreateDraft; update: (patch: Partial<CreateDraft>) => void; quote: QuoteAsset; quotes?: QuoteAsset[]; allocationSupply?: bigint; openingFdvUsd: number }) {
+export function FirstBuyStep({ draft, update, quote, quotes = [quote], allocationSupply, openingFdvUsd, error }: { draft: CreateDraft; update: (patch: Partial<CreateDraft>) => void; quote: QuoteAsset; quotes?: QuoteAsset[]; allocationSupply?: bigint; openingFdvUsd: number; error?: string }) {
   const wallet = useWallet();
   const balance = useQuoteBalance(wallet.address, quote.address);
   const preview = previewFirstBuy(draft.firstBuy, quote, draft.feeBps, openingFdvUsd, allocationSupply);
@@ -38,6 +38,8 @@ export function FirstBuyStep({ draft, update, quote, quotes = [quote], allocatio
         <div className="flex items-center gap-3">
           <input
             id="first-buy"
+            aria-invalid={Boolean(error)}
+            aria-describedby={error ? "first-buy-error" : undefined}
             inputMode="decimal"
             autoComplete="off"
             placeholder="0"
@@ -60,7 +62,7 @@ export function FirstBuyStep({ draft, update, quote, quotes = [quote], allocatio
             </button>
           ))}
         </div>
-        {tooMuch ? <p className="text-footnote text-down">That is more than your {quote.symbol} balance.</p> : null}
+        {error ? <p id="first-buy-error" role="alert" className="text-footnote text-down">{error}</p> : tooMuch ? <p className="text-footnote text-down">That is more than your {quote.symbol} balance.</p> : null}
       </div>
 
       {preview ? (

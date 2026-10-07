@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useAccount, useSwitchChain, useWalletClient } from "wagmi";
 import { getRpcUrlForChain } from "@/lib/wallet/rpc";
 import { CHAIN_NAME, TARGET_CHAIN, TARGET_CHAIN_ID } from "@/lib/chain";
@@ -16,6 +16,48 @@ type ChainEventProvider = RequestCapableProvider & {
 
 const CHAIN_SWITCH_SETTLE_TIMEOUT_MS = 6_000;
 const CHAIN_SWITCH_POLL_INTERVAL_MS = 150;
+
+class WalletReadTimeout extends Error {
+  constructor() {
+    super(`Your wallet took too long to report its network. Check your wallet and try switching to ${CHAIN_NAME} again.`);
+  }
+}
+
+class WalletSwitchCancelled extends Error {
+  constructor() {
+    super("Your wallet connection changed. Try again with the selected wallet.");
+  }
+}
+
+function assertActive(signal?: AbortSignal) {
+  if (signal?.aborted) throw new WalletSwitchCancelled();
+}
+
+function rethrowInterrupted(error: unknown) {
+  if (error instanceof WalletReadTimeout || error instanceof WalletSwitchCancelled) throw error;
+}
+
+/** EIP-1193 requests cannot be aborted, so detach from late responses on cancellation. */
+function walletRequest<T>(request: () => Promise<T>, signal?: AbortSignal, timeoutMs: number | null = CHAIN_SWITCH_SETTLE_TIMEOUT_MS): Promise<T> {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const finish = (complete: () => void) => {
+      if (settled) return;
+      settled = true;
+      if (timer !== undefined) clearTimeout(timer);
+      signal?.removeEventListener("abort", cancel);
+      complete();
+    };
+    const cancel = () => finish(() => reject(new WalletSwitchCancelled()));
+    if (signal?.aborted) { cancel(); return; }
+    signal?.addEventListener("abort", cancel, { once: true });
+    if (timeoutMs !== null) timer = setTimeout(() => finish(() => reject(new WalletReadTimeout())), timeoutMs);
+    Promise.resolve().then(() => { assertActive(signal); return request(); }).then(
+      value => finish(() => resolve(value)), error => finish(() => reject(error)),
+    );
+  });
+}
 
 function toHexChainId(chainId: number) {
   return `0x${chainId.toString(16)}`;
@@ -46,28 +88,33 @@ function sleep(ms: number) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
-async function readProviderChainId(provider: RequestCapableProvider) {
+async function readProviderChainId(provider: RequestCapableProvider, signal?: AbortSignal, timeoutMs?: number) {
   return parseProviderChainId(
-    await provider.request({
+    await walletRequest(() => provider.request({
       method: "eth_chainId",
-    })
+    }), signal, timeoutMs)
   );
 }
 
 async function waitForProviderChainId(
   provider: RequestCapableProvider,
-  expectedChainId: number
+  expectedChainId: number,
+  signal?: AbortSignal,
 ) {
-  const startedAt = Date.now();
+  const deadline = Date.now() + CHAIN_SWITCH_SETTLE_TIMEOUT_MS;
 
-  while (Date.now() - startedAt < CHAIN_SWITCH_SETTLE_TIMEOUT_MS) {
-    const nextChainId = await readProviderChainId(provider).catch(() => null);
+  while (Date.now() < deadline) {
+    assertActive(signal);
+    const nextChainId = await readProviderChainId(provider, signal, deadline - Date.now()).catch(error => {
+      rethrowInterrupted(error);
+      return null;
+    });
 
     if (nextChainId === expectedChainId) {
       return true;
     }
 
-    await sleep(CHAIN_SWITCH_POLL_INTERVAL_MS);
+    await walletRequest(() => sleep(Math.min(CHAIN_SWITCH_POLL_INTERVAL_MS, Math.max(0, deadline - Date.now()))), signal, null);
   }
 
   return false;
@@ -106,19 +153,19 @@ function getSwitchErrorMessage(error: unknown) {
   return `Your wallet could not switch to ${CHAIN_NAME} automatically. Please switch to ${CHAIN_NAME} and try again.`;
 }
 
-async function requestBaseChainFromProvider(provider: RequestCapableProvider) {
+async function requestBaseChainFromProvider(provider: RequestCapableProvider, signal: AbortSignal) {
   try {
-    await provider.request({
+    await walletRequest(() => provider.request({
       method: "wallet_switchEthereumChain",
       params: [{ chainId: toHexChainId(TARGET_CHAIN_ID) }],
-    });
+    }), signal, null);
   } catch (error) {
     if (!isUnknownChainError(error)) {
       throw error;
     }
 
     const rpcUrl = getRpcUrlForChain(TARGET_CHAIN_ID) || TARGET_CHAIN.rpcUrls.default.http[0];
-    await provider.request({
+    await walletRequest(() => provider.request({
       method: "wallet_addEthereumChain",
       params: [
         {
@@ -129,26 +176,30 @@ async function requestBaseChainFromProvider(provider: RequestCapableProvider) {
           ...(TARGET_CHAIN.blockExplorers ? { blockExplorerUrls: [TARGET_CHAIN.blockExplorers.default.url] } : {}),
         },
       ],
-    });
-    await provider.request({
+    }), signal, null);
+    await walletRequest(() => provider.request({
       method: "wallet_switchEthereumChain",
       params: [{ chainId: toHexChainId(TARGET_CHAIN_ID) }],
-    });
+    }), signal, null);
   }
 }
 
 export function useBaseChainSwitch() {
-  const { chainId, connector, isConnected } = useAccount();
+  const { address, chainId, connector, isConnected } = useAccount();
   const { data: walletClient } = useWalletClient();
   const { isPending: isWagmiSwitching, switchChainAsync } = useSwitchChain();
   const [isSwitching, setIsSwitching] = useState(false);
   const [observedChainId, setObservedChainId] = useState<number | null>(null);
+  const activeSwitch = useRef<AbortController | null>(null);
 
   const effectiveChainId = observedChainId ?? chainId ?? null;
   const isOnBase = isConnected && effectiveChainId === TARGET_CHAIN_ID;
 
-  const getRequestProvider = useCallback(async () => {
-    const connectorProvider = await connector?.getProvider?.().catch(() => null);
+  const getRequestProvider = useCallback(async (signal?: AbortSignal) => {
+    const connectorProvider = await walletRequest(() => Promise.resolve(connector?.getProvider?.()), signal).catch(error => {
+      rethrowInterrupted(error);
+      return null;
+    });
 
     if (hasRequestMethod(connectorProvider)) {
       return connectorProvider;
@@ -163,6 +214,12 @@ export function useBaseChainSwitch() {
     return null;
   }, [connector, walletClient]);
 
+  useEffect(() => () => {
+    activeSwitch.current?.abort();
+    activeSwitch.current = null;
+    setIsSwitching(false);
+  }, [address, connector?.uid, isConnected]);
+
   useEffect(() => {
     if (typeof chainId === "number") {
       setObservedChainId(chainId);
@@ -172,10 +229,11 @@ export function useBaseChainSwitch() {
     if (!isConnected) {
       setObservedChainId(null);
     }
-  }, [chainId, isConnected]);
+  }, [address, chainId, connector?.uid, isConnected]);
 
   useEffect(() => {
     let disposed = false;
+    const observation = new AbortController();
     let removeChainChangedListener: (() => void) | null = null;
 
     if (!isConnected) {
@@ -183,19 +241,20 @@ export function useBaseChainSwitch() {
     }
 
     void (async () => {
-      const provider = await getRequestProvider();
+      const provider = await getRequestProvider(observation.signal);
       if (!provider || disposed) {
         return;
       }
 
       const syncObservedChainId = async () => {
-        const nextChainId = await readProviderChainId(provider).catch(() => null);
+        const nextChainId = await readProviderChainId(provider, observation.signal).catch(() => null);
         if (!disposed && nextChainId) {
           setObservedChainId(nextChainId);
         }
       };
 
       await syncObservedChainId();
+      if (disposed) return;
 
       if (hasChainEventMethods(provider)) {
         const handleChainChanged = (nextChainId: unknown) => {
@@ -213,48 +272,57 @@ export function useBaseChainSwitch() {
           provider.removeListener?.("chainChanged", handleChainChanged);
         };
       }
-    })();
+    })().catch(() => undefined);
 
     return () => {
       disposed = true;
+      observation.abort();
       removeChainChangedListener?.();
     };
-  }, [getRequestProvider, isConnected]);
+  }, [address, getRequestProvider, isConnected]);
 
   const switchToBase = useCallback(async () => {
     if (!isConnected) {
       throw new Error("Connect your wallet first.");
     }
+    if (activeSwitch.current) throw new Error("A wallet network switch is already pending.");
+    const switching = new AbortController();
+    const signal = switching.signal;
+    activeSwitch.current = switching;
 
     setIsSwitching(true);
 
     try {
-      const provider = await getRequestProvider();
+      const provider = await getRequestProvider(signal);
       const providerChainId = provider
-        ? await readProviderChainId(provider).catch(() => null)
+        ? await readProviderChainId(provider, signal).catch(error => { rethrowInterrupted(error); return null; })
         : null;
 
       if ((provider ? providerChainId : chainId) === TARGET_CHAIN_ID) {
+        assertActive(signal);
         setObservedChainId(TARGET_CHAIN_ID);
         return true;
       }
 
       try {
-        const switchedChain = await switchChainAsync({
+        const switchedChain = await walletRequest(() => switchChainAsync({
           chainId: TARGET_CHAIN_ID,
-        });
+        }), signal, null);
 
         if (provider) {
-          if (!await waitForProviderChainId(provider, TARGET_CHAIN_ID)) {
+          if (!await waitForProviderChainId(provider, TARGET_CHAIN_ID, signal)) {
             throw new Error(`Your wallet has not switched to ${CHAIN_NAME}. Please switch it and try again.`);
           }
         } else if (switchedChain?.id !== TARGET_CHAIN_ID) {
           throw new Error(`Your wallet has not switched to ${CHAIN_NAME}. Please switch it and try again.`);
         }
 
+        assertActive(signal);
         setObservedChainId(TARGET_CHAIN_ID);
         return true;
       } catch (error) {
+        rethrowInterrupted(error);
+        assertActive(signal);
         if (isUserRejectedRequest(error)) {
           throw error;
         }
@@ -270,16 +338,20 @@ export function useBaseChainSwitch() {
         );
       }
 
-      await requestBaseChainFromProvider(provider);
-      if (!await waitForProviderChainId(provider, TARGET_CHAIN_ID)) {
+      await requestBaseChainFromProvider(provider, signal);
+      if (!await waitForProviderChainId(provider, TARGET_CHAIN_ID, signal)) {
         throw new Error(`Your wallet has not switched to ${CHAIN_NAME}. Please switch it and try again.`);
       }
+      assertActive(signal);
       setObservedChainId(TARGET_CHAIN_ID);
       return true;
     } catch (error) {
       throw new Error(getSwitchErrorMessage(error));
     } finally {
-      setIsSwitching(false);
+      if (activeSwitch.current === switching) {
+        activeSwitch.current = null;
+        setIsSwitching(false);
+      }
     }
   }, [chainId, getRequestProvider, isConnected, switchChainAsync]);
 

@@ -11,8 +11,12 @@ const NOW = Date.UTC(2026, 9, 4, 12);
 const input: LaunchInput = { name: "One Token", symbol: "ONE", image: "", description: "", links: {}, quote: ETH,
   mode: "creator", feeBps: 100, creatorKeepBps: 0, firstBuyQuote: 0,
   markets: [{ quote: ETH, firstBuyQuote: 0 }, { quote: USDC, firstBuyQuote: 25, firstBuyText: "25" }] };
-beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(NOW); });
-afterEach(() => { vi.useRealTimers(); });
+beforeEach(() => {
+  vi.useFakeTimers(); vi.setSystemTime(NOW);
+  // Creator-only fixtures must not receive the preview's randomly attributed referral rewards.
+  vi.spyOn(Math, "random").mockReturnValue(0.5);
+});
+afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
 async function finish<T>(promise: Promise<T>): Promise<T> { await vi.runAllTimersAsync(); return promise; }
 
 describe("one token across independent preview markets", () => {
@@ -50,6 +54,21 @@ describe("one token across independent preview markets", () => {
     await finish(market.claim(USER, claimables.filter((item) => item.quoteSymbol === "USDC"), "ok", undefined, PAYOUT));
     expect(market.getQuoteBalance(PAYOUT, "USDC")).toBeCloseTo(payoutBefore + 0.2, 10);
     expect(market.getClaimables(USER).map((item) => item.quoteSymbol)).toEqual(["ETH"]);
+  });
+  it("preserves creator and referral rewards in the same currency and pays every row", async () => {
+    vi.mocked(Math.random).mockReturnValue(0);
+    const market = new PreviewMarket({ now: NOW, empty: true });
+    const coin = await finish(market.launch(USER, input));
+    await finish(market.trade(USER, coin.address, "buy", 0.01, 0, { poolId: coin.markets![0]!.poolId, referrer: NEXT }));
+    const claimables = market.getClaimables(USER);
+    expect(claimables.map(item => `${item.kind}:${item.quoteSymbol}`).sort()).toEqual(["creator:ETH", "creator:USDC", "referral:ETH", "referral:USDC"]);
+    const before = { ETH: market.ensureUser(PAYOUT).balances.get("ETH")!, USDC: market.getQuoteBalance(PAYOUT, "USDC") };
+    await finish(market.claim(USER, claimables, "ok", undefined, PAYOUT));
+    for (const symbol of ["ETH", "USDC"] as const) {
+      const amount = claimables.filter(item => item.quoteSymbol === symbol).reduce((sum, item) => sum + item.amountQuote, 0);
+      expect(market.getQuoteBalance(PAYOUT, symbol)).toBeCloseTo(before[symbol] + amount, 10);
+    }
+    expect(market.getClaimables(USER)).toEqual([]);
   });
   it("lowers every market fee permanently and transfers pending earnings only after recipient acceptance", async () => {
     const market = new PreviewMarket({ now: NOW, empty: true });

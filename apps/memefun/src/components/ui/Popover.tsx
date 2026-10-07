@@ -29,7 +29,7 @@ export function Popover({ trigger, label, children, align = "center", side = "bo
           sideOffset={8}
           collisionPadding={12}
           className={cn(
-            "z-50 w-72 rounded-lg bg-bg-elevated p-4 text-subhead text-label shadow-float outline-none mf-squircle",
+            "z-50 max-h-[var(--radix-popover-content-available-height)] w-72 max-w-[calc(100vw-24px)] overflow-y-auto overscroll-contain rounded-lg bg-bg-elevated p-4 text-subhead text-label shadow-float outline-none mf-squircle",
             className,
           )}
         >

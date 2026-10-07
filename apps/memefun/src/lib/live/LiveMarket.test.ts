@@ -169,6 +169,41 @@ function baseApi() {
 }
 
 describe("LiveMarket", () => {
+  it("waits for a coin list response even when other API reads are ready, including an empty list", async () => {
+    let release!: (value: { body: unknown }) => void;
+    const api = baseApi().on("/v1/coins", () => new Promise<{ body: unknown }>(resolve => { release = resolve; }));
+    const { m } = market(api);
+    await settle();
+    expect(m.getStatus().state).toBe("ready");
+    expect(m.listCoins()).toEqual([]);
+    expect(m.isCoinsReady()).toBe(false);
+    release({ body: { coins: [], nextCursor: null } });
+    await settle();
+    expect(m.isCoinsReady()).toBe(true);
+    expect(m.listCoins()).toEqual([]);
+  });
+
+  it("keeps a loaded coin list ready during a pending or failed background refresh", async () => {
+    let now = Date.now();
+    const api = baseApi();
+    const { m } = market(api, { now: () => now });
+    m.listCoins();
+    await settle();
+    const loaded = m.listCoins();
+    expect(loaded).toHaveLength(2);
+    expect(m.isCoinsReady()).toBe(true);
+    let release!: (value: { status: number; body: unknown }) => void;
+    api.on("/v1/coins", () => new Promise<{ status: number; body: unknown }>(resolve => { release = resolve; }));
+    now += 5_001;
+    expect(m.listCoins()).toEqual(loaded);
+    expect(m.isCoinsReady()).toBe(true);
+    expect(api.count("/v1/coins?")).toBe(2);
+    release({ status: 503, body: { error: { code: "unavailable", message: "Temporary outage." } } });
+    await settle();
+    expect(m.isCoinsReady()).toBe(true);
+    expect(m.listCoins()).toEqual(loaded);
+  });
+
   it("keeps same-ticker quote balances distinct and preserves successful balances when one token fails", async () => {
     const tokens: QuoteAsset[] = [COIN, OTHER].map(address => ({
       address: address as QuoteAsset["address"], symbol: "SAME", name: "Different token", decimals: 18,

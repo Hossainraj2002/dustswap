@@ -1,11 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Gift, Link2, Share } from "lucide-react";
 import { getAddress, isAddress, zeroAddress } from "viem";
-import { formatQuoteAmount, formatUsd } from "@/core/format";
+import { formatQuoteAmount, formatUsd, shortAddress } from "@/core/format";
 import { useClaimables, useCoins } from "@/lib/market/hooks";
 import { useMarket } from "@/lib/market/MarketProvider";
 import type { Claimable, Coin } from "@/lib/market/types";
@@ -29,10 +29,17 @@ const KIND_LABEL: Record<Claimable["kind"], string> = {
   author: "Post author earnings",
 };
 
-function totalsBySymbol(items: Claimable[]) {
-  const totals = new Map<string, number>();
-  for (const item of items) totals.set(item.quoteSymbol, (totals.get(item.quoteSymbol) ?? 0) + item.amountQuote);
-  return [...totals.entries()].map(([symbol, amount]) => formatQuoteAmount(amount, symbol)).join(", ");
+function totalsByAsset(items: Claimable[]) {
+  const totals = new Map<string, { symbol: string; currency?: string; amount: number }>();
+  for (const item of items) {
+    const key = item.currency?.toLowerCase() ?? item.quoteSymbol;
+    const previous = totals.get(key);
+    totals.set(key, { symbol: item.quoteSymbol, currency: item.currency, amount: (previous?.amount ?? 0) + item.amountQuote });
+  }
+  const symbols = new Map<string, number>();
+  for (const { symbol } of totals.values()) symbols.set(symbol, (symbols.get(symbol) ?? 0) + 1);
+  return [...totals.values()].map(({ symbol, currency, amount }) =>
+    `${formatQuoteAmount(amount, symbol)}${(symbols.get(symbol) ?? 0) > 1 && currency ? ` (${shortAddress(currency)})` : ""}`).join(", ");
 }
 
 export function RewardsScreen() {
@@ -43,7 +50,10 @@ export function RewardsScreen() {
   const { coins } = useCoins();
   const [claiming, setClaiming] = useState<string | null>(null);
   const [payoutWallet, setPayoutWallet] = useState("");
+  const walletKey = wallet.address?.toLowerCase() ?? "";
+  useEffect(() => { setPayoutWallet(""); }, [walletKey, market]);
   const payoutValid = payoutWallet === "" || (isAddress(payoutWallet) && payoutWallet.toLowerCase() !== zeroAddress);
+  const hasCustomPayout = claimables.some((item) => item.kind === "creator" || item.kind === "referral");
   const claimKey = (item: Claimable) => `${item.kind}-${item.coin}-${item.poolId ?? item.currency ?? item.quoteSymbol}-${item.epoch ?? ""}-${item.index ?? ""}`;
   const byAddress = useMemo(() => new Map(coins.map((coin) => [coin.address, coin])), [coins]);
   const total = claimables.reduce((sum, item) => sum + item.amountUsd, 0);
@@ -54,7 +64,7 @@ export function RewardsScreen() {
     setClaiming(key);
     try {
       await market.claim(wallet.address, items, txOutcome, undefined, customPayout && payoutWallet ? getAddress(payoutWallet) : wallet.address);
-      toast.success(`Claimed ${totalsBySymbol(items)}`, { description: preview ? "Preview claim. Nothing was sent on chain." : "Creator and referral payouts sent to your chosen wallet; holder and author rewards sent to their earning wallet." });
+      toast.success(`Claimed ${totalsByAsset(items)}`, { description: preview ? "Preview claim. Nothing was sent on chain." : "Creator and referral payouts sent to your chosen wallet; holder and author rewards sent to their earning wallet." });
     } catch (error) {
       if (error instanceof TxError && error.kind === "rejected") toast("Claim cancelled", { description: error.message });
       else toast.error("Claim did not go through", { description: error instanceof Error ? error.message : "Try again." });
@@ -81,9 +91,9 @@ export function RewardsScreen() {
                     Ready to claim
                   </h2>
                   <UsdFlow value={total} compact={false} className="text-large-title font-bold text-label" />
-                  {claimables.length > 0 ? <p className="mf-num text-subhead text-label-2">{totalsBySymbol(claimables)}</p> : null}
+                  {claimables.length > 0 ? <p className="mf-num text-subhead text-label-2">{totalsByAsset(claimables)}</p> : null}
                 </div>
-                <Button size="lg" disabled={claimables.length === 0 || !payoutValid || (claiming !== null && claiming !== "all")} loading={claiming === "all"} loadingLabel="Confirm in your wallet" onClick={() => void claim(claimables, "all")}>
+                <Button size="lg" disabled={claimables.length === 0 || (hasCustomPayout && !payoutValid) || (claiming !== null && claiming !== "all")} loading={claiming === "all"} loadingLabel="Confirm in your wallet" onClick={() => void claim(claimables, "all")}>
                   Claim all
                 </Button>
               </div>

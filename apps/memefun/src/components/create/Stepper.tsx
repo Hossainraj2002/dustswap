@@ -5,7 +5,7 @@ import { cn } from "@/lib/cn";
 import { STEPS, type StepId } from "@/lib/create/draft";
 
 /** The five launch steps. Completed steps can be revisited; later ones cannot be skipped to. */
-export function Stepper({ current, furthest, onSelect }: { current: StepId; furthest: number; onSelect: (step: StepId) => void }) {
+export function Stepper({ current, furthest, onSelect, disabled = false }: { current: StepId; furthest: number; onSelect: (step: StepId) => void; disabled?: boolean }) {
   const index = STEPS.findIndex((step) => step.id === current);
   return (
     <nav aria-label="Launch steps">
@@ -40,7 +40,7 @@ export function Stepper({ current, furthest, onSelect }: { current: StepId; furt
           return (
             <li key={step.id} className="flex items-center gap-1">
               {revisitable ? (
-                <button type="button" onClick={() => onSelect(step.id)} className={classes} aria-label={`${step.label}, completed. Edit`}>
+                <button type="button" disabled={disabled} onClick={() => onSelect(step.id)} className={cn(classes, "disabled:cursor-default disabled:opacity-60")} aria-label={`${step.label}, completed. Edit`}>
                   {content}
                 </button>
               ) : (

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { ChevronRight, ShieldAlert } from "lucide-react";
 import { launchFeeBps, protectionRemainingSec } from "@/core/antiSnipe";
@@ -60,6 +60,8 @@ export function TradePanel({ coin, initialSide = "buy", onDone, onPendingChange,
   const [payWithEth, setPayWithEth] = useState(false);
   const [slippage, setSlippage] = useState<SlippageSetting>({ mode: "auto" });
   const [pending, setPending] = useState(false);
+  const [walletAction, setWalletAction] = useState<"connect" | "switch" | null>(null);
+  const submitting = useRef(false);
   const [submittedLimit, setSubmittedLimit] = useState<{ bps: number; minReceive: number; raw?: string } | null>(null);
   const [stage, setStage] = useState<TxStage | null>(null);
 
@@ -67,7 +69,7 @@ export function TradePanel({ coin, initialSide = "buy", onDone, onPendingChange,
   useEffect(() => {
     setAmountText("");
     setMaxSell(false);
-  }, [side, payWithEth, coin.selectedPoolId]);
+  }, [side, payWithEth, coin.selectedPoolId, coin.address, coin.quote.address, wallet.address]);
   // Live pairs have no ETH route yet: pay in the pair asset.
   const live = market?.kind === "live";
 
@@ -90,9 +92,9 @@ export function TradePanel({ coin, initialSide = "buy", onDone, onPendingChange,
   const amount = parseAmount(amountText);
 
   const quote = useMemo(
-    () => (market && amount > 0 ? market.quote(coin.address, side, amount, Date.now(), routed, coin.selectedPoolId) : null),
-    // Re-quote whenever the market changes: a price move, or (live) the pool arriving.
-    [market, version, coin.address, coin.priceQuote, coin.selectedPoolId, side, amount, routed], // eslint-disable-line react-hooks/exhaustive-deps
+    () => (market && amount > 0 ? market.quote(coin.address, side, amount, tick || Date.now(), routed, coin.selectedPoolId) : null),
+    // The fee decays with time even when the pool has not changed.
+    [market, version, coin.address, coin.priceQuote, coin.selectedPoolId, side, amount, routed, tick], // eslint-disable-line react-hooks/exhaustive-deps
   );
 
   const restricted = stocksRestricted && coin.quote.kind === "stock";
@@ -124,20 +126,38 @@ export function TradePanel({ coin, initialSide = "buy", onDone, onPendingChange,
   const invalidSlippage = slippageBps === null;
   const zeroMinimum = quote?.ok && minReceive <= 0;
   const impact = quote ? impactLevel(quote.priceImpact) : "none";
-  const feeNow = launchFeeBps(coin.terms.feeBps, protection, now > 0 ? (now - coin.createdAt) / 1000 : 0);
+  const walletBusy = walletAction !== null || wallet.status === "connecting" || wallet.isSwitching;
 
   const submit = async () => {
-    if (locked || pending) return;
-    if (cta.kind === "connect") return void wallet.connect();
+    if (locked || pending || submitting.current || walletBusy) return;
+    if (cta.kind === "connect") {
+      submitting.current = true;
+      setWalletAction("connect");
+      try {
+        await wallet.connect();
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "Could not connect your wallet. Try again.");
+      } finally {
+        submitting.current = false;
+        setWalletAction(null);
+      }
+      return;
+    }
     if (cta.kind === "switch") {
+      submitting.current = true;
+      setWalletAction("switch");
       try {
         await wallet.switchToBase();
       } catch (error) {
         toast.error(error instanceof Error ? error.message : `Switch to ${CHAIN_NAME} in your wallet.`);
+      } finally {
+        submitting.current = false;
+        setWalletAction(null);
       }
       return;
     }
     if (cta.kind !== "ready" || !market || !wallet.address || !quote || slippageBps === null || zeroMinimum) return;
+    submitting.current = true;
     setSubmittedLimit({ bps: slippageBps, minReceive, raw: minAmountOutRaw });
     setPending(true);
     onPendingChange?.(true);
@@ -171,6 +191,7 @@ export function TradePanel({ coin, initialSide = "buy", onDone, onPendingChange,
       if (error instanceof TxError && error.kind === "rejected") toast("Trade cancelled", { description: error.message });
       else toast.error("Trade did not go through", { description: error instanceof Error ? error.message : "Try again." });
     } finally {
+      submitting.current = false;
       setPending(false);
       onPendingChange?.(false);
       setSubmittedLimit(null);
@@ -335,8 +356,9 @@ export function TradePanel({ coin, initialSide = "buy", onDone, onPendingChange,
         fullWidth
         variant={cta.kind === "ready" || cta.kind === "pending" ? (side === "buy" ? "buy" : "sell") : cta.kind === "switch" ? "destructive" : "filled"}
         disabled={(!cta.enabled && cta.kind !== "pending") || (cta.kind === "ready" && (invalidSlippage || Boolean(zeroMinimum)))}
-        loading={pending}
-        loadingLabel={stageLabel(stage, { token: payingSymbol, chainName: CHAIN_NAME })}
+        loading={pending || walletBusy}
+        loadingLabel={pending ? stageLabel(stage, { token: payingSymbol, chainName: CHAIN_NAME })
+          : walletAction === "switch" || wallet.isSwitching ? `Switching to ${CHAIN_NAME}` : "Connecting"}
         onClick={() => void submit()}
       >
         {cta.kind === "ready" && invalidSlippage ? "Set valid slippage" : cta.kind === "ready" && zeroMinimum ? "Amount too small" : cta.label}

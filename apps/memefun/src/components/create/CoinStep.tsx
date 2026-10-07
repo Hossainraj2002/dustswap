@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, type DragEvent } from "react";
+import { useEffect, useRef, useState, type DragEvent } from "react";
 import { ImagePlus } from "lucide-react";
 import { validateImageFile, normalizeTicker, NAME_MAX, TICKER_MAX, DESCRIPTION_MAX } from "@/core/validation";
 import { cn } from "@/lib/cn";
@@ -20,6 +20,8 @@ interface StepProps {
 
 export function CoinStep({ draft, update, errors, showErrors, showImagePicker = true }: StepProps) {
   const fileInput = useRef<HTMLInputElement>(null);
+  const imageRequest = useRef(0);
+  useEffect(() => () => { imageRequest.current++; }, []);
   const [imageError, setImageError] = useState<string | null>(null);
   const [processing, setProcessing] = useState(false);
   const [dragging, setDragging] = useState(false);
@@ -29,19 +31,22 @@ export function CoinStep({ draft, update, errors, showErrors, showImagePicker = 
 
   const accept = async (file: File | undefined) => {
     if (!file) return;
+    const request = ++imageRequest.current;
     const check = validateImageFile(file);
     if (!check.ok) {
+      setProcessing(false);
       setImageError(check.error ?? "Use a different image.");
       return;
     }
     setProcessing(true);
     setImageError(null);
     try {
-      update({ image: await normalizeCoinImage(file) });
+      const image = await normalizeCoinImage(file);
+      if (request === imageRequest.current) update({ image });
     } catch (error) {
-      setImageError(error instanceof Error ? error.message : "Could not read this image.");
+      if (request === imageRequest.current) setImageError(error instanceof Error ? error.message : "Could not read this image.");
     } finally {
-      setProcessing(false);
+      if (request === imageRequest.current) setProcessing(false);
     }
   };
 
@@ -91,7 +96,12 @@ export function CoinStep({ draft, update, errors, showErrors, showImagePicker = 
                 {draft.image ? "Change" : "Choose image"}
               </Button>
               {draft.image ? (
-                <Button size="sm" variant="plain" onClick={() => update({ image: null })}>
+                <Button size="sm" variant="plain" onClick={() => {
+                  imageRequest.current++;
+                  setProcessing(false);
+                  setImageError(null);
+                  update({ image: null });
+                }}>
                   Remove
                 </Button>
               ) : null}

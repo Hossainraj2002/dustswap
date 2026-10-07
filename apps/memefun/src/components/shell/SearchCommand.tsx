@@ -45,7 +45,7 @@ export function matchCoins(coins: Coin[], query: string, limit = 12): Coin[] {
 
 export function SearchCommand({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
   const router = useRouter();
-  const { coins } = useCoins();
+  const { coins, ready } = useCoins();
 
   const go = (href: string) => {
     onOpenChange(false);
@@ -62,7 +62,7 @@ export function SearchCommand({ open, onOpenChange }: { open: boolean; onOpenCha
             <Dialog.Description>Find a coin by name, ticker or contract address.</Dialog.Description>
           </VisuallyHidden.Root>
           <Command label="Search coins" loop shouldFilter={false}>
-            <CommandSearch coins={coins} go={go} />
+            <CommandSearch coins={coins} ready={ready} go={go} />
           </Command>
         </Dialog.Content>
       </Dialog.Portal>
@@ -70,7 +70,7 @@ export function SearchCommand({ open, onOpenChange }: { open: boolean; onOpenCha
   );
 }
 
-function CommandSearch({ coins, go }: { coins: Coin[]; go: (href: string) => void }) {
+function CommandSearch({ coins, ready, go }: { coins: Coin[]; ready: boolean; go: (href: string) => void }) {
   const [query, setQuery] = useState("");
   const results = matchCoins(coins, query, 8);
   const itemClass =
@@ -87,7 +87,8 @@ function CommandSearch({ coins, go }: { coins: Coin[]; go: (href: string) => voi
         />
       </div>
       <Command.List className="max-h-[56vh] overflow-y-auto p-2">
-        <Command.Empty className="px-3 py-8 text-center text-subhead text-label-2">No coins match. Try a ticker or a contract address.</Command.Empty>
+        {!ready ? <p role="status" className="px-3 py-8 text-center text-subhead text-label-2">Loading coins…</p>
+          : <Command.Empty className="px-3 py-8 text-center text-subhead text-label-2">No coins match. Try a ticker or a contract address.</Command.Empty>}
         {results.length > 0 ? (
           <Command.Group heading={query ? "Coins" : "Trending"} className="[&_[cmdk-group-heading]]:px-3 [&_[cmdk-group-heading]]:py-2 [&_[cmdk-group-heading]]:text-footnote [&_[cmdk-group-heading]]:font-semibold [&_[cmdk-group-heading]]:text-label-2">
             {results.map((coin) => (

@@ -1,24 +1,28 @@
 /** @vitest-environment jsdom */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { PreviewMarket } from "@/lib/preview/engine";
 import type { MarketQuote } from "@/lib/market/Market";
+import { formatBps, formatQuoteAmount } from "@/core/format";
 import { TradePanel } from "./TradePanel";
 
 const view = vi.hoisted(() => ({
   now: 1_800_000_000_000, trades: [] as { ts: number; priceUsd: number }[],
-  quote: null as MarketQuote | null, trade: vi.fn(),
+  quote: null as MarketQuote | null, quoteCall: vi.fn(), trade: vi.fn(),
+  error: vi.fn(),
+  wallet: { status: "connected", address: "0x00000000000000000000000000000000000000aa" as string | null,
+    onBase: true, isSwitching: false, connect: vi.fn(), switchToBase: vi.fn() },
 }));
 vi.mock("@/lib/hooks", () => ({ useNow: () => view.now, useAnimationNow: () => view.now }));
 vi.mock("@/lib/market/hooks", () => ({ useCoinBalance: () => 1000, useQuoteBalance: () => 10, useTrades: () => view.trades }));
 vi.mock("@/lib/market/MarketProvider", () => {
-  const market = { kind: "live", quote: () => view.quote, trade: (...args: unknown[]) => view.trade(...args) };
+  const market = { kind: "live", quote: (...args: unknown[]) => view.quoteCall(...args) ?? view.quote, trade: (...args: unknown[]) => view.trade(...args) };
   return { useMarket: () => ({ market, version: view.quote }) };
 });
-vi.mock("@/lib/wallet/WalletProvider", () => ({ useWallet: () => ({ status: "connected", address: "0x00000000000000000000000000000000000000aa", onBase: true }) }));
+vi.mock("@/lib/wallet/WalletProvider", () => ({ useWallet: () => view.wallet }));
 vi.mock("@/lib/preview/scenario", () => ({ usePreview: () => ({ preview: true, stocksRestricted: false, txOutcome: "success" }) }));
 vi.mock("@/lib/referrals", () => ({ useReferrer: () => undefined }));
-vi.mock("sonner", () => ({ toast: Object.assign(vi.fn(), { success: vi.fn(), error: vi.fn() }) }));
+vi.mock("sonner", () => ({ toast: Object.assign(vi.fn(), { success: vi.fn(), error: (...args: unknown[]) => view.error(...args) }) }));
 
 const seed = new PreviewMarket({ now: view.now, seed: 1 }).listCoins()[0]!;
 const coin = { ...seed, symbol: "TEST", createdAt: view.now - 3_600_000, liquidityUsd: 500_000,
@@ -28,7 +32,15 @@ const quoted: MarketQuote = { side: "buy", amountIn: 0.1, amountOut: 100, amount
 const fill = { coinAmount: 100, quoteAmount: 0.1, txHash: `0x${"1".repeat(64)}` };
 const enterAmount = () => fireEvent.change(screen.getByLabelText("You pay"), { target: { value: "0.1" } });
 const openSettings = () => fireEvent.click(screen.getByRole("button", { name: /^Slippage/ }));
-beforeEach(() => { view.quote = { ...quoted }; view.trades = []; view.trade.mockReset(); view.trade.mockResolvedValue(fill); });
+beforeEach(() => {
+  view.now = 1_800_000_000_000; view.quote = { ...quoted }; view.trades = []; view.quoteCall.mockReset();
+  view.trade.mockReset(); view.trade.mockResolvedValue(fill);
+  view.wallet.status = "connected"; view.wallet.address = "0x00000000000000000000000000000000000000aa";
+  view.wallet.onBase = true; view.wallet.isSwitching = false;
+  view.wallet.connect.mockReset(); view.wallet.connect.mockResolvedValue(undefined);
+  view.wallet.switchToBase.mockReset(); view.wallet.switchToBase.mockResolvedValue(true);
+  view.error.mockClear();
+});
 afterEach(cleanup);
 
 describe("trade slippage execution", () => {
@@ -99,5 +111,105 @@ describe("trade slippage execution", () => {
     expect(button.matches(":disabled")).toBe(true);
     fireEvent.click(button);
     expect(view.trade).not.toHaveBeenCalled();
+  });
+
+  it("clears a previous wallet's Max sell before trading with another wallet", () => {
+    const page = render(<TradePanel coin={coin} initialSide="sell" />);
+    fireEvent.click(screen.getByRole("button", { name: "Max, sell your whole balance" }));
+    expect((screen.getByLabelText("You pay") as HTMLInputElement).value).toBe("1000");
+    view.wallet.address = "0x00000000000000000000000000000000000000bb";
+    page.rerender(<TradePanel coin={coin} initialSide="sell" />);
+    expect((screen.getByLabelText("You pay") as HTMLInputElement).value).toBe("");
+    fireEvent.click(screen.getByRole("button", { name: "Enter an amount" }));
+    expect(view.trade).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByLabelText("You pay"), { target: { value: "12" } });
+    fireEvent.click(screen.getByRole("button", { name: "Sell TEST" }));
+    expect(view.trade.mock.calls[0]![5]).toMatchObject({ max: false, amountText: "12" });
+  });
+
+  it("clears the amount when another coin has no explicit pool selection", () => {
+    const page = render(<TradePanel coin={{ ...coin, selectedPoolId: undefined }} />); enterAmount();
+    page.rerender(<TradePanel coin={{ ...coin, address: "0x00000000000000000000000000000000000000cc", selectedPoolId: undefined }} />);
+    expect((screen.getByLabelText("You pay") as HTMLInputElement).value).toBe("");
+    expect(screen.getByRole("button", { name: "Enter an amount" }).matches(":disabled")).toBe(true);
+  });
+
+  it("keeps network switching disabled while the selected wallet is switching", () => {
+    view.wallet.onBase = false; view.wallet.isSwitching = true;
+    render(<TradePanel coin={coin} />);
+    const button = screen.getByRole("button", { name: /^Switch/ });
+    expect(button.matches(":disabled")).toBe(true);
+    fireEvent.click(button);
+    expect(view.wallet.switchToBase).not.toHaveBeenCalled();
+  });
+
+  it("prevents duplicate connection requests before wallet state updates", async () => {
+    view.wallet.status = "disconnected"; view.wallet.address = null;
+    let complete!: () => void;
+    view.wallet.connect.mockImplementation(() => new Promise<void>(resolve => { complete = resolve; }));
+    render(<TradePanel coin={coin} />);
+    fireEvent.click(screen.getByRole("button", { name: "Connect wallet" }));
+    const button = screen.getByRole("button", { name: "Connecting" });
+    expect(button.matches(":disabled")).toBe(true);
+    fireEvent.click(button);
+    expect(view.wallet.connect).toHaveBeenCalledTimes(1);
+    await act(async () => complete());
+  });
+
+  it("reports a connection failure and lets the user try again", async () => {
+    view.wallet.status = "disconnected"; view.wallet.address = null;
+    view.wallet.connect.mockRejectedValueOnce(new Error("Wallet initialization did not finish"));
+    render(<TradePanel coin={coin} />);
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Connect wallet" })));
+    expect(view.error).toHaveBeenCalledWith("Wallet initialization did not finish");
+    expect(screen.getByRole("button", { name: "Connect wallet" }).matches(":disabled")).toBe(false);
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Connect wallet" })));
+    expect(view.wallet.connect).toHaveBeenCalledTimes(2);
+  });
+
+  it("shows an existing SDK connection attempt instead of opening another", () => {
+    view.wallet.status = "connecting"; view.wallet.address = null;
+    render(<TradePanel coin={coin} />);
+    const button = screen.getByRole("button", { name: "Connecting" });
+    expect(button.matches(":disabled")).toBe(true);
+    fireEvent.click(button);
+    expect(view.wallet.connect).not.toHaveBeenCalled();
+  });
+
+  it("blocks another switch request until the current one settles", async () => {
+    view.wallet.onBase = false;
+    let fail!: (reason: Error) => void;
+    view.wallet.switchToBase.mockImplementation(() => new Promise((_resolve, reject) => { fail = reject; }));
+    render(<TradePanel coin={coin} />);
+    fireEvent.click(screen.getByRole("button", { name: /^Switch to/ }));
+    const button = screen.getByRole("button", { name: /^Switching to/ });
+    expect(button.matches(":disabled")).toBe(true);
+    fireEvent.click(button);
+    expect(view.wallet.switchToBase).toHaveBeenCalledTimes(1);
+    await act(async () => fail(new Error("Network switch rejected")));
+    expect(view.error).toHaveBeenCalledWith("Network switch rejected");
+    expect(screen.getByRole("button", { name: /^Switch to/ }).matches(":disabled")).toBe(false);
+  });
+
+  it("refreshes a decaying launch fee quote as time passes without a market update", () => {
+    const market = new PreviewMarket({ now: view.now, seed: 1, protectionDemo: true });
+    const protectedCoin = market.listCoins().find(entry => entry.createdAt === view.now - 5000)!;
+    expect(protectedCoin).toBeDefined();
+    view.quoteCall.mockImplementation((address: string, side: "buy" | "sell", amount: number, now: number) => market.quote(address, side, amount, now));
+    const feeText = (now: number) => {
+      const quote = market.quote(protectedCoin.address, "buy", 0.1, now);
+      return `${formatBps(quote.feeBps)} (${formatQuoteAmount(quote.feeQuote, protectedCoin.quote.symbol)})`;
+    };
+    const initialFee = feeText(view.now);
+    const page = render(<TradePanel coin={protectedCoin} />); enterAmount();
+    expect(screen.getByText(initialFee)).toBeDefined();
+    expect(view.quoteCall).toHaveBeenCalledTimes(1);
+    view.now += 1000;
+    page.rerender(<TradePanel coin={protectedCoin} />);
+    expect(feeText(view.now)).not.toBe(initialFee);
+    expect(screen.queryByText(initialFee)).toBeNull();
+    expect(screen.getByText(feeText(view.now))).toBeDefined();
+    expect(view.quoteCall).toHaveBeenCalledTimes(2);
+    expect(view.quoteCall.mock.calls[1]![3]).toBe(view.now);
   });
 });

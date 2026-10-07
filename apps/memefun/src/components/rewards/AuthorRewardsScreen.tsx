@@ -38,7 +38,7 @@ export function AuthorRewardCard({ coin }: { coin: Coin }) {
 export function AuthorRewardsScreen() {
   const wallet = useWallet();
   const { market } = useMarket();
-  const { coins } = useCoins();
+  const { coins, ready } = useCoins();
   const params = useSearchParams();
   const requested = params.get("coin");
   const { coin: requestedCoin } = useCoin(requested && isAddress(requested) ? requested : undefined);
@@ -123,7 +123,8 @@ export function AuthorRewardsScreen() {
             </li>)}</ul> : <p className="text-footnote text-label-2">No unpaid author rewards are available.</p> : null}
           </section> : null}
         </section>;
-      }) : <div className="mf-card p-5"><p className="mb-4 text-subhead text-label-2">{session ? "No coins linked to this X author are loaded yet. Open the coin's author earnings link to verify it." : "Open a tweet coin to verify its original author, or launch one from a public post."}</p><Button asChild variant="tinted"><Link href="/create/tweet">Launch by tweet</Link></Button></div>}
+      }) : !ready ? <p role="status" className="mf-card p-5 text-subhead text-label-2">Loading post author coins…</p>
+        : <div className="mf-card p-5"><p className="mb-4 text-subhead text-label-2">{session ? "No coins linked to this X author are loaded yet. Open the coin's author earnings link to verify it." : "Open a tweet coin to verify its original author, or launch one from a public post."}</p><Button asChild variant="tinted"><Link href="/create/tweet">Launch by tweet</Link></Button></div>}
     </div>
   </>;
 }

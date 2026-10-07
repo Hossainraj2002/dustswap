@@ -29,6 +29,8 @@ export interface Market {
   stop(): void;
 
   listCoins(includeHidden?: boolean): Coin[];
+  /** False until the first live coin list finishes loading; cached refreshes stay ready. */
+  isCoinsReady?(): boolean;
   getCoin(address: string): Coin | undefined;
   getTrades(address: string, limit?: number, poolId?: Hash): Trade[];
   getComments(address: string): Comment[];

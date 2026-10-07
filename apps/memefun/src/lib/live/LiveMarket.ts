@@ -500,6 +500,10 @@ export class LiveMarket implements Market {
 
   /* ---------------------------------------------------------------- readers */
 
+  isCoinsReady(): boolean {
+    return this.listLoaded;
+  }
+
   listCoins(includeHidden = false): Coin[] {
     this.read("coins", 5_000, () => this.loadCoins());
     const list = this.listOrder.map((address) => this.coins.get(address)).filter((coin): coin is Coin => Boolean(coin));

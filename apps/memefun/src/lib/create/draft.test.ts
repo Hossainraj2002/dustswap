@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { DEFAULT_SETTINGS } from "@/core/settings";
 import { ETH, USDC } from "@/lib/market/quotes";
 import type { QuoteAsset } from "@/core/types";
-import { EMPTY_DRAFT, migrateDraft, previewFirstBuy, reconcileDraftQuotes, reconcileDraftSettings, selectedQuoteIds, validatePairs } from "./draft";
+import { EMPTY_DRAFT, migrateDraft, previewFirstBuy, reconcileDraftQuotes, reconcileDraftSettings, selectedQuoteIds, validateFirstBuyStep, validatePairs } from "./draft";
 import { mergePairCatalog } from "@/lib/market/pairs";
 
 describe("saved launch drafts", () => {
@@ -64,5 +64,28 @@ describe("listed pair validation", () => {
   it("does not calculate a first-buy preview when a selected pair loses its verified price", () => {
     for (const usdPrice of [0, -1, NaN, Infinity]) expect(previewFirstBuy("1", { ...tokens[0]!, usdPrice }, 100, 5000)).toBeNull();
     expect(previewFirstBuy("1", tokens[0]!, 100, 5000)).not.toBeNull();
+  });
+});
+
+describe("optional first-buy validation", () => {
+  it("accepts no buy, zero and exact quote units", () => {
+    for (const firstBuy of ["", "0", "0.", ".000001", "1.234567", "1.23456700"]) {
+      expect(validateFirstBuyStep({ ...EMPTY_DRAFT, firstBuy }, USDC, 2)).toEqual({});
+    }
+    expect(validateFirstBuyStep({ ...EMPTY_DRAFT, firstBuy: "0.000000000000000001" }, ETH)).toEqual({});
+  });
+  it("rejects invalid saved text and amounts that would be silently truncated", () => {
+    for (const firstBuy of [".", "-1", "Infinity", "NaN", "1e3", "0x10", "1,2"]) {
+      expect(validateFirstBuyStep({ ...EMPTY_DRAFT, firstBuy }, USDC).firstBuy).toBe("Enter a valid amount.");
+    }
+    for (const firstBuy of ["0.0000001", "1.2345678"]) {
+      expect(validateFirstBuyStep({ ...EMPTY_DRAFT, firstBuy }, USDC).firstBuy).toBe("USDC supports up to 6 decimal places.");
+    }
+  });
+  it("uses the current balance while allowing disconnected preparation", () => {
+    const draft = { ...EMPTY_DRAFT, firstBuy: "2" };
+    expect(validateFirstBuyStep(draft, USDC)).toEqual({});
+    expect(validateFirstBuyStep(draft, USDC, 2)).toEqual({});
+    expect(validateFirstBuyStep(draft, USDC, 1).firstBuy).toBe("Not enough USDC.");
   });
 });

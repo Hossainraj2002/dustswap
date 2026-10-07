@@ -16,6 +16,10 @@ const render = (value = coin) => renderToStaticMarkup(<CoinHeader coin={value} o
 beforeEach(() => { clock.now = launchedAt + 30_000; });
 
 describe("current trading fee in the coin header", () => {
+  it("makes the hidden compact header inert", () => {
+    expect(render()).toMatch(/<div aria-hidden="true" inert=""/);
+  });
+
   it("shows the decaying protection fee instead of the nominal fee, then the normal fee", () => {
     expect(render()).toContain('aria-label="Current trading fee 27.5%"');
     clock.now = launchedAt + 60_000;

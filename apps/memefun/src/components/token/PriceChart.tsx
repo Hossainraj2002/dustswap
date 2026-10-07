@@ -85,6 +85,7 @@ export default function PriceChart({ candles, metric, markers, floorValue, heigh
     const volumeSeries = chart.addSeries(HistogramSeries, { priceScaleId: "volume", priceFormat: { type: "volume" }, lastValueVisible: false, priceLineVisible: false });
     chart.priceScale("volume").applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
     chartRef.current = chart;
+    fittedKey.current = "";
     candleRef.current = candleSeries;
     volumeRef.current = volumeSeries;
     markersRef.current = createSeriesMarkers(candleSeries, []);

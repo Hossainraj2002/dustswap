@@ -31,7 +31,7 @@ export function ChartCard({ coin }: { coin: Coin }) {
     const result: ChartMarker[] = [];
     const seen = new Set<string>();
     for (const trade of trades) {
-      const mine = wallet.address !== null && trade.trader === wallet.address;
+      const mine = wallet.address !== null && trade.trader.toLowerCase() === wallet.address.toLowerCase();
       if (!trade.isCreator && !mine) continue;
       const time = Math.floor(trade.ts / 1000 / interval) * interval;
       const kind = `${mine ? "you" : "dev"}-${trade.side}` as ChartMarker["kind"];

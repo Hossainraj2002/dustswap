@@ -46,6 +46,7 @@ export function CoinHeader({ coin, onShare }: { coin: Coin; onShare: () => void 
     <>
       <div
         aria-hidden={!compact}
+        inert={!compact}
         className={cn(
           "mf-material hairline-b fixed inset-x-0 top-0 z-30 flex items-center gap-2 px-2 transition-opacity duration-200 lg:hidden",
           compact ? "opacity-100" : "pointer-events-none opacity-0",
@@ -62,7 +63,7 @@ export function CoinHeader({ coin, onShare }: { coin: Coin; onShare: () => void 
       </div>
 
       <header className="flex flex-col gap-4 pb-2 pt-[max(12px,var(--mf-safe-top))] lg:pt-6">
-        <div className="flex items-center justify-between gap-2">
+        <div className="flex flex-wrap items-center justify-between gap-2 sm:flex-nowrap">
           <Link href="/" className="-ml-2 inline-flex h-11 items-center gap-0.5 rounded-sm pr-2 text-body text-tint lg:hidden">
             <ChevronLeft className="size-6" aria-hidden />
             Discover

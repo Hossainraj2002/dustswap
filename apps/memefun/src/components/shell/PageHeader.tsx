@@ -45,21 +45,22 @@ export function PageHeader({ title, subtitle, actions, hideWallet = false, leadi
     <>
       <div
         aria-hidden={!compact}
+        inert={!compact}
         className={cn(
           "mf-material hairline-b fixed inset-x-0 top-0 z-30 flex items-center gap-3 px-4 transition-opacity duration-200 lg:hidden",
           compact ? "opacity-100" : "pointer-events-none opacity-0",
         )}
         style={{ paddingTop: "var(--mf-safe-top)", height: "calc(52px + var(--mf-safe-top))" }}
       >
-        <div className="flex w-20 items-center">{leading}</div>
+        {leading ? <div className="flex shrink-0 items-center">{leading}</div> : null}
         <span className="min-w-0 flex-1 truncate text-center text-headline text-label">{title}</span>
-        <div className="flex w-20 justify-end">{hideWallet ? null : <WalletButton />}</div>
+        {hideWallet ? null : <div className="flex shrink-0 justify-end"><WalletButton /></div>}
       </div>
       <header className="flex flex-col gap-1 pb-4 pt-[max(16px,var(--mf-safe-top))] lg:pt-6">
         {leading ? <div className="-ml-2 mb-1 lg:hidden">{leading}</div> : null}
-        <div className="flex items-start justify-between gap-3">
+        <div className="flex flex-wrap items-start justify-between gap-3 sm:flex-nowrap">
           <h1 className="min-w-0 text-large-title text-label">{title}</h1>
-          <div className="pt-1">{trailing}</div>
+          <div className="ml-auto pt-1">{trailing}</div>
         </div>
         {subtitle ? <div className="text-subhead text-label-2">{subtitle}</div> : null}
         <div ref={sentinel} aria-hidden className="h-px" />

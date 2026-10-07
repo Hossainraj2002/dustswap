@@ -7,14 +7,18 @@ import { useBaseChainSwitch } from "./useBaseChainSwitch";
 const sdk = vi.hoisted(() => ({
   chainId: 1,
   isConnected: true,
+  address: "0x00000000000000000000000000000000000000aa",
   provider: null as null | { request: ReturnType<typeof vi.fn> },
   switchChain: vi.fn<(...args: unknown[]) => Promise<{ id: number }>>(),
 }));
-vi.mock("wagmi", () => ({
-  useAccount: () => ({ chainId: sdk.chainId, isConnected: sdk.isConnected, connector: { getProvider: async () => sdk.provider } }),
-  useWalletClient: () => ({ data: null }),
-  useSwitchChain: () => ({ isPending: false, switchChainAsync: sdk.switchChain }),
-}));
+vi.mock("wagmi", () => {
+  const connector = { uid: "selected", getProvider: async () => sdk.provider };
+  return {
+    useAccount: () => ({ chainId: sdk.chainId, address: sdk.address, isConnected: sdk.isConnected, connector }),
+    useWalletClient: () => ({ data: null }),
+    useSwitchChain: () => ({ isPending: false, switchChainAsync: sdk.switchChain }),
+  };
+});
 vi.mock("./rpc", () => ({ getRpcUrlForChain: () => "https://mainnet.base.org" }));
 vi.mock("./paymaster", () => ({ isUserRejectedRequest: (error: { code?: number }) => error?.code === 4001 }));
 
@@ -22,6 +26,7 @@ beforeEach(() => {
   vi.useFakeTimers();
   sdk.chainId = 1;
   sdk.isConnected = true;
+  sdk.address = "0x00000000000000000000000000000000000000aa";
   sdk.provider = { request: vi.fn().mockImplementation(async ({ method }: { method: string }) => method === "eth_chainId" ? "0x1" : null) };
   sdk.switchChain = vi.fn().mockResolvedValue({ id: TARGET_CHAIN_ID });
 });
@@ -98,5 +103,94 @@ describe("confirmed wallet network switching", () => {
     expect(unrelated.request).not.toHaveBeenCalled();
     expect(hook.result.current.isOnBase).toBe(false);
     Reflect.deleteProperty(window, "ethereum");
+  });
+
+  it("releases a switch when the selected provider's initial chain read stalls", async () => {
+    sdk.provider!.request.mockImplementation(() => new Promise(() => undefined));
+    const hook = renderHook(useBaseChainSwitch);
+    let failure: unknown;
+    await act(async () => {
+      void hook.result.current.switchToBase().catch(error => { failure = error; });
+      await vi.advanceTimersByTimeAsync(6100);
+    });
+    expect(failure).toBeInstanceOf(Error);
+    expect(hook.result.current.isSwitching).toBe(false);
+    expect(hook.result.current.isOnBase).toBe(false);
+    expect(sdk.switchChain).not.toHaveBeenCalled();
+  });
+
+  it("times out a stalled confirmation and ignores its late target-chain response", async () => {
+    let stalled = false;
+    const lateReads: Array<(chainId: string) => void> = [];
+    sdk.provider!.request.mockImplementation(({ method }: { method: string }) => {
+      if (method === "eth_chainId" && stalled) return new Promise<string>(resolve => lateReads.push(resolve));
+      return Promise.resolve(method === "eth_chainId" ? "0x1" : null);
+    });
+    sdk.switchChain.mockImplementation(async () => { stalled = true; return { id: TARGET_CHAIN_ID }; });
+    const hook = renderHook(useBaseChainSwitch);
+    await act(async () => { await Promise.resolve(); });
+    let failure: unknown;
+    await act(async () => {
+      void hook.result.current.switchToBase().catch(error => { failure = error; });
+      await vi.advanceTimersByTimeAsync(6200);
+    });
+    expect(failure).toBeInstanceOf(Error);
+    expect(hook.result.current.isSwitching).toBe(false);
+    expect(sdk.provider!.request.mock.calls.every(([request]) => (request as { method: string }).method === "eth_chainId")).toBe(true);
+    await act(async () => lateReads.forEach(resolve => resolve(`0x${TARGET_CHAIN_ID.toString(16)}`)));
+    expect(hook.result.current.isOnBase).toBe(false);
+  });
+
+  it("cancels an old wallet's stalled read when the selected address changes", async () => {
+    const lateReads: Array<(chainId: string) => void> = [];
+    sdk.provider!.request.mockImplementation(() => new Promise<string>(resolve => lateReads.push(resolve)));
+    const hook = renderHook(useBaseChainSwitch);
+    let failure: unknown;
+    await act(async () => {
+      void hook.result.current.switchToBase().catch(error => { failure = error; });
+      await Promise.resolve();
+    });
+    expect(hook.result.current.isSwitching).toBe(true);
+    sdk.address = "0x00000000000000000000000000000000000000bb";
+    sdk.provider = { request: vi.fn().mockResolvedValue("0x1") };
+    await act(async () => hook.rerender());
+    expect(failure).toBeInstanceOf(Error);
+    expect(hook.result.current.isSwitching).toBe(false);
+    await act(async () => lateReads.forEach(resolve => resolve(`0x${TARGET_CHAIN_ID.toString(16)}`)));
+    expect(hook.result.current.isOnBase).toBe(false);
+    expect(sdk.switchChain).not.toHaveBeenCalled();
+  });
+
+  it("detaches a pending SDK switch on unmount without processing its late completion", async () => {
+    let complete!: (chain: { id: number }) => void;
+    sdk.switchChain.mockImplementation(() => new Promise(resolve => { complete = resolve; }));
+    const hook = renderHook(useBaseChainSwitch);
+    let failure: unknown;
+    await act(async () => {
+      void hook.result.current.switchToBase().catch(error => { failure = error; });
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(sdk.switchChain).toHaveBeenCalledTimes(1);
+    hook.unmount();
+    await act(async () => { await Promise.resolve(); });
+    expect(failure).toBeInstanceOf(Error);
+    const priorReads = sdk.provider!.request.mock.calls.length;
+    await act(async () => complete({ id: TARGET_CHAIN_ID }));
+    expect(sdk.provider!.request.mock.calls).toHaveLength(priorReads);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("deduplicates simultaneous switches from separate controls", async () => {
+    sdk.switchChain.mockImplementation(() => new Promise(() => undefined));
+    const hook = renderHook(useBaseChainSwitch);
+    let duplicate: unknown;
+    await act(async () => {
+      void hook.result.current.switchToBase().catch(() => undefined);
+      duplicate = await hook.result.current.switchToBase().catch(error => error);
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(duplicate).toBeInstanceOf(Error);
+    expect(sdk.switchChain).toHaveBeenCalledTimes(1);
+    expect(hook.result.current.isSwitching).toBe(true);
   });
 });

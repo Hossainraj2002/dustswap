@@ -15,7 +15,7 @@ import { TxError, type TxStage } from "@/lib/market/Market";
 import { CHAIN_NAME } from "@/lib/chain";
 import { stageLabel } from "@/lib/trade/stages";
 import type { Coin } from "@/lib/market/types";
-import { clearDraft, EMPTY_DRAFT, loadDraft, reconcileDraftQuotes, reconcileDraftSettings, saveDraft, selectedQuoteIds, STEPS, validateCoinStep, validateFeesStep, validatePairs, type CreateDraft, type DraftErrors, type StepId } from "@/lib/create/draft";
+import { clearDraft, EMPTY_DRAFT, loadDraft, reconcileDraftQuotes, reconcileDraftSettings, saveDraft, selectedQuoteIds, STEPS, validateCoinStep, validateFeesStep, validateFirstBuyStep, validatePairs, type CreateDraft, type DraftErrors, type StepId } from "@/lib/create/draft";
 import { findPair, mergePairCatalog, pairId } from "@/lib/market/pairs";
 import { equalAllocations } from "@/lib/market/markets";
 import { usePreview } from "@/lib/preview/scenario";
@@ -95,19 +95,15 @@ export function CreateScreen({ entry = "manual" }: { entry?: CreateDraft["entry"
         return validatePairs(draft, quotes, settings, stocksRestricted);
       case "fees":
         return validateFeesStep(draft, settings);
-      case "buy": {
-        const amount = Number(draft.firstBuy) || 0;
-        if (amount < 0 || Number.isNaN(Number(draft.firstBuy || "0"))) return { firstBuy: "Enter a valid amount." };
-        if (wallet.status === "connected" && amount > quoteBalance) return { firstBuy: `Not enough ${buyQuote.symbol}.` };
-        return {};
-      }
+      case "buy":
+        return validateFirstBuyStep(draft, buyQuote, wallet.status === "connected" ? quoteBalance : undefined);
       default:
         return {};
     }
-  }, [draft, quotes, buyQuote.symbol, quoteBalance, settings, step, stocksRestricted, wallet.status]);
+  }, [draft, quotes, buyQuote, quoteBalance, settings, step, stocksRestricted, wallet.status]);
 
   const goTo = (index: number) => {
-    if (preparingTweet) return;
+    if (preparingTweet || stage !== "idle") return;
     setStepIndex(index);
     setFurthest((current) => Math.max(current, index));
     setShowErrors(false);
@@ -115,6 +111,7 @@ export function CreateScreen({ entry = "manual" }: { entry?: CreateDraft["entry"
   };
 
   const next = () => {
+    if (stage !== "idle") return;
     if (Object.keys(errors).length > 0) {
       setShowErrors(true);
       toast.error("Check the highlighted fields", { description: Object.values(errors)[0] });
@@ -135,10 +132,15 @@ export function CreateScreen({ entry = "manual" }: { entry?: CreateDraft["entry"
     }
     if (!market) return;
     // Re-check everything at launch time; earlier steps may have been edited.
-    const blocking = { ...validateCoinStep(draft), ...validateFeesStep(draft, settings), ...validatePairs(draft, quotes, settings, stocksRestricted) };
+    const coinErrors = validateCoinStep(draft);
+    const pairErrors = validatePairs(draft, quotes, settings, stocksRestricted);
+    const feeErrors = validateFeesStep(draft, settings);
+    const buyErrors = validateFirstBuyStep(draft, buyQuote, quoteBalance);
+    const blocking = { ...coinErrors, ...pairErrors, ...feeErrors, ...buyErrors };
     if (Object.keys(blocking).length > 0) {
       toast.error("Some details need fixing", { description: Object.values(blocking)[0] });
-      goTo(blocking.quoteId ? 1 : blocking.feeBps || blocking.mode || blocking.creatorKeepBps ? 2 : 0);
+      goTo(Object.keys(coinErrors).length ? 0 : Object.keys(pairErrors).length ? 1 : Object.keys(feeErrors).length ? 2 : 3);
+      setShowErrors(true);
       return;
     }
     setStage("confirm");
@@ -218,7 +220,7 @@ export function CreateScreen({ entry = "manual" }: { entry?: CreateDraft["entry"
           {launchLabel}
         </Button>
       ) : (
-        <Button size="lg" className="flex-[2]" onClick={next} disabled={preparingTweet}>
+        <Button size="lg" className="flex-[2]" onClick={next} disabled={preparingTweet || launching}>
           Continue
         </Button>
       )}
@@ -240,7 +242,7 @@ export function CreateScreen({ entry = "manual" }: { entry?: CreateDraft["entry"
       />
       <div className="mb-5">
         {entry === "manual" ? <Link href="/create/tweet" className="mb-4 inline-flex min-h-11 items-center text-subhead font-semibold text-tint">Launch by tweet</Link> : null}
-        <Stepper current={step} furthest={furthest} onSelect={(id) => goTo(STEPS.findIndex((entry) => entry.id === id))} />
+        <Stepper current={step} furthest={furthest} disabled={launching || preparingTweet} onSelect={(id) => goTo(STEPS.findIndex((entry) => entry.id === id))} />
       </div>
 
       {settings.launchesPaused ? (
@@ -258,7 +260,7 @@ export function CreateScreen({ entry = "manual" }: { entry?: CreateDraft["entry"
             {step === "coin" && (entry === "manual" || draft.tweet) ? <CoinStep draft={draft} update={update} errors={errors} showErrors={showErrors} showImagePicker={entry === "manual"} /> : null}
             {step === "pair" ? <PairStep draft={draft} update={update} openingFdvUsd={settings.openingFdvUsd} enabledKinds={settings.enabledQuoteKinds} quotes={quotes} /> : null}
             {step === "fees" ? <FeesStep draft={draft} update={update} settings={settings} errors={errors} showErrors={showErrors} /> : null}
-            {step === "buy" ? <FirstBuyStep draft={draft} update={update} quote={buyQuote} quotes={selectedQuotes} allocationSupply={equalAllocations(Math.max(1, selectedQuotes.length))[selectedQuotes.findIndex((entry) => pairId(entry) === pairId(buyQuote))]} openingFdvUsd={settings.openingFdvUsd} /> : null}
+            {step === "buy" ? <FirstBuyStep draft={draft} update={update} quote={buyQuote} quotes={selectedQuotes} allocationSupply={equalAllocations(Math.max(1, selectedQuotes.length))[selectedQuotes.findIndex((entry) => pairId(entry) === pairId(buyQuote))]} openingFdvUsd={settings.openingFdvUsd} error={showErrors ? errors.firstBuy : undefined} /> : null}
             {step === "review" ? <ReviewStep draft={draft} quote={buyQuote} quotes={selectedQuotes} settings={settings} /> : null}
           </section>
           {regular ? actions : null}

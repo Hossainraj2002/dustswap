@@ -7,12 +7,15 @@ import { useMarket } from "./MarketProvider";
 import type { CandleInterval } from "./types";
 import type { PairCatalogSort } from "./pairs";
 
-/* Each hook re-reads when the market version changes. `ready` is false until
- * the client-side market exists, which is when screens show skeletons. */
+/* Each hook re-reads when the market version changes. List screens keep their
+ * skeletons until the first live coin list arrives. */
 
 export function useCoins() {
   const { market, version } = useMarket();
-  return useMemo(() => ({ ready: Boolean(market), coins: market?.listCoins() ?? [] }), [market, version]); // eslint-disable-line react-hooks/exhaustive-deps
+  return useMemo(() => {
+    const coins = market?.listCoins() ?? [];
+    return { ready: Boolean(market) && (market?.isCoinsReady?.() ?? true), coins };
+  }, [market, version]); // eslint-disable-line react-hooks/exhaustive-deps
 }
 
 export function useCoin(address: string | undefined) {
