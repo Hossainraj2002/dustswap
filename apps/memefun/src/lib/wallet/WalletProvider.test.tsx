@@ -41,7 +41,7 @@ vi.mock("@privy-io/react-auth", () => ({
   },
 }));
 vi.mock("@privy-io/wagmi", () => ({ WagmiProvider: ({ children }: { children: ReactNode }) => children }));
-vi.mock("wagmi", () => ({ useAccount: () => ({ ...view.account }) }));
+vi.mock("wagmi", () => ({ WagmiProvider: ({ children }: { children: ReactNode }) => children, useAccount: () => ({ ...view.account }) }));
 vi.mock("./wagmi", () => ({ MEMEFUN_CHAINS: [{ id: 84532 }], wagmiConfig: {} }));
 vi.mock("./ethereumProviders", () => ({ ensureOkxEip6963Shim: vi.fn() }));
 vi.mock("sonner", () => ({ toast: { error: (message: string) => view.toastError(message) } }));

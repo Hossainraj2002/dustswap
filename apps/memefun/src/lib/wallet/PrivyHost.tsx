@@ -3,8 +3,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import { type Chain as PrivyChain } from "@privy-io/chains";
 import { PrivyProvider, type PrivyClientConfig } from "@privy-io/react-auth";
-import { WagmiProvider as PrivyWagmiProvider } from "@privy-io/wagmi";
-import { useAccount } from "wagmi";
+import { WagmiProvider, useAccount } from "wagmi";
 import { toast } from "sonner";
 import type { Address } from "@/core/types";
 import { ensureOkxEip6963Shim } from "./ethereumProviders";
@@ -60,11 +59,13 @@ export default function PrivyHost({ theme, onChange }: PrivyHostProps) {
       appId={privyAppId}
       config={config}
     >
-      <PrivyWagmiProvider config={wagmiConfig} reconnectOnMount={false}>
+      {/* Privy's wagmi wrapper reconnects on every wallet-list change, even
+          with reconnectOnMount=false. Our connection provider owns activation. */}
+      <WagmiProvider config={wagmiConfig} reconnectOnMount={false}>
         <WalletConnectionProvider enabled>
           <Bridge onChange={onChange} />
         </WalletConnectionProvider>
-      </PrivyWagmiProvider>
+      </WagmiProvider>
     </PrivyProvider>
   );
 }
@@ -90,7 +91,7 @@ function Bridge({ onChange }: { onChange: (wallet: MemefunWallet) => void }) {
   const value = useMemo<MemefunWallet>(
     () => ({
       mode: "privy",
-      status: status === "connected" ? "connected" : status === "connecting" || status === "reconnecting" ? "connecting" : "disconnected",
+      status: status === "connected" ? "connected" : connection.isConnecting || status === "connecting" || status === "reconnecting" ? "connecting" : "disconnected",
       address: (address as Address | undefined) ?? null,
       chainId: chainId ?? null,
       onBase: isOnBase,
@@ -99,7 +100,7 @@ function Bridge({ onChange }: { onChange: (wallet: MemefunWallet) => void }) {
       disconnect,
       switchToBase: switchChain,
     }),
-    [address, chainId, connect, disconnect, isOnBase, isSwitching, status, switchChain],
+    [address, chainId, connect, connection.isConnecting, disconnect, isOnBase, isSwitching, status, switchChain],
   );
 
   useEffect(() => onChange(value), [onChange, value]);

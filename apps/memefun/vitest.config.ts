@@ -10,6 +10,8 @@ export default defineConfig({
     },
   },
   test: {
+    // Exercise the real SDK reconnect effect while replacing Privy's network-facing hooks.
+    server: { deps: { inline: ["@privy-io/wagmi"] } },
     include: ["src/**/*.test.{ts,tsx}"],
     // *.local.test.ts need a local chain: pnpm test:local.
     exclude: ["src/**/*.local.test.ts", "node_modules/**"],

@@ -1,4 +1,3 @@
-import { createConfig as createPrivyConfig } from "@privy-io/wagmi";
 import { cookieStorage, createConfig as createWagmiConfig, createStorage, http } from "wagmi";
 import { base, baseSepolia } from "wagmi/chains";
 import type { Chain } from "wagmi/chains";
@@ -34,7 +33,9 @@ const parameters = {
   transports: transports() as Record<number, ReturnType<typeof http>>,
 } as const;
 
-export const wagmiConfig = createPrivyConfig(parameters);
+// Privy supplies the chosen EIP-1193 provider; it must not auto-activate every
+// remembered/injected wallet or reconnect on wallet-list identity changes.
+export const wagmiConfig = createWagmiConfig({ ...parameters, multiInjectedProviderDiscovery: false });
 export const fallbackWagmiConfig = createWagmiConfig(parameters);
 
 declare module "wagmi" {

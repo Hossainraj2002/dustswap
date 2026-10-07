@@ -18,8 +18,9 @@ import {
   usePrivy,
   useWallets,
 } from "@privy-io/react-auth";
-import { useSetActiveWallet } from "@privy-io/wagmi";
-import { useAccount, useDisconnect } from "wagmi";
+import { useAccount, useConfig, useDisconnect } from "wagmi";
+import { toast } from "sonner";
+import { activatePrivyWallet } from "./activateWallet";
 import {
   ensureOkxEip6963Shim,
   hasAnyInjectedEthereumProvider,
@@ -203,6 +204,7 @@ type WalletConnectionContextValue = {
   } | null;
   disconnectWallet: () => Promise<void>;
   isAvailable: boolean;
+  isConnecting: boolean;
   openWalletModal: (
     description?: string,
     walletList?: WalletListEntry[]
@@ -216,6 +218,7 @@ const FALLBACK_WALLET_CONNECTION: WalletConnectionContextValue = {
   activeWallet: null,
   disconnectWallet: noopAsync,
   isAvailable: false,
+  isConnecting: false,
   openWalletModal: noopAsync,
   supportsBaseAccountFeatures: false,
 };
@@ -224,17 +227,26 @@ const WalletConnectionContext = createContext<WalletConnectionContextValue>(
   FALLBACK_WALLET_CONNECTION
 );
 
-// Bug #2C kill-switch: set NEXT_PUBLIC_DISABLE_WALLET_RECONCILE=1 to fall back
-// to the previous (connect-only) activation behavior if reconciliation ever
-// misbehaves. Defaults to enabled because reconciliation is the actual fix.
-const WALLET_RECONCILE_ENABLED =
-  process.env.NEXT_PUBLIC_DISABLE_WALLET_RECONCILE !== "1";
-
-// Backoff schedule (ms) used to retry promoting the Privy wallet into wagmi.
-// The wagmi connector is set up asynchronously by @privy-io/wagmi, so the first
-// setActiveWallet call can be a no-op; we retry until wagmi reports connected.
+// Bounded retries for a selected provider that is still initializing.
 const WALLET_RECONCILE_RETRY_DELAYS_MS = [0, 150, 300, 600, 1200, 2400];
 const MANUAL_DISCONNECT_STORAGE_KEY = "memefun:wallet-manual-disconnect";
+const SELECTED_WALLET_STORAGE_KEY = "memefun:selected-wallet-v1";
+
+function rememberSelectedWallet(wallet: ConnectedWallet) {
+  try {
+    window.localStorage.setItem(SELECTED_WALLET_STORAGE_KEY, JSON.stringify({ address: wallet.address.toLowerCase(), id: wallet.meta.id }));
+  } catch { /* Storage is optional in private browsing. */ }
+}
+
+function previouslySelectedWallet(wallets: ConnectedWallet[], recentId: string | null | undefined) {
+  let selected: { address?: string; id?: string } | null = null;
+  try { selected = JSON.parse(window.localStorage.getItem(SELECTED_WALLET_STORAGE_KEY) ?? "null"); } catch { /* Ignore malformed/blocked storage. */ }
+  if (selected?.address && selected.id) {
+    return wallets.find(entry => entry.address.toLowerCase() === selected!.address && entry.meta.id === selected!.id) ?? null;
+  }
+  const matches = recentId ? wallets.filter(entry => (entry.walletClientType === "privy" ? `${entry.meta.id}.${entry.address}` : entry.meta.id) === recentId) : wallets;
+  return matches.length === 1 ? matches[0]! : null;
+}
 
 function hasManualDisconnectMarker() {
   if (typeof window === "undefined") return false;
@@ -266,18 +278,19 @@ function clearManualDisconnectMarker() {
 function PrivyWalletConnectionProvider({ children }: { children: ReactNode }) {
   const { ready, authenticated, logout } = usePrivy();
   const { wallet } = useActiveWallet();
-  const { wallets } = useWallets();
-  const { setActiveWallet } = useSetActiveWallet();
-  const { address: wagmiAddress, status: wagmiStatus } = useAccount();
+  const { wallets, ready: walletsReady } = useWallets();
+  const hasWallets = wallets.length > 0;
+  const config = useConfig();
+  const { address: wagmiAddress, status: wagmiStatus, connector: wagmiConnector } = useAccount();
   const { disconnectAsync } = useDisconnect();
-  // The SDK replaces this callback whenever its connector/connection map changes.
-  // Those changes must not restart our activation schedule.
-  const setActiveWalletRef = useRef(setActiveWallet);
-  setActiveWalletRef.current = setActiveWallet;
+  const setActiveWalletRef = useRef<(selected: ConnectedWallet) => Promise<void>>(async () => {});
   const activationAttemptsRef = useRef({ address: null as string | null, count: 0 });
   const [activationVersion, setActivationVersion] = useState(0);
   const openingRef = useRef<Promise<void> | null>(null);
   const connectionGenerationRef = useRef(0);
+  const restoreStartedRef = useRef(false);
+  const selectedWalletIdRef = useRef<string | null>(null);
+  const [activating, setActivating] = useState(false);
   // ── Sticky manual-disconnect latch ───────────────────────────────────────
   // When the user clicks "Disconnect" we must keep the Privy→wagmi
   // reconciliation effect OFF until they intentionally connect again. A plain
@@ -297,15 +310,18 @@ function PrivyWalletConnectionProvider({ children }: { children: ReactNode }) {
   >(null);
   const allowedReconcileAddressRef = useRef<string | null>(null);
   const pauseReconcile = useCallback(() => {
+    setActivating(false);
     reconcilePausedRef.current = true;
     setReconcilePaused(true);
   }, []);
   const resumeReconcile = useCallback(() => {
+    setActivating(true);
     reconcilePausedRef.current = false;
     setReconcilePaused(false);
   }, []);
   const setAllowedAddress = useCallback((address?: string | null) => {
     const normalized = address?.toLowerCase() ?? null;
+    if (!normalized) selectedWalletIdRef.current = null;
     allowedReconcileAddressRef.current = normalized;
     setAllowedReconcileAddress(normalized);
   }, []);
@@ -317,6 +333,48 @@ function PrivyWalletConnectionProvider({ children }: { children: ReactNode }) {
     manualDisconnectRef.current = false;
     clearManualDisconnectMarker();
   }, []);
+
+  setActiveWalletRef.current = async selected => {
+    const generation = connectionGenerationRef.current;
+    const isCurrent = () => generation === connectionGenerationRef.current && !manualDisconnectRef.current && allowedReconcileAddressRef.current === selected.address.toLowerCase() && selectedWalletIdRef.current === selected.meta.id;
+    await activatePrivyWallet(config, selected, isCurrent);
+    if (isCurrent()) rememberSelectedWallet(selected);
+  };
+
+  // Restore at most one previously selected wallet after Privy has finished
+  // loading its wallets. Changing SDK array/object identities is not a request
+  // to reconnect, and an ambiguous wallet list never silently chooses an account.
+  useEffect(() => {
+    if (!ready || !walletsReady || !hasWallets || restoreStartedRef.current) return;
+    restoreStartedRef.current = true;
+    if (manualDisconnectRef.current) return;
+    const generation = connectionGenerationRef.current;
+    let disposed = false;
+    let finished = false;
+    void (async () => {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const recentId = await Promise.race([
+        Promise.resolve(config.storage?.getItem("recentConnectorId")).catch(() => null),
+        new Promise<null>(resolve => { timer = setTimeout(() => resolve(null), 1_000); }),
+      ]);
+      if (timer) clearTimeout(timer);
+      if (disposed || generation !== connectionGenerationRef.current || manualDisconnectRef.current) return;
+      finished = true;
+      const selected = previouslySelectedWallet(walletsRef.current.filter(entry => entry.type === "ethereum"), recentId);
+      if (!selected) return;
+      selectedWalletIdRef.current = selected.meta.id;
+      activationAttemptsRef.current = { address: selected.address.toLowerCase(), count: 0 };
+      setActivationVersion(version => version + 1);
+      setAllowedAddress(selected.address);
+      resumeReconcile();
+    })();
+    return () => {
+      disposed = true;
+      // React Strict Mode replays mount effects before the async storage read
+      // completes. The replay can restore once; array churn cannot restart it.
+      if (!finished) restoreStartedRef.current = false;
+    };
+  }, [config, ready, walletsReady, hasWallets, resumeReconcile, setAllowedAddress]);
 
   const { connectWallet } = useConnectWallet({
     onSuccess: async ({ wallet: connectedWallet }) => {
@@ -330,9 +388,11 @@ function PrivyWalletConnectionProvider({ children }: { children: ReactNode }) {
         return;
       }
       if (connectedWallet.type !== "ethereum") return;
+      restoreStartedRef.current = true;
       const selectedAddress = connectedWallet.address.toLowerCase();
       // Duplicate SDK notifications for the same selection aren't new attempts.
-      if (!reconcilePausedRef.current && allowedReconcileAddressRef.current === selectedAddress) return;
+      if (!reconcilePausedRef.current && allowedReconcileAddressRef.current === selectedAddress && selectedWalletIdRef.current === connectedWallet.meta.id) return;
+      selectedWalletIdRef.current = connectedWallet.meta.id;
       activationAttemptsRef.current = { address: selectedAddress, count: 0 };
       setActivationVersion((version) => version + 1);
       setAllowedAddress(connectedWallet.address);
@@ -351,6 +411,7 @@ function PrivyWalletConnectionProvider({ children }: { children: ReactNode }) {
   const openWalletModal = useCallback(
     (description?: string, walletList?: WalletListEntry[]) => {
       if (openingRef.current) return openingRef.current;
+      restoreStartedRef.current = true;
       const generation = ++connectionGenerationRef.current;
       const opening = (async () => {
         // Opening the picker is not a completed wallet choice. Keep reconciliation
@@ -430,24 +491,16 @@ function PrivyWalletConnectionProvider({ children }: { children: ReactNode }) {
     [clearManualDisconnected, connectWallet, disconnectAsync, pauseReconcile, setAllowedAddress]
   );
 
-  // ── Bug #2C: deterministic Privy → wagmi reconciliation ──────────────────
-  // OKX (and every external wallet) connects through Privy, but the wagmi
-  // walletClient only exists once the matching connector is *active* in wagmi.
-  // @privy-io/wagmi's setActiveWallet only binds wagmi if it finds a connector
-  // whose getAccounts() already includes the address, and those connectors are
-  // set up asynchronously. On the connect race AND on reconnectOnMount the
-  // binding can be missed, leaving useWalletClient() null while Privy reports a
-  // connected wallet — the exact desync behind "Connect a wallet first" on the
-  // Sweep panel. We watch both sides and retry setActiveWallet until wagmi's
-  // account matches the Privy wallet, so wagmi stays the single source of truth.
-  const targetWallet = useMemo<ConnectedWallet | null>(() => {
+  // One bounded activation schedule owns the selected Privy EIP-1193 provider.
+  // The SDK's automatic wagmi synchronization is deliberately not mounted.
+  const targetWallet: ConnectedWallet | null = (() => {
     const connected = wallets ?? [];
     if (connected.length === 0) {
       return null;
     }
     if (allowedReconcileAddress) {
       const allowed = connected.find(
-        (entry) => entry.address.toLowerCase() === allowedReconcileAddress
+        (entry) => entry.address.toLowerCase() === allowedReconcileAddress && entry.meta.id === selectedWalletIdRef.current
       );
       if (allowed) {
         return allowed;
@@ -464,18 +517,19 @@ function PrivyWalletConnectionProvider({ children }: { children: ReactNode }) {
       }
     }
     return connected[0] ?? null;
-  }, [wallets, wallet, allowedReconcileAddress]);
+  })();
 
   const targetAddress = targetWallet?.address?.toLowerCase() ?? null;
   const wagmiBound =
     wagmiStatus === "connected" &&
     !!wagmiAddress &&
     !!targetAddress &&
-    wagmiAddress.toLowerCase() === targetAddress;
+    wagmiAddress.toLowerCase() === targetAddress &&
+    !!targetWallet &&
+    !!wagmiConnector?.id.startsWith(`memefun.${targetWallet.meta.id}.${targetAddress}.`);
   // Don't fight wagmi while it is mid-(re)connect; re-evaluate when it settles.
   const wagmiBusy = wagmiStatus === "connecting" || wagmiStatus === "reconnecting";
   const needsReconcile =
-    WALLET_RECONCILE_ENABLED &&
     !manualDisconnectRef.current &&
     !reconcilePaused &&
     !!targetAddress &&
@@ -517,8 +571,13 @@ function PrivyWalletConnectionProvider({ children }: { children: ReactNode }) {
         try {
           attempts.count++;
           await setActiveWalletRef.current(candidate);
-        } catch {
-          // Connector likely not set up yet; the next retry picks it up.
+        } catch (error) {
+          // Pending native state cancels this effect's retry loop, but the last
+          // failure must still end the UI's Connecting state for this selection.
+          if (attempts.count === WALLET_RECONCILE_RETRY_DELAYS_MS.length && activationAttemptsRef.current === attempts && !manualDisconnectRef.current && allowedReconcileAddressRef.current === targetAddress) {
+            pauseReconcile();
+            toast.error(error instanceof Error ? error.message : "Your wallet could not connect. Please try again.");
+          }
         }
       }
     })();
@@ -528,7 +587,11 @@ function PrivyWalletConnectionProvider({ children }: { children: ReactNode }) {
     };
     // `needsReconcile` flips to false as soon as wagmi reports the target as
     // connected, which cancels the in-flight retry loop via the cleanup above.
-  }, [needsReconcile, targetAddress, activationVersion]);
+  }, [needsReconcile, targetAddress, activationVersion, pauseReconcile]);
+
+  useEffect(() => { if (wagmiBound) setActivating(false); }, [wagmiBound]);
+
+  useEffect(() => () => { connectionGenerationRef.current++; }, []);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -592,13 +655,14 @@ function PrivyWalletConnectionProvider({ children }: { children: ReactNode }) {
 
   const value = useMemo<WalletConnectionContextValue>(
     () => ({
-      activeWallet: wallet ?? null,
+      activeWallet: targetWallet ?? wallet ?? null,
       disconnectWallet,
       isAvailable: true,
+      isConnecting: activating,
       openWalletModal,
-      supportsBaseAccountFeatures: supportsBaseAccountFeatures(wallet),
+      supportsBaseAccountFeatures: supportsBaseAccountFeatures(targetWallet ?? wallet),
     }),
-    [disconnectWallet, openWalletModal, wallet]
+    [activating, disconnectWallet, openWalletModal, targetWallet, wallet]
   );
 
   return (
