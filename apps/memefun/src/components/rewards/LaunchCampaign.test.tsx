@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { toast } from "sonner";
 import type { LaunchCampaignSummary, LaunchCampaignWalletStatus } from "@/core/campaign";
-import { TxError } from "@/lib/market/Market";
+import { TxError, type TxStage } from "@/lib/market/Market";
 import { LaunchCampaignBanner, LaunchCampaignClaimCard } from "./LaunchCampaign";
 
 const A = "0x1111111111111111111111111111111111111111" as const;
@@ -138,7 +138,7 @@ describe("launch reward wallet actions", () => {
     fireEvent.click(claim);
     fireEvent.click(claim);
     expect(state.claim).toHaveBeenCalledTimes(1);
-    expect(state.claim).toHaveBeenCalledWith(A);
+    expect(state.claim).toHaveBeenCalledWith(A, expect.any(Function));
     expect(state.refresh).not.toHaveBeenCalled();
     expect(toast.success).not.toHaveBeenCalled();
     expect((screen.getByRole("button", { name: "Refresh eligibility" }) as HTMLButtonElement).disabled).toBe(true);
@@ -146,6 +146,46 @@ describe("launch reward wallet actions", () => {
     result.resolve(`0x${"12".repeat(32)}`);
     await waitFor(() => expect(state.refresh).toHaveBeenCalledTimes(1));
     expect(toast.success).toHaveBeenCalledWith("Launch reward claimed", expect.any(Object));
+  });
+
+  it("reports preparation, wallet confirmation and receipt waiting separately without allowing another claim", async () => {
+    let onStage: ((stage: TxStage) => void) | undefined;
+    const result = deferred<`0x${string}`>();
+    state.claim.mockImplementation((_wallet: string, report?: (stage: TxStage) => void) => { onStage = report; return result.promise; });
+    render(<LaunchCampaignClaimCard />);
+    fireEvent.click(screen.getByRole("button", { name: "Claim launch reward" }));
+    expect((screen.getByRole("button", { name: "Preparing claim" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(onStage).toBeTypeOf("function");
+    act(() => onStage!("confirm"));
+    expect((screen.getByRole("button", { name: "Confirm in your wallet" }) as HTMLButtonElement).disabled).toBe(true);
+    act(() => onStage!("pending"));
+    const pending = screen.getByRole("button", { name: "Confirming claim" }) as HTMLButtonElement;
+    expect(pending.disabled).toBe(true);
+    fireEvent.click(pending);
+    expect(state.claim).toHaveBeenCalledTimes(1);
+    expect(toast.success).not.toHaveBeenCalled();
+    await act(async () => result.resolve(`0x${"12".repeat(32)}`));
+    expect((screen.getByRole("button", { name: "Claim launch reward" }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("keeps an in-flight claim locked when the user selects another eligible wallet", async () => {
+    const result = deferred<`0x${string}`>();
+    state.claim.mockReturnValue(result.promise);
+    const view = render(<LaunchCampaignClaimCard />);
+    fireEvent.click(screen.getByRole("button", { name: "Claim launch reward" }));
+    state.address = B;
+    state.eligibility = { ...status("eligible"), wallet: B };
+    view.rerender(<LaunchCampaignClaimCard />);
+    const pending = screen.getByRole("button", { name: "Preparing claim" }) as HTMLButtonElement;
+    expect(pending.disabled).toBe(true);
+    fireEvent.click(pending);
+    expect(state.claim).toHaveBeenCalledTimes(1);
+    expect(state.claim).toHaveBeenCalledWith(A, expect.any(Function));
+    await act(async () => result.reject(new TxError("Your selected wallet changed. Check the connected wallet and try again.", "reverted")));
+    expect(toast.success).not.toHaveBeenCalled();
+    expect(toast.error).toHaveBeenCalledWith("Reward claim did not go through", { description: expect.stringContaining("selected wallet changed") });
+    expect(state.refresh).toHaveBeenCalledTimes(1);
+    expect((screen.getByRole("button", { name: "Claim launch reward" }) as HTMLButtonElement).disabled).toBe(false);
   });
 
   it("refreshes a rejected claim without claiming success or retrying submission", async () => {

@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { PublicClient } from "viem";
 import type { LaunchCampaignClaimTicket, LaunchCampaignSummary } from "@/core/campaign";
 import { TxError } from "@/lib/market/Market";
-import { createApi } from "./api";
+import { ApiError, createApi } from "./api";
 import { LiveMarket } from "./LiveMarket";
 import { clearSession, loadSession, saveSession, signIn } from "./session";
 import { sendLaunchCampaignClaim, type TxContext } from "./tx";
@@ -62,16 +62,18 @@ describe("LiveMarket campaign claim boundaries", () => {
 
   it("fetches a fresh direct summary and authenticated empty-body ticket before the attributed claim helper", async () => {
     let active = SUMMARY;
-    const { m, fetch, ctx, events } = market(path => {
+    const { m, fetch, ctx, events, txContext } = market(path => {
       if (path === "/v1/launch-campaign") return { body: active };
       if (path === "/v1/launch-campaign/claim-ticket") return { body: TICKET };
       throw new Error(`Unexpected endpoint ${path}`);
     });
     expect(await m.readLaunchCampaign()).toEqual(SUMMARY);
     active = { ...SUMMARY, contract: CURRENT, qualifiedCount: 2 };
+    const onStage = vi.fn();
     vi.mocked(sendLaunchCampaignClaim).mockImplementationOnce(async () => { events.push("chain-submit"); return HASH; });
-    await expect(m.claimLaunchCampaign(USER)).resolves.toBe(HASH);
+    await expect(m.claimLaunchCampaign(USER, onStage)).resolves.toBe(HASH);
     expect(sendLaunchCampaignClaim).toHaveBeenCalledWith(ctx, active, TICKET);
+    expect(txContext).toHaveBeenCalledWith(USER, onStage);
     const post = fetch.mock.calls.find(([input]) => new URL(String(input)).pathname.endsWith("/claim-ticket"))!;
     expect(post[1]?.method).toBe("POST");
     expect(post[1]?.body).toBe("{}");
@@ -116,6 +118,94 @@ describe("LiveMarket campaign claim boundaries", () => {
     expect(signIn).not.toHaveBeenCalled();
     expect(txContext).not.toHaveBeenCalled();
     expect(sendLaunchCampaignClaim).not.toHaveBeenCalled();
+  });
+
+  it.each(["siwe_signature", "siwe_domain", "siwe_chain", "siwe_nonce"])("does not repeat fresh wallet sign-in after a %s verification rejection", async code => {
+    vi.mocked(loadSession).mockReturnValue(null);
+    const rejected = new ApiError(401, code, "Sign-in verification was rejected");
+    vi.mocked(signIn).mockRejectedValue(rejected);
+    const { m, fetch } = market(() => ({ body: SUMMARY }));
+    await expect(m.claimLaunchCampaign(USER)).rejects.toBe(rejected);
+    expect(signIn).toHaveBeenCalledTimes(1);
+    expect(clearSession).not.toHaveBeenCalled();
+    expect(fetch).toHaveBeenCalledTimes(1); // No claim ticket was ever requested.
+    expect(sendLaunchCampaignClaim).not.toHaveBeenCalled();
+  });
+
+  it("does not repeat a wallet's cancelled sign-in or request a claim ticket", async () => {
+    vi.mocked(loadSession).mockReturnValue(null);
+    const rejected = new TxError("You rejected the request in your wallet.", "rejected");
+    vi.mocked(signIn).mockRejectedValue(rejected);
+    const { m, fetch } = market(() => ({ body: SUMMARY }));
+    await expect(m.claimLaunchCampaign(USER)).rejects.toBe(rejected);
+    expect(signIn).toHaveBeenCalledTimes(1);
+    expect(clearSession).not.toHaveBeenCalled();
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(sendLaunchCampaignClaim).not.toHaveBeenCalled();
+  });
+
+  it("does not retry a renewed sign-in that fails after the first ticket rejects its session", async () => {
+    vi.mocked(loadSession).mockReturnValueOnce(session("test-only-expired-session")).mockReturnValue(null);
+    const rejected = new ApiError(401, "siwe_signature", "The signature does not match this wallet.");
+    vi.mocked(signIn).mockRejectedValue(rejected);
+    const { m, fetch } = market(path => path === "/v1/launch-campaign" ? { body: SUMMARY }
+      : { status: 401, body: { error: { code: "sign_in_required", message: "Sign in again" } } });
+    await expect(m.claimLaunchCampaign(USER)).rejects.toBe(rejected);
+    expect(signIn).toHaveBeenCalledTimes(1);
+    expect(clearSession).toHaveBeenCalledTimes(1);
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(sendLaunchCampaignClaim).not.toHaveBeenCalled();
+  });
+
+  it("does not retry an unexpected ticket 401 by requesting another wallet signature", async () => {
+    const { m, fetch, txContext } = market(path => path === "/v1/launch-campaign" ? { body: SUMMARY }
+      : { status: 401, body: { error: { code: "siwe_domain", message: "This sign-in message is not for memefun." } } });
+    await expect(m.claimLaunchCampaign(USER)).rejects.toMatchObject({ status: 401, code: "siwe_domain" });
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(signIn).not.toHaveBeenCalled();
+    expect(clearSession).not.toHaveBeenCalled();
+    expect(txContext).not.toHaveBeenCalled();
+    expect(sendLaunchCampaignClaim).not.toHaveBeenCalled();
+  });
+
+  it("never asks for authentication or a transaction while campaign configuration is unavailable", async () => {
+    const { m, fetch, txContext } = market(() => ({ status: 503,
+      body: { error: { code: "campaign_unavailable", message: "The launch reward campaign is not active." } } }));
+    await expect(m.claimLaunchCampaign(USER)).rejects.toMatchObject({ status: 503, code: "campaign_unavailable" });
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(loadSession).not.toHaveBeenCalled();
+    expect(signIn).not.toHaveBeenCalled();
+    expect(txContext).not.toHaveBeenCalled();
+    expect(sendLaunchCampaignClaim).not.toHaveBeenCalled();
+  });
+
+  it("does not repeat a ticket request or reach the chain after its bounded HTTP request aborts", async () => {
+    const controllers: AbortController[] = [];
+    const timeout = vi.spyOn(AbortSignal, "timeout").mockImplementation(() => {
+      const controller = new AbortController();
+      controllers.push(controller);
+      return controller.signal;
+    });
+    try {
+      const fetch = vi.fn<typeof globalThis.fetch>(async (input, init) => {
+        if (String(input).endsWith("/v1/launch-campaign")) return Response.json(SUMMARY);
+        return new Promise<Response>((_resolve, reject) => {
+          init!.signal!.addEventListener("abort", () => reject(init!.signal!.reason), { once: true });
+        });
+      });
+      const txContext = vi.fn();
+      const m = new LiveMarket({ api: createApi("https://campaign.test", fetch), client: {} as PublicClient, txContext });
+      const claim = m.claimLaunchCampaign(USER);
+      const failure = expect(claim).rejects.toMatchObject({ name: "TimeoutError" });
+      await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
+      expect(timeout.mock.calls).toEqual([[15_000], [15_000]]);
+      controllers[1]!.abort(new DOMException("The request timed out.", "TimeoutError"));
+      await failure;
+      expect(fetch).toHaveBeenCalledTimes(2);
+      expect(signIn).not.toHaveBeenCalled();
+      expect(txContext).not.toHaveBeenCalled();
+      expect(sendLaunchCampaignClaim).not.toHaveBeenCalled();
+    } finally { timeout.mockRestore(); }
   });
 
   it("propagates an ambiguous chain result with its hash and never reissues the ticket or transaction", async () => {

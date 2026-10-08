@@ -96,6 +96,7 @@ export function TradePanel({ coin, initialSide = "buy", onDone, onPendingChange,
     // The fee decays with time even when the pool has not changed.
     [market, version, coin.address, coin.priceQuote, coin.selectedPoolId, side, amount, routed, tick], // eslint-disable-line react-hooks/exhaustive-deps
   );
+  const quoteLoading = Boolean(quote && !quote.ok && quote.reason === "Loading the pool.");
 
   const restricted = stocksRestricted && coin.quote.kind === "stock";
   const cta = tradeCta({
@@ -109,7 +110,7 @@ export function TradePanel({ coin, initialSide = "buy", onDone, onPendingChange,
     restricted,
     pending,
     quoteOk: quote ? quote.ok : true,
-    quoteLoading: Boolean(quote && !quote.ok && quote.reason === "Loading the pool."),
+    quoteLoading,
     chainName: CHAIN_NAME,
   });
 
@@ -298,7 +299,13 @@ export function TradePanel({ coin, initialSide = "buy", onDone, onPendingChange,
         </div>
       </div>
 
-      {quote && amount > 0 ? (
+      {quote && !quote.ok && amount > 0 ? (
+        <p role={quoteLoading ? "status" : "alert"} className={cn("px-1 text-footnote", quoteLoading ? "text-label-2" : "text-down")}>
+          {quoteLoading ? "Loading the trade quote…" : quote.reason || "Unable to quote this amount. Try again."}
+        </p>
+      ) : null}
+
+      {quote?.ok && amount > 0 ? (
         <dl className="flex flex-col gap-2 px-1 text-subhead">
           <div className="flex items-baseline justify-between gap-3">
             <dt className="text-label-2">You receive</dt>

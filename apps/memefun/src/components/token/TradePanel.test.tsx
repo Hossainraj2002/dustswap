@@ -44,6 +44,31 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("trade slippage execution", () => {
+  it("shows a loading message instead of zero receive, fee and price impact before the pool arrives", () => {
+    view.quote = { ...quoted, ok: false, reason: "Loading the pool.", amountOut: 0, amountOutRaw: undefined,
+      feeQuote: 0, priceImpact: 0 };
+    const page = render(<TradePanel coin={coin} />); enterAmount();
+    expect(screen.getByRole("status").textContent).toBe("Loading the trade quote…");
+    expect(screen.queryByText("You receive")).toBeNull();
+    expect(screen.queryByText("Trading fee")).toBeNull();
+    expect(screen.queryByText("Price impact")).toBeNull();
+    expect(screen.getByRole("button", { name: "Getting the price" }).matches(":disabled")).toBe(true);
+    view.quote = { ...quoted };
+    page.rerender(<TradePanel coin={coin} />);
+    expect(screen.queryByText("Loading the trade quote…")).toBeNull();
+    expect(screen.getByText("100 TEST")).toBeDefined();
+  });
+
+  it("shows a failed quote's reason without presenting its invalid zero figures", () => {
+    view.quote = { ...quoted, ok: false, reason: "Pool data is unavailable. Try again.", amountOut: 0,
+      amountOutRaw: undefined, feeQuote: 0, priceImpact: 0 };
+    render(<TradePanel coin={coin} />); enterAmount();
+    expect(screen.getByRole("alert").textContent).toBe("Pool data is unavailable. Try again.");
+    expect(screen.queryByText("You receive")).toBeNull();
+    expect(screen.queryByText("Trading fee")).toBeNull();
+    expect(view.trade).not.toHaveBeenCalled();
+  });
+
   it("defaults to Auto, freezes its displayed raw floor and percentage while pending", async () => {
     let complete!: (value: typeof fill) => void;
     view.trade.mockImplementation(() => new Promise(resolve => { complete = resolve; }));

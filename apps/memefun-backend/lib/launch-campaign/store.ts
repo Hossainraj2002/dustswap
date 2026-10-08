@@ -14,12 +14,16 @@ export function checkpointCovers(checkpoint: string | undefined, chainId: number
 export function createCampaignStore(index: Queryable, app: Queryable, excludedTradeSenders: Address[]) {
   return {
     async caughtUp(chainId: number, finalizedBlock: bigint) {
-      const [row] = await rows<{ latest_checkpoint: string; safe_checkpoint: string }>(index,
-        `SELECT latest_checkpoint, safe_checkpoint FROM _ponder_checkpoint WHERE chain_id = $1`, [chainId]);
-      // Ponder can retain an old latest checkpoint during crash rollback. Its safe checkpoint
-      // marks history whose undo journal has been pruned; require both before signing slots.
+      const checkpoints = await rows<{ chain_id: number | string; latest_checkpoint: string; finalized_checkpoint: string }>(index,
+        `SELECT chain_id, latest_checkpoint, finalized_checkpoint FROM _ponder_checkpoint`);
+      // The app indexes exactly one chain. In Ponder's multichain ordering, finalized_checkpoint
+      // advances atomically with pruning that chain's undo prefix. safe_checkpoint only records
+      // the last pruned user event, so it may lag across fully processed quiet blocks.
+      // Refuse a multichain table: another chain can retain earlier undo operations in the prefix.
+      if (checkpoints.length !== 1 || Number(checkpoints[0]?.chain_id) !== chainId) return false;
+      const row = checkpoints[0]!;
       return checkpointCovers(row?.latest_checkpoint, chainId, finalizedBlock)
-        && checkpointCovers(row?.safe_checkpoint, chainId, finalizedBlock);
+        && checkpointCovers(row?.finalized_checkpoint, chainId, finalizedBlock);
     },
     /** Rank launches, never HTTP claim requests. One immutable launcher gets its first coin only.
      * No moderation or market joins: visibility and number of quote pools cannot change slots. */

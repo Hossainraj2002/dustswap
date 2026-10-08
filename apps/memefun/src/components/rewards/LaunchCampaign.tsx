@@ -7,7 +7,7 @@ import { toast } from "sonner";
 import type { LaunchCampaignSummary, LaunchCampaignWalletStatus } from "@/core/campaign";
 import { useLaunchCampaign } from "@/lib/campaign/useLaunchCampaign";
 import { useMarket } from "@/lib/market/MarketProvider";
-import { TxError } from "@/lib/market/Market";
+import { TxError, type TxStage } from "@/lib/market/Market";
 import { useWallet } from "@/lib/wallet/WalletProvider";
 import { Button } from "@/components/ui/Button";
 
@@ -50,21 +50,23 @@ export function LaunchCampaignClaimCard() {
   const wallet = useWallet();
   const { market } = useMarket();
   const [busy, setBusy] = useState(false);
+  const [stage, setStage] = useState<TxStage | null>(null);
   const lock = useRef(false);
   if (!summary?.enabled) return null;
   const claim = async () => {
     if (lock.current || !wallet.address || !market?.claimLaunchCampaign || eligibility?.state !== "eligible") return;
     lock.current = true;
     setBusy(true);
+    setStage(null);
     try {
-      await market.claimLaunchCampaign(wallet.address);
+      await market.claimLaunchCampaign(wallet.address, setStage);
       toast.success("Launch reward claimed", { description: "The tokens were sent to your qualifying wallet." });
       refresh();
     } catch (cause) {
       if (cause instanceof TxError && cause.kind === "rejected") toast("Claim cancelled");
       else toast.error("Reward claim did not go through", { description: cause instanceof Error ? cause.message : "Refresh your eligibility and try again." });
       refresh();
-    } finally { lock.current = false; setBusy(false); }
+    } finally { lock.current = false; setBusy(false); setStage(null); }
   };
   return <section aria-label="Platform token launch reward" className="mf-card mb-5 p-5 sm:p-6">
     <h2 className="break-words text-title3 font-semibold text-label">{summary.token.name} launch reward</h2>
@@ -77,7 +79,7 @@ export function LaunchCampaignClaimCard() {
       : <p role="status" className="mt-4 text-subhead text-label">{error ? "Eligibility could not be loaded. Try refreshing." : campaignWalletMessage(eligibility)}</p>}
     <div className="mt-4 flex flex-wrap gap-3">
       {!wallet.address ? <Button loading={busy} onClick={async () => { if (lock.current) return; lock.current = true; setBusy(true); try { await wallet.connect(); } catch { toast.error("Wallet connection did not complete"); } finally { lock.current = false; setBusy(false); } }}>Connect wallet</Button>
-        : <Button disabled={error || eligibility?.state !== "eligible" || busy || !market?.claimLaunchCampaign} loading={busy} loadingLabel="Confirm in your wallet" onClick={() => void claim()}>Claim launch reward</Button>}
+        : <Button disabled={error || eligibility?.state !== "eligible" || busy || !market?.claimLaunchCampaign} loading={busy} loadingLabel={stage === "pending" ? "Confirming claim" : stage === "confirm" ? "Confirm in your wallet" : "Preparing claim"} onClick={() => void claim()}>Claim launch reward</Button>}
       <Button variant="gray" disabled={busy} onClick={refresh}>Refresh eligibility</Button>
       {eligibility?.state === "launch_required" ? <Button asChild variant="tinted"><Link href="/create">Launch a token</Link></Button> : null}
       {eligibility?.state === "trade_required" ? <Button asChild variant="tinted"><Link href="/">Find a token to trade</Link></Button> : null}

@@ -32,7 +32,8 @@ beforeAll(async () => {
     CREATE TABLE public.trade (id text PRIMARY KEY, coin text NOT NULL, trader text NOT NULL, sender text NOT NULL, kind text NOT NULL,
       quote_amount numeric NOT NULL, coin_amount numeric NOT NULL, block_number numeric NOT NULL, log_index integer NOT NULL);
     CREATE TABLE public.market (pool_id text PRIMARY KEY, coin text NOT NULL);
-    CREATE TABLE public._ponder_checkpoint (chain_id integer PRIMARY KEY, latest_checkpoint varchar(75) NOT NULL, safe_checkpoint varchar(75) NOT NULL)`);
+    CREATE TABLE public._ponder_checkpoint (chain_id integer PRIMARY KEY, latest_checkpoint varchar(75) NOT NULL,
+      safe_checkpoint varchar(75) NOT NULL, finalized_checkpoint varchar(75) NOT NULL)`);
 });
 beforeEach(async () => {
   assertOwned();
@@ -116,13 +117,17 @@ describe("canonical campaign SQL and replica quotas in real Postgres", () => {
   it("uses canonical checkpoint readiness even when the finalized block contains no application events", async () => {
     const cp = (block: number, tail: string) => `1780000000${String(8453).padStart(16,"0")}${String(block).padStart(16,"0")}${tail}`;
     const store = createCampaignStore(first, first, [MODULE]);
-    await first.query("INSERT INTO public._ponder_checkpoint VALUES(8453,$1,$1)", [cp(110, "0".repeat(33))]);
+    await first.query("INSERT INTO public._ponder_checkpoint VALUES(8453,$1,$1,$1)", [cp(110, "0".repeat(33))]);
     expect(await store.caughtUp(8453, 110n)).toBe(false);
-    await first.query("UPDATE public._ponder_checkpoint SET latest_checkpoint=$1,safe_checkpoint=$1", [cp(111, "0".repeat(33))]);
+    await first.query("UPDATE public._ponder_checkpoint SET latest_checkpoint=$1,safe_checkpoint=$1,finalized_checkpoint=$1", [cp(111, "0".repeat(33))]);
     expect(await store.caughtUp(8453, 110n)).toBe(true);
     expect(await store.launches(100n, 110n)).toEqual([]);
-    // A restart can retain an optimistic latest checkpoint above durable indexed rows.
+    // Actual multichain Ponder updates safe_checkpoint from pruned user events only. A quiet
+    // finalized interval has durable complete history despite an older event watermark.
     await first.query("UPDATE public._ponder_checkpoint SET safe_checkpoint=$1", [cp(109, "9".repeat(33))]);
+    expect(await store.caughtUp(8453, 110n)).toBe(true);
+    // A restart can retain an optimistic latest checkpoint above durable indexed rows.
+    await first.query("UPDATE public._ponder_checkpoint SET finalized_checkpoint=$1", [cp(109, "9".repeat(33))]);
     expect(await store.caughtUp(8453, 110n)).toBe(false);
   });
   it("admits only the limit across simultaneous replicas and budgets expire into a new window", async () => {

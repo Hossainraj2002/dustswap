@@ -7,9 +7,10 @@ import { HttpError, errorBody } from "../../api/http";
 import { createSessions } from "../../api/write/session";
 import deploymentRecord from "../../deployments/8453.json";
 import { parseDeployment } from "../../lib/deployment";
+import type { Queryable } from "../../lib/db";
 import { campaignLabel, launchCampaignConfig, type LaunchCampaignConfig } from "../../lib/launch-campaign/config";
 import { createLaunchCampaign, type LaunchCampaign } from "../../lib/launch-campaign/service";
-import { checkpointCovers, type CampaignLaunch } from "../../lib/launch-campaign/store";
+import { checkpointCovers, createCampaignStore, type CampaignLaunch } from "../../lib/launch-campaign/store";
 import { LAUNCH_CAMPAIGN_DOMAIN_NAME, LAUNCH_CAMPAIGN_TYPES } from "../../shared/core/campaign";
 
 // Public, deterministic unit-test signing key. Never loaded from operator environment files.
@@ -90,6 +91,27 @@ describe("campaign configuration and complete finalized checkpoints", () => {
     expect(checkpointCovers(checkpoint(8453, 300n, "0".repeat(33)), 8453, 300n)).toBe(false);
     expect(checkpointCovers(checkpoint(8453, 300n), 8453, 300n)).toBe(true);
     expect(checkpointCovers(checkpoint(8453, 301n, "0".repeat(33)), 8453, 300n)).toBe(true);
+  });
+  it("accepts a fully finalized quiet interval even when Ponder's last pruned event is older", async () => {
+    // Installed Ponder multichain finalize advances finalized_checkpoint at every finalized
+    // boundary; safe_checkpoint is only MAX(checkpoint) from deleted undo rows and may stay old.
+    const index = { query: vi.fn(async () => ({ rows: [{ chain_id: 8453, latest_checkpoint: checkpoint(8453, 400n),
+      finalized_checkpoint: checkpoint(8453, 370n), safe_checkpoint: checkpoint(8453, 150n, "0".repeat(33)) }] })) } as unknown as Queryable;
+    expect(await createCampaignStore(index, index, []).caughtUp(8453, 300n)).toBe(true);
+  });
+  it.each([
+    [checkpoint(8453, 290n), checkpoint(8453, 400n)],
+    [checkpoint(8453, 400n), checkpoint(8453, 290n)],
+    [checkpoint(8453, 400n), checkpoint(8453, 300n, "0".repeat(33))],
+  ])("fails closed while either processed or durable finalized history is behind", async (latest, finalized) => {
+    const index = { query: vi.fn(async () => ({ rows: [{ chain_id: 8453, latest_checkpoint: latest,
+      finalized_checkpoint: finalized, safe_checkpoint: checkpoint(8453, 200n) }] })) } as unknown as Queryable;
+    expect(await createCampaignStore(index, index, []).caughtUp(8453, 300n)).toBe(false);
+  });
+  it("refuses a multichain checkpoint table rather than assuming one chain's undo-prefix durability", async () => {
+    const index = { query: vi.fn(async () => ({ rows: [8453, 84532].map(chain_id => ({ chain_id,
+      latest_checkpoint: checkpoint(chain_id, 400n), finalized_checkpoint: checkpoint(chain_id, 370n), safe_checkpoint: checkpoint(chain_id, 350n) })) })) } as unknown as Queryable;
+    expect(await createCampaignStore(index, index, []).caughtUp(8453, 300n)).toBe(false);
   });
 });
 

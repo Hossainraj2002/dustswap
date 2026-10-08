@@ -1228,13 +1228,14 @@ export class LiveMarket implements Market {
   async claimLaunchCampaign(user: Address, onStage?: (stage: TxStage) => void): Promise<Hash> {
     const summary = await this.readLaunchCampaign();
     if (!summary.enabled) throw new TxError("The launch reward campaign is not active.", "reverted");
-    const getTicket = async () => this.api.post<LaunchCampaignClaimTicket>("/v1/launch-campaign/claim-ticket", {}, { token: await this.sessionToken(user) });
+    const token = await this.sessionToken(user);
+    const getTicket = (session: string) => this.api.post<LaunchCampaignClaimTicket>("/v1/launch-campaign/claim-ticket", {}, { token: session });
     let ticket: LaunchCampaignClaimTicket;
-    try { ticket = await getTicket(); }
+    try { ticket = await getTicket(token); }
     catch (error) {
-      if (!(error instanceof ApiError) || error.status !== 401) throw error;
+      if (!(error instanceof ApiError) || error.status !== 401 || error.code !== "sign_in_required") throw error;
       clearSession(user);
-      ticket = await getTicket(); // Only authentication is retried, before any chain submission.
+      ticket = await getTicket(await this.sessionToken(user)); // Retry only a rejected session, before any chain submission.
     }
     return (await txModule()).sendLaunchCampaignClaim(await this.txContext(user, onStage), summary, ticket);
   }
