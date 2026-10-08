@@ -12,6 +12,7 @@ import { equalAllocations, MAX_MARKETS } from "@/lib/market/markets";
 import { usePreview } from "@/lib/preview/scenario";
 import { SegmentedControl } from "@/components/ui/SegmentedControl";
 import { IS_TESTNET } from "@/lib/chain";
+import { QuoteAvatar } from "@/components/ui/QuoteAvatar";
 
 export function usMarketOpen(date = new Date()): boolean {
   const parts = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", weekday: "short", hour: "numeric", minute: "numeric", hour12: false }).formatToParts(date);
@@ -23,11 +24,13 @@ export function usMarketOpen(date = new Date()): boolean {
 export function PairStep({ draft, update, openingFdvUsd, enabledKinds, quotes }: {
   draft: CreateDraft; update: (patch: Partial<CreateDraft>) => void; openingFdvUsd: number; enabledKinds: QuoteKind[]; quotes: QuoteAsset[];
 }) {
-  const { stocksRestricted } = usePreview();
+  const { stocksRestricted, preview } = usePreview();
   const [search, setSearch] = useState("");
   const [sort, setSort] = useState<PairCatalogSort>("trending");
   const catalog = usePairCatalog(sort);
-  const assets = mergePairCatalog(quotes, catalog.quotes);
+  // Mainnet stocks must come from Coinbase's address-verified issuer inventory.
+  const assets = mergePairCatalog(quotes, catalog.quotes).filter(quote =>
+    preview || IS_TESTNET || quote.kind !== "stock" || quote.source === "coinbase");
   const selected = selectedQuoteIds(draft).map(id => findPair(quotes, id)).filter((quote): quote is QuoteAsset => Boolean(quote)).map(pairId);
   const choose = (quote: QuoteAsset) => {
     const id = pairId(quote);
@@ -55,9 +58,9 @@ export function PairStep({ draft, update, openingFdvUsd, enabledKinds, quotes }:
       {draft.launchMode === "multi" ? <p className="rounded-md bg-fill-4 p-3 text-footnote text-label-2">{selected.length} / {MAX_MARKETS} pools selected. The fixed 1 billion token supply is split equally between them, with any final unit in the last pool. Every pool starts at the same token price and shares one fee policy.</p> : null}
       <div className="flex flex-wrap gap-2" aria-label="Selected pools">
         {selected.map(id => {
-          const quote = findPair(quotes, id)!;
+          const quote = findPair(assets, id) ?? findPair(quotes, id)!;
           return <button key={id} type="button" aria-label={`Remove ${quote.symbol} ${quote.address}`} disabled={selected.length === 1} onClick={() => choose(quote)} className="inline-flex min-h-9 items-center gap-2 rounded-full bg-tint/10 px-3 text-footnote font-semibold text-tint disabled:opacity-60">
-            {quote.symbol}<span className="font-normal">{quote.address.slice(0, 6)}…{quote.address.slice(-4)}</span><X className="size-3.5" aria-hidden />
+            <QuoteAvatar quote={quote} size={20} />{quote.symbol}<span className="font-normal">{quote.address.slice(0, 6)}…{quote.address.slice(-4)}</span><X className="size-3.5" aria-hidden />
           </button>;
         })}
       </div>
@@ -80,7 +83,7 @@ export function PairStep({ draft, update, openingFdvUsd, enabledKinds, quotes }:
                 const atLimit = !checked && draft.launchMode === "multi" && selected.length >= MAX_MARKETS;
                 return <button key={id} type="button" aria-label={`${quote.symbol} ${quote.address}`} aria-pressed={checked} disabled={Boolean(reason) || atLimit} onClick={() => choose(quote)}
                   className={cn("flex min-h-20 items-start gap-3 rounded-lg p-3 text-left disabled:opacity-55", checked ? "bg-tint/8 shadow-[0_0_0_2px_var(--mf-tint)]" : "bg-bg-elevated shadow-[0_0_0_1px_var(--mf-separator)]")}>
-                  <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-fill-3 font-bold text-label">{quote.symbol.slice(0, 1)}</span>
+                  <QuoteAvatar quote={quote} size={36} />
                   <span className="flex min-w-0 flex-1 flex-col gap-0.5"><span className="text-headline text-label">{quote.symbol}</span><span className="truncate text-footnote text-label-2">{quote.name}</span>
                     <span className="text-caption1 text-label-2">{quote.address.slice(0, 6)}…{quote.address.slice(-4)}{quote.usdPrice > 0 ? ` · ${formatUsd(quote.usdPrice)}` : " · Price unavailable"}</span>
                     {quote.kind === "token" ? <span className="text-caption1 text-label-2">{quote.rank ? `o1 #${quote.rank} · ` : ""}{quote.createdAt ? `Launched ${new Date(quote.createdAt).toLocaleDateString()}` : "Launch age unavailable"}</span> : null}

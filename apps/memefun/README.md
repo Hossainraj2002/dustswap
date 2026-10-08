@@ -86,3 +86,11 @@ Live mode against the local stack: `pnpm dev:chain` and `pnpm dev` in `apps/meme
 - **Optional Cloudflare Workers deployment:** `.github/workflows/deploy-memefun.yml` builds the OpenNext worker. It stays off until the repository variable `MEMEFUN_TESTNET_DEPLOY` is `on`, and it needs the `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` secrets. The current Railway deployment does not require this workflow.
 
 Production builds must use the service's reviewed variables. If uploading local source, stage only source files and required assets in an isolated directory, excluding `.env*`, local deployment records, dependencies and build output; a laptop's `.env.local` must never enter the bundle.
+
+## Pair logos and stock identity
+
+The launch picker renders address-matched pair images in both the catalog and selected pools. ETH and Base USDC use the original Ethereum and Circle brand assets. Live Base stock rows come from Coinbase's current tokenized-stock inventory; registry-only stock entries are excluded from the picker, and issuer names, symbols and images survive registry merges. Registry prices, geographic restrictions, issuer pauses and launch eligibility still govern selection. Preview and test stock fixtures remain simulated.
+
+Every stock exposed in the official inventory on October 8, 2026 has a bundled authentic logo fallback under `public/pair-icons/stocks`. Records without issuer images use the companies' own published icons. `public/pair-icons/SOURCES.json` records each address, original image URL and file. Meme-token fallbacks and their address-matched provider provenance are recorded in `public/pair-icons/TOKEN-SOURCES.json`. The local manifests supply images only: they never add an asset to the current inventory or enable a pair. New provider images take priority, with the bundled asset used if the remote image fails or no image is supplied. Missing imagery is explicitly labeled unavailable instead of borrowing a ticker's logo.
+
+The backend also retrieves logos for registry crypto assets omitted by o1 and extracts address-matched Base imagery independently of pool price or liquidity. These reads never make a discovery price executable or change registry eligibility. Deploy both the frontend and backend to enable this path on the live site.

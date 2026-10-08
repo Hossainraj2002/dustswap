@@ -128,6 +128,21 @@ export function marketReferences(raw: unknown, requested: Address[], now: number
   return references;
 }
 
+/** Address-matched imagery remains useful when a token has no usable pool price. */
+export function marketIcons(raw: unknown, requested: Address[]): Map<string, string> {
+  const rows = z.array(z.unknown()).max(1200).parse(raw), allowed = new Set(requested.map(token => token.toLowerCase()));
+  const icons = new Map<string, string>(), depths = new Map<string, number>();
+  for (const rawPair of rows) {
+    const pair = object(rawPair), token = address.safeParse(object(pair.baseToken).address);
+    if (pair.chainId !== "base" || !token.success || !allowed.has(token.data.toLowerCase())) continue;
+    const icon = safeIcon(object(pair.info).imageUrl); if (!icon) continue;
+    const key = token.data.toLowerCase(), depth = positive(object(pair.liquidity).usd) ?? 0;
+    if (icons.has(key) && (depths.get(key) ?? 0) >= depth) continue;
+    icons.set(key, icon); depths.set(key, depth);
+  }
+  return icons;
+}
+
 function cached<T>(load: () => Promise<T>, clock: () => number, ttl: number) {
   let value: { at: number; data: T } | undefined; let pending: Promise<T> | undefined;
   return () => { if (value && clock() - value.at < ttl) return Promise.resolve(value.data);
@@ -137,11 +152,14 @@ function cached<T>(load: () => Promise<T>, clock: () => number, ttl: number) {
 export function createPairCatalog(options: { chainId: number; client: PublicClient; registry: () => Promise<{ quotes: QuoteRecord[]; settings: LaunchSettings; nowSec: number }>;
   apiKey?: string; fetchFn?: typeof fetch; clock?: () => number; ttlMs?: number }) {
   const fetchFn = options.fetchFn ?? fetch, clock = options.clock ?? Date.now, ttl = options.ttlMs ?? 300_000;
+  const iconCache = new Map<string, { at: number; url?: string }>();
   const references = async (addresses: Address[]) => {
     const map = new Map<string, ReturnType<typeof marketReferences> extends Map<string, infer V> ? V : never>();
     for (let offset = 0; offset < addresses.length; offset += 30) {
       const batch = addresses.slice(offset, offset + 30);
-      try { const rows = marketReferences(await json(fetchFn, `https://api.dexscreener.com/tokens/v1/base/${batch.join(",")}`), batch, clock());
+      try { const raw = await json(fetchFn, `https://api.dexscreener.com/tokens/v1/base/${batch.join(",")}`);
+        for (const [key, url] of marketIcons(raw, batch)) iconCache.set(key, { at: clock(), url });
+        const rows = marketReferences(raw, batch, clock());
         for (const [key, value] of rows) map.set(key, value); } catch { /* No unverified or stale fallback prices. */ }
     }
     return map;
@@ -188,6 +206,25 @@ export function createPairCatalog(options: { chainId: number; client: PublicClie
     return { records, candidates, prices, identities, status, complete };
   }, clock, ttl);
   const tokenLoaders = { trending: o1("trending"), newest: o1("newest"), oldest: o1("oldest") };
+  const pendingRegistryIcons = new Map<string, Promise<void>>();
+  const registryIcons = async (quotes: QuoteRecord[]) => {
+    const missing = quotes.filter(q => q.kind === 3 && (!iconCache.has(q.address.toLowerCase())
+      || clock() - iconCache.get(q.address.toLowerCase())!.at >= ttl)).map(q => getAddress(q.address.toLowerCase()));
+    if (!missing.length) return;
+    const key = missing.map(token => token.toLowerCase()).sort().join(",");
+    let pending = pendingRegistryIcons.get(key);
+    if (!pending) {
+      pending = references(missing).then(() => {
+        // Bound retries for missing images and upstream outages without inventing imagery.
+        for (const token of missing) {
+          const address = token.toLowerCase();
+          iconCache.set(address, { at: clock(), url: iconCache.get(address)?.url });
+        }
+      }).finally(() => { pendingRegistryIcons.delete(key); });
+      pendingRegistryIcons.set(key, pending);
+    }
+    await pending;
+  };
   return {
     async get(sort: CatalogSort = "trending"): Promise<PairCatalog> {
       const registry = await options.registry(); const registered = new Map(registry.quotes.map((q) => [q.address.toLowerCase(), q]));
@@ -204,7 +241,9 @@ export function createPairCatalog(options: { chainId: number; client: PublicClie
         const expectedKind = { native: 0, stable: 1, stock: 2, token: 3 }[asset.kind];
         const blocked = asset.reason ?? (q.decimals !== asset.decimals || q.kind !== expectedKind
           ? "The pair's token units or category could not be verified." : value.unavailableReason);
-        return { ...asset, ...value, registered: true, enabled: q.enabled === true, ready: value.launchable && !blocked,
+        return { ...asset, ...value,
+          ...(asset.kind === "stock" && asset.source === "coinbase" ? { name: asset.name, symbol: asset.symbol, isin: asset.isin } : {}),
+          registered: true, enabled: q.enabled === true, ready: value.launchable && !blocked,
           launchable: value.launchable && !blocked, reason: blocked, unavailableReason: blocked };
       };
       if (options.chainId !== 8453) return { chainId: options.chainId, asOf: registry.nowSec * 1000, fetchedAt: clock(),
@@ -212,6 +251,7 @@ export function createPairCatalog(options: { chainId: number; client: PublicClie
           registered: true, ready: false, enabled: q.enabled === true, source: "registry" }))],
         sources: { coinbase: { status: "not_applicable", count: 0 }, o1: { status: "not_applicable", complete: false, keyConfigured: false } } };
       const [stockResult, tokenResult] = await Promise.all([stocks(), tokenLoaders[sort]()]);
+      await registryIcons(registry.quotes);
       const oracleReasons = await stockOracleReasons(options.client, stockResult.records.filter((stock) => {
         const q = registered.get(stock.contract_address.toLowerCase());
         return q?.kind === 2 && [1, 2].includes(q.source ?? -1) && quoteEligibility(q, registry.settings, registry.nowSec).launchable;
@@ -229,7 +269,7 @@ export function createPairCatalog(options: { chainId: number; client: PublicClie
             ? "A current stock price oracle is not configured." : oracleReasons.get(key) ?? (!feed && !configuredPrice
               ? "A verified launch oracle is not configured for this stock." : undefined);
         return finish({ address: stock.contract_address, symbol: stock.symbol, name: stock.name, decimals: stock.decimals, kind: "stock",
-          usdPrice: stock.nav_price ?? reference?.priceUsd ?? 0, feed, priceUpdatedAt: time(stock.nav_price_updated_at, clock()), iconUrl: safeIcon(stock.icon_url),
+          usdPrice: stock.nav_price ?? reference?.priceUsd ?? 0, feed, priceUpdatedAt: time(stock.nav_price_updated_at, clock()), iconUrl: safeIcon(stock.icon_url) ?? reference?.iconUrl,
           isin: stock.isin, supply: stock.total_supply?.toString(), marketReference: reference, source: "coinbase", reason,
           ready: false, launchable: false, enabled: false, registered: false });
       });
@@ -241,7 +281,7 @@ export function createPairCatalog(options: { chainId: number; client: PublicClie
         const summary = tokenResult.records.find((r) => r.token.address.toLowerCase() === key), data = object(summary?.market_data);
         const reference = tokenResult.prices.get(key); const price = positive(object(data.price).usd) ?? reference?.priceUsd ?? 0;
         return [finish({ address: token, symbol: identity.symbol, name: identity.name, decimals: identity.decimals, supply: identity.supply,
-          kind: "token", usdPrice: price, iconUrl: safeIcon(summary?.token.image_url) ?? reference?.iconUrl,
+          kind: "token", usdPrice: price, iconUrl: safeIcon(summary?.token.image_url) ?? iconCache.get(key)?.url ?? reference?.iconUrl,
           // A pool's first trade is not proof of the token's launch date.
           createdAt: time(summary?.launch.created_at, clock()), priceUpdatedAt: time(data.updated_at, clock()),
           rank: index + 1, catalogGroup: sort === "newest" ? "recent" : sort === "oldest" ? "established" : "trending",
@@ -253,6 +293,7 @@ export function createPairCatalog(options: { chainId: number; client: PublicClie
       const known = new Set([...stockEntries, ...tokenEntries, ...native].map((q) => q.address.toLowerCase()));
       const other = registry.quotes.filter((q) => !known.has(q.address.toLowerCase())).map((q) => finish({ ...eligibleQuoteAsset(q, registry.settings, registry.nowSec),
         registered: true, ready: false, enabled: q.enabled === true, source: "registry" as const,
+        iconUrl: q.kind === 3 ? iconCache.get(q.address.toLowerCase())?.url : undefined,
         ...(q.kind === 2 ? { reason: stockResult.ok
           ? "This stock is not in the issuer's current verified inventory."
           : "Stock issuer availability could not be verified. Try again later." } : {}) }));

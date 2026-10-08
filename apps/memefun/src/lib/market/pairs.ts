@@ -32,7 +32,10 @@ export function mergePairCatalog(registry: QuoteAsset[], catalog: QuoteAsset[], 
   for (const quote of registry) {
     const entry = catalog.find(item => pairId(item) === pairId(quote));
     const missingIssuer = quote.kind === "stock" && options.requireStockIssuer && (!options.stockIssuerVerified || !entry || entry.launchable !== true);
-    byAddress.set(pairId(quote), { ...entry, ...quote,
+    const issuerIdentity = quote.kind === "stock" && entry?.kind === "stock" && entry.source === "coinbase"
+      ? { name: entry.name, symbol: entry.symbol, isin: entry.isin, source: entry.source } : {};
+    byAddress.set(pairId(quote), { ...entry, ...quote, ...issuerIdentity,
+      iconUrl: entry?.kind === quote.kind ? entry.iconUrl?.trim() || quote.iconUrl : quote.iconUrl,
       ...(entry?.launchable === false || missingIssuer ? { launchable: false, unavailableReason: entry?.unavailableReason || "Stock issuer availability could not be verified" } : {}) });
   }
   return [...byAddress.values()];

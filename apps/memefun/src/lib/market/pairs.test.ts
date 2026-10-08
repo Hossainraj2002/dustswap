@@ -35,3 +35,17 @@ describe("pair eligibility", () => {
     expect(findPair([USDC, same], USDC.address.toUpperCase())).toBe(USDC);
   });
 });
+
+describe("pair catalog identity", () => {
+  it("retains issuer labels and logos while registry controls prices and eligibility", () => {
+    const registry = { ...USDC, kind: "stock" as const, name: "Old label", symbol: "OLD", iconUrl: undefined, usdPrice: 12, launchable: true };
+    const issuer = { ...registry, name: "Apple Inc.", symbol: "AAPLc", source: "coinbase" as const, iconUrl: "https://metadata.coinbase.com/equity_icons/AAPL.png", usdPrice: 99 };
+    expect(mergePairCatalog([registry], [issuer])[0]).toMatchObject({ name: issuer.name, symbol: issuer.symbol, iconUrl: issuer.iconUrl, source: "coinbase", usdPrice: 12 });
+    expect(mergePairCatalog([{ ...registry, iconUrl: "  " }], [issuer])[0]?.iconUrl).toBe(issuer.iconUrl);
+  });
+  it("does not apply stock identity or logos to a differently categorized registry asset", () => {
+    const issuer = { ...USDC, kind: "stock" as const, source: "coinbase" as const, symbol: "FAKEc", iconUrl: "https://example.com/stock.png" };
+    const merged = mergePairCatalog([USDC], [issuer])[0]!;
+    expect(merged.symbol).toBe(USDC.symbol); expect(merged.iconUrl).toBe(USDC.iconUrl);
+  });
+});

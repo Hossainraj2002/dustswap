@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { AbiDecodingZeroDataError, BaseError, ContractFunctionRevertedError, getAddress, type PublicClient } from "viem";
 import { Hono } from "hono";
-import { createPairCatalog, marketReferences, STOCK_FEEDS, STOCK_ORACLE_REGISTRY } from "../../lib/market/pair-catalog";
+import { createPairCatalog, marketIcons, marketReferences, STOCK_FEEDS, STOCK_ORACLE_REGISTRY } from "../../lib/market/pair-catalog";
 import { eligibleQuoteAsset, quoteEligibility, readableFeedRound } from "../../lib/market/readiness";
 import type { QuoteRecord } from "../../lib/market/derive";
 import type { LaunchSettings } from "../../shared/core/settings";
@@ -237,5 +237,51 @@ describe("pair catalog HTTP boundary", () => {
     expect((await app.request("/v1/pair-catalog?sort=random")).status).toBe(400);
     expect((await app.request(`/v1/pair-catalog?q=${"a".repeat(81)}`)).status).toBe(400);
     expect(get).not.toHaveBeenCalled();
+  });
+});
+
+describe("pair logo metadata", () => {
+  it("extracts real address-matched Base logos independently of price or liquidity", () => {
+    const logo = "https://example.com/meme.png";
+    const row = { chainId: "base", baseToken: { address: TOKEN }, info: { imageUrl: logo } };
+    expect(marketIcons([row], [TOKEN]).get(TOKEN.toLowerCase())).toBe(logo);
+    expect(marketReferences([row], [TOKEN], NOW).size).toBe(0);
+    expect(marketIcons([{ ...row, chainId: "ethereum" }, { ...row, baseToken: { address: APPLE } }], [TOKEN]).size).toBe(0);
+    expect(marketIcons([{ ...row, info: { imageUrl: "javascript:alert(1)" } }], [TOKEN]).size).toBe(0);
+  });
+  it("preserves verified issuer stock labels and icon with registry price authority", async () => {
+    const logo = "https://metadata.coinbase.com/equity_icons/AAPL.png";
+    const fetchFn = vi.fn(async (input: string | URL | Request) => String(input).includes("coinbase.com")
+      ? response({ tokens: [{ ...issuerStock, name: "Apple Inc.", icon_url: logo }] }) : response([])) as typeof fetch;
+    const result = await createPairCatalog({ chainId: 8453, client, fetchFn, clock: () => NOW,
+      registry: async () => ({ quotes: [{ ...apple, name: "Old name", symbol: "OLD", priceUsdE8: 12_000_000_000n }], settings, nowSec: NOW / 1000 }) }).get();
+    expect(result.stocks[0]).toMatchObject({ name: "Apple Inc.", symbol: "AAPLc", iconUrl: logo, usdPrice: 120, source: "coinbase", launchable: true });
+  });
+  it("enriches a registered crypto omitted by discovery with imagery without granting new launch rights", async () => {
+    const logo = "https://example.com/registered.png";
+    const fetchFn = vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.includes("coinbase.com")) return response({ tokens: [] });
+      if (url.includes("alpha-tokens")) return response([]);
+      return response([{ chainId: "base", baseToken: { address: TOKEN }, info: { imageUrl: logo } }]);
+    }) as typeof fetch;
+    const result = await createPairCatalog({ chainId: 8453, client, fetchFn, clock: () => NOW,
+      registry: async () => ({ quotes: [{ ...apple, address: TOKEN, kind: 3, enabled: false }], settings, nowSec: NOW / 1000 }) }).get();
+    expect(result.crypto[0]).toMatchObject({ address: TOKEN, iconUrl: logo, launchable: false, registered: true, source: "registry" });
+  });
+});
+
+describe("registered logo caching", () => {
+  it("coalesces concurrent reads and bounds retries for absent imagery after each TTL", async () => {
+    let now = NOW;
+    const fetchFn = vi.fn(async (input: string | URL | Request) => String(input).includes("coinbase.com") ? response({ tokens: [] }) : response([])) as typeof fetch;
+    const catalog = createPairCatalog({ chainId: 8453, client, fetchFn, clock: () => now, ttlMs: 10_000,
+      registry: async () => ({ quotes: [{ ...apple, address: TOKEN, kind: 3 }], settings, nowSec: now / 1000 }) });
+    const imageRequests = () => vi.mocked(fetchFn).mock.calls.filter(([input]) => String(input).includes("dexscreener.com")).length;
+    await Promise.all([catalog.get(), catalog.get()]); expect(imageRequests()).toBe(1);
+    await catalog.get(); expect(imageRequests()).toBe(1);
+    now += 10_001;
+    await Promise.all([catalog.get(), catalog.get()]); expect(imageRequests()).toBe(2);
+    await catalog.get(); expect(imageRequests()).toBe(2);
   });
 });
