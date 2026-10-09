@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { toast } from "sonner";
-import { CircleAlert, CircleCheck, Lock, ShieldCheck } from "lucide-react";
+import { CircleAlert, CircleCheck, Info, Lock, ShieldCheck } from "lucide-react";
 import { DEAD_ADDRESS } from "@/core/constants";
 import { formatAge, formatBps, formatCoinAmount, formatPercent, formatQuoteAmount, formatUsd, shortAddress } from "@/core/format";
 import { IS_TESTNET, explorerUrl } from "@/lib/chain";
@@ -24,7 +24,7 @@ import { ConnectHint } from "@/components/shell/WalletButton";
 
 type TabKey = "trades" | "holders" | "comments" | "about" | "safety";
 
-export function CoinTabs({ coin }: { coin: Coin }) {
+export function CoinTabs({ coin, official = false }: { coin: Coin; official?: boolean }) {
   const [tab, setTab] = useState<TabKey>("trades");
   const comments = useComments(coin.address);
   return (
@@ -33,11 +33,11 @@ export function CoinTabs({ coin }: { coin: Coin }) {
       value={tab}
       onChange={setTab}
       items={[
-        { value: "trades", label: "Trades", content: <TradesTab coin={coin} /> },
-        { value: "holders", label: "Holders", count: coin.holders, content: <HoldersTab coin={coin} /> },
+        { value: "trades", label: "Trades", content: <TradesTab coin={coin} official={official} /> },
+        { value: "holders", label: "Holders", count: coin.holders, content: <HoldersTab coin={coin} official={official} /> },
         { value: "comments", label: "Comments", count: comments.length, content: <CommentsTab coin={coin} /> },
         { value: "about", label: "About", content: <AboutTab coin={coin} /> },
-        { value: "safety", label: "Safety", content: <SafetyTab coin={coin} /> },
+        { value: "safety", label: "Safety", content: <SafetyTab coin={coin} official={official} /> },
       ]}
     />
   );
@@ -45,7 +45,7 @@ export function CoinTabs({ coin }: { coin: Coin }) {
 
 /* ------------------------------------------------------------------ trades */
 
-function TradesTab({ coin }: { coin: Coin }) {
+function TradesTab({ coin, official }: { coin: Coin; official: boolean }) {
   const [limit, setLimit] = useState(20);
   const trades = useTrades(coin.address, limit + 1, coin.selectedPoolId);
   const wallet = useWallet();
@@ -55,7 +55,7 @@ function TradesTab({ coin }: { coin: Coin }) {
     <div className="mt-3 flex flex-col gap-3">
     <ol className="mf-card overflow-hidden [&>li+li]:hairline-t" aria-label="Latest trades">
       {trades.slice(0, limit).map((trade) => {
-        const you = wallet.address !== null && trade.trader === wallet.address;
+        const you = wallet.address !== null && trade.trader.toLowerCase() === wallet.address.toLowerCase();
         return (
           <li key={trade.id} className="flex items-center gap-3 px-4 py-2.5">
             <span
@@ -74,7 +74,7 @@ function TradesTab({ coin }: { coin: Coin }) {
               </span>
               <span className="flex items-center gap-1.5 truncate text-footnote text-label-2">
                 <AddressAvatar address={trade.trader} size={14} />
-                {you ? <Badge tone="tint">You</Badge> : trade.isCreator ? <Badge tone="warning">Dev</Badge> : shortAddress(trade.trader)}
+                {you ? <Badge tone="tint">You</Badge> : trade.isCreator ? <Badge tone={official ? "tint" : "warning"}>{official ? "Platform" : "Dev"}</Badge> : shortAddress(trade.trader)}
                 {trade.inProtection ? <span className="text-warning">paid {formatBps(trade.feeBps)} launch fee</span> : null}
               </span>
             </span>
@@ -97,14 +97,14 @@ function TradesTab({ coin }: { coin: Coin }) {
 
 /* ----------------------------------------------------------------- holders */
 
-function holderName(holder: Holder) {
+function holderName(holder: Holder, official: boolean) {
   switch (holder.label) {
     case "pool":
       return "Uniswap v4 pool (locked)";
     case "burn":
       return "Burn address";
     case "creator":
-      return "Creator";
+      return official ? "Platform wallet" : "Creator";
     case "you":
       return "You";
     default:
@@ -112,7 +112,7 @@ function holderName(holder: Holder) {
   }
 }
 
-function HoldersTab({ coin }: { coin: Coin }) {
+function HoldersTab({ coin, official }: { coin: Coin; official: boolean }) {
   const holders = useHolders(coin.address, 22);
   return (
     <ol className="mf-card mt-3 overflow-hidden [&>li+li]:hairline-t" aria-label="Top holders">
@@ -135,8 +135,8 @@ function HoldersTab({ coin }: { coin: Coin }) {
           )}
           <span className="flex min-w-0 flex-1 flex-col gap-1">
             <span className="flex items-center gap-1.5 truncate text-subhead text-label">
-              {holderName(holder)}
-              {holder.label === "creator" ? <Badge tone="warning">Dev</Badge> : null}
+              {holderName(holder, official)}
+              {holder.label === "creator" ? <Badge tone={official ? "tint" : "warning"}>{official ? "Platform" : "Dev"}</Badge> : null}
             </span>
             <span className="h-1 w-full overflow-hidden rounded-full bg-fill-3" aria-hidden>
               <span className="block h-full rounded-full bg-tint-fill" style={{ width: `${Math.min(100, holder.pct * 100)}%` }} />
@@ -260,7 +260,7 @@ function AboutTab({ coin }: { coin: Coin }) {
 
 /* ------------------------------------------------------------------ safety */
 
-function SafetyTab({ coin }: { coin: Coin }) {
+function SafetyTab({ coin, official }: { coin: Coin; official: boolean }) {
   const guarantees = [
     "Fixed supply of 1,000,000,000. Nobody can mint more.",
     "No admin or owner. Nobody can pause, block or seize transfers.",
@@ -269,7 +269,7 @@ function SafetyTab({ coin }: { coin: Coin }) {
     `Trading fee is ${formatBps(coin.terms.feeBps)} and can only go down.`,
     `Fees always go to the same place: ${MODE_META[coin.terms.mode].label.toLowerCase()}.`,
   ];
-  const checks: Array<{ label: string; value: string; tone: "good" | "caution"; note: string }> = [
+  const checks: Array<{ label: string; value: string; tone: "good" | "caution" | "neutral"; note: string }> = [
     {
       label: "Top 10 holders",
       value: formatPercent(coin.top10Pct),
@@ -277,10 +277,11 @@ function SafetyTab({ coin }: { coin: Coin }) {
       note: "Share of supply held by the 10 largest wallets, not counting the pool or burn address.",
     },
     {
-      label: "Creator holds",
+      label: official ? "Platform wallet holds" : "Creator holds",
       value: formatPercent(coin.devHoldsPct),
-      tone: coin.devHoldsPct > 0.05 ? "caution" : "good",
-      note: coin.devSold ? "The creator has sold some coins." : "The creator has not sold any coins.",
+      tone: official ? "neutral" : coin.devHoldsPct > 0.05 ? "caution" : "good",
+      note: official ? (coin.devSold ? "The platform wallet has sold some coins." : "The platform wallet has not sold any coins.")
+        : coin.devSold ? "The creator has sold some coins." : "The creator has not sold any coins.",
     },
     {
       label: "Launch snipers",
@@ -320,6 +321,8 @@ function SafetyTab({ coin }: { coin: Coin }) {
             <div key={check.label} className="flex gap-3 px-4 py-3">
               {check.tone === "good" ? (
                 <CircleCheck className="mt-0.5 size-4 shrink-0 text-up" aria-hidden />
+              ) : check.tone === "neutral" ? (
+                <Info className="mt-0.5 size-4 shrink-0 text-tint" aria-hidden />
               ) : (
                 <CircleAlert className="mt-0.5 size-4 shrink-0 text-warning" aria-hidden />
               )}

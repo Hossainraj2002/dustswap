@@ -41,6 +41,7 @@ import { ApiError, type ApiClient, createApi, dataUrlToBlob } from "./api";
 import { API_URL, DeploymentMismatch, resolveDeployment } from "./config";
 import { clearSession, loadSession, saveSession, signIn } from "./session";
 import { AuthorCompletion, type VerifiedAuthor } from "./authorCompletion";
+import { canSelectPlatformToken, parsePlatformTokenInfo } from "@/lib/platform-token/config";
 import type { ClaimRequest, TxContext, TxStage } from "./tx";
 
 /** Transactions (and the contract ABIs they carry) load with the first action. */
@@ -66,6 +67,7 @@ const LAUNCH_SLIPPAGE_BPS = 500;
 const DEADLINE_SEC = 20 * 60;
 const treasuryAbi = parseAbi(["function treasury() view returns (address)"]);
 const poolIdentityAbi = parseAbi(["function poolIdFor(address coin, address quote) view returns (bytes32)"]);
+const predictCoinAbi = parseAbi(["function predictCoin(address launcher, bytes32 salt) view returns (address)"]);
 
 interface AuthorReserveResponse {
   coin: Address;
@@ -958,6 +960,12 @@ export class LiveMarket implements Market {
   }
 
   async launch(user: Address, input: LaunchInput, _outcome?: TxOutcome, onStage?: (stage: TxStage) => void): Promise<Coin> {
+    if (input.officialPlatformToken) {
+      const platform = parsePlatformTokenInfo(await this.api.get("/v1/platform-token"));
+      if (TARGET_CHAIN_ID !== 8453 || !canSelectPlatformToken(platform, user)) {
+        throw new TxError("Only the designated platform wallet can select the official MemeFun token, and only before one is registered.", "reverted");
+      }
+    }
     try { await this.loadSettings(); }
     catch { throw new TxError("Could not verify the current launch settings. Check your connection and try again.", "reverted"); }
     const settings = this.getSettings();
@@ -990,9 +998,11 @@ export class LiveMarket implements Market {
     }));
     const primary = pairs[0]!;
     let tweet: TweetLaunchAttestation | undefined;
+    // Reuse one salt across the server's selection and the actual factory transaction.
+    const selectedSalt = input.officialPlatformToken ? toHex(crypto.getRandomValues(new Uint8Array(32))) : undefined;
     if (input.tweet) {
       try {
-        const salt = toHex(crypto.getRandomValues(new Uint8Array(32)));
+        const salt = selectedSalt ?? toHex(crypto.getRandomValues(new Uint8Array(32)));
         tweet = await this.api.post<TweetLaunchAttestation>("/v1/tweets/attestation", { url: input.tweet.source.url, authorShareBps: input.tweet.authorShareBps, salt }, { token: await this.sessionToken(user) });
         if (tweet.source.postId !== input.tweet.source.postId || tweet.source.author.id !== input.tweet.source.author.id || tweet.tweet.authorShareBps !== input.tweet.authorShareBps
           || tweet.salt !== salt || tweet.launcher.toLowerCase() !== user.toLowerCase()) throw new TxError("The post attribution changed. Import the X post again before launching.", "reverted");
@@ -1023,6 +1033,21 @@ export class LiveMarket implements Market {
     }
 
     const [ctx, deadline] = await Promise.all([this.txContext(user, onStage), this.deadline()]);
+    if (selectedSalt) {
+      try {
+        const [prepared, predicted] = await Promise.all([
+          this.api.post<{ coin: Address; salt: string; contractURI: string }>("/v1/platform-token/prepare",
+            { salt: selectedSalt, contractURI }, { token: await this.sessionToken(user) }),
+          ctx.client.readContract({ address: ctx.deployment.factory, abi: predictCoinAbi, functionName: "predictCoin", args: [user, selectedSalt] }),
+        ]);
+        if (prepared.salt?.toLowerCase() !== selectedSalt.toLowerCase() || prepared.contractURI !== contractURI || prepared.coin?.toLowerCase() !== predicted.toLowerCase()) {
+          throw new TxError("The official token selection did not match this launch. Try again.", "reverted");
+        }
+      } catch (error) {
+        throw error instanceof ApiError ? new TxError(error.message, "reverted") : error;
+      }
+    }
+
     const result = await (await txModule()).sendLaunch(ctx, {
       name: input.name,
       symbol: input.symbol,
@@ -1036,7 +1061,7 @@ export class LiveMarket implements Market {
       pairs,
       slippageBps: LAUNCH_SLIPPAGE_BPS,
       deadline,
-      ...(tweet ? { tweet, salt: tweet.salt } : {}),
+      ...(tweet ? { tweet, salt: tweet.salt } : selectedSalt ? { salt: selectedSalt } : {}),
     });
     this.invalidate("coins");
     this.invalidate(`qbal:${lower(user)}`);

@@ -6,7 +6,9 @@ import { useEffect, useMemo, useState } from "react";
 import { LayoutGrid, Megaphone, Rows3, Sparkles } from "lucide-react";
 import type { FeeMode } from "@/core/types";
 import { useIsRegularWidth, useLocalStorageState } from "@/lib/hooks";
-import { useCoins, useModeration } from "@/lib/market/hooks";
+import { useCoin, useCoins, useModeration } from "@/lib/market/hooks";
+import { PLATFORM_TOKEN_LAUNCH_AT } from "@/lib/platform-token/config";
+import { usePlatformToken } from "@/lib/platform-token/usePlatformToken";
 import type { Coin } from "@/lib/market/types";
 import { usePreview } from "@/lib/preview/scenario";
 import { PageHeader } from "@/components/shell/PageHeader";
@@ -21,6 +23,7 @@ import { SegmentedControl } from "@/components/ui/SegmentedControl";
 import { JustLaunched } from "./JustLaunched";
 import { LiveTape } from "./LiveTape";
 import { Spotlight } from "./Spotlight";
+import { PlatformLaunchCountdown } from "./PlatformLaunchCountdown";
 import { TopCreators } from "./TopCreators";
 import { LaunchCampaignBanner } from "@/components/rewards/LaunchCampaign";
 
@@ -53,6 +56,12 @@ function sortCoins(coins: Coin[], sort: Sort): Coin[] {
 export function DiscoverScreen() {
   const { coins, ready } = useCoins();
   const moderation = useModeration();
+  const platform = usePlatformToken();
+  const officialAddress = platform.available && platform.info?.enabled ? platform.info.tokenAddress : undefined;
+  const { coin: officialCoin } = useCoin(officialAddress ?? undefined);
+  const announcement = platform.showAnnouncement ? (officialCoin && !officialCoin.hidden
+    ? <Spotlight coin={officialCoin} official />
+    : <PlatformLaunchCountdown launchAt={platform.info?.enabled ? platform.info.launchAt : PLATFORM_TOKEN_LAUNCH_AT} />) : null;
   const { stocksRestricted } = usePreview();
   const regular = useIsRegularWidth();
   const searchParams = useSearchParams();
@@ -107,6 +116,7 @@ export function DiscoverScreen() {
       <>
         {header}
         <LaunchCampaignBanner />
+        {announcement ? <div className="mb-6">{announcement}</div> : null}
         <DiscoverSkeleton />
       </>
     );
@@ -117,6 +127,7 @@ export function DiscoverScreen() {
       <>
         {header}
         <LaunchCampaignBanner />
+        {announcement ? <div className="mb-6">{announcement}</div> : null}
         <div className="mf-card">
           <EmptyState
             icon={<Sparkles aria-hidden />}
@@ -145,7 +156,7 @@ export function DiscoverScreen() {
           </p>
         ) : null}
         <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
-          {king ? <Spotlight coin={king} /> : null}
+          {announcement ?? (king ? <Spotlight coin={king} /> : null)}
           <JustLaunched coins={newest} />
         </div>
 

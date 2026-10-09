@@ -20,6 +20,8 @@ import { findPair, mergePairCatalog, pairId } from "@/lib/market/pairs";
 import { equalAllocations } from "@/lib/market/markets";
 import { usePreview } from "@/lib/preview/scenario";
 import { useWallet } from "@/lib/wallet/WalletProvider";
+import { canSelectPlatformToken, PLATFORM_TOKEN_LAUNCHER } from "@/lib/platform-token/config";
+import { usePlatformToken } from "@/lib/platform-token/usePlatformToken";
 import { PageHeader } from "@/components/shell/PageHeader";
 import { LaunchCampaignBanner } from "@/components/rewards/LaunchCampaign";
 import { Button } from "@/components/ui/Button";
@@ -37,6 +39,7 @@ export function CreateScreen({ entry = "manual" }: { entry?: CreateDraft["entry"
   const liveSettings = useLaunchSettings();
   const settings = liveSettings ?? DEFAULT_SETTINGS;
   const wallet = useWallet();
+  const platform = usePlatformToken();
   const { market } = useMarket();
   const { txOutcome, stocksRestricted, preview } = usePreview();
   const regular = useIsRegularWidth();
@@ -51,6 +54,14 @@ export function CreateScreen({ entry = "manual" }: { entry?: CreateDraft["entry"
   const top = useRef<HTMLDivElement>(null);
   const restored = useRef(false);
   const settingsApplied = useRef(false);
+  const canSelectOfficial = market?.kind === "live" && platform.showAnnouncement && platform.available && wallet.onBase && canSelectPlatformToken(platform.info, wallet.address);
+  const officialSelected = draft.officialPlatformToken === true && canSelectOfficial;
+
+  useEffect(() => {
+    if (draft.officialPlatformToken && wallet.status === "connected" && wallet.address?.toLowerCase() !== PLATFORM_TOKEN_LAUNCHER) {
+      setDraft(current => current.officialPlatformToken ? { ...current, officialPlatformToken: false } : current);
+    }
+  }, [draft.officialPlatformToken, wallet.address, wallet.status]);
 
   // Restore an unfinished draft after mount (never during render: hydration).
   useEffect(() => {
@@ -132,6 +143,10 @@ export function CreateScreen({ entry = "manual" }: { entry?: CreateDraft["entry"
       return;
     }
     if (!market) return;
+    if (draft.officialPlatformToken && !canSelectOfficial) {
+      toast.error("Official token selection is unavailable", { description: "Connect the designated platform wallet on Base and wait for the platform token settings to load." });
+      return;
+    }
     // Re-check everything at launch time; earlier steps may have been edited.
     const coinErrors = validateCoinStep(draft);
     const pairErrors = validatePairs(draft, quotes, settings, stocksRestricted);
@@ -151,6 +166,7 @@ export function CreateScreen({ entry = "manual" }: { entry?: CreateDraft["entry"
       const coin = await market.launch(
         wallet.address,
         {
+          officialPlatformToken: officialSelected,
           name: validateName(draft.name).value,
           symbol: normalizeTicker(draft.ticker),
           description: validateDescription(draft.description).value,
@@ -260,10 +276,18 @@ export function CreateScreen({ entry = "manual" }: { entry?: CreateDraft["entry"
             <h2 className="mb-5 text-title2 text-label">{stepTitle(step)}</h2>
             {step === "coin" && entry === "tweet" ? <TweetImportPanel draft={draft} update={update} onBusy={setPreparingTweet} /> : null}
             {step === "coin" && (entry === "manual" || draft.tweet) ? <CoinStep draft={draft} update={update} errors={errors} showErrors={showErrors} showImagePicker={entry === "manual"} /> : null}
+            {step === "coin" && (canSelectOfficial || (draft.officialPlatformToken && wallet.address?.toLowerCase() === PLATFORM_TOKEN_LAUNCHER)) ? (
+              <label className="mt-5 flex cursor-pointer items-start gap-3 rounded-lg border border-tint/20 bg-tint/8 p-4">
+                <input type="checkbox" checked={draft.officialPlatformToken === true} onChange={event => update({ officialPlatformToken: event.target.checked })} disabled={launching} className="mt-1 size-4 shrink-0 accent-tint" />
+                <span className="text-subhead text-label"><span className="block font-semibold">Official platform token</span>
+                  <span className="mt-1 block text-footnote text-label-2">{canSelectOfficial ? "Use this launch as the official MemeFun token. Confirm this selection with your wallet; its details will replace the countdown after creation is confirmed." : "Official selection is unavailable. Untick this option to create a regular token."}</span>
+                </span>
+              </label>
+            ) : null}
             {step === "pair" ? <PairStep draft={draft} update={update} openingFdvUsd={settings.openingFdvUsd} enabledKinds={settings.enabledQuoteKinds} quotes={quotes} /> : null}
             {step === "fees" ? <FeesStep draft={draft} update={update} settings={settings} errors={errors} showErrors={showErrors} /> : null}
-            {step === "buy" ? <FirstBuyStep draft={draft} update={update} quote={buyQuote} quotes={selectedQuotes} allocationSupply={equalAllocations(Math.max(1, selectedQuotes.length))[selectedQuotes.findIndex((entry) => pairId(entry) === pairId(buyQuote))]} openingFdvUsd={settings.openingFdvUsd} error={showErrors ? errors.firstBuy : undefined} /> : null}
-            {step === "review" ? <ReviewStep draft={draft} quote={buyQuote} quotes={selectedQuotes} settings={settings} /> : null}
+            {step === "buy" ? <FirstBuyStep draft={draft} update={update} quote={buyQuote} quotes={selectedQuotes} allocationSupply={equalAllocations(Math.max(1, selectedQuotes.length))[selectedQuotes.findIndex((entry) => pairId(entry) === pairId(buyQuote))]} openingFdvUsd={settings.openingFdvUsd} error={showErrors ? errors.firstBuy : undefined} officialPlatformToken={officialSelected} /> : null}
+            {step === "review" ? <ReviewStep draft={draft} quote={buyQuote} quotes={selectedQuotes} settings={settings} officialPlatformToken={officialSelected} /> : null}
           </section>
           {regular ? actions : null}
           {!regular && step !== "review" ? <PreviewCard draft={draft} quotes={selectedQuotes} openingFdvUsd={settings.openingFdvUsd} /> : null}

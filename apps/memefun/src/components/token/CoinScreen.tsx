@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { SearchX } from "lucide-react";
 import { useCoin } from "@/lib/market/hooks";
+import { usePlatformToken } from "@/lib/platform-token/usePlatformToken";
 import type { Coin } from "@/lib/market/types";
 import type { Hash } from "@/core/types";
 import { selectCoinMarket } from "@/lib/market/markets";
@@ -21,6 +22,8 @@ import { AuthorRewardCard } from "@/components/rewards/AuthorRewardsScreen";
 
 export function CoinScreen({ address }: { address: string }) {
   const { coin, ready } = useCoin(address);
+  const platform = usePlatformToken();
+  const official = platform.showAnnouncement && platform.available && platform.info?.enabled === true && platform.info.tokenAddress?.toLowerCase() === coin?.address.toLowerCase();
   const [shareMoment, setShareMoment] = useState<ShareMoment | null>(null);
   const [tradeSide, setTradeSide] = useState<"buy" | "sell" | null>(null);
   const [poolId, setPoolId] = useState<Hash>();
@@ -58,7 +61,7 @@ export function CoinScreen({ address }: { address: string }) {
 
   return (
     <>
-      <CoinHeader coin={coin} onShare={() => share()} />
+      <CoinHeader coin={coin} official={official} onShare={() => share()} />
       {coin.markets?.length ? <label className="mt-4 flex flex-wrap items-center gap-3 text-subhead text-label">Trading pool
         <select aria-label="Trading pool" disabled={tradePending} value={activePoolId} onChange={(event) => setPoolId(event.target.value as Hash)} className="rounded-md bg-fill-4 p-3 text-label">
           {coin.markets.map((market) => <option key={market.poolId} value={market.poolId}>{coin.symbol} / {market.quote.symbol}</option>)}
@@ -68,13 +71,13 @@ export function CoinScreen({ address }: { address: string }) {
       <AuthorRewardCard coin={coin} />
       <div className="mt-4 grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_384px]">
         <div className="flex min-w-0 flex-col gap-6">
-          <ChartCard coin={selectedCoin} />
+          <ChartCard coin={selectedCoin} official={official} />
           <div className="flex flex-col gap-4 lg:hidden">
             <MilestoneCard coin={coin} onShare={share} />
             <ModeImpactCard coin={selectedCoin} />
             <CreatorCard coin={coin} />
           </div>
-          <CoinTabs coin={selectedCoin} />
+          <CoinTabs coin={selectedCoin} official={official} />
         </div>
         <aside className="hidden flex-col gap-4 self-start lg:sticky lg:top-6 lg:flex" aria-label={`Trade ${coin.symbol}`}>
           <div className="mf-card p-4">

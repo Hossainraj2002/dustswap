@@ -17,6 +17,9 @@ import { createPairCatalog } from "../lib/market/pair-catalog";
 import { launchCampaignConfig } from "../lib/launch-campaign/config";
 import { createCampaignStore } from "../lib/launch-campaign/store";
 import { createLaunchCampaign } from "../lib/launch-campaign/service";
+import { platformTokenConfig } from "../lib/platform-token/config";
+import { createPlatformTokenStore } from "../lib/platform-token/store";
+import { createPlatformToken } from "../lib/platform-token/service";
 import type { AppDeps } from "./app";
 import { normalizeOrigins } from "./http";
 import { createSettingsReader } from "./read/settings";
@@ -80,6 +83,10 @@ export async function createDeps(): Promise<Running> {
   const campaign = { campaign: createLaunchCampaign(launchCampaignConfig(), client, deployment, campaignStore), sessions, ipSalt };
   const campaignPrune = setInterval(() => { void campaignStore.prune().catch(() => console.error("[memefun api] campaign quota cleanup failed")); }, 60_000);
   campaignPrune.unref();
+  const platformStore = createPlatformTokenStore(readPool, appPool);
+  const platformToken = { platformToken: createPlatformToken(platformTokenConfig(chain.id), client, deployment, platformStore), sessions, ipSalt };
+  const platformPrune = setInterval(() => { void platformStore.prune().catch(() => console.error("[memefun api] platform token quota cleanup failed")); }, 60_000);
+  platformPrune.unref();
 
   snapshot.start(2_000);
   hub.start(1_000);
@@ -96,9 +103,11 @@ export async function createDeps(): Promise<Running> {
     deployment,
     author,
     campaign,
+    platformToken,
     async dispose() {
       clearInterval(xPrune);
       clearInterval(campaignPrune);
+      clearInterval(platformPrune);
       snapshot.stop();
       hub.stop();
       await Promise.allSettled([readPool.end(), appPool.end()]);

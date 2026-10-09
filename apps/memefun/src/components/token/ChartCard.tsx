@@ -18,7 +18,7 @@ const PriceChart = dynamic(() => import("./PriceChart"), {
   loading: () => <Skeleton className="h-[300px] w-full rounded-md" />,
 });
 
-export function ChartCard({ coin }: { coin: Coin }) {
+export function ChartCard({ coin, official = false }: { coin: Coin; official?: boolean }) {
   const regular = useIsRegularWidth();
   const { resolvedTheme } = useTheme();
   const wallet = useWallet();
@@ -34,14 +34,14 @@ export function ChartCard({ coin }: { coin: Coin }) {
       const mine = wallet.address !== null && trade.trader.toLowerCase() === wallet.address.toLowerCase();
       if (!trade.isCreator && !mine) continue;
       const time = Math.floor(trade.ts / 1000 / interval) * interval;
-      const kind = `${mine ? "you" : "dev"}-${trade.side}` as ChartMarker["kind"];
+      const kind = `${mine ? "you" : official ? "platform" : "dev"}-${trade.side}` as ChartMarker["kind"];
       const key = `${time}-${kind}`;
       if (seen.has(key)) continue;
       seen.add(key);
       result.push({ time, kind });
     }
     return result;
-  }, [trades, wallet.address, interval]);
+  }, [trades, wallet.address, interval, official]);
 
   const floorValue =
     coin.terms.mode === "floor" && coin.stats.floorPriceUsd > 0

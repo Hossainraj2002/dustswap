@@ -136,6 +136,8 @@ export interface TradeOptions {
 }
 
 export interface LaunchInput {
+  /** Requires the designated wallet's authenticated, chain-bound platform selection. */
+  officialPlatformToken?: boolean;
   tweet?: TweetDraft;
   name: string;
   symbol: string;

@@ -16,6 +16,12 @@ const render = (value = coin) => renderToStaticMarkup(<CoinHeader coin={value} o
 beforeEach(() => { clock.now = launchedAt + 30_000; });
 
 describe("current trading fee in the coin header", () => {
+  it("marks the verified platform token while keeping its actual fee visible", () => {
+    const html = renderToStaticMarkup(<CoinHeader coin={coin} official onShare={() => undefined} />);
+    expect(html).toContain("Official MemeFun token");
+    expect(html).toContain('aria-label="Current trading fee 27.5%"');
+    expect(render()).not.toContain("Official MemeFun token");
+  });
   it("makes the hidden compact header inert", () => {
     expect(render()).toMatch(/<div aria-hidden="true" inert=""/);
   });

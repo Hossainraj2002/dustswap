@@ -209,3 +209,13 @@ Author fees always accrue into one pending balance for each market/currency. Aut
 - **Referral claimables** are per pair asset, as FeeVault keeps them; the app shows them per asset, not per coin.
 - **Cost basis** is the average cost of the wallet's own trades; coins received by transfer are valued at today's price.
 - **Rate limits** for uploads, comments and reports are counted in Postgres (shared by replicas); sign-in burst limits are per process.
+
+### Official platform-token selection
+
+The optional Base mainnet announcement uses public `MEMEFUN_PLATFORM_TOKEN_LAUNCH_AT` (an exact UTC timestamp such as `2026-10-11T09:00:00Z`) and `MEMEFUN_PLATFORM_TOKEN_LAUNCHER` (the wallet that actually calls the factory). Missing or invalid settings leave `GET /v1/platform-token` disabled. The launch time controls the announcement countdown; it does not create an onchain launch restriction or activate the separate funded reward campaign.
+
+The designated wallet signs in through existing SIWE, explicitly selects its official launch in the create flow, and calls `POST /v1/platform-token/prepare {salt,contractURI}` before broadcasting. The API binds a durable intent to the factory's predicted coin and exact metadata URI, rejecting tokens that already exist. Exact retries retain the original intent, including across a long wallet prompt. Preparations that are never launched do not take the official slot.
+
+Public GET polling recovers the selection after the browser closes. It requires a complete indexed block and three Base confirmations, then verifies the actual factory `Launched` event against the canonical transaction receipt and block hash. Three confirmations are **not finalized** and do not change the reward campaign's finalized eligibility gate. Among qualifying prepared creations, block and log order decide the first token. The resulting official pin cannot be replaced. Every five seconds at most, polling revalidates its canonical receipt; disappeared or replaced history hides official status and never assigns another token. Moderation, ticker, name and mutable fee creator do not authorize a selection.
+
+Focused tests: `node node_modules/vitest/vitest.mjs run test/unit/platform-token.test.ts`. The optional real-Postgres suite (`--config vitest.platform-token.config.ts`) accepts only a loopback local test port through `MEMEFUN_PLATFORM_TOKEN_TEST_PORT`, creates its own random database and removes it afterward. It never uses `DATABASE_URL` or operator env files.

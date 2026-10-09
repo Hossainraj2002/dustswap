@@ -12,10 +12,11 @@ import { MODE_META } from "@/components/ui/ModeBadge";
 import { TweetSourceCard } from "./TweetImportPanel";
 import { AuthorRewardTerms } from "@/components/rewards/AuthorRewardTerms";
 
-export function ReviewStep({ draft, quote, quotes = [quote], settings }: { draft: CreateDraft; quote: QuoteAsset; quotes?: QuoteAsset[]; settings: LaunchSettings }) {
+export function ReviewStep({ draft, quote, quotes = [quote], settings, officialPlatformToken = false }: { draft: CreateDraft; quote: QuoteAsset; quotes?: QuoteAsset[]; settings: LaunchSettings; officialPlatformToken?: boolean }) {
   const meta = MODE_META[draft.mode];
   const firstBuy = Number(draft.firstBuy) || 0;
   const rows: Array<[string, React.ReactNode]> = [
+    ...(officialPlatformToken ? [["Official platform token", "MemeFun · pinned to the Discover hero after confirmation"] as [string, React.ReactNode]] : []),
     ["Pairs", selectedQuoteIds(draft).map(id => `${normalizeTicker(draft.ticker)} / ${findPair(quotes, id)?.symbol ?? "Unavailable pair"}`).join(", ")],
     ["Pool allocations", `${selectedQuoteIds(draft).length} equal shares of 1 billion tokens; one token contract`],
     ["Trading fee", `${formatBps(draft.feeBps)} of every trade`],

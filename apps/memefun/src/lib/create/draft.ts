@@ -9,6 +9,7 @@ import { parseTweetUrl, validXId } from "@/core/tweet";
 import { findPair, pairId, pairUnavailableReason } from "@/lib/market/pairs";
 
 export interface CreateDraft {
+  officialPlatformToken?: boolean;
   entry: "manual" | "tweet";
   tweet?: TweetDraft;
   image: string | null;
@@ -45,6 +46,7 @@ export const EMPTY_DRAFT: CreateDraft = {
   mode: "creator",
   creatorKeepBps: 2500,
   firstBuy: "",
+  officialPlatformToken: false,
 };
 
 export const STEPS = [
@@ -170,7 +172,7 @@ export function migrateDraft(saved: SavedDraft): CreateDraft {
   void _oldPrimary; void _oldPairs; void _oldBuy;
   return { ...EMPTY_DRAFT, ...current, entry: saved.entry === "tweet" ? "tweet" : "manual", launchMode: saved.launchMode === "multi" ? "multi" : "single", quoteId: quoteIds[0] ?? quoteId,
     tweet, mode: saved.entry === "tweet" ? "creator" : (saved.mode ?? EMPTY_DRAFT.mode), quoteIds, firstBuyQuoteId: quoteIds.includes(savedBuyQuote) ? savedBuyQuote : quoteIds[0]!,
-    firstBuy: quoteIds.includes(savedBuyQuote) ? (saved.firstBuy ?? "") : "" };
+    firstBuy: quoteIds.includes(savedBuyQuote) ? (saved.firstBuy ?? "") : "", officialPlatformToken: saved.officialPlatformToken === true };
 }
 
 export function selectedQuoteIds(draft: CreateDraft): string[] {

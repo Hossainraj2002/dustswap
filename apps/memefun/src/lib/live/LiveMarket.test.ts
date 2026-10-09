@@ -10,9 +10,11 @@ import { applyQuote, createLaunchPool, launchPoolAt, livePool, minOut, quoteBuy,
 import type { Coin } from "@/lib/market/types";
 import { createApi } from "./api";
 import { type EventSourceLike, LiveMarket, type PoolInfo } from "./LiveMarket";
-import { sendTrade, type TxContext, type TradeFill } from "./tx";
+import { sendLaunch, sendTrade, type TxContext, type TradeFill } from "./tx";
+import { PLATFORM_TOKEN_LAUNCH_AT, PLATFORM_TOKEN_LAUNCHER } from "@/lib/platform-token/config";
+import { DEPLOYMENTS } from "@/lib/contracts/deployments";
 
-vi.mock("./tx", () => ({ sendTrade: vi.fn() }));
+vi.mock("./tx", () => ({ sendTrade: vi.fn(), sendLaunch: vi.fn() }));
 
 const COIN = "0xb200000000000000000000000000000000000001";
 const OTHER = "0xb200000000000000000000000000000000000002";
@@ -169,6 +171,68 @@ function baseApi() {
 }
 
 describe("LiveMarket", () => {
+  const launchInput = () => ({ name: "New token", symbol: "NEW", description: "", image: "data:image/png;base64,AA==", links: {},
+    quote: coin(COIN).quote, mode: "creator" as const, feeBps: 100, creatorKeepBps: 0, firstBuyQuote: 0 });
+  const platformInfo = { enabled: true, launchAt: PLATFORM_TOKEN_LAUNCH_AT, launcher: PLATFORM_TOKEN_LAUNCHER, tokenAddress: null };
+
+  it.each([
+    [USER, platformInfo],
+    [PLATFORM_TOKEN_LAUNCHER, { ...platformInfo, tokenAddress: COIN }],
+    [PLATFORM_TOKEN_LAUNCHER, { enabled: false }],
+  ] as const)("refuses unauthorized or already-pinned official selection before upload or wallet access", async (user, info) => {
+    const api = baseApi().on("/v1/platform-token", info);
+    const txContext = vi.fn();
+    const { m } = market(api, { txContext });
+    await expect(m.launch(user, { ...launchInput(), officialPlatformToken: true })).rejects.toThrow("Only the designated platform wallet");
+    expect(api.count("/v1/media/")).toBe(0);
+    expect(txContext).not.toHaveBeenCalled();
+    expect(sendLaunch).not.toHaveBeenCalled();
+  });
+
+  it.each(["none", "coin", "salt", "uri", "denied"] as const)("binds an official launch to the signed intent and factory prediction (%s)", async mismatch => {
+    const api = baseApi().on("/v1/launch-settings", { settings: DEFAULT_SETTINGS, quotes: [coin(COIN).quote] }).on("/v1/platform-token", platformInfo)
+      .on("/v1/media/image", { uri: "https://media.test/coin.webp" })
+      .on("/v1/media/metadata", { contractURI: "https://media.test/coin.json" })
+      .on("/v1/auth/nonce", { nonce: "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6" })
+      .on("/v1/auth/verify", { address: PLATFORM_TOKEN_LAUNCHER, token: "signed-platform-session", expiresAt: new Date(Date.now() + 3_600_000).toISOString() })
+      .on("/v1/platform-token/prepare", (_url: URL, init?: RequestInit) => {
+        if (mismatch === "denied") return { status: 403, body: { error: { code: "platform_token_launcher", message: "Selection denied" } } };
+        const body = JSON.parse(String(init?.body)) as { salt: string; contractURI: string };
+        return { body: { coin: mismatch === "coin" ? OTHER : COIN, salt: mismatch === "salt" ? `0x${"ff".repeat(32)}` : body.salt,
+          contractURI: mismatch === "uri" ? "https://media.test/copied.json" : body.contractURI } };
+      });
+    const readContract = vi.fn(async () => COIN);
+    const ctx = { client: { ...client, readContract }, deployment: DEPLOYMENTS[8453], wallet: {
+      account: { address: PLATFORM_TOKEN_LAUNCHER }, signMessage: vi.fn(async () => `0x${"ab".repeat(65)}`),
+    } } as unknown as TxContext;
+    vi.mocked(sendLaunch).mockResolvedValue({ coin: COIN, hash: `0x${"12".repeat(32)}`, blockNumber: 1n, coinsBought: 0n, quoteSpent: 0n });
+    const { m } = market(api, { txContext: async () => ctx, location: { host: "memefun.test", origin: "https://memefun.test" } });
+    const attempt = m.launch(PLATFORM_TOKEN_LAUNCHER, { ...launchInput(), officialPlatformToken: true });
+    if (mismatch === "none") {
+      expect((await attempt).address).toBe(COIN);
+      const prepare = api.calls.find(call => call.path === "/v1/platform-token/prepare")!;
+      const selected = JSON.parse(prepare.body!);
+      expect(prepare.auth).toBe("Bearer signed-platform-session");
+      expect(sendLaunch).toHaveBeenCalledWith(ctx, expect.objectContaining({ salt: selected.salt, contractURI: selected.contractURI, feeBps: 100 }));
+      expect(readContract).toHaveBeenCalledWith(expect.objectContaining({ address: DEPLOYMENTS[8453]!.factory, functionName: "predictCoin", args: [PLATFORM_TOKEN_LAUNCHER, selected.salt] }));
+    } else {
+      await expect(attempt).rejects.toThrow(mismatch === "denied" ? "Selection denied" : "did not match this launch");
+      expect(sendLaunch).not.toHaveBeenCalled();
+    }
+  });
+
+  it("keeps normal launches independent from official-token availability and sign-in", async () => {
+    const api = baseApi().on("/v1/launch-settings", { settings: DEFAULT_SETTINGS, quotes: [coin(COIN).quote] }).on("/v1/media/image", { uri: "https://media.test/coin.webp" })
+      .on("/v1/media/metadata", { contractURI: "https://media.test/coin.json" });
+    const ctx = { client, deployment: DEPLOYMENTS[8453] } as unknown as TxContext;
+    vi.mocked(sendLaunch).mockResolvedValue({ coin: COIN, hash: `0x${"12".repeat(32)}`, blockNumber: 1n, coinsBought: 0n, quoteSpent: 0n });
+    const { m } = market(api, { txContext: async () => ctx });
+    expect((await m.launch(USER, launchInput())).address).toBe(COIN);
+    expect(sendLaunch).toHaveBeenCalledOnce();
+    expect(api.count("/v1/platform-token")).toBe(0);
+    expect(api.count("/v1/auth/")).toBe(0);
+  });
+
   it("waits for a coin list response even when other API reads are ready, including an empty list", async () => {
     let release!: (value: { body: unknown }) => void;
     const api = baseApi().on("/v1/coins", () => new Promise<{ body: unknown }>(resolve => { release = resolve; }));

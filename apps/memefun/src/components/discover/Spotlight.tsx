@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Crown } from "lucide-react";
+import { BadgeCheck, Crown } from "lucide-react";
 import { formatCompact, formatUsd } from "@/core/format";
 import { milestoneLabel, milestoneProgress } from "@/core/milestones";
 import { useNow } from "@/lib/hooks";
@@ -15,7 +15,7 @@ import { PairBadge, UsdFlow } from "@/components/coin/CoinBits";
 import { coinRing } from "@/components/coin/ring";
 
 /** King of the hill: the coin with the most momentum right now. */
-export function Spotlight({ coin }: { coin: Coin }) {
+export function Spotlight({ coin, official = false }: { coin: Coin; official?: boolean }) {
   const now = useNow();
   const milestone = milestoneProgress(coin.marketCapUsd, coin.openingMarketCapUsd);
   return (
@@ -24,9 +24,9 @@ export function Spotlight({ coin }: { coin: Coin }) {
         <div className="flex min-w-0 items-center gap-4">
           <CoinAvatar src={coin.image} alt="" size={88} ring={coinRing(coin, now)} symbol={coin.symbol} />
           <div className="min-w-0">
-            <p className="flex items-center gap-1.5 text-footnote font-semibold uppercase tracking-wide text-warning">
-              <Crown className="size-4" aria-hidden />
-              King of the hill
+            <p className={`flex items-center gap-1.5 text-footnote font-semibold uppercase tracking-wide ${official ? "text-tint" : "text-warning"}`}>
+              {official ? <BadgeCheck className="size-4" aria-hidden /> : <Crown className="size-4" aria-hidden />}
+              {official ? "Official MemeFun token" : "King of the hill"}
             </p>
             <h2 id="spotlight-title" className="truncate text-title1 text-label">
               {coin.name}

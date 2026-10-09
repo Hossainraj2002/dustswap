@@ -21,7 +21,7 @@ import type { Candle } from "@/lib/market/types";
 
 export interface ChartMarker {
   time: number;
-  kind: "dev-buy" | "dev-sell" | "you-buy" | "you-sell";
+  kind: "dev-buy" | "dev-sell" | "you-buy" | "you-sell" | "platform-buy" | "platform-sell";
 }
 
 interface PriceChartProps {
@@ -150,12 +150,13 @@ export default function PriceChart({ candles, metric, markers, floorValue, heigh
       .map((marker) => {
         const buy = marker.kind.endsWith("buy");
         const you = marker.kind.startsWith("you");
+        const platform = marker.kind.startsWith("platform");
         return {
           time: marker.time as UTCTimestamp,
           position: buy ? "belowBar" : "aboveBar",
           shape: buy ? "arrowUp" : "arrowDown",
-          color: you ? cssVar("--mf-tint") : cssVar("--mf-warning"),
-          text: you ? "You" : buy ? "Dev buy" : "Dev sell",
+          color: you || platform ? cssVar("--mf-tint") : cssVar("--mf-warning"),
+          text: you ? "You" : `${platform ? "Platform" : "Dev"} ${buy ? "buy" : "sell"}`,
         };
       });
     markersRef.current.setMarkers(items);

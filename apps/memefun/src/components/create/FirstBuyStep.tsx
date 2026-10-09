@@ -9,7 +9,7 @@ import { useQuoteBalance } from "@/lib/market/hooks";
 import { useWallet } from "@/lib/wallet/WalletProvider";
 import { pairId } from "@/lib/market/pairs";
 
-export function FirstBuyStep({ draft, update, quote, quotes = [quote], allocationSupply, openingFdvUsd, error }: { draft: CreateDraft; update: (patch: Partial<CreateDraft>) => void; quote: QuoteAsset; quotes?: QuoteAsset[]; allocationSupply?: bigint; openingFdvUsd: number; error?: string }) {
+export function FirstBuyStep({ draft, update, quote, quotes = [quote], allocationSupply, openingFdvUsd, error, officialPlatformToken = false }: { draft: CreateDraft; update: (patch: Partial<CreateDraft>) => void; quote: QuoteAsset; quotes?: QuoteAsset[]; allocationSupply?: bigint; openingFdvUsd: number; error?: string; officialPlatformToken?: boolean }) {
   const wallet = useWallet();
   const balance = useQuoteBalance(wallet.address, quote.address);
   const preview = previewFirstBuy(draft.firstBuy, quote, draft.feeBps, openingFdvUsd, allocationSupply);
@@ -82,7 +82,7 @@ export function FirstBuyStep({ draft, update, quote, quotes = [quote], allocatio
         </dl>
       ) : null}
 
-      {preview?.warn ? (
+      {preview?.warn && !officialPlatformToken ? (
         <div className="flex gap-3 rounded-lg bg-warning/10 p-4" role="status">
           <CircleAlert className="mt-0.5 size-5 shrink-0 text-warning" aria-hidden />
           <p className="text-subhead text-label">

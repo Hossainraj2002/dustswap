@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
-import { ChevronLeft, Share, Star } from "lucide-react";
+import { BadgeCheck, ChevronLeft, Share, Star } from "lucide-react";
 import { launchFeeBps } from "@/core/antiSnipe";
 import { formatCompact, formatUsd, shortAddress } from "@/core/format";
 import { cn } from "@/lib/cn";
@@ -22,7 +22,7 @@ export function useWatchlist() {
   return useLocalStorageState<string[]>("memefun:watchlist", []);
 }
 
-export function CoinHeader({ coin, onShare }: { coin: Coin; onShare: () => void }) {
+export function CoinHeader({ coin, onShare, official = false }: { coin: Coin; onShare: () => void; official?: boolean }) {
   const now = useNow();
   const feeBps = now > 0
     ? launchFeeBps(coin.terms.feeBps, { startBps: coin.terms.snipeStartBps, durationSec: coin.terms.snipeDurationSec }, (now - coin.createdAt) / 1000)
@@ -80,6 +80,7 @@ export function CoinHeader({ coin, onShare }: { coin: Coin; onShare: () => void 
             <h1 className="truncate text-title1 text-label">{coin.name}</h1>
             <div className="mt-1 flex flex-wrap items-center gap-1.5">
               <span className="text-subhead font-semibold text-label-2">${coin.symbol}</span>
+              {official ? <span className="inline-flex items-center gap-1 rounded-full bg-tint/10 px-2 py-1 text-caption1 font-semibold text-tint"><BadgeCheck className="size-3.5" aria-hidden />Official MemeFun token</span> : null}
               {inProtection(coin, now) ? <ProtectionBadge /> : null}
               <ModeBadge mode={coin.terms.mode} compact feeBps={feeBps} />
               <PairBadge coin={coin} />
