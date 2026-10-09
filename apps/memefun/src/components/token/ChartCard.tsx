@@ -8,6 +8,7 @@ import { useIsRegularWidth } from "@/lib/hooks";
 import { useCandles, useTrades } from "@/lib/market/hooks";
 import { CANDLE_INTERVALS, type CandleInterval, type Coin } from "@/lib/market/types";
 import { useWallet } from "@/lib/wallet/WalletProvider";
+import { isPlatformWallet } from "@/lib/platform-token/config";
 import { useTheme } from "@/components/theme/ThemeProvider";
 import { SegmentedControl } from "@/components/ui/SegmentedControl";
 import { Skeleton } from "@/components/ui/display";
@@ -34,7 +35,7 @@ export function ChartCard({ coin, official = false }: { coin: Coin; official?: b
       const mine = wallet.address !== null && trade.trader.toLowerCase() === wallet.address.toLowerCase();
       if (!trade.isCreator && !mine) continue;
       const time = Math.floor(trade.ts / 1000 / interval) * interval;
-      const kind = `${mine ? "you" : official ? "platform" : "dev"}-${trade.side}` as ChartMarker["kind"];
+      const kind = `${mine ? "you" : official ? isPlatformWallet(trade.trader) ? "platform" : "creator" : "dev"}-${trade.side}` as ChartMarker["kind"];
       const key = `${time}-${kind}`;
       if (seen.has(key)) continue;
       seen.add(key);

@@ -14,6 +14,7 @@ import { useMarket } from "@/lib/market/MarketProvider";
 import type { Coin, Holder } from "@/lib/market/types";
 import { usePreview } from "@/lib/preview/scenario";
 import { useWallet } from "@/lib/wallet/WalletProvider";
+import { isPlatformWallet } from "@/lib/platform-token/config";
 import { AddressAvatar } from "@/components/ui/AddressAvatar";
 import { Button } from "@/components/ui/Button";
 import { Badge, EmptyState } from "@/components/ui/display";
@@ -56,6 +57,7 @@ function TradesTab({ coin, official }: { coin: Coin; official: boolean }) {
     <ol className="mf-card overflow-hidden [&>li+li]:hairline-t" aria-label="Latest trades">
       {trades.slice(0, limit).map((trade) => {
         const you = wallet.address !== null && trade.trader.toLowerCase() === wallet.address.toLowerCase();
+        const platform = official && isPlatformWallet(trade.trader);
         return (
           <li key={trade.id} className="flex items-center gap-3 px-4 py-2.5">
             <span
@@ -74,7 +76,7 @@ function TradesTab({ coin, official }: { coin: Coin; official: boolean }) {
               </span>
               <span className="flex items-center gap-1.5 truncate text-footnote text-label-2">
                 <AddressAvatar address={trade.trader} size={14} />
-                {you ? <Badge tone="tint">You</Badge> : trade.isCreator ? <Badge tone={official ? "tint" : "warning"}>{official ? "Platform" : "Dev"}</Badge> : shortAddress(trade.trader)}
+                {you ? <Badge tone="tint">You</Badge> : trade.isCreator ? <Badge tone={official ? "tint" : "warning"}>{platform ? "Platform" : official ? "Creator" : "Dev"}</Badge> : shortAddress(trade.trader)}
                 {trade.inProtection ? <span className="text-warning">paid {formatBps(trade.feeBps)} launch fee</span> : null}
               </span>
             </span>
@@ -98,13 +100,14 @@ function TradesTab({ coin, official }: { coin: Coin; official: boolean }) {
 /* ----------------------------------------------------------------- holders */
 
 function holderName(holder: Holder, official: boolean) {
+  if (official && isPlatformWallet(holder.address) && holder.label !== "you") return "Platform wallet";
   switch (holder.label) {
     case "pool":
       return "Uniswap v4 pool (locked)";
     case "burn":
       return "Burn address";
     case "creator":
-      return official ? "Platform wallet" : "Creator";
+      return "Creator";
     case "you":
       return "You";
     default:
@@ -136,7 +139,8 @@ function HoldersTab({ coin, official }: { coin: Coin; official: boolean }) {
           <span className="flex min-w-0 flex-1 flex-col gap-1">
             <span className="flex items-center gap-1.5 truncate text-subhead text-label">
               {holderName(holder, official)}
-              {holder.label === "creator" ? <Badge tone={official ? "tint" : "warning"}>{official ? "Platform" : "Dev"}</Badge> : null}
+              {official && isPlatformWallet(holder.address) ? <Badge tone="tint">Platform</Badge>
+                : holder.label === "creator" ? <Badge tone={official ? "tint" : "warning"}>{official ? "Creator" : "Dev"}</Badge> : null}
             </span>
             <span className="h-1 w-full overflow-hidden rounded-full bg-fill-3" aria-hidden>
               <span className="block h-full rounded-full bg-tint-fill" style={{ width: `${Math.min(100, holder.pct * 100)}%` }} />
@@ -277,10 +281,10 @@ function SafetyTab({ coin, official }: { coin: Coin; official: boolean }) {
       note: "Share of supply held by the 10 largest wallets, not counting the pool or burn address.",
     },
     {
-      label: official ? "Platform wallet holds" : "Creator holds",
+      label: official ? (isPlatformWallet(coin.creator) ? "Platform wallet holds" : "Current creator holds") : "Creator holds",
       value: formatPercent(coin.devHoldsPct),
       tone: official ? "neutral" : coin.devHoldsPct > 0.05 ? "caution" : "good",
-      note: official ? (coin.devSold ? "The platform wallet has sold some coins." : "The platform wallet has not sold any coins.")
+      note: official ? (coin.devSold ? "The original launcher has sold or transferred tokens to a trading pool." : "No original-launcher sales or transfers to a trading pool are recorded.")
         : coin.devSold ? "The creator has sold some coins." : "The creator has not sold any coins.",
     },
     {

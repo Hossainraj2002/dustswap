@@ -158,6 +158,7 @@ afterEach(() => {
   for (const m of markets) m.stop();
   markets = [];
   vi.clearAllMocks();
+  vi.unstubAllGlobals();
 });
 
 function baseApi() {
@@ -231,6 +232,64 @@ describe("LiveMarket", () => {
     expect(sendLaunch).toHaveBeenCalledOnce();
     expect(api.count("/v1/platform-token")).toBe(0);
     expect(api.count("/v1/auth/")).toBe(0);
+  });
+
+  it.each([
+    ["prepare", "recover"], ["prepare", "repeated401"], ["prepare", "forbidden"],
+    ["attestation", "recover"], ["attestation", "repeated401"], ["attestation", "forbidden"],
+  ] as const)("handles a cached session rejected by official launch %s (%s) before chain submission", async (endpoint, outcome) => {
+    const key = `memefun:session:${PLATFORM_TOKEN_LAUNCHER.toLowerCase()}`;
+    const values = new Map([[key, JSON.stringify({ address: PLATFORM_TOKEN_LAUNCHER, token: "cached-rejected-session", expiresAt: Date.now() + 3_600_000 })]]);
+    vi.stubGlobal("window", { sessionStorage: {
+      getItem: (name: string) => values.get(name) ?? null,
+      setItem: (name: string, value: string) => { values.set(name, value); },
+      removeItem: (name: string) => { values.delete(name); },
+    } });
+    const source = { postId: "123456789", url: "https://x.com/test/status/123456789", text: "Official launch", author: { id: "987654321", handle: "test", name: "Test" },
+      photos: [], suggestedName: "Official launch", suggestedTicker: "OFF", authorFeesSupported: true };
+    const rejectedPath = endpoint === "prepare" ? "/v1/platform-token/prepare" : "/v1/tweets/attestation";
+    let attempts = 0;
+    const reject = () => ({ status: outcome === "forbidden" ? 403 : 401,
+      body: { error: { code: outcome === "forbidden" ? "platform_token_launcher" : "sign_in_required", message: "Session rejected" } } });
+    const prepared = (_url: URL, init?: RequestInit) => {
+      if (rejectedPath === "/v1/platform-token/prepare" && (++attempts === 1 || outcome !== "recover")) return reject();
+      const body = JSON.parse(String(init?.body)) as { salt: string; contractURI: string };
+      return { body: { coin: COIN, salt: body.salt, contractURI: body.contractURI } };
+    };
+    const attested = (_url: URL, init?: RequestInit) => {
+      if (rejectedPath === "/v1/tweets/attestation" && (++attempts === 1 || outcome !== "recover")) return reject();
+      const body = JSON.parse(String(init?.body)) as { salt: string; authorShareBps: number };
+      return { body: { source, launcher: PLATFORM_TOKEN_LAUNCHER, salt: body.salt, tweet: { postId: source.postId, authorXUserId: source.author.id, authorShareBps: body.authorShareBps },
+        deadline: "1791709500", signature: `0x${"ab".repeat(65)}`, chainId: 8453, factory: DEPLOYMENTS[8453]!.factory, reserveDays: 180 } };
+    };
+    const api = baseApi().on("/v1/launch-settings", { settings: DEFAULT_SETTINGS, quotes: [coin(COIN).quote] }).on("/v1/platform-token", platformInfo)
+      .on("/v1/media/image", { uri: "https://media.test/coin.webp" }).on("/v1/media/metadata", { contractURI: "https://media.test/coin.json" })
+      .on("/v1/auth/nonce", { nonce: "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6" })
+      .on("/v1/auth/verify", { address: PLATFORM_TOKEN_LAUNCHER, token: "renewed-session", expiresAt: new Date(Date.now() + 3_600_000).toISOString() })
+      .on("/v1/platform-token/prepare", prepared).on("/v1/tweets/attestation", attested);
+    const signMessage = vi.fn(async () => `0x${"ab".repeat(65)}`);
+    const ctx = { client: { ...client, readContract: vi.fn(async () => COIN) }, deployment: DEPLOYMENTS[8453],
+      wallet: { account: { address: PLATFORM_TOKEN_LAUNCHER }, signMessage } } as unknown as TxContext;
+    vi.mocked(sendLaunch).mockResolvedValue({ coin: COIN, hash: `0x${"12".repeat(32)}`, blockNumber: 1n, coinsBought: 0n, quoteSpent: 0n });
+    const { m } = market(api, { txContext: async () => ctx, location: { host: "memefun.test", origin: "https://memefun.test" } });
+    const attempt = m.launch(PLATFORM_TOKEN_LAUNCHER, { ...launchInput(), officialPlatformToken: true,
+      ...(endpoint === "attestation" ? { tweet: { source, authorShareBps: 5_000 } } : {}) });
+    if (outcome === "recover") {
+      expect((await attempt).address).toBe(COIN);
+      expect(sendLaunch).toHaveBeenCalledOnce();
+      const posts = api.calls.filter(call => call.path === rejectedPath);
+      expect(posts.map(call => call.auth)).toEqual(["Bearer cached-rejected-session", "Bearer renewed-session"]);
+      expect(posts[0]!.body).toEqual(posts[1]!.body); // Retry preserves the selected salt and metadata/attribution.
+      expect(JSON.parse(values.get(key)!).token).toBe("renewed-session");
+    } else {
+      await expect(attempt).rejects.toThrow("Session rejected");
+      expect(sendLaunch).not.toHaveBeenCalled();
+      if (outcome === "repeated401") expect(values.has(key)).toBe(false);
+      else expect(JSON.parse(values.get(key)!).token).toBe("cached-rejected-session");
+    }
+    expect(attempts).toBe(outcome === "forbidden" ? 1 : 2);
+    expect(api.count("/v1/auth/verify")).toBe(outcome === "forbidden" ? 0 : 1);
+    expect(signMessage).toHaveBeenCalledTimes(outcome === "forbidden" ? 0 : 1);
   });
 
   it("waits for a coin list response even when other API reads are ready, including an empty list", async () => {

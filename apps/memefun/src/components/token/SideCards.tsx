@@ -154,7 +154,7 @@ function Metric({ label, value, sub, small }: { label: string; value: string; su
   );
 }
 
-export function CreatorCard({ coin }: { coin: Coin }) {
+export function CreatorCard({ coin, official = false }: { coin: Coin; official?: boolean }) {
   const profile = useCreatorProfile(coin.creator);
   const wallet = useWallet();
   const isYou = wallet.address === coin.creator;
@@ -168,7 +168,8 @@ export function CreatorCard({ coin }: { coin: Coin }) {
             Creator of {profile?.coins.length ?? 1} {profile && profile.coins.length === 1 ? "coin" : "coins"}, earned {formatUsd(profile?.earnedUsd ?? 0, { compact: true })}
           </p>
           <div className="mt-1.5">
-            {coin.devSold ? <Badge tone="warning">Creator has sold</Badge> : <Badge tone="up">Creator has not sold</Badge>}
+            {official ? <p className="text-caption1 text-label-2">{coin.devSold ? "Original launcher: sale or transfer to a trading pool recorded." : "No original-launcher sale or transfer to a trading pool recorded."}</p>
+              : coin.devSold ? <Badge tone="warning">Creator has sold</Badge> : <Badge tone="up">Creator has not sold</Badge>}
           </div>
         </div>
         <ChevronRight className="size-4 text-label-3" aria-hidden />

@@ -3,6 +3,7 @@ import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Coin } from "@/lib/market/types";
 import { ETH } from "@/lib/market/quotes";
+import { PreviewMarket } from "@/lib/preview/engine";
 import { PLATFORM_TOKEN_LAUNCH_AT, PLATFORM_TOKEN_LAUNCHER, type PlatformTokenInfo } from "@/lib/platform-token/config";
 import { DiscoverScreen } from "./DiscoverScreen";
 
@@ -25,8 +26,9 @@ vi.mock("./TopCreators", () => ({ TopCreators: () => null }));
 vi.mock("./PlatformLaunchCountdown", () => ({ PlatformLaunchCountdown: () => <p>Platform countdown</p> }));
 vi.mock("./Spotlight", () => ({ Spotlight: ({ coin, official }: { coin: Coin; official?: boolean }) => <p>{official ? "Official" : "Trending"} hero: {coin.symbol}</p> }));
 
-const OFFICIAL = { address: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", symbol: "PLATFORM", quote: ETH, terms: { mode: "creator" }, momentum: 1, createdAt: 1 } as Coin;
-const TRENDING = { ...OFFICIAL, address: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", symbol: "TRENDING", momentum: 999 } as Coin;
+const seed = new PreviewMarket({ now: 1_800_000_000_000, seed: 1 }).listCoins()[0]!;
+const OFFICIAL: Coin = { ...seed, address: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", symbol: "PLATFORM", quote: ETH, terms: { ...seed.terms, mode: "creator" }, momentum: 1, createdAt: 1 };
+const TRENDING: Coin = { ...OFFICIAL, address: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", symbol: "TRENDING", momentum: 999 };
 const INFO = { enabled: true as const, launchAt: PLATFORM_TOKEN_LAUNCH_AT, launcher: PLATFORM_TOKEN_LAUNCHER, tokenAddress: null };
 beforeEach(() => {
   view.ready = true; view.coins = [TRENDING, OFFICIAL]; view.official = null; view.requested = undefined;

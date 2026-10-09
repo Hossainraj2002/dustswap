@@ -75,7 +75,7 @@ export function CoinScreen({ address }: { address: string }) {
           <div className="flex flex-col gap-4 lg:hidden">
             <MilestoneCard coin={coin} onShare={share} />
             <ModeImpactCard coin={selectedCoin} />
-            <CreatorCard coin={coin} />
+            <CreatorCard coin={coin} official={official} />
           </div>
           <CoinTabs coin={selectedCoin} official={official} />
         </div>
@@ -85,7 +85,7 @@ export function CoinScreen({ address }: { address: string }) {
           </div>
           <MilestoneCard coin={coin} onShare={share} />
           <ModeImpactCard coin={selectedCoin} />
-          <CreatorCard coin={coin} />
+          <CreatorCard coin={coin} official={official} />
         </aside>
       </div>
 

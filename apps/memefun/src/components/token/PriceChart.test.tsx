@@ -43,12 +43,14 @@ describe("chart view fitting", () => {
     render(<PriceChart {...props} markers={[
       { time: 3, kind: "platform-sell" }, { time: 1, kind: "platform-buy" },
       { time: 2, kind: "dev-buy" }, { time: 4, kind: "you-sell" },
+      { time: 5, kind: "creator-buy" },
     ]} />);
     expect(chart.markers).toHaveBeenLastCalledWith([
       expect.objectContaining({ time: 1, text: "Platform buy", color: "#0052ff", position: "belowBar", shape: "arrowUp" }),
       expect.objectContaining({ time: 2, text: "Dev buy", color: "#b22e00" }),
       expect.objectContaining({ time: 3, text: "Platform sell", color: "#0052ff", position: "aboveBar", shape: "arrowDown" }),
       expect.objectContaining({ time: 4, text: "You", color: "#0052ff" }),
+      expect.objectContaining({ time: 5, text: "Creator buy", color: "#0052ff", position: "belowBar", shape: "arrowUp" }),
     ]);
   });
 });

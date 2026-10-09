@@ -1002,8 +1002,9 @@ export class LiveMarket implements Market {
     const selectedSalt = input.officialPlatformToken ? toHex(crypto.getRandomValues(new Uint8Array(32))) : undefined;
     if (input.tweet) {
       try {
+        const { source, authorShareBps } = input.tweet;
         const salt = selectedSalt ?? toHex(crypto.getRandomValues(new Uint8Array(32)));
-        tweet = await this.api.post<TweetLaunchAttestation>("/v1/tweets/attestation", { url: input.tweet.source.url, authorShareBps: input.tweet.authorShareBps, salt }, { token: await this.sessionToken(user) });
+        tweet = await this.withSessionRetry(user, token => this.api.post<TweetLaunchAttestation>("/v1/tweets/attestation", { url: source.url, authorShareBps, salt }, { token }));
         if (tweet.source.postId !== input.tweet.source.postId || tweet.source.author.id !== input.tweet.source.author.id || tweet.tweet.authorShareBps !== input.tweet.authorShareBps
           || tweet.salt !== salt || tweet.launcher.toLowerCase() !== user.toLowerCase()) throw new TxError("The post attribution changed. Import the X post again before launching.", "reverted");
       } catch (error) { throw error instanceof ApiError ? new TxError(error.message, "reverted") : error; }
@@ -1036,8 +1037,8 @@ export class LiveMarket implements Market {
     if (selectedSalt) {
       try {
         const [prepared, predicted] = await Promise.all([
-          this.api.post<{ coin: Address; salt: string; contractURI: string }>("/v1/platform-token/prepare",
-            { salt: selectedSalt, contractURI }, { token: await this.sessionToken(user) }),
+          this.withSessionRetry(user, token => this.api.post<{ coin: Address; salt: string; contractURI: string }>("/v1/platform-token/prepare",
+            { salt: selectedSalt, contractURI }, { token })),
           ctx.client.readContract({ address: ctx.deployment.factory, abi: predictCoinAbi, functionName: "predictCoin", args: [user, selectedSalt] }),
         ]);
         if (prepared.salt?.toLowerCase() !== selectedSalt.toLowerCase() || prepared.contractURI !== contractURI || prepared.coin?.toLowerCase() !== predicted.toLowerCase()) {
@@ -1224,6 +1225,21 @@ export class LiveMarket implements Market {
     this.comments.set(key, [comment, ...(this.comments.get(key) ?? []).filter((c) => c.id !== comment.id)]);
     this.emit();
     return comment;
+  }
+
+  /** Retry a server-rejected sign-in once, only before any transaction is submitted. */
+  private async withSessionRetry<T>(address: Address, request: (token: string) => Promise<T>): Promise<T> {
+    const token = await this.sessionToken(address);
+    try { return await request(token); }
+    catch (error) {
+      if (!(error instanceof ApiError) || error.status !== 401 || error.code !== "sign_in_required") throw error;
+      clearSession(address);
+      try { return await request(await this.sessionToken(address)); }
+      catch (retry) {
+        if (retry instanceof ApiError && retry.status === 401 && retry.code === "sign_in_required") clearSession(address);
+        throw retry;
+      }
+    }
   }
 
   private async sessionToken(address: Address): Promise<string> {

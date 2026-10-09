@@ -2,6 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen } from "@testing-library/react";
 import { PreviewMarket } from "@/lib/preview/engine";
+import { PLATFORM_TOKEN_LAUNCHER } from "@/lib/platform-token/config";
 import { ChartCard } from "./ChartCard";
 
 const view = vi.hoisted(() => ({ address: null as string | null, trades: [] as {
@@ -40,13 +41,22 @@ describe("trade chart markers", () => {
   it("relabels official creator buys and sells while keeping the viewer's own marker", () => {
     view.address = "0x00000000000000000000000000000000000000aa";
     view.trades = [
-      { trader: "0x00000000000000000000000000000000000000bb", ts: 1_800_000_000_000, side: "buy", isCreator: true },
-      { trader: "0x00000000000000000000000000000000000000bb", ts: 1_800_000_000_000, side: "sell", isCreator: true },
+      { trader: PLATFORM_TOKEN_LAUNCHER, ts: 1_800_000_000_000, side: "buy", isCreator: true },
+      { trader: PLATFORM_TOKEN_LAUNCHER, ts: 1_800_000_000_000, side: "sell", isCreator: true },
       { trader: view.address, ts: 1_800_000_000_000, side: "buy", isCreator: false },
     ];
     const page = render(<ChartCard coin={coin} />);
     expect(JSON.parse(screen.getByTestId("markers").textContent!).map((marker: { kind: string }) => marker.kind)).toEqual(["dev-buy", "dev-sell", "you-buy"]);
     page.rerender(<ChartCard coin={coin} official />);
     expect(JSON.parse(screen.getByTestId("markers").textContent!).map((marker: { kind: string }) => marker.kind)).toEqual(["platform-buy", "platform-sell", "you-buy"]);
+  });
+
+  it("does not label a transferred creator's trade as the platform wallet", () => {
+    view.trades = [
+      { trader: PLATFORM_TOKEN_LAUNCHER, ts: 1_800_000_000_000, side: "buy", isCreator: true },
+      { trader: "0x00000000000000000000000000000000000000bb", ts: 1_800_000_000_000, side: "sell", isCreator: true },
+    ];
+    render(<ChartCard coin={coin} official />);
+    expect(JSON.parse(screen.getByTestId("markers").textContent!).map((marker: { kind: string }) => marker.kind)).toEqual(["platform-buy", "creator-sell"]);
   });
 });
