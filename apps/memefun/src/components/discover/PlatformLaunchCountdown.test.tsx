@@ -2,9 +2,10 @@
 import { renderToString } from "react-dom/server";
 import { act, cleanup, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { PLATFORM_TOKEN_LAUNCH_AT } from "@/lib/platform-token/config";
 import { PlatformLaunchCountdown } from "./PlatformLaunchCountdown";
 
-const LAUNCH_AT = "2026-10-11T09:00:00Z";
+const LAUNCH_AT = PLATFORM_TOKEN_LAUNCH_AT;
 const LAUNCH_TIME = Date.parse(LAUNCH_AT);
 const value = (unit: string) => screen.getByText(unit).parentElement?.querySelector("dd")?.textContent;
 
@@ -19,7 +20,7 @@ describe("platform launch countdown", () => {
     const second = renderToString(<PlatformLaunchCountdown launchAt={LAUNCH_AT} />);
     expect(first).toBe(second);
     expect(first.match(/>--<\/dd>/g)).toHaveLength(4);
-    expect(new DOMParser().parseFromString(first, "text/html").querySelector("time")?.textContent).toBe("11 October 2026 · 09:00 UTC");
+    expect(new DOMParser().parseFromString(first, "text/html").querySelector("time")?.textContent).toBe("10 October 2026 · 09:00 UTC");
     expect(first).toContain('src="/memefun-logo.png"');
   });
 
@@ -34,7 +35,14 @@ describe("platform launch countdown", () => {
   });
 
   it("does not interpret an unzoned launch time in the visitor's local timezone", () => {
-    expect(renderToString(<PlatformLaunchCountdown launchAt="2026-10-11T09:00:00" />)).toBe("");
+    expect(renderToString(<PlatformLaunchCountdown launchAt="2026-10-10T09:00:00" />)).toBe("");
+  });
+
+  it("counts down to today's 09:00 UTC launch without an extra day", () => {
+    vi.setSystemTime("2026-10-10T00:00:00Z");
+    render(<PlatformLaunchCountdown launchAt={LAUNCH_AT} />);
+    expect([value("Days"), value("Hours"), value("Minutes"), value("Seconds")]).toEqual(["00", "09", "00", "00"]);
+    expect(screen.getByText("10 October 2026 · 09:00 UTC").getAttribute("datetime")).toBe("2026-10-10T09:00:00.000Z");
   });
 
   it("keeps the last partial second positive and opens the window without claiming a token is live", () => {

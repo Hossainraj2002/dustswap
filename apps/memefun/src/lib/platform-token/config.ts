@@ -1,7 +1,7 @@
 import { isAddress, zeroAddress, type Address } from "viem";
 
 /** Announcement fallback remains visible while the market API is loading. */
-export const PLATFORM_TOKEN_LAUNCH_AT = "2026-10-11T09:00:00.000Z";
+export const PLATFORM_TOKEN_LAUNCH_AT = "2026-10-10T09:00:00.000Z";
 export const PLATFORM_TOKEN_LAUNCHER: Address = "0x0fd79f3ceae7dda5cfc15b35188e67efac542573";
 
 /** Fee-creator control can move; the designated platform wallet remains the same identity. */

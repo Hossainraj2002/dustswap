@@ -9,7 +9,7 @@ const INFO = { enabled: true as const, launchAt: PLATFORM_TOKEN_LAUNCH_AT, launc
 describe("official platform token configuration", () => {
   it("accepts explicit launch times and the designated launcher, with or without a pinned token", () => {
     expect(parsePlatformTokenInfo(INFO)).toEqual(INFO);
-    const pinned = { ...INFO, launcher: getAddress(PLATFORM_TOKEN_LAUNCHER), tokenAddress: TOKEN, launchAt: "2026-10-11T15:00:00+06:00" };
+    const pinned = { ...INFO, launcher: getAddress(PLATFORM_TOKEN_LAUNCHER), tokenAddress: TOKEN, launchAt: "2026-10-10T15:00:00+06:00" };
     expect(parsePlatformTokenInfo(pinned)).toEqual(pinned);
     expect(Date.parse(pinned.launchAt)).toBe(Date.parse(PLATFORM_TOKEN_LAUNCH_AT));
   });
@@ -23,7 +23,7 @@ describe("official platform token configuration", () => {
     ["array response", []],
     ["missing fields", { enabled: true }],
     ["non-boolean activation", { ...INFO, enabled: "true" }],
-    ["local launch time", { ...INFO, launchAt: "2026-10-11T09:00:00" }],
+    ["local launch time", { ...INFO, launchAt: "2026-10-10T09:00:00" }],
     ["invalid launch time", { ...INFO, launchAt: "not-a-dateZ" }],
     ["wrong launcher", { ...INFO, launcher: OTHER_WALLET }],
     ["malformed launcher", { ...INFO, launcher: "0x123" }],

@@ -212,7 +212,7 @@ Author fees always accrue into one pending balance for each market/currency. Aut
 
 ### Official platform-token selection
 
-The optional Base mainnet announcement uses public `MEMEFUN_PLATFORM_TOKEN_LAUNCH_AT` (an exact UTC timestamp such as `2026-10-11T09:00:00Z`) and `MEMEFUN_PLATFORM_TOKEN_LAUNCHER` (the wallet that actually calls the factory). Missing or invalid settings leave `GET /v1/platform-token` disabled. The launch time controls the announcement countdown; it does not create an onchain launch restriction or activate the separate funded reward campaign.
+The optional Base mainnet announcement uses public `MEMEFUN_PLATFORM_TOKEN_LAUNCH_AT` (an exact UTC timestamp such as `2026-10-10T09:00:00Z`) and `MEMEFUN_PLATFORM_TOKEN_LAUNCHER` (the wallet that actually calls the factory). Missing or invalid settings leave `GET /v1/platform-token` disabled. The launch time controls the announcement countdown; it does not create an onchain launch restriction or activate the separate funded reward campaign.
 
 The designated wallet signs in through existing SIWE, explicitly selects its official launch in the create flow, and calls `POST /v1/platform-token/prepare {salt,contractURI}` before broadcasting. The API binds a durable intent to the factory's predicted coin and exact metadata URI, rejecting tokens that already exist. Exact retries retain the original intent, including across a long wallet prompt. Preparations that are never launched do not take the official slot.
 
