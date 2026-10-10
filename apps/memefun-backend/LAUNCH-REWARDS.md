@@ -46,7 +46,7 @@ forge script script/DeployLaunchRewardsDryRun.s.sol --fork-url "$BASE_MAINNET_RP
 
 Never use the address created in that simulation as an actual distributor address. Deployment must use the same reviewed compiler settings (solc 0.8.26, Cancun, via-IR, optimizer 1,000), preserve DustSwap's ERC-8021 builder attribution on the creation and every funding/owner call, and wait for successful receipts. The existing attributed transaction boundary can submit funding transfers and owner calls; no approval is needed for a plain token transfer to the distributor.
 
-`DeployLaunchRewards.s.sol` provides the future attributed deployment. In addition to the public constructor variables, set `MEMEFUN_LAUNCH_REWARD_DEPLOYER` to the deployer's public address. Preview it first:
+`DeployLaunchRewards.s.sol` provides an attributed deployment helper. In addition to the public constructor variables, set `MEMEFUN_LAUNCH_REWARD_DEPLOYER` to the deployer's public address. Preview it first:
 
 ```sh
 forge script script/DeployLaunchRewards.s.sol --rpc-url "$BASE_MAINNET_RPC_URL" --offline
@@ -63,7 +63,11 @@ Before any live action, confirm the constructor tuple and the token balance to a
 5. The owner calls `activate()`. Its receipt establishes the permanent start block. Announce the campaign after that receipt. New eligibility starts in later blocks. Disabling and re-enabling an environment flag does not restart the campaign or shift this block.
 6. After finalized indexing, check `/v1/launch-campaign`, a new launcher's wallet status, a SIWE claim ticket, and a real claim receipt/token balance. Check duplicate-wallet rejection and discovery retention before announcing broad availability.
 
-At the time this feature was built, no platform-token address or funded allocation was supplied. No campaign distributor was deployed, funded or activated.
+On 10 October 2026, the Base distributor was deployed at [0xe9132055290d748940806EBd6859f5f5ab17331D](https://basescan.org/address/0xe9132055290d748940806EBd6859f5f5ab17331D) in [transaction 0x4ab764f8c3e6beff08845afdd6e8b43155b7ab56cf517468d0f83ad67e8fa0bb](https://basescan.org/tx/0x4ab764f8c3e6beff08845afdd6e8b43155b7ab56cf517468d0f83ad67e8fa0bb), block 52,416,864. Its immutable reward token is [MEMEFUN, 0xb20000000000000000000048301bd98a061ceACF](https://basescan.org/token/0xb20000000000000000000048301bd98a061ceACF), with 18 decimals. Each of the 1,000 wallets receives 100,000 MEMEFUN (`100000000000000000000000` raw units), requiring a reserve of exactly 100,000,000 MEMEFUN (`100000000000000000000000000` raw units). The [public deployment record](../../packages/memefun-contracts/deployments/launch-rewards-8453.json) contains the constructor, signer, factory, compiler settings and code hashes.
+
+The deployed runtime has an [exact Sourcify source match](https://repo.sourcify.dev/8453/0xe9132055290d748940806EBd6859f5f5ab17331D); the successful creation input was independently matched to the compiler artifact, constructor arguments and attribution suffix. Sourcify did not record a creation match.
+
+The distributor was unfunded and unactivated at deployment. Deployment alone does not enable rewards. Verify its source and immutable getters, transfer the required MEMEFUN reserve to that distributor address on Base, confirm its token balance, configure the API, then have the owner call `activate()` as described above. Leave `tradeRequiredFromBlock()` at zero and `MEMEFUN_LAUNCH_REWARD_REQUIRE_TRADE=false` for launch-only qualification. Eligibility starts after the activation block; it does not start at token creation or distributor deployment. Check current on-chain funding and activation state before announcing the campaign.
 
 ## Railway API variables
 
