@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { cn } from "@/lib/cn";
+import { mediaImageUrl } from "@/lib/market/media-url";
 
 export type AvatarRing =
   | { kind: "milestone"; progress: number }
@@ -27,7 +28,8 @@ interface CoinAvatarProps {
  * also state the progress in text.
  */
 export function CoinAvatar({ src, alt, size, ring = null, className, symbol }: CoinAvatarProps) {
-  const [failed, setFailed] = useState(false);
+  const [failedSource, setFailedSource] = useState<string | null>(null);
+  const image = mediaImageUrl(src);
   const stroke = Math.max(2, Math.round(size * 0.058));
   const gap = ring ? Math.max(2, Math.round(size * 0.045)) : 0;
   const inset = ring ? stroke + gap : 0;
@@ -67,17 +69,17 @@ export function CoinAvatar({ src, alt, size, ring = null, className, symbol }: C
         className="absolute overflow-hidden rounded-full bg-fill-3"
         style={{ left: inset, top: inset, width: inner, height: inner }}
       >
-        {src && !failed ? (
+        {image && image !== failedSource ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
-            src={src}
+            src={image}
             alt={alt}
             width={inner}
             height={inner}
             loading="lazy"
             decoding="async"
             draggable={false}
-            onError={() => setFailed(true)}
+            onError={() => setFailedSource(image)}
             className="size-full object-cover"
           />
         ) : (

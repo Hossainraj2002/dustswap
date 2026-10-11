@@ -80,6 +80,35 @@ function record(contractUri: string): CoinRecord {
     epochs: 0, devSold: false, snipers: 0, sameBlockBuys: 0 };
 }
 
+describe("immutable media revalidation", () => {
+  it("returns no bytes for matching strong, weak and list validators", async () => {
+    const f = fixture();
+    const stored = await f.media.put(new TextEncoder().encode('{"name":"Based Frog"}'), "application/json");
+    const etag = `"${stored.cid}"`;
+    for (const validator of [etag, `W/${etag}`, `"old", W/${etag}`, "*"]) {
+      const response = await f.app.request(stored.url, { headers: { "if-none-match": validator } });
+      expect(response.status).toBe(304);
+      expect(await response.text()).toBe("");
+      expect(response.headers.get("etag")).toBe(etag);
+      expect(response.headers.get("cache-control")).toBe("public, max-age=31536000, immutable");
+      expect(response.headers.get("x-content-type-options")).toBe("nosniff");
+    }
+    const changed = await f.app.request(stored.url, { headers: { "if-none-match": '"different"' } });
+    expect(changed.status).toBe(200);
+    expect(await changed.json()).toEqual({ name: "Based Frog" });
+  });
+
+  it("never returns 304 for missing or tampered objects, including wildcard validators", async () => {
+    const bucket = memoryBucket(), f = fixture(8453, new BucketMediaStore(bucket, BASE));
+    const stored = await f.media.put(new TextEncoder().encode("{}"), "application/json");
+    bucket.objects.set(stored.cid, { bytes: new Uint8Array([9]), contentType: "application/json" });
+    for (const cid of [stored.cid, CID]) {
+      const response = await f.app.request(`${BASE}/media/${cid}`, { headers: { "if-none-match": "*" } });
+      expect(response.status).toBe(404);
+    }
+  });
+});
+
 async function snapshot(f: ReturnType<typeof fixture>, contractUri: string) {
   const store = { quotes: async () => [{ address: "0x0000000000000000000000000000000000000000", kind: 0,
     decimals: 18, symbol: "ETH", name: "Ether", priceUsdE8: 300_000_000_000n }], coins: async () => [record(contractUri)],

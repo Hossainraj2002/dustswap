@@ -169,6 +169,16 @@ describe("http helpers", () => {
     const etag = first.headers.get("etag")!;
     expect(first.headers.get("cache-control")).toBe("public, max-age=2, stale-while-revalidate=10");
     expect((await app.request("/x", { headers: { "if-none-match": etag } })).status).toBe(304);
+    // Railway/CDN compression can weaken ETags; clients can also send multiple validators.
+    for (const validator of [`W/${etag}`, `"old", W/${etag}`, "*"]) {
+      const response = await app.request("/x", { headers: { "if-none-match": validator } });
+      expect(response.status).toBe(304);
+      expect(await response.text()).toBe("");
+      expect(response.headers.get("etag")).toBe(etag);
+    }
+    const changed = await app.request("/x", { headers: { "if-none-match": 'W/"different"' } });
+    expect(changed.status).toBe(200);
+    expect(await changed.json()).toEqual({ a: 1 });
   });
 });
 

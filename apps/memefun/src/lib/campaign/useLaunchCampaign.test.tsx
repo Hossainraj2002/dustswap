@@ -40,6 +40,18 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.useRealTimers(); });
 
 describe("optional launch campaign reads", () => {
+  it("suspends campaign and wallet polling while hidden and refreshes on return", async () => {
+    vi.useFakeTimers();
+    const visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+    const { result, unmount } = renderHook(() => useLaunchCampaign(true));
+    await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+    expect(state.market!.readLaunchCampaign).not.toHaveBeenCalled();
+    await act(async () => { visibility.mockReturnValue("visible"); document.dispatchEvent(new Event("visibilitychange")); });
+    expect(result.current.wallet).toEqual(ELIGIBLE);
+    expect(state.market!.readLaunchCampaign).toHaveBeenCalledTimes(1);
+    unmount();
+    visibility.mockRestore();
+  });
   it("remains absent in a preview market without campaign methods", () => {
     state.market = {};
     const { result } = renderHook(() => useLaunchCampaign(true));

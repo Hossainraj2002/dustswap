@@ -59,6 +59,9 @@ const txModule = () => import("./tx");
 const KEEP_ALIVE_MS = 30_000;
 const EVICT_MS = 10 * 60_000;
 const SCHEDULER_MS = 1_000;
+// Reconcile the whole history periodically; streamed trades and launches refresh one coin.
+const COIN_LIST_INTERVAL_MS = 60_000;
+const COIN_LIST_FALLBACK_MS = 10_000;
 const OFFLINE_AFTER_FAILURES = 3;
 const INDEXER_WAIT_MS = 20_000;
 const LAUNCH_SLIPPAGE_BPS = 500;
@@ -80,6 +83,8 @@ interface Entry {
   loader: () => Promise<void>;
   inflight: Promise<void> | null;
   failures: number;
+  poll: boolean;
+  reload: boolean;
 }
 
 export interface PoolInfo {
@@ -112,6 +117,8 @@ export interface LiveMarketOptions {
   txContext?: (user: Address | undefined, onStage?: (stage: TxStage) => void) => Promise<TxContext>;
   /** Tests: the page location a sign-in message names. */
   location?: { host: string; origin: string };
+  /** Tests can model background tabs without a browser. */
+  visibility?: Pick<Document, "visibilityState" | "addEventListener" | "removeEventListener"> | null;
 }
 
 const lower = (value: string) => value.toLowerCase();
@@ -137,6 +144,7 @@ export class LiveMarket implements Market {
   private timer: ReturnType<typeof setInterval> | null = null;
   private stream: EventSourceLike | null = null;
   private streamRetry: ReturnType<typeof setTimeout> | null = null;
+  private readonly streamedTradeIds = new Set<string>();
   private status: MarketStatus = { state: "loading" };
   private apiFailures = 0;
 
@@ -146,6 +154,10 @@ export class LiveMarket implements Market {
   private listOrder: string[] = [];
   private listLoaded = false;
   private coinListLoad: AbortController | null = null;
+  private coinRevision = 0;
+  private readonly coinUpdates = new Map<string, number>();
+  private hiddenAt: number | null = null;
+  private readonly visibility: LiveMarketOptions["visibility"];
   private readonly missing = new Set<string>();
   private readonly trades = new Map<string, Trade[]>();
   private readonly candles = new Map<string, Candle[]>();
@@ -175,6 +187,7 @@ export class LiveMarket implements Market {
   constructor(private readonly options: LiveMarketOptions = {}) {
     this.api = options.api ?? createApi(API_URL);
     this.now = options.now ?? Date.now;
+    this.visibility = options.visibility === undefined ? (typeof document === "undefined" ? null : document) : options.visibility;
     this.authorCompletion = new AuthorCompletion(this.api, this.now, typeof window === "undefined" ? undefined : window);
     this.client =
       options.client ??
@@ -209,6 +222,8 @@ export class LiveMarket implements Market {
   start() {
     if (this.timer) return;
     this.timer = setInterval(() => this.tick(), SCHEDULER_MS);
+    this.visibility?.addEventListener("visibilitychange", this.onVisibilityChange);
+    if (this.isHidden()) this.hiddenAt = this.now();
     this.read("deployment", 10 * 60_000, () => this.loadDeployment());
     this.read("settings", 30_000, () => this.loadSettings());
     this.read("moderation", 30_000, () => this.loadModeration());
@@ -218,6 +233,7 @@ export class LiveMarket implements Market {
   stop() {
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
+    this.visibility?.removeEventListener("visibilitychange", this.onVisibilityChange);
     if (this.streamRetry) clearTimeout(this.streamRetry);
     this.streamRetry = null;
     this.stream?.close();
@@ -227,6 +243,40 @@ export class LiveMarket implements Market {
     this.coinListLoad?.abort();
   }
 
+  private isHidden() {
+    return this.visibility?.visibilityState === "hidden";
+  }
+
+  private readonly onVisibilityChange = () => {
+    if (!this.timer) return;
+    if (this.isHidden()) {
+      this.hiddenAt ??= this.now();
+      this.stream?.close();
+      this.stream = null;
+      if (this.streamRetry) clearTimeout(this.streamRetry);
+      this.streamRetry = null;
+      for (const handle of this.debounces.values()) clearTimeout(handle);
+      this.debounces.clear();
+      this.coinListLoad?.abort();
+      return;
+    }
+    const now = this.now();
+    const hiddenAt = this.hiddenAt;
+    this.hiddenAt = null;
+    if (hiddenAt === null) return;
+    // Resume readers that were on screen before hiding, even after a long background stay.
+    for (const entry of this.entries.values()) {
+      if (entry.poll && (now - entry.touchedAt <= KEEP_ALIVE_MS
+        || hiddenAt !== null && hiddenAt - entry.touchedAt <= KEEP_ALIVE_MS)) {
+        entry.touchedAt = now;
+        entry.fetchedAt = 0;
+        if (entry.inflight) entry.reload = true;
+      }
+    }
+    this.openStream();
+    this.tick();
+  };
+
   getStatus(): MarketStatus {
     if (this.deploymentError) return { state: "misconfigured", message: this.deploymentError.message };
     return this.status;
@@ -235,17 +285,18 @@ export class LiveMarket implements Market {
   /* -------------------------------------------------------------- the cache */
 
   /** Marks `key` wanted and starts a load if it has none or its data is older than `intervalMs`. */
-  private read(key: string, intervalMs: number, loader: () => Promise<void>) {
+  private read(key: string, intervalMs: number, loader: () => Promise<void>, poll = true) {
     const now = this.now();
     let entry = this.entries.get(key);
     if (!entry) {
-      entry = { fetchedAt: 0, touchedAt: now, intervalMs, loader, inflight: null, failures: 0 };
+      entry = { fetchedAt: 0, touchedAt: now, intervalMs, loader, inflight: null, failures: 0, poll, reload: false };
       this.entries.set(key, entry);
     }
     entry.touchedAt = now;
     entry.loader = loader;
     entry.intervalMs = intervalMs;
-    if (!entry.inflight && now - entry.fetchedAt >= this.backoff(entry)) void this.load(key, entry);
+    entry.poll = poll;
+    if (!this.isHidden() && !entry.inflight && now - entry.fetchedAt >= this.backoff(entry)) void this.load(key, entry);
   }
 
   private backoff(entry: Entry): number {
@@ -254,6 +305,7 @@ export class LiveMarket implements Market {
   }
 
   private load(key: string, entry: Entry): Promise<void> {
+    entry.reload = false;
     entry.inflight = entry
       .loader()
       .then(() => {
@@ -261,13 +313,15 @@ export class LiveMarket implements Market {
         this.noteApi(true);
       })
       .catch((error: unknown) => {
+        if (error instanceof Error && error.name === "AbortError") return;
         entry.failures += 1;
         if (!(error instanceof ApiError) || error.status >= 500) this.noteApi(false, error);
       })
       .finally(() => {
-        entry.fetchedAt = this.now();
+        entry.fetchedAt = entry.reload ? 0 : this.now();
         entry.inflight = null;
         this.emit();
+        if (entry.reload && this.timer && !this.isHidden() && this.now() - entry.touchedAt <= KEEP_ALIVE_MS) void this.load(key, entry);
       });
     return entry.inflight;
   }
@@ -293,7 +347,8 @@ export class LiveMarket implements Market {
       if (!key.startsWith(prefix)) continue;
       entry.fetchedAt = 0;
       entry.failures = 0;
-      if (!entry.inflight && now - entry.touchedAt < KEEP_ALIVE_MS) void this.load(key, entry);
+      if (entry.inflight) entry.reload = true;
+      if (!this.isHidden() && !entry.inflight && now - entry.touchedAt < KEEP_ALIVE_MS) void this.load(key, entry);
     }
   }
 
@@ -309,14 +364,17 @@ export class LiveMarket implements Market {
   }
 
   private tick() {
+    if (this.isHidden()) return;
     const now = this.now();
     for (const [key, entry] of this.entries) {
       if (now - entry.touchedAt > EVICT_MS) {
         this.entries.delete(key);
         continue;
       }
-      if (entry.inflight || now - entry.touchedAt > KEEP_ALIVE_MS) continue;
-      if (now - entry.fetchedAt >= this.backoff(entry)) void this.load(key, entry);
+      if (!entry.poll || entry.inflight || now - entry.touchedAt > KEEP_ALIVE_MS) continue;
+      const interval = key === "coins" && entry.failures === 0 && this.stream?.readyState !== 1
+        ? Math.min(entry.intervalMs, COIN_LIST_FALLBACK_MS) : this.backoff(entry);
+      if (now - entry.fetchedAt >= interval) void this.load(key, entry);
     }
   }
 
@@ -378,6 +436,7 @@ export class LiveMarket implements Market {
   private async loadCoins() {
     const controller = new AbortController();
     this.coinListLoad = controller;
+    const revision = this.coinRevision;
     const coins = new Map<string, Coin>();
     const cursors = new Set<string>();
     let cursor: string | null = null;
@@ -403,8 +462,11 @@ export class LiveMarket implements Market {
         cursor = body.nextCursor;
       } while (cursor !== null);
       // Publish a complete list together. A failed later page keeps the previous snapshot intact.
-      for (const [address, coin] of coins) this.coins.set(address, coin);
-      this.listOrder = [...coins.keys()];
+      for (const [address, coin] of coins) {
+        if ((this.coinUpdates.get(address) ?? 0) <= revision) this.coins.set(address, coin);
+      }
+      const newlyStreamed = this.listOrder.filter(address => !coins.has(address) && (this.coinUpdates.get(address) ?? 0) > revision);
+      this.listOrder = [...newlyStreamed, ...coins.keys()];
       this.listLoaded = true;
     } finally {
       if (this.coinListLoad === controller) this.coinListLoad = null;
@@ -415,7 +477,12 @@ export class LiveMarket implements Market {
     try {
       const { coin } = await this.api.get<{ coin: Coin }>(`/v1/coins/${address}`);
       this.coins.set(address, aggregateCoinMarkets(coin));
+      this.coinUpdates.set(address, ++this.coinRevision);
       this.missing.delete(address);
+      const catalog = this.entries.get("coins");
+      if (!coin.hidden && catalog && this.now() - catalog.touchedAt <= KEEP_ALIVE_MS && !this.listOrder.includes(address)) {
+        this.listOrder = [address, ...this.listOrder];
+      }
     } catch (error) {
       if (error instanceof ApiError && error.status === 404) this.missing.add(address);
       else throw error;
@@ -464,6 +531,7 @@ export class LiveMarket implements Market {
   /* -------------------------------------------------------- live updates */
 
   private openStream() {
+    if (this.stream || !this.timer || this.isHidden()) return;
     const factory = this.options.eventSource === undefined ? (url: string) => new EventSource(url) as unknown as EventSourceLike : this.options.eventSource;
     if (!factory || !this.api.baseUrl) return;
     const stream = factory(`${this.api.baseUrl}/v1/stream`);
@@ -472,7 +540,7 @@ export class LiveMarket implements Market {
     stream.addEventListener("activity", (event) => this.onActivity(event));
     stream.onerror = () => {
       // EventSource retries by itself; a closed one (CLOSED = 2) is reopened here.
-      if (stream.readyState === 2 && this.stream === stream && this.timer) {
+      if (stream.readyState === 2 && this.stream === stream && this.timer && !this.isHidden()) {
         this.stream = null;
         this.streamRetry = setTimeout(() => this.openStream(), 5_000);
       }
@@ -486,6 +554,11 @@ export class LiveMarket implements Market {
     } catch {
       return;
     }
+    if (!trade || typeof trade.id !== "string" || !trade.id || typeof trade.coin !== "string"
+      || typeof trade.trader !== "string" || !/^0x[0-9a-f]{40}$/i.test(trade.coin) || !/^0x[0-9a-f]{40}$/i.test(trade.trader)) return;
+    if (this.streamedTradeIds.has(trade.id)) return;
+    this.streamedTradeIds.add(trade.id);
+    if (this.streamedTradeIds.size > 1_000) this.streamedTradeIds.delete(this.streamedTradeIds.values().next().value!);
     const coin = lower(trade.coin);
     const primaryPool = this.coins.get(coin)?.markets?.[0]?.poolId;
     for (const [key, list] of this.trades) {
@@ -497,7 +570,7 @@ export class LiveMarket implements Market {
     this.debounce(`coin:${coin}`, 400, () => this.invalidate(`coin:${coin}`));
     this.debounce(`candles:${coin}`, 1_500, () => this.invalidate(`candles:${coin}:`));
     this.debounce(`holders:${coin}`, 2_500, () => this.invalidate(`holders:${coin}:`));
-    this.debounce("coins", 3_000, () => this.invalidate("coins"));
+    this.debounce(`catalog-coin:${coin}`, 1_000, () => this.refreshCatalogCoin(coin));
     const trader = lower(trade.trader);
     this.invalidate(`cbal:${trader}:${coin}`);
     this.debounce(`account:${trader}`, 2_500, () => {
@@ -515,11 +588,27 @@ export class LiveMarket implements Market {
     } catch {
       return;
     }
+    if (!item || typeof item.id !== "string" || typeof item.coin !== "string" || !/^0x[0-9a-f]{40}$/i.test(item.coin)) return;
     if (!this.activity.some((existing) => existing.id === item.id)) {
       this.activity = [item, ...this.activity].slice(0, 200);
       this.emit();
     }
-    if (item.kind === "launch") this.debounce("coins", 1_000, () => this.invalidate("coins"));
+    if (item.kind === "launch") {
+      const address = lower(item.coin);
+      this.debounce(`catalog-coin:${address}`, 1_000, () => this.refreshCatalogCoin(address));
+    }
+  }
+
+  /** Keep discovery current without downloading every historic launch after each event. */
+  private refreshCatalogCoin(address: string) {
+    const catalog = this.entries.get("coins");
+    if (!catalog || this.now() - catalog.touchedAt > KEEP_ALIVE_MS || this.isHidden()) return;
+    const detail = this.entries.get(`coin:${address}`);
+    if (detail && this.now() - detail.touchedAt <= KEEP_ALIVE_MS) {
+      if (this.missing.has(address)) this.invalidate(`coin:${address}`);
+      return; // The detail reader already refreshes on trades.
+    }
+    this.read(`catalog-coin:${address}`, 1_000, () => this.loadCoin(address), false);
   }
 
   /* ---------------------------------------------------------------- readers */
@@ -529,7 +618,7 @@ export class LiveMarket implements Market {
   }
 
   listCoins(includeHidden = false): Coin[] {
-    this.read("coins", 5_000, () => this.loadCoins());
+    this.read("coins", COIN_LIST_INTERVAL_MS, () => this.loadCoins());
     const list = this.listOrder.map((address) => this.coins.get(address)).filter((coin): coin is Coin => Boolean(coin));
     if (!includeHidden) return list.filter((coin) => !coin.hidden);
     const extra = this.adminHidden.map((address) => this.getCoin(address)).filter((coin): coin is Coin => Boolean(coin) && !this.listOrder.includes(lower(coin!.address)));

@@ -22,7 +22,7 @@ export function useLaunchCampaign(includeWallet = false) {
     let active = true;
     let pending = false;
     const read = async () => {
-      if (pending) return;
+      if (pending || !active || document.visibilityState === "hidden") return;
       pending = true;
       try {
         const summary = await readSummary();
@@ -38,7 +38,9 @@ export function useLaunchCampaign(includeWallet = false) {
     };
     void read();
     const timer = setInterval(() => void read(), 15_000);
-    return () => { active = false; clearInterval(timer); };
+    const visibilityChanged = () => { if (document.visibilityState !== "hidden") void read(); };
+    document.addEventListener("visibilitychange", visibilityChanged);
+    return () => { active = false; clearInterval(timer); document.removeEventListener("visibilitychange", visibilityChanged); };
   }, [market, includeWallet, address, revision]);
   return { ...data, wallet: data.wallet?.wallet.toLowerCase() === address?.toLowerCase() ? data.wallet : null, refresh };
 }

@@ -46,7 +46,7 @@ describe("official platform token reads", () => {
     const { result } = renderHook(() => usePlatformToken());
     await settle();
     expect(result.current.info).toEqual(pinned);
-    await act(async () => { await vi.advanceTimersByTimeAsync(5_000); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
     expect(result.current.info).toEqual(pinned);
     expect(result.current.available).toBe(false);
     await act(async () => { await vi.advanceTimersByTimeAsync(5_000); });
@@ -97,5 +97,21 @@ describe("official platform token reads", () => {
     expect(vi.getTimerCount()).toBe(1);
     unmount();
     expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("polls pinned identity once a minute and resumes once after backgrounding", async () => {
+    state.get.mockResolvedValue({ ...INFO, tokenAddress: TOKEN });
+    const visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+    const { unmount } = renderHook(() => usePlatformToken());
+    await settle();
+    await act(async () => { await vi.advanceTimersByTimeAsync(5_000); });
+    expect(state.get).toHaveBeenCalledTimes(1);
+    act(() => { visibility.mockReturnValue("hidden"); document.dispatchEvent(new Event("visibilitychange")); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(120_000); });
+    expect(state.get).toHaveBeenCalledTimes(1);
+    await act(async () => { visibility.mockReturnValue("visible"); document.dispatchEvent(new Event("visibilitychange")); });
+    expect(state.get).toHaveBeenCalledTimes(2);
+    unmount();
+    visibility.mockRestore();
   });
 });

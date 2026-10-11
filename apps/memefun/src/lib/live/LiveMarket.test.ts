@@ -157,6 +157,7 @@ function market(api: FakeApi, extra: Partial<ConstructorParameters<typeof LiveMa
 afterEach(() => {
   for (const m of markets) m.stop();
   markets = [];
+  vi.useRealTimers();
   vi.clearAllMocks();
   vi.unstubAllGlobals();
 });
@@ -317,7 +318,7 @@ describe("LiveMarket", () => {
     expect(m.isCoinsReady()).toBe(true);
     let release!: (value: { status: number; body: unknown }) => void;
     api.on("/v1/coins", () => new Promise<{ status: number; body: unknown }>(resolve => { release = resolve; }));
-    now += 5_001;
+    now += 60_001;
     expect(m.listCoins()).toEqual(loaded);
     expect(m.isCoinsReady()).toBe(true);
     expect(api.count("/v1/coins?")).toBe(2);
@@ -396,7 +397,7 @@ describe("LiveMarket", () => {
     api.on("/v1/coins", (url: URL) => url.searchParams.has("cursor")
       ? { status: 503, body: { error: { code: "unavailable", message: "Temporary outage." } } }
       : { body: { coins: [coin(COIN, { symbol: "PARTIAL" })], nextCursor: "next" } });
-    now += 5_001;
+    now += 60_001;
     m.listCoins();
     await settle();
     expect(m.isCoinsReady()).toBe(true);
@@ -421,6 +422,129 @@ describe("LiveMarket", () => {
     expect(api.count("/v1/coins?")).toBe(2);
     expect(m.isCoinsReady()).toBe(false);
     expect(m.listCoins()).toEqual([]);
+  });
+
+  it("reconciles the complete catalog once a minute instead of every five seconds", async () => {
+    let now = Date.now();
+    const api = baseApi();
+    const { m } = market(api, { now: () => now });
+    m.listCoins();
+    await settle();
+    now += 5_001;
+    expect(m.listCoins()).toHaveLength(2);
+    expect(api.count("/v1/coins?")).toBe(1);
+    now += 55_000;
+    m.listCoins();
+    await settle();
+    expect(api.count("/v1/coins?")).toBe(2);
+  });
+
+  it("updates discovery's changed coin and new launches without downloading the whole history", async () => {
+    vi.useFakeTimers();
+    const added = "0xb200000000000000000000000000000000000003";
+    const api = baseApi().on(`/v1/coins/${COIN}`, { coin: coin(COIN, { momentum: 123, volumeTotalUsd: 50 }) })
+      .on(`/v1/coins/${added}`, { coin: coin(added, { symbol: "NEW" }) });
+    const { m, stream } = market(api);
+    m.listCoins();
+    await vi.advanceTimersByTimeAsync(0);
+    stream.emit("trade", { id: "a", coin: COIN, trader: USER, ts: 1 });
+    stream.emit("trade", { id: "b", coin: COIN, trader: USER, ts: 2 });
+    stream.emit("activity", { id: "launch", kind: "launch", coin: added, ts: 3 });
+    await vi.advanceTimersByTimeAsync(1_100);
+    expect(api.count("/v1/coins?")).toBe(1);
+    expect(api.count(`/v1/coins/${COIN}`)).toBe(1);
+    expect(m.listCoins()[0]?.address).toBe(added);
+    expect([...m.listCoins()].sort((a, b) => b.momentum - a.momentum)[0]?.momentum).toBe(123);
+    // Event refreshes do not become a recurring poll for every coin that traded.
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(api.count(`/v1/coins/${COIN}`)).toBe(1);
+    expect(api.count("/v1/coins?")).toBe(1);
+  });
+
+  it("does not overwrite a streamed coin update with an older in-flight catalog page", async () => {
+    vi.useFakeTimers();
+    const api = baseApi();
+    const { m, stream } = market(api);
+    m.listCoins();
+    await vi.advanceTimersByTimeAsync(0);
+    let release!: (value: { body: unknown }) => void;
+    api.on("/v1/coins", () => new Promise<{ body: unknown }>(resolve => { release = resolve; }))
+      .on(`/v1/coins/${COIN}`, { coin: coin(COIN, { symbol: "FRESH" }) });
+    await vi.advanceTimersByTimeAsync(60_001);
+    m.listCoins();
+    stream.emit("trade", { id: "a", coin: COIN, trader: USER, ts: 1 });
+    await vi.advanceTimersByTimeAsync(1_100);
+    release({ body: { coins: [coin(COIN), coin(OTHER)], nextCursor: null } });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(m.listCoins().find(item => item.address === COIN)?.symbol).toBe("FRESH");
+  });
+
+  it("pauses reads and streaming in background tabs and resumes on-screen readers once", async () => {
+    vi.useFakeTimers();
+    class Visibility extends EventTarget {
+      visibilityState: DocumentVisibilityState = "visible";
+      set(value: DocumentVisibilityState) { this.visibilityState = value; this.dispatchEvent(new Event("visibilitychange")); }
+    }
+    const visibility = new Visibility();
+    const streams: FakeStream[] = [];
+    const api = baseApi();
+    const { m } = market(api, { visibility, eventSource: () => {
+      const stream = new FakeStream(); streams.push(stream); return stream;
+    } });
+    m.listCoins(); m.getCoin(COIN);
+    await vi.advanceTimersByTimeAsync(0);
+    visibility.set("hidden");
+    expect(streams[0]?.readyState).toBe(2);
+    const calls = api.calls.length;
+    await vi.advanceTimersByTimeAsync(600_000);
+    m.listCoins(); m.getCoin(COIN);
+    expect(api.calls.length).toBe(calls);
+    visibility.set("visible");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(streams).toHaveLength(2);
+    expect(api.count("/v1/coins?")).toBe(2);
+    expect(api.count(`/v1/coins/${COIN}`)).toBe(2);
+    visibility.set("visible");
+    expect(streams).toHaveLength(2);
+    m.stop();
+    visibility.set("hidden"); visibility.set("visible");
+    expect(streams).toHaveLength(2);
+  });
+
+  it("uses the ten-second catalog fallback while the stream is unavailable", async () => {
+    vi.useFakeTimers();
+    const api = baseApi();
+    const { m, stream } = market(api);
+    m.listCoins();
+    await vi.advanceTimersByTimeAsync(0);
+    stream.readyState = 0;
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(api.count("/v1/coins?")).toBe(2);
+  });
+
+  it("retries an aborted catalog immediately when visibility returns before its response settles", async () => {
+    vi.useFakeTimers();
+    class Visibility extends EventTarget {
+      visibilityState: DocumentVisibilityState = "visible";
+      set(value: DocumentVisibilityState) { this.visibilityState = value; this.dispatchEvent(new Event("visibilitychange")); }
+    }
+    const visibility = new Visibility();
+    const api = baseApi();
+    const { m } = market(api, { visibility });
+    m.listCoins();
+    await vi.advanceTimersByTimeAsync(0);
+    let release!: (value: { body: unknown }) => void;
+    let requests = 0;
+    api.on("/v1/coins", () => ++requests === 1
+      ? new Promise<{ body: unknown }>(resolve => { release = resolve; })
+      : { body: { coins: [coin(COIN, { symbol: "RESUMED" })], nextCursor: null } });
+    await vi.advanceTimersByTimeAsync(60_001);
+    m.listCoins();
+    visibility.set("hidden"); visibility.set("visible");
+    release({ body: { coins: [coin(COIN)], nextCursor: null } });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(api.count("/v1/coins?")).toBe(3);
+    expect(m.listCoins()[0]?.symbol).toBe("RESUMED");
   });
 
   it("keeps same-ticker quote balances distinct and preserves successful balances when one token fails", async () => {

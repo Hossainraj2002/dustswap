@@ -33,6 +33,17 @@ export function parseLimit(value: string | undefined, fallback: number, max: num
   return Math.min(n, max);
 }
 
+/** RFC GET/HEAD validators compare opaque tags regardless of compression's weak prefix. */
+export function matchesIfNoneMatch(header: string | undefined, etag: string): boolean {
+  if (!header) return false;
+  // GET/HEAD validators use weak comparison: a gzip proxy may prefix our tag with W/.
+  const opaque = etag.replace(/^W\//, "");
+  return header.split(",").some(value => {
+    const tag = value.trim();
+    return tag === "*" || tag.replace(/^W\//, "") === opaque;
+  });
+}
+
 /**
  * JSON with a strong ETag and a short shared cache. A request carrying the same ETag gets a 304,
  * so polling clients cost almost nothing between snapshot refreshes.
@@ -43,7 +54,7 @@ export function cachedJson(c: Context, body: unknown, options: { maxAge: number;
   const scope = options.private ? "private" : "public";
   c.header("Cache-Control", `${scope}, max-age=${options.maxAge}, stale-while-revalidate=${options.staleWhileRevalidate ?? options.maxAge * 5}`);
   c.header("ETag", etag);
-  if (c.req.header("if-none-match") === etag) return c.body(null, 304);
+  if (matchesIfNoneMatch(c.req.header("if-none-match"), etag)) return c.body(null, 304);
   return c.body(text, 200, { "Content-Type": "application/json; charset=utf-8" });
 }
 

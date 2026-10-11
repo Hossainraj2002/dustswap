@@ -45,7 +45,6 @@ export function matchCoins(coins: Coin[], query: string, limit = 12): Coin[] {
 
 export function SearchCommand({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
   const router = useRouter();
-  const { coins, ready } = useCoins();
 
   const go = (href: string) => {
     onOpenChange(false);
@@ -62,7 +61,7 @@ export function SearchCommand({ open, onOpenChange }: { open: boolean; onOpenCha
             <Dialog.Description>Find a coin by name, ticker or contract address.</Dialog.Description>
           </VisuallyHidden.Root>
           <Command label="Search coins" loop shouldFilter={false}>
-            <CommandSearch coins={coins} ready={ready} go={go} />
+            <CommandSearch go={go} />
           </Command>
         </Dialog.Content>
       </Dialog.Portal>
@@ -70,7 +69,9 @@ export function SearchCommand({ open, onOpenChange }: { open: boolean; onOpenCha
   );
 }
 
-function CommandSearch({ coins, ready, go }: { coins: Coin[]; ready: boolean; go: (href: string) => void }) {
+function CommandSearch({ go }: { go: (href: string) => void }) {
+  // Radix mounts this content only while open; a closed global search needs no catalog polling.
+  const { coins, ready } = useCoins();
   const [query, setQuery] = useState("");
   const results = matchCoins(coins, query, 8);
   const itemClass =

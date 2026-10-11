@@ -3,7 +3,7 @@ import { bodyLimit } from "hono/body-limit";
 import { type Hex, getAddress } from "viem";
 import { z } from "zod";
 import type { PlatformTokenService } from "../lib/platform-token/service";
-import { HttpError, clientIp, hashIp } from "./http";
+import { HttpError, cachedJson, clientIp, hashIp } from "./http";
 import { type AuthVariables, requireAuth } from "./write/auth";
 import type { Sessions } from "./write/session";
 
@@ -23,9 +23,12 @@ export function platformTokenRoutes(deps?: PlatformTokenDeps) {
   };
   app.get("/v1/platform-token", async c => {
     c.header("Cache-Control", "no-store");
-    if (!deps || !deps.platformToken.configured()) return c.json({ enabled: false } as const);
+    // This summary is public and already refreshed at most every five seconds by the service.
+    // Keep authenticated preparation uncached, and do not serve stale selection information.
+    const policy = { maxAge: 5, staleWhileRevalidate: 0 };
+    if (!deps || !deps.platformToken.configured()) return cachedJson(c, { enabled: false } as const, policy);
     await quota(`read:${hashIp(clientIp(c), deps.ipSalt)}`, 120, 60);
-    return c.json(await deps.platformToken.summary());
+    return cachedJson(c, await deps.platformToken.summary(), policy);
   });
   app.post("/v1/platform-token/prepare", bodyLimit({ maxSize: 2048, onError: () => { throw new HttpError(413, "body_too_large", "That request is too large."); } }),
     async (c, next) => requireAuth(required().sessions)(c, next), async c => {

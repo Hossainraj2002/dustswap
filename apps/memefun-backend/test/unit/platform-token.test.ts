@@ -192,6 +192,20 @@ describe("official token HTTP authorization and quota", () => {
     const app = new Hono(); app.route("/", platformTokenRoutes());
     expect(await (await app.request("/v1/platform-token")).json()).toEqual({ enabled: false });
   });
+  it("makes only the public summary briefly cacheable and revalidates unchanged information", async () => {
+    const f = appFixture();
+    const response = await f.app.request("/v1/platform-token");
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("public, max-age=5, stale-while-revalidate=0");
+    const etag = response.headers.get("etag")!;
+    const unchanged = await f.app.request("/v1/platform-token", { headers: { "if-none-match": `W/${etag}` } });
+    expect(unchanged.status).toBe(304);
+    expect(await unchanged.text()).toBe("");
+    f.store.quota.mockResolvedValue(false);
+    const rejected = await f.app.request("/v1/platform-token");
+    expect(rejected.status).toBe(429);
+    expect(rejected.headers.get("cache-control")).toBe("no-store");
+  });
   it("requires a valid session and designated launcher", async () => {
     const f = appFixture(); expect((await f.post()).status).toBe(401); expect((await f.post(OTHER)).status).toBe(403);
     expect(f.store.prepare).not.toHaveBeenCalled();
