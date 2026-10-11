@@ -327,6 +327,102 @@ describe("LiveMarket", () => {
     expect(m.listCoins()).toEqual(loaded);
   });
 
+  it("loads beyond 1,000 launches and keeps older active coins available to the activity tape", async () => {
+    const newer = Array.from({ length: 1_200 }, (_, index) => coin(`0xb2${(index + 10).toString(16).padStart(38, "0")}`,
+      { createdAt: 2_000 - index }));
+    const older = coin(OTHER, { symbol: "ACTIVE", createdAt: 1, momentum: 99, volumeTotalUsd: 1_000 });
+    const all = [...newer, older];
+    let releaseLast!: (value: { body: unknown }) => void;
+    const api = baseApi().on("/v1/coins", (url: URL) => {
+      const offset = Number(url.searchParams.get("cursor") ?? 0);
+      if (offset === 1_200) return new Promise<{ body: unknown }>(resolve => { releaseLast = resolve; });
+      return { body: { coins: all.slice(offset, offset + 200), nextCursor: String(offset + 200) } };
+    }).on("/v1/activity", { items: [{ id: "older-trade", kind: "trade", coin: OTHER, ts: 3_000 }] });
+    const { m } = market(api);
+    m.listCoins();
+    m.getActivity();
+    await settle();
+    expect(api.count("/v1/coins?")).toBe(7);
+    expect(m.isCoinsReady()).toBe(false);
+    expect(m.listCoins()).toEqual([]);
+    releaseLast({ body: { coins: [older], nextCursor: null } });
+    await settle();
+    const listed = m.listCoins();
+    expect(listed).toHaveLength(1_201);
+    expect([...listed].sort((a, b) => b.momentum - a.momentum)[0]?.address).toBe(OTHER);
+    const addresses = new Set(listed.map(item => item.address));
+    expect(m.getActivity().filter(item => addresses.has(item.coin)).map(item => item.id)).toEqual(["older-trade"]);
+  });
+
+  it("deduplicates overlapping pages while continuing through the final page", async () => {
+    const api = baseApi().on("/v1/coins", (url: URL) => ({ body: url.searchParams.has("cursor")
+      ? { coins: [coin(COIN), coin(OTHER)], nextCursor: null }
+      : { coins: [coin(COIN)], nextCursor: "next/page+1" } }));
+    const { m } = market(api);
+    m.listCoins();
+    await settle();
+    expect(m.listCoins().map(item => item.address)).toEqual([COIN, OTHER]);
+    expect(api.calls.some(call => call.path.includes("cursor=next%2Fpage%2B1"))).toBe(true);
+  });
+
+  it.each(["repeat", "cycle", "empty", "no-progress", "invalid-cursor", "invalid-page"] as const)
+    ("rejects %s pagination without publishing a partial list", async mode => {
+      const third = coin("0xb200000000000000000000000000000000000003");
+      let page = 0;
+      const api = baseApi().on("/v1/coins", () => {
+        page += 1;
+        if (page === 1) return { body: { coins: [coin(COIN)], nextCursor: "a" } };
+        if (mode === "empty") return { body: { coins: [], nextCursor: "b" } };
+        if (mode === "no-progress") return { body: { coins: [coin(COIN)], nextCursor: "b" } };
+        if (mode === "invalid-cursor") return { body: { coins: [coin(OTHER)], nextCursor: "" } };
+        if (mode === "invalid-page") return { body: { coins: null, nextCursor: null } };
+        return { body: { coins: [page === 2 ? coin(OTHER) : third], nextCursor: mode === "repeat" || page === 3 ? "a" : "b" } };
+      });
+      const { m } = market(api);
+      m.listCoins();
+      await settle();
+      expect(page).toBe(mode === "cycle" ? 3 : 2);
+      expect(m.isCoinsReady()).toBe(false);
+      expect(m.listCoins()).toEqual([]);
+    });
+
+  it("preserves the complete previous coin snapshot when a later refresh page fails", async () => {
+    let now = Date.now();
+    const api = baseApi();
+    const { m } = market(api, { now: () => now });
+    m.listCoins();
+    await settle();
+    const loaded = m.listCoins();
+    api.on("/v1/coins", (url: URL) => url.searchParams.has("cursor")
+      ? { status: 503, body: { error: { code: "unavailable", message: "Temporary outage." } } }
+      : { body: { coins: [coin(COIN, { symbol: "PARTIAL" })], nextCursor: "next" } });
+    now += 5_001;
+    m.listCoins();
+    await settle();
+    expect(m.isCoinsReady()).toBe(true);
+    expect(m.listCoins()).toEqual(loaded);
+  });
+
+  it("aborts a paginated load on stop without fetching or publishing later pages", async () => {
+    let release!: (value: { body: unknown }) => void;
+    let pendingSignal: AbortSignal | undefined;
+    const api = baseApi().on("/v1/coins", (url: URL, init?: RequestInit) => {
+      if (!url.searchParams.has("cursor")) return { body: { coins: [coin(COIN)], nextCursor: "next" } };
+      pendingSignal = init?.signal ?? undefined;
+      return new Promise<{ body: unknown }>(resolve => { release = resolve; });
+    });
+    const { m } = market(api);
+    m.listCoins();
+    await settle();
+    m.stop();
+    expect(pendingSignal?.aborted).toBe(true);
+    release({ body: { coins: [coin(OTHER)], nextCursor: "later" } });
+    await settle();
+    expect(api.count("/v1/coins?")).toBe(2);
+    expect(m.isCoinsReady()).toBe(false);
+    expect(m.listCoins()).toEqual([]);
+  });
+
   it("keeps same-ticker quote balances distinct and preserves successful balances when one token fails", async () => {
     const tokens: QuoteAsset[] = [COIN, OTHER].map(address => ({
       address: address as QuoteAsset["address"], symbol: "SAME", name: "Different token", decimals: 18,

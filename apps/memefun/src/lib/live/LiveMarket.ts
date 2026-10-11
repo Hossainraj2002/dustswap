@@ -60,7 +60,6 @@ const KEEP_ALIVE_MS = 30_000;
 const EVICT_MS = 10 * 60_000;
 const SCHEDULER_MS = 1_000;
 const OFFLINE_AFTER_FAILURES = 3;
-const MAX_COIN_PAGES = 5;
 const INDEXER_WAIT_MS = 20_000;
 const LAUNCH_SLIPPAGE_BPS = 500;
 /** Transactions may wait this long in a wallet before the contracts refuse them. */
@@ -146,6 +145,7 @@ export class LiveMarket implements Market {
   private readonly coins = new Map<string, Coin>();
   private listOrder: string[] = [];
   private listLoaded = false;
+  private coinListLoad: AbortController | null = null;
   private readonly missing = new Set<string>();
   private readonly trades = new Map<string, Trade[]>();
   private readonly candles = new Map<string, Candle[]>();
@@ -224,6 +224,7 @@ export class LiveMarket implements Market {
     this.stream = null;
     for (const handle of this.debounces.values()) clearTimeout(handle);
     this.debounces.clear();
+    this.coinListLoad?.abort();
   }
 
   getStatus(): MarketStatus {
@@ -375,19 +376,39 @@ export class LiveMarket implements Market {
   }
 
   private async loadCoins() {
-    const seen: string[] = [];
+    const controller = new AbortController();
+    this.coinListLoad = controller;
+    const coins = new Map<string, Coin>();
+    const cursors = new Set<string>();
     let cursor: string | null = null;
-    for (let page = 0; page < MAX_COIN_PAGES; page++) {
-      const body: { coins: Coin[]; nextCursor: string | null } = await this.api.get(`/v1/coins?sort=new&limit=200${cursor ? `&cursor=${cursor}` : ""}`);
-      for (const coin of body.coins) {
-        this.coins.set(lower(coin.address), aggregateCoinMarkets(coin));
-        seen.push(lower(coin.address));
-      }
-      cursor = body.nextCursor;
-      if (!cursor) break;
+    try {
+      do {
+        controller.signal.throwIfAborted();
+        const body: { coins: Coin[]; nextCursor: string | null } = await this.api.get(
+          `/v1/coins?sort=new&limit=200${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`, { signal: controller.signal },
+        );
+        controller.signal.throwIfAborted();
+        if (!body || !Array.isArray(body.coins)
+          || (body.nextCursor !== null && (typeof body.nextCursor !== "string" || !body.nextCursor))) {
+          throw new Error("The coin list response did not contain a valid page.");
+        }
+        const previousSize = coins.size;
+        for (const coin of body.coins) coins.set(lower(coin.address), aggregateCoinMarkets(coin));
+        if (body.nextCursor !== null) {
+          if (coins.size === previousSize || cursors.has(body.nextCursor)) {
+            throw new Error("The coin list pagination did not advance.");
+          }
+          cursors.add(body.nextCursor);
+        }
+        cursor = body.nextCursor;
+      } while (cursor !== null);
+      // Publish a complete list together. A failed later page keeps the previous snapshot intact.
+      for (const [address, coin] of coins) this.coins.set(address, coin);
+      this.listOrder = [...coins.keys()];
+      this.listLoaded = true;
+    } finally {
+      if (this.coinListLoad === controller) this.coinListLoad = null;
     }
-    this.listOrder = seen;
-    this.listLoaded = true;
   }
 
   private async loadCoin(address: string) {
