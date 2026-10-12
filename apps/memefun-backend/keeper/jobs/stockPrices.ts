@@ -30,6 +30,9 @@ export function needsUpdate(current: bigint, target: bigint, ageSec: number): bo
  * prices; trading never reads them.
  */
 export async function runStockPrices(ctx: KeeperContext): Promise<{ updated: number }> {
+  // "none" deliberately cannot produce a price. Avoid polling every manual quote
+  // on chain when manual-price updates are disabled by configuration.
+  if (ctx.prices.kind === "none") return { updated: 0 };
   const manual = await rows<{ address: string; symbol: string }>(ctx.index, `SELECT address, symbol FROM quote WHERE source = 2`);
   const now = await ctx.chainNow();
   let updated = 0;

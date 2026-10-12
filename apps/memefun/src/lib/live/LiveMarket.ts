@@ -505,20 +505,20 @@ export class LiveMarket implements Market {
     return state;
   }
 
-  private async loadQuoteBalances(owner: Address) {
-    const quotes = this.listQuotes();
-    const values = await Promise.allSettled(
-      quotes.map((quote) =>
-        quote.address === zeroAddress
-          ? this.client.getBalance({ address: owner })
-          : this.client.readContract({ address: quote.address, abi: erc20Abi, functionName: "balanceOf", args: [owner] }),
-      ),
-    );
-    const balances = new Map<string, bigint>();
-    quotes.forEach((quote, i) => {
-      const result = values[i];
-      if (result?.status === "fulfilled") balances.set(pairId(quote), result.value);
-    });
+  private async loadQuoteBalance(owner: Address, currency: Address) {
+    let raw: bigint;
+    try {
+      raw = currency === zeroAddress
+        ? await this.client.getBalance({ address: owner })
+        : await this.client.readContract({ address: currency, abi: erc20Abi, functionName: "balanceOf", args: [owner] });
+    } catch {
+      // Passive balance failures did not make the API offline in the former settled batch.
+      // Keep that behavior and retry on the normal interval; submission checks still throw.
+      return;
+    }
+    // Independent asset reads must preserve the other balances, including when one RPC fails.
+    const balances = this.quoteBalances.get(lower(owner)) ?? new Map<string, bigint>();
+    balances.set(lower(currency), raw);
     this.quoteBalances.set(lower(owner), balances);
   }
 
@@ -729,14 +729,16 @@ export class LiveMarket implements Market {
   }
 
   ensureUser(address: Address): void {
-    this.read(`qbal:${lower(address)}`, 10_000, () => this.loadQuoteBalances(address));
+    // Warm ETH for a newly connected wallet. Other assets are read only by their visible users.
+    this.read(`qbal:${lower(address)}:${zeroAddress}`, 10_000, () => this.loadQuoteBalance(address, zeroAddress));
   }
 
   getQuoteBalance(address: Address, id: string): number {
-    this.ensureUser(address);
-    const quote = findPair(this.quotes, id);
-    const raw = quote && this.quoteBalances.get(lower(address))?.get(pairId(quote));
-    return raw !== undefined && quote ? fromUnits(raw, quote.decimals) : 0;
+    const quote = findPair(this.listQuotes(), id);
+    if (!quote) return 0;
+    this.read(`qbal:${lower(address)}:${pairId(quote)}`, 10_000, () => this.loadQuoteBalance(address, quote.address));
+    const raw = this.quoteBalances.get(lower(address))?.get(pairId(quote));
+    return raw !== undefined ? fromUnits(raw, quote.decimals) : 0;
   }
 
   getCoinBalance(address: Address, coin: string): number {

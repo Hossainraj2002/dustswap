@@ -11,7 +11,8 @@
 import { loadLocalEnv } from "../lib/env";
 import { migrate } from "../lib/migrate";
 import { addressOf, createKeeperContext, jsonLog } from "./context";
-import { type Job, JOBS, runJobOnce } from "./registry";
+import { JOBS, runJobOnce } from "./registry";
+import { startJobs } from "./scheduler";
 
 async function main() {
   loadLocalEnv();
@@ -37,21 +38,13 @@ async function main() {
   }
 
   let stopping = false;
-  const timers: Array<ReturnType<typeof setTimeout>> = [];
-  const loop = (job: Job) => {
-    if (stopping) return;
-    void runJobOnce(ctx, job).finally(() => {
-      // Small jitter so many instances (or many jobs) do not wake in lockstep.
-      if (!stopping) timers.push(setTimeout(() => loop(job), job.everyMs + Math.floor(Math.random() * 1_000)));
-    });
-  };
-  for (const job of selected) loop(job);
+  const stopJobs = startJobs(selected, (job) => runJobOnce(ctx, job));
 
   const shutdown = async () => {
     if (stopping) return;
     stopping = true;
     ctx.log("keeper.stop");
-    for (const timer of timers) clearTimeout(timer);
+    stopJobs();
     await Promise.allSettled([ctx.index.end(), ctx.appPool.end()]);
     process.exit(0);
   };

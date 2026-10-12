@@ -3,6 +3,7 @@ import { rows } from "../../lib/db";
 import { processCoinImage } from "../../lib/media/image";
 import { type SanitizedMetadata, sanitizeMetadata } from "../../lib/media/metadata";
 import { FetchRejected, fetchPublicHttps, type HttpsDependencies } from "../../lib/media/public-https";
+import { storedMetadataCid } from "../../lib/media/urls";
 import { IMAGE_MAX_BYTES } from "../../shared/core/validation";
 import type { KeeperContext } from "../context";
 
@@ -18,12 +19,13 @@ const MAX_ATTEMPTS = 8;
 
 export { FetchRejected };
 
-/** The bytes behind a URI, from our media store (IPFS), the web, or inline data. */
+/** The bytes behind a URI, from our media store (IPFS or its exact URL), the web, or inline data. */
 export async function loadUri(ctx: Pick<KeeperContext, "media">, uri: string, limit: number, https: HttpsDependencies = {}): Promise<Uint8Array> {
   const ipfs = parseIpfsUri(uri);
-  if (ipfs) {
-    if (ipfs.path) throw new FetchRejected("IPFS paths inside directories are not supported");
-    const object = await ctx.media.get(ipfs.cid);
+  if (ipfs?.path) throw new FetchRejected("IPFS paths inside directories are not supported");
+  const storedCid = storedMetadataCid(uri, ctx.media);
+  if (storedCid) {
+    const object = await ctx.media.get(storedCid);
     if (!object) throw new Error("not found on IPFS");
     if (object.bytes.byteLength > limit) throw new FetchRejected("too large");
     return object.bytes;
@@ -62,7 +64,7 @@ export async function resolveMetadata(
       imageUri = null;
     }
   }
-  return { cid: parseIpfsUri(contractUri)?.cid ?? cidV1Raw(raw), doc, imageUri };
+  return { cid: storedMetadataCid(contractUri, ctx.media) ?? cidV1Raw(raw), doc, imageUri };
 }
 
 export async function runMetadata(ctx: KeeperContext): Promise<{ resolved: number; failed: number }> {
@@ -78,7 +80,8 @@ export async function runMetadata(ctx: KeeperContext): Promise<{ resolved: numbe
   let failed = 0;
   for (const due of await ctx.app.dueCoinMetadata(20)) {
     const coin = byAddress.get(due.coin);
-    const uriCid = parseIpfsUri(due.contract_uri)?.cid;
+    const ipfs = parseIpfsUri(due.contract_uri);
+    const uriCid = ipfs?.path ? null : storedMetadataCid(due.contract_uri, ctx.media);
     try {
       // Uploaded through our API: already stored and validated.
       if (uriCid && (await ctx.app.metadataByCids([uriCid])).has(uriCid)) {

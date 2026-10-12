@@ -547,26 +547,136 @@ describe("LiveMarket", () => {
     expect(m.listCoins()[0]?.symbol).toBe("RESUMED");
   });
 
-  it("keeps same-ticker quote balances distinct and preserves successful balances when one token fails", async () => {
+  it("warms only ETH and keeps requested same-ticker balances distinct when one token fails", async () => {
     const tokens: QuoteAsset[] = [COIN, OTHER].map(address => ({
       address: address as QuoteAsset["address"], symbol: "SAME", name: "Different token", decimals: 18,
       kind: "token", usdPrice: 1, registered: true, enabled: true, launchable: true,
     }));
     const unavailable = { ...tokens[0]!, address: "0x00000000000000000000000000000000000000ff" as const, symbol: "FAILED" };
     const api = baseApi().on("/v1/launch-settings", { settings: DEFAULT_SETTINGS, quotes: [coin(COIN).quote, ...tokens, unavailable] });
+    const getBalance = vi.fn(async () => 2n * 10n ** 18n);
     const readContract = vi.fn(async ({ address }: { address: string }) => {
       if (address === unavailable.address) throw new Error("Token unavailable");
       return address === COIN ? 10n ** 18n : 2n * 10n ** 18n;
     });
-    const { m } = market(api, { client: { ...client, readContract } as unknown as PublicClient });
+    const { m } = market(api, { client: { ...client, getBalance, readContract } as unknown as PublicClient });
     await settle();
     m.ensureUser(USER);
+    await settle();
+    expect(getBalance).toHaveBeenCalledOnce();
+    expect(readContract).not.toHaveBeenCalled();
+    m.getQuoteBalance(USER, COIN);
+    m.getQuoteBalance(USER, OTHER);
+    m.getQuoteBalance(USER, unavailable.address);
     await settle();
     expect(m.getQuoteBalance(USER, COIN)).toBe(1);
     expect(m.getQuoteBalance(USER, OTHER)).toBe(2);
     expect(m.getQuoteBalance(USER, coin(COIN).quote.address)).toBe(2);
     expect(m.getQuoteBalance(USER, "SAME")).toBe(0);
     expect(m.getQuoteBalance(USER, unavailable.address)).toBe(0);
+    expect(getBalance).toHaveBeenCalledOnce();
+    expect(readContract).toHaveBeenCalledTimes(3);
+  });
+
+  it("reads only the selected USDC/stock assets with their own decimals and preserves cached values on RPC failure", async () => {
+    let fail = false;
+    let now = Date.now();
+    const stock: QuoteAsset = { address: COIN, symbol: "NVDAc", name: "NVIDIA", decimals: 18, kind: "stock", usdPrice: 200 };
+    const api = baseApi().on("/v1/launch-settings", { settings: DEFAULT_SETTINGS, quotes: [coin(COIN).quote, USDC, stock] });
+    const getBalance = vi.fn(async () => 2n * 10n ** 18n);
+    const readContract = vi.fn(async ({ address }: { address: string }) => {
+      if (fail && address.toLowerCase() === USDC.address.toLowerCase()) throw new Error("RPC unavailable");
+      return address.toLowerCase() === USDC.address.toLowerCase() ? 125_350_000n : 1_250_000_000_000_000_000n;
+    });
+    const { m } = market(api, { now: () => now, client: { ...client, getBalance, readContract } as unknown as PublicClient });
+    await settle();
+    m.getQuoteBalance(USER, USDC.address);
+    m.getQuoteBalance(USER, "usdc"); // The address and legacy unique ticker share one request.
+    await settle();
+    expect(m.getQuoteBalance(USER, USDC.address)).toBe(125.35);
+    expect(readContract).toHaveBeenCalledOnce();
+    expect(getBalance).not.toHaveBeenCalled();
+    expect(readContract).toHaveBeenCalledWith(expect.objectContaining({ address: USDC.address, functionName: "balanceOf", args: [USER] }));
+    m.getQuoteBalance(USER, stock.address);
+    await settle();
+    expect(m.getQuoteBalance(USER, stock.address)).toBe(1.25);
+    fail = true;
+    now += 10_001;
+    m.getQuoteBalance(USER, USDC.address);
+    await settle();
+    expect(m.getQuoteBalance(USER, USDC.address)).toBe(125.35);
+    expect(m.getQuoteBalance(USER, stock.address)).toBe(1.25);
+    await settle();
+    expect(getBalance).not.toHaveBeenCalled();
+  });
+
+  it("polls requested balances every ten seconds without polling unused quote assets or a previous wallet", async () => {
+    vi.useFakeTimers();
+    const extra: QuoteAsset = { address: COIN, symbol: "NVDAc", name: "NVIDIA", decimals: 18, kind: "stock", usdPrice: 200 };
+    const api = baseApi().on("/v1/launch-settings", { settings: DEFAULT_SETTINGS, quotes: [coin(COIN).quote, USDC, extra] });
+    const readContract = vi.fn(async ({ args }: { args: readonly string[] }) => args[0] === USER ? 4_000_000n : 9_000_000n);
+    const { m } = market(api, { client: { ...client, readContract } as unknown as PublicClient });
+    await vi.advanceTimersByTimeAsync(0);
+    m.getQuoteBalance(USER, USDC.address);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(m.getQuoteBalance(USER, USDC.address)).toBe(4);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(readContract).toHaveBeenCalledTimes(2);
+    m.getQuoteBalance(OTHER, USDC.address);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(m.getQuoteBalance(OTHER, USDC.address)).toBe(9);
+    for (let i = 0; i < 5; i++) {
+      await vi.advanceTimersByTimeAsync(10_000);
+      m.getQuoteBalance(OTHER, USDC.address);
+    }
+    expect(readContract.mock.calls.every(([request]) => (request as { address?: string }).address?.toLowerCase() === USDC.address.toLowerCase())).toBe(true);
+    const oldWalletReads = readContract.mock.calls.filter(([request]) => request.args[0] === USER).length;
+    await vi.advanceTimersByTimeAsync(10_000);
+    m.getQuoteBalance(OTHER, USDC.address);
+    expect(readContract.mock.calls.filter(([request]) => request.args[0] === USER)).toHaveLength(oldWalletReads);
+    expect(m.getQuoteBalance(OTHER, USDC.address)).toBe(9);
+  });
+
+  it("checks the fresh trading balance and refreshes the per-asset cache after a confirmed trade", async () => {
+    let balance = 2n * 10n ** 18n;
+    const getBalance = vi.fn(async () => balance);
+    const readContract = vi.fn(async () => 0n);
+    const { m } = market(baseApi(), { txContext: async () => ({}) as TxContext, client: { ...client, getBalance, readContract } as unknown as PublicClient });
+    await settle();
+    m.ensureUser(USER);
+    m.getQuoteBalance(USER, coin(COIN).quote.address);
+    await settle();
+    expect(m.getQuoteBalance(USER, coin(COIN).quote.address)).toBe(2);
+    expect(getBalance).toHaveBeenCalledOnce();
+    balance = 5n * 10n ** 16n;
+    vi.mocked(sendTrade).mockClear();
+    await expect(m.trade(USER, COIN, "buy", 0.1, 0, { amountText: "0.1" })).rejects.toThrow("Not enough ETH");
+    expect(sendTrade).not.toHaveBeenCalled();
+    balance = 10n ** 18n;
+    vi.mocked(sendTrade).mockResolvedValue({ hash: `0x${"11".repeat(32)}`, isBuy: true,
+      quoteAmount: 10n ** 17n, coinAmount: 1n, fee: 0n, feeBps: 100,
+      sqrtPriceX96: launch.sqrtPriceX96, tick: launch.tick, blockNumber: 1n,
+    } as TradeFill);
+    await m.trade(USER, COIN, "buy", 0.1, 0, { amountText: "0.1" });
+    await settle();
+    expect(m.getQuoteBalance(USER, coin(COIN).quote.address)).toBe(1);
+    expect(getBalance).toHaveBeenCalledTimes(4); // One warm read, two fresh checks and one post-trade refresh.
+    expect(readContract).not.toHaveBeenCalled();
+  });
+
+  it("does not turn unavailable passive token balances into an API outage", async () => {
+    const assets = [COIN, OTHER, "0x00000000000000000000000000000000000000ff"].map(address => ({
+      address: address as `0x${string}`, symbol: "STOCK", name: "Stock", decimals: 18, kind: "stock" as const, usdPrice: 1,
+    }));
+    const api = baseApi().on("/v1/launch-settings", { settings: DEFAULT_SETTINGS, quotes: [coin(COIN).quote, ...assets] });
+    const readContract = vi.fn(async () => { throw new Error("RPC temporarily unavailable"); });
+    const { m } = market(api, { client: { ...client, readContract } as unknown as PublicClient });
+    await settle();
+    for (const asset of assets) m.getQuoteBalance(USER, asset.address);
+    await settle();
+    expect(readContract).toHaveBeenCalledTimes(3);
+    expect(m.getStatus().state).toBe("ready");
+    expect(assets.map(asset => m.getQuoteBalance(USER, asset.address))).toEqual([0, 0, 0]);
   });
 
   it("keeps catalog discovery separate from registry launch eligibility", async () => {

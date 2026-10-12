@@ -4,6 +4,7 @@ import type { Deployment } from "../lib/deployment";
 import type { MediaStore } from "../lib/media/store";
 import { HttpError, errorBody, originGuard } from "./http";
 import { mountMedia } from "./media";
+import { publicDeliveryRedirect, type PublicDelivery } from "./public-delivery";
 import { type CampaignDeps, launchCampaignRoutes } from "./launch-campaign";
 import { type PlatformTokenDeps, platformTokenRoutes } from "./platform-token";
 import { mountOg } from "./read/og";
@@ -27,6 +28,7 @@ export interface AppDeps {
   author?: AuthorDeps;
   campaign?: CampaignDeps;
   platformToken?: PlatformTokenDeps;
+  publicDelivery?: PublicDelivery;
 }
 
 /** The memefun HTTP API: read endpoints typed as the app's own data, writes, admin, media, cards. */
@@ -49,6 +51,7 @@ export function createApp(deps: AppDeps) {
     c.header("Referrer-Policy", "no-referrer");
   });
   app.use("*", originGuard(deps.allowedOrigins));
+  app.use("*", publicDeliveryRedirect(deps.publicDelivery));
 
   app.get("/v1/health", (c) => {
     const state = deps.read.snapshot.current;

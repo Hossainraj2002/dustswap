@@ -100,6 +100,16 @@ export function WalletButton({ className }: { className?: string }) {
 }
 
 function AccountSheet({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
+  return (
+    <Sheet open={open} onOpenChange={onOpenChange} title="Account" hideTitle>
+      <AccountSheetContent onOpenChange={onOpenChange} />
+    </Sheet>
+  );
+}
+
+function AccountSheetContent({ onOpenChange }: { onOpenChange: (open: boolean) => void }) {
+  // Sheet mounts its contents while visible (including its exit animation). A closed account
+  // button must not keep every stock/token balance subscribed in the background.
   const wallet = useWallet();
   const { market } = useMarket();
   if (!wallet.address) return null;
@@ -110,7 +120,7 @@ function AccountSheet({ open, onOpenChange }: { open: boolean; onOpenChange: (op
   const totalUsd = balances.reduce((sum, entry) => sum + entry.amount * entry.quote.usdPrice, 0);
 
   return (
-    <Sheet open={open} onOpenChange={onOpenChange} title="Account" hideTitle>
+    <>
       <div className="flex flex-col items-center gap-2 pb-5 pt-1 text-center">
         <AddressAvatar address={address} size={64} />
         <div className="flex items-center gap-1">
@@ -161,7 +171,7 @@ function AccountSheet({ open, onOpenChange }: { open: boolean; onOpenChange: (op
           Disconnect
         </Button>
       </div>
-    </Sheet>
+    </>
   );
 }
 

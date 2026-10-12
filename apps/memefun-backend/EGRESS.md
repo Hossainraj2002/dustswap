@@ -4,12 +4,15 @@ Production delivery uses `https://memefun-api.dustswap.wtf` on the existing Rail
 
 Keep backend `PUBLIC_API_URL=https://memefun-api-production.up.railway.app`. Published bucket metadata and on-chain token URIs already contain that canonical origin, and publication checks compare against it. The frontend rewrites only known canonical `/media/<CID>` image URLs for display. It does not change persisted metadata, token URIs, or third-party image URLs.
 
+Set the separate optional API variable `PUBLIC_DELIVERY_URL=https://memefun-api.dustswap.wtf` only after the keeper supports direct authenticated reads of this store's canonical HTTPS metadata URLs. This redirects anonymous legacy-host public reads and valid `/media/<CID>` reads to the CDN with a temporary 307, preserving the complete query. Redirects are cached for five minutes and vary on credential/Range headers. Alias requests serve normal bodies without looping. Wallet, claim, auth, streaming, write, credential-bearing, and unlisted routes are not redirected. Leaving the variable unset preserves the original delivery behavior.
+
 ## Client requests
 
 - Full discovery/search catalogs reconcile every 60 seconds while streaming is healthy. Trades and launches refresh the affected coin, rather than reloading every historical token.
 - A disconnected stream retains a 10-second full-catalog fallback. All catalog pages remain available; there is no token-count truncation.
 - Hidden tabs suspend passive market polling and streaming, abort a paginated catalog fetch, and refresh when visible again.
 - A closed search dialog does not subscribe to the full catalog. Existing readers expire through the normal 30-second keep-alive window.
+- A closed wallet account sheet does not subscribe to all supported token balances. Visible trade views poll only requested assets; opening the account sheet still loads all balances it displays. Balance refresh cadence and post-transaction invalidation are preserved.
 - Pinned platform-token identity refreshes every 60 seconds. Trading detail, quotes, pool checks, and transaction freshness retain their existing behavior.
 
 Changing scheduled catalog reconciliation from five to 60 seconds means 91.7% fewer scheduled full-catalog downloads per active catalog reader. This is not a measured reduction in the total Railway bill: streaming events, direct-origin clients, other routes, and cache-hit rates affect actual bandwidth.
@@ -29,14 +32,22 @@ Eligible rules preserve query-string cache keys, respect origin browser TTL, and
 
 Authentication, wallet-specific endpoints, all writes, errors, and SSE remain uncached. Verify new routes before extending the public allowlist. Cloudflare does not cache extensionless CID paths or JSON by default; the eligibility rules are required.
 
+## Keeper and resource costs
+
+The keeper retains only pending job timers, instead of keeping every timer handle after it fires. A stock-price job with an explicitly disabled (`none`) source returns before unnecessary database or RPC reads. Job frequencies, financial thresholds and transaction rules are unchanged. Own-store canonical HTTPS metadata and image URLs resolve directly through the authenticated media store with CID and byte-size checks; arbitrary remote redirects remain rejected.
+
+Railway DNS and network-flow checks confirmed that the API and keeper already use private Postgres networking. Service CPU/RAM ceilings are not their metered usage; lowering a ceiling alone does not reduce the bill. Keep the active database and indexer running. An idle legacy database had a small measured footprint, so it was not deleted or disabled as part of this optimization.
+
 Public JSON and media support weak/list/wildcard If-None-Match validation. Media validators still check the stored object before returning a zero-body 304. Railway already compresses JSON for browsers; there is no duplicate application gzip middleware.
 
 ## Verification and operations
 
 On 11 October 2026, the new hostname passed normal HTTPS and CORS checks, public JSON and media MISS-to-HIT probes, credential bypass checks, wallet-data no-store/private checks, SSE ready-event delivery, preflight, and repeated 400/404 non-caching checks. Automated validation passed 791 frontend and 359 backend tests, both type checks, and a frontend production build using the CDN hostname.
 
-Compare hourly API NETWORK_TX_GB and HTTP route counts over similar traffic windows after deployment. Record Cloudflare HIT/MISS/EXPIRED/BYPASS ratios as well: origin request counts alone cannot measure image byte savings. Existing clients using the original Railway hostname bypass Cloudflare until they reload the updated app; external direct-origin traffic also remains possible. Do not claim an exact bill reduction before comparable live measurements.
+Compare hourly API NETWORK_TX_GB and HTTP route counts over similar traffic windows after deployment. Record Cloudflare HIT/MISS/EXPIRED/BYPASS ratios as well: origin request counts alone cannot measure image byte savings. Existing clients using the original Railway hostname bypass Cloudflare until they reload the updated app or the optional legacy redirects are enabled. Credential-bearing and unlisted direct-origin traffic remains possible. Do not claim an exact bill reduction before comparable live measurements.
 
-Rollback: restore the frontend build variable to the original Railway API hostname and rebuild/redeploy the web service. The display mapping follows the configured API automatically. The original API hostname remains available. Cache rules can be disabled for the alias without modifying canonical metadata or deploying contracts. Do not remove canonical media serving: older published URLs depend on it.
+Rollout of legacy redirects: deploy the keeper's own-store metadata compatibility change first, then deploy the API with `PUBLIC_DELIVERY_URL` enabled. This avoids redirecting a media URL while an older keeper still rejects redirects. Verify legacy 307-to-CDN-200/HIT, unchanged private routes, and keeper metadata resolution.
+
+Rollback: remove `PUBLIC_DELIVERY_URL` and redeploy the API, then restore the frontend build variable to the original Railway API hostname and rebuild/redeploy the web service. Browsers may retain temporary redirects for up to five minutes. The display mapping follows the configured API automatically. The original API hostname remains available. Cache rules can be disabled for the alias without modifying canonical metadata or deploying contracts. Do not remove canonical media serving: older published URLs depend on it.
 
 Official references: [Cloudflare default caching](https://developers.cloudflare.com/cache/concepts/default-cache-behavior/) and [Cache Rule settings](https://developers.cloudflare.com/cache/how-to/cache-rules/settings/).

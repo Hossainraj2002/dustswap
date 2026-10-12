@@ -22,6 +22,7 @@ import { createPlatformTokenStore } from "../lib/platform-token/store";
 import { createPlatformToken } from "../lib/platform-token/service";
 import type { AppDeps } from "./app";
 import { normalizeOrigins } from "./http";
+import { publicDeliveryConfig } from "./public-delivery";
 import { createSettingsReader } from "./read/settings";
 import { MarketSnapshot } from "./read/snapshot";
 import { createReadStore } from "./read/store";
@@ -38,6 +39,7 @@ export interface Running extends AppDeps {
  * (advisory-locked, so replicas starting together are safe).
  */
 export async function createDeps(): Promise<Running> {
+  const publicDelivery = publicDeliveryConfig(optionalEnv("PUBLIC_API_URL"), optionalEnv("PUBLIC_DELIVERY_URL"));
   const chain = chainSettings();
   const deployment = loadDeployment(chain.id);
   const readPool = createReadPool();
@@ -104,6 +106,7 @@ export async function createDeps(): Promise<Running> {
     author,
     campaign,
     platformToken,
+    publicDelivery,
     async dispose() {
       clearInterval(xPrune);
       clearInterval(campaignPrune);
