@@ -109,6 +109,17 @@ export function createAppStore(db: Queryable & Pick<pg.Pool, "connect">) {
       );
     },
 
+    /** Discoveries are bounded by the keeper; enqueue them in one idempotent write. */
+    async enqueueCoinMetadataBatch(coins: Array<{ coin: string; contractUri: string }>) {
+      if (coins.length === 0) return;
+      await db.query(
+        `INSERT INTO coin_metadata (coin, contract_uri, status)
+         SELECT coin, contract_uri, 'pending' FROM UNNEST($1::text[], $2::text[]) AS c(coin, contract_uri)
+         ON CONFLICT (coin) DO NOTHING`,
+        [coins.map((coin) => coin.coin), coins.map((coin) => coin.contractUri)],
+      );
+    },
+
     async resolveCoinMetadata(coin: string, status: "resolved" | "failed" | "unsupported", detail: { cid?: string; error?: string; retryInSec?: number }) {
       await db.query(
         `UPDATE coin_metadata

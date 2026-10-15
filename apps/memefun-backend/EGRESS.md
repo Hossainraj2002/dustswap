@@ -34,6 +34,16 @@ Authentication, wallet-specific endpoints, all writes, errors, and SSE remain un
 
 ## Keeper and resource costs
 
+### Quiet-market operation
+
+The API's shared market snapshot rebuilds every ten seconds during quiet periods, rather than every two seconds. Observed stream trades/activity trigger a coalesced refresh and retain the two-second cadence for twenty seconds. This means 80% fewer scheduled full rebuilds while quiet; it is not a claim of 80% lower total billing. Reads wait for an in-flight build and refresh a snapshot that is at least ten seconds old. Explicit write/admin refreshes remain immediate. Rolling windows, holder balances, quote changes, multi-pool history and moderation continue updating within that quiet bound.
+
+The event hub performs no database polls without subscribers. Active streams retain their one-second polling cadence, initialize a fresh cursor on reconnect, and refresh the snapshot before deriving new trade/activity events. In-flight work from a previous audience cannot replay to a new one. A failed batch does not advance its cursors.
+
+Share-card PNG storage is bounded to 16 MiB and 128 entries, with fixed one-minute expiry and concurrent requests for the same card sharing one render. Expired PNGs are released while idle. This limits retained cache data, not all HTTP rendering memory or total process RAM.
+
+Keeper metadata discovery uses a bounded database anti-join against the existing `memefun_app.coin_metadata` table and one batched, idempotent enqueue. Names/symbols are fetched only for the twenty due work items. Known resolved/unsupported records, retry limits, backoff and immutable queued URIs are preserved. The two schemas must remain in the same Postgres database, as in the existing deployment. No new migration is required.
+
 The keeper retains only pending job timers, instead of keeping every timer handle after it fires. A stock-price job with an explicitly disabled (`none`) source returns before unnecessary database or RPC reads. Job frequencies, financial thresholds and transaction rules are unchanged. Own-store canonical HTTPS metadata and image URLs resolve directly through the authenticated media store with CID and byte-size checks; arbitrary remote redirects remain rejected.
 
 Railway DNS and network-flow checks confirmed that the API and keeper already use private Postgres networking. Service CPU/RAM ceilings are not their metered usage; lowering a ceiling alone does not reduce the bill. Keep the active database and indexer running. An idle legacy database had a small measured footprint, so it was not deleted or disabled as part of this optimization.

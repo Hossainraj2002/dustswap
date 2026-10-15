@@ -14,6 +14,7 @@ import type { Coin } from "../../shared/market-types";
 import { HttpError, parseAddress } from "../http";
 import { creatorProfiles } from "./routes";
 import type { MarketSnapshot } from "./snapshot";
+import { PngCache } from "./og-cache";
 
 /**
  * Share cards (1200 x 630 PNG) for X, Telegram and Farcaster previews: a coin, a fresh launch, a
@@ -157,17 +158,10 @@ export async function renderPng(node: Node): Promise<Buffer> {
 }
 
 export function mountOg(app: Hono, deps: { snapshot: MarketSnapshot; media: MediaStore }) {
-  const cache = new Map<string, { at: number; png: Buffer }>();
-  const TTL = 60_000;
+  const cache = new PngCache({ ttlMs: 60_000, maxEntries: 128, maxBytes: 16 * 1024 * 1024 });
 
   const respond = async (key: string, build: () => Promise<Node>) => {
-    const hit = cache.get(key);
-    let png = hit && Date.now() - hit.at < TTL ? hit.png : null;
-    if (!png) {
-      png = await renderPng(await build());
-      if (cache.size > 2_000) cache.clear();
-      cache.set(key, { at: Date.now(), png });
-    }
+    const png = await cache.getOrCreate(key, async () => renderPng(await build()));
     return new Response(new Uint8Array(png), {
       headers: { "Content-Type": "image/png", "Cache-Control": "public, max-age=60, stale-while-revalidate=300" },
     });

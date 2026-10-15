@@ -21,6 +21,9 @@ import type { ReadStore } from "./store";
 const DAY = 86_400;
 /** A coin with no trade in the last day (plus this margin) has flat rolling windows. */
 const ACTIVE_MARGIN = 900;
+const QUIET_REFRESH_MS = 10_000;
+const ACTIVE_REFRESH_MS = 2_000;
+const ACTIVE_FOR_MS = 20_000;
 
 export interface SnapshotState {
   version: number;
@@ -34,9 +37,9 @@ export interface SnapshotState {
 }
 
 /**
- * The market as the app sees it, rebuilt every few seconds from the index. Every request reads the
- * latest complete snapshot, so a list never mixes two refreshes, and the database sees one set of
- * queries per refresh no matter how many requests arrive.
+ * The market as the app sees it. Quiet markets refresh at most every ten seconds; observed live
+ * activity brings back the two-second cadence. Requests share each complete refresh, so a list
+ * never mixes two builds and balances, settings and rolling windows still refresh while idle.
  */
 export class MarketSnapshot {
   private state: SnapshotState = { version: 0, nowSec: 0, coins: [], byAddress: new Map(), records: new Map(), quotes: new Map(), banner: "" };
@@ -46,6 +49,10 @@ export class MarketSnapshot {
   private timer: ReturnType<typeof setInterval> | null = null;
   private refreshing: Promise<void> | null = null;
   private lastError: unknown = null;
+  private refreshedAt: number | null = null;
+  private activeUntil = 0;
+  private activityTimer: ReturnType<typeof setTimeout> | null = null;
+  private activityWaiter: { promise: Promise<void>; resolve(): void; reject(error: unknown): void; after: Promise<void> | null } | null = null;
 
   constructor(
     private readonly deps: {
@@ -65,28 +72,79 @@ export class MarketSnapshot {
     return this.state.version > 0 && this.lastError === null;
   }
 
-  start(intervalMs = 2_000) {
+  start(intervalMs = ACTIVE_REFRESH_MS) {
     if (this.timer) return;
-    this.timer = setInterval(() => void this.refresh().catch(() => undefined), intervalMs);
+    // The cheap timer remains frequent; it no longer reloads every coin on each quiet tick.
+    this.timer = setInterval(() => {
+      const now = this.clock();
+      const cadence = now < this.activeUntil ? ACTIVE_REFRESH_MS : QUIET_REFRESH_MS;
+      if (this.refreshedAt === null || this.lastError !== null || now - this.refreshedAt >= cadence) {
+        void this.refresh().catch(() => undefined);
+      }
+    }, intervalMs);
     this.timer.unref?.();
   }
 
   stop() {
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
+    if (this.activityTimer) clearTimeout(this.activityTimer);
+    this.activityTimer = null;
+    // Shutdown must not leave an event poll awaiting a cancelled refresh forever.
+    this.activityWaiter?.resolve();
+    this.activityWaiter = null;
   }
 
-  /** Waits for a snapshot to exist (first request after startup). */
+  /** The first read after an idle gap refreshes before returning; concurrent reads share it. */
   async ready(): Promise<SnapshotState> {
-    if (this.state.version === 0) await this.refresh();
+    if (this.refreshing) await this.refreshing;
+    else if (this.refreshedAt === null || this.lastError !== null || this.clock() - this.refreshedAt >= QUIET_REFRESH_MS) await this.refresh();
     return this.state;
+  }
+
+  /** New live events share a fresh view without making bursts rebuild faster than every two seconds. */
+  noteActivity(): Promise<void> {
+    const now = this.clock();
+    this.activeUntil = now + ACTIVE_FOR_MS;
+    if (this.activityWaiter) return this.activityWaiter.promise;
+    const delay = this.refreshedAt === null ? 0 : Math.max(0, ACTIVE_REFRESH_MS - (now - this.refreshedAt));
+    if (!this.refreshing && (delay === 0 || this.lastError !== null)) return this.refresh();
+    let resolve!: () => void;
+    let reject!: (error: unknown) => void;
+    const promise = new Promise<void>((yes, no) => { resolve = yes; reject = no; });
+    const waiter = { promise, resolve, reject, after: this.refreshing };
+    this.activityWaiter = waiter;
+    if (waiter.after) {
+      // The current build may already have read its coin/quote rows before this event was
+      // indexed. It cannot satisfy the hint: one later build must do that, still at <= 0.5 Hz.
+      void waiter.after.then(() => {
+        if (this.activityWaiter === waiter) this.scheduleActivityRefresh();
+      }, error => {
+        if (this.activityWaiter !== waiter) return;
+        this.activityWaiter = null;
+        waiter.reject(error);
+      });
+    } else this.scheduleActivityRefresh();
+    return promise;
+  }
+
+  private scheduleActivityRefresh() {
+    const delay = this.refreshedAt === null ? 0 : Math.max(0, ACTIVE_REFRESH_MS - (this.clock() - this.refreshedAt));
+    if (delay === 0 || this.lastError !== null || this.refreshing) {
+      void this.refresh().catch(() => undefined);
+      return;
+    }
+    this.activityTimer = setTimeout(() => { void this.refresh().catch(() => undefined); }, delay);
+    this.activityTimer.unref?.();
   }
 
   refresh(): Promise<void> {
     // One refresh at a time; concurrent callers share it.
+    const startedAt = this.clock();
     this.refreshing ??= this.build()
       .then((state) => {
         this.state = state;
+        this.refreshedAt = startedAt;
         this.lastError = null;
         this.deps.onRefresh?.(state);
       })
@@ -97,12 +155,24 @@ export class MarketSnapshot {
       .finally(() => {
         this.refreshing = null;
       });
+    // A scheduled hint, an explicit write refresh and a normal timer tick share the same build.
+    if (this.activityWaiter && this.activityWaiter.after !== this.refreshing) {
+      if (this.activityTimer) clearTimeout(this.activityTimer);
+      this.activityTimer = null;
+      const waiter = this.activityWaiter;
+      this.activityWaiter = null;
+      void this.refreshing.then(waiter.resolve, waiter.reject);
+    }
     return this.refreshing;
+  }
+
+  private clock(): number {
+    return this.deps.clock?.() ?? Date.now();
   }
 
   private async build(): Promise<SnapshotState> {
     const { store, app } = this.deps;
-    const clockSec = Math.floor((this.deps.clock?.() ?? Date.now()) / 1000);
+    const clockSec = Math.floor(this.clock() / 1000);
     const [quoteRows, coinRows, latest, moderation, banner, marketRows, tweetRows] = await Promise.all([
       store.quotes(),
       store.coins(),

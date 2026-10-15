@@ -16,6 +16,7 @@ import type { KeeperContext } from "../context";
 const MAX_JSON_BYTES = 64 * 1024;
 const BACKOFF_SEC = [60, 300, 1_800, 7_200, 86_400];
 const MAX_ATTEMPTS = 8;
+const DISCOVERY_BATCH = 100;
 
 export { FetchRejected };
 
@@ -68,17 +69,30 @@ export async function resolveMetadata(
 }
 
 export async function runMetadata(ctx: KeeperContext): Promise<{ resolved: number; failed: number }> {
-  const known = await ctx.app.knownCoinMetadata();
-  const coins = await rows<{ address: string; contract_uri: string; name: string; symbol: string }>(
+  // Both schemas live in the same Postgres database. Keep the anti-join in Postgres instead of
+  // downloading every historical coin and metadata key on each 15-second keeper pass.
+  const discoveries = await rows<{ address: string; contract_uri: string }>(
     ctx.index,
-    `SELECT address, contract_uri, name, symbol FROM coin WHERE launched = true`,
+    `SELECT c.address, c.contract_uri FROM coin c
+      WHERE c.launched = true AND NOT EXISTS (
+        SELECT 1 FROM memefun_app.coin_metadata m WHERE m.coin = c.address
+      ) ORDER BY c.created_at, c.address LIMIT $1`,
+    [DISCOVERY_BATCH],
+  );
+  if (discoveries.length > 0) await ctx.app.enqueueCoinMetadataBatch(discoveries.map((coin) => ({ coin: coin.address, contractUri: coin.contract_uri })));
+
+  const dueCoins = await ctx.app.dueCoinMetadata(20);
+  if (dueCoins.length === 0) return { resolved: 0, failed: 0 };
+  // Names are needed only for this bounded work batch, including retries discovered earlier.
+  const coins = await rows<{ address: string; name: string; symbol: string }>(ctx.index,
+    `SELECT address, name, symbol FROM coin WHERE launched = true AND address = ANY($1::text[])`,
+    [[...new Set(dueCoins.map((coin) => coin.coin))]],
   );
   const byAddress = new Map(coins.map((c) => [c.address, c]));
-  for (const c of coins) if (!known.has(c.address)) await ctx.app.enqueueCoinMetadata(c.address, c.contract_uri);
 
   let resolved = 0;
   let failed = 0;
-  for (const due of await ctx.app.dueCoinMetadata(20)) {
+  for (const due of dueCoins) {
     const coin = byAddress.get(due.coin);
     const ipfs = parseIpfsUri(due.contract_uri);
     const uriCid = ipfs?.path ? null : storedMetadataCid(due.contract_uri, ctx.media);

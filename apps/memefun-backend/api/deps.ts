@@ -51,7 +51,7 @@ export async function createDeps(): Promise<Running> {
   const media = createMediaStore();
   const client = createPublicClient({ chain: chain.viemChain, transport: fallback(chain.rpcUrls.map((url) => http(url, { timeout: 10_000 }))) });
   const snapshot = new MarketSnapshot({ store, app, media });
-  const hub = new LiveHub({ store, snapshot });
+  const hub = new LiveHub({ store, snapshot, onActivity: () => snapshot.noteActivity() });
   const settings = createSettingsReader(client, deployment.config);
   const pairCatalog = createPairCatalog({ chainId: chain.id, client, apiKey: optionalEnv("O1_API_KEY"), registry: async () => {
     const [state, currentSettings] = await Promise.all([snapshot.ready(), settings.get()]);

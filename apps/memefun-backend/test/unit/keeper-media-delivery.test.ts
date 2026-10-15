@@ -24,12 +24,13 @@ function queued(f: ReturnType<typeof fixture>, uri: string, cid: string) {
   const app = {
     knownCoinMetadata: async () => new Set([COIN]),
     enqueueCoinMetadata: vi.fn(),
+    enqueueCoinMetadataBatch: vi.fn(),
     dueCoinMetadata: async () => [{ coin: COIN, contract_uri: uri, attempts: 0 }],
     metadataByCids: vi.fn(async () => new Map([[cid, { cid }]])),
     resolveCoinMetadata: vi.fn(async () => undefined),
     saveMetadata: vi.fn(async () => undefined),
   };
-  const ctx = { media: f.media, app, index: { query: async () => ({ rows: [{ address: COIN, contract_uri: uri, name: "Coin", symbol: "COIN" }] }) }, log: vi.fn() } as unknown as KeeperContext;
+  const ctx = { media: f.media, app, index: { query: async (sql: string) => ({ rows: sql.includes("NOT EXISTS") ? [] : [{ address: COIN, name: "Coin", symbol: "COIN" }] }) }, log: vi.fn() } as unknown as KeeperContext;
   return { ctx, app };
 }
 
