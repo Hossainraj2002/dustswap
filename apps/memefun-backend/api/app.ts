@@ -4,6 +4,7 @@ import type { Deployment } from "../lib/deployment";
 import type { MediaStore } from "../lib/media/store";
 import { HttpError, errorBody, originGuard } from "./http";
 import { mountMedia } from "./media";
+import { publicCatalogCompression } from "./public-compression";
 import { publicDeliveryRedirect, type PublicDelivery } from "./public-delivery";
 import { type CampaignDeps, launchCampaignRoutes } from "./launch-campaign";
 import { type PlatformTokenDeps, platformTokenRoutes } from "./platform-token";
@@ -52,6 +53,7 @@ export function createApp(deps: AppDeps) {
   });
   app.use("*", originGuard(deps.allowedOrigins));
   app.use("*", publicDeliveryRedirect(deps.publicDelivery));
+  app.use("*", publicCatalogCompression());
 
   app.get("/v1/health", (c) => {
     const state = deps.read.snapshot.current;

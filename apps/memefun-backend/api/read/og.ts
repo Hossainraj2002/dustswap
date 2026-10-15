@@ -4,10 +4,10 @@ import { fileURLToPath } from "node:url";
 import { Resvg } from "@resvg/resvg-js";
 import type { Hono } from "hono";
 import satori from "satori";
-import sharp from "sharp";
 
 import { parseIpfsUri } from "../../lib/cid";
 import type { MediaStore } from "../../lib/media/store";
+import sharp from "../../lib/media/sharp";
 import { formatCompact, formatPercent, formatUsd, shortAddress } from "../../shared/core/format";
 import { milestoneLabel } from "../../shared/core/milestones";
 import type { Coin } from "../../shared/market-types";

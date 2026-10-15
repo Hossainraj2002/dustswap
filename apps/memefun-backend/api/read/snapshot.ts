@@ -22,6 +22,8 @@ const DAY = 86_400;
 /** A coin with no trade in the last day (plus this margin) has flat rolling windows. */
 const ACTIVE_MARGIN = 900;
 const QUIET_REFRESH_MS = 10_000;
+const IDLE_REFRESH_MS = 60_000;
+const READ_INTEREST_MS = 20_000;
 const ACTIVE_REFRESH_MS = 2_000;
 const ACTIVE_FOR_MS = 20_000;
 
@@ -37,9 +39,9 @@ export interface SnapshotState {
 }
 
 /**
- * The market as the app sees it. Quiet markets refresh at most every ten seconds; observed live
- * activity brings back the two-second cadence. Requests share each complete refresh, so a list
- * never mixes two builds and balances, settings and rolling windows still refresh while idle.
+ * The market as the app sees it. Quiet readers get ten-second refreshes and live activity gets
+ * the two-second cadence. With no readers or streams, a minute heartbeat checks the database;
+ * the next read refreshes an old view before returning. Requests share each complete build.
  */
 export class MarketSnapshot {
   private state: SnapshotState = { version: 0, nowSec: 0, coins: [], byAddress: new Map(), records: new Map(), quotes: new Map(), banner: "" };
@@ -51,6 +53,7 @@ export class MarketSnapshot {
   private lastError: unknown = null;
   private refreshedAt: number | null = null;
   private activeUntil = 0;
+  private readUntil = 0;
   private activityTimer: ReturnType<typeof setTimeout> | null = null;
   private activityWaiter: { promise: Promise<void>; resolve(): void; reject(error: unknown): void; after: Promise<void> | null } | null = null;
 
@@ -61,6 +64,7 @@ export class MarketSnapshot {
       media: MediaStore;
       clock?: () => number;
       onRefresh?: (state: SnapshotState) => void;
+      hasAudience?: () => boolean;
     },
   ) {}
 
@@ -77,7 +81,8 @@ export class MarketSnapshot {
     // The cheap timer remains frequent; it no longer reloads every coin on each quiet tick.
     this.timer = setInterval(() => {
       const now = this.clock();
-      const cadence = now < this.activeUntil ? ACTIVE_REFRESH_MS : QUIET_REFRESH_MS;
+      const interested = now < this.readUntil || this.deps.hasAudience?.() === true;
+      const cadence = now < this.activeUntil ? ACTIVE_REFRESH_MS : interested ? QUIET_REFRESH_MS : IDLE_REFRESH_MS;
       if (this.refreshedAt === null || this.lastError !== null || now - this.refreshedAt >= cadence) {
         void this.refresh().catch(() => undefined);
       }
@@ -97,6 +102,8 @@ export class MarketSnapshot {
 
   /** The first read after an idle gap refreshes before returning; concurrent reads share it. */
   async ready(): Promise<SnapshotState> {
+    // Health probes use `current`, not this method, so they cannot keep market work awake.
+    this.readUntil = this.clock() + READ_INTEREST_MS;
     if (this.refreshing) await this.refreshing;
     else if (this.refreshedAt === null || this.lastError !== null || this.clock() - this.refreshedAt >= QUIET_REFRESH_MS) await this.refresh();
     return this.state;

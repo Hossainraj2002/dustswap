@@ -40,7 +40,7 @@ export function adminRoutes(deps: AdminDeps) {
 
   app.get("/v1/admin/overview", async (c) => {
     const [openReports, runs, lastEpoch] = await Promise.all([deps.app.reports("open", 200), deps.app.keeperRuns(20), deps.app.lastRewardEpoch()]);
-    const state = deps.snapshot.current;
+    const state = await deps.snapshot.ready();
     return c.json({
       coins: state.coins.length,
       hiddenCoins: state.coins.filter((coin) => coin.hidden).map((coin) => coin.address),

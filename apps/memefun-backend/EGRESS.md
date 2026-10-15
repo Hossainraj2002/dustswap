@@ -36,11 +36,13 @@ Authentication, wallet-specific endpoints, all writes, errors, and SSE remain un
 
 ### Quiet-market operation
 
-The API's shared market snapshot rebuilds every ten seconds during quiet periods, rather than every two seconds. Observed stream trades/activity trigger a coalesced refresh and retain the two-second cadence for twenty seconds. This means 80% fewer scheduled full rebuilds while quiet; it is not a claim of 80% lower total billing. Reads wait for an in-flight build and refresh a snapshot that is at least ten seconds old. Explicit write/admin refreshes remain immediate. Rolling windows, holder balances, quote changes, multi-pool history and moderation continue updating within that quiet bound.
+The API's shared market snapshot rebuilds every ten seconds for quiet readers, rather than every two seconds. With no stream subscribers and no real market read for twenty seconds, it uses a one-minute background heartbeat. Health checks do not extend reader interest. The next real read (including admin overview) waits for an in-flight build and refreshes a snapshot that is at least ten seconds old before returning. Observed stream trades/activity trigger a coalesced refresh and retain the two-second cadence for twenty seconds. This means 80% fewer scheduled full rebuilds for quiet readers, or 96.7% fewer during fully idle periods compared with the original two-second loop; neither number is a total billing reduction. Explicit write/admin refreshes remain immediate. Rolling windows, holder balances, quote changes, multi-pool history and moderation continue updating for interested readers within the quiet bound.
 
 The event hub performs no database polls without subscribers. Active streams retain their one-second polling cadence, initialize a fresh cursor on reconnect, and refresh the snapshot before deriving new trade/activity events. In-flight work from a previous audience cannot replay to a new one. A failed batch does not advance its cursors.
 
 Share-card PNG storage is bounded to 16 MiB and 128 entries, with fixed one-minute expiry and concurrent requests for the same card sharing one render. Expired PNGs are released while idle. This limits retained cache data, not all HTTP rendering memory or total process RAM.
+
+Uploads, keeper image processing and share-card renders also use one configured Sharp instance with an 8 MB native operation-cache budget, at most 32 cached operations and no cached open files. Image dimensions, encoding, quality, validation and concurrency selection are unchanged. Temporary decoding/rendering buffers are outside these retained-cache budgets.
 
 Keeper metadata discovery uses a bounded database anti-join against the existing `memefun_app.coin_metadata` table and one batched, idempotent enqueue. Names/symbols are fetched only for the twenty due work items. Known resolved/unsupported records, retry limits, backoff and immutable queued URIs are preserved. The two schemas must remain in the same Postgres database, as in the existing deployment. No new migration is required.
 
@@ -48,7 +50,22 @@ The keeper retains only pending job timers, instead of keeping every timer handl
 
 Railway DNS and network-flow checks confirmed that the API and keeper already use private Postgres networking. Service CPU/RAM ceilings are not their metered usage; lowering a ceiling alone does not reduce the bill. Keep the active database and indexer running. An idle legacy database had a small measured footprint, so it was not deleted or disabled as part of this optimization.
 
-Public JSON and media support weak/list/wildcard If-None-Match validation. Media validators still check the stored object before returning a zero-body 304. Railway already compresses JSON for browsers; there is no duplicate application gzip middleware.
+Public JSON and media support weak/list/wildcard If-None-Match validation. Media validators still check the stored object before returning a zero-body 304. Anonymous exact `GET /v1/coins` catalog responses also use gzip inside the application when the client accepts it, before response bytes leave the container. The existing Hono compressor manages encoding negotiation, `Vary: Accept-Encoding` and weak ETags. Private/authenticated, range, write, HEAD, streaming, errors, 304, already encoded and `no-transform` responses bypass this path. Other routes retain existing edge compression. Measuring browser gzip alone cannot prove which bytes Railway meters; compare container network flow and comparable usage windows.
+
+### Direct runtime launchers
+
+Keep the API, web and keeper in separate services with their existing secrets. Their runtime commands invoke the same installed entry points directly, avoiding persistent package-manager/CLI wrappers. Under Railpack's shell start command, `exec` replaces the shell and delivers shutdown signals directly:
+
+```sh
+# API (apps/memefun-backend)
+exec node node_modules/ponder/dist/esm/bin/ponder.js start --schema $RAILWAY_DEPLOYMENT_ID --views-schema memefun_mainnet --port $PORT
+# Web (apps/memefun)
+exec node node_modules/next/dist/bin/next start --hostname 0.0.0.0 --port $PORT
+# Keeper (apps/memefun-backend)
+exec node --import tsx keeper/main.ts
+```
+
+Do not execute keeper main locally against production environment values just to smoke-test a launcher. Validate installed CLI versions and the `tsx` loader with harmless modules, then check production startup and job logs. Preserve deployment/schema/port flags and existing working directories. Revalidate entry points after dependency upgrades. Roll back launcher changes to the previous `pnpm exec ponder ...`, `pnpm exec next ...` and `pnpm keeper` commands if startup fails. Wrapper memory savings require stable post-deployment measurements; no memory hard limit or heap cap is introduced.
 
 ## Verification and operations
 

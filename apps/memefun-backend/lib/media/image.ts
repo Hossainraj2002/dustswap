@@ -1,4 +1,4 @@
-import sharp from "sharp";
+import sharp from "./sharp";
 
 import { IMAGE_MAX_BYTES } from "../../shared/core/validation";
 

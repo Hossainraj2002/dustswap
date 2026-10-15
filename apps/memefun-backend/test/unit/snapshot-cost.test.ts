@@ -36,6 +36,7 @@ function fixture(withCoin = false) {
     moderation: new Map<string, { hidden: boolean; featured: boolean }>(),
     holders: { top10: 0n, creatorBalance: 0n },
     banner: "",
+    audience: true,
   };
   const store = {
     quotes: vi.fn(async () => data.quotes),
@@ -55,7 +56,8 @@ function fixture(withCoin = false) {
     metadataByCids: vi.fn(async () => new Map()),
   };
   const media = { urlFor: (cid: string) => `https://media.test/media/${cid}` } as MediaStore;
-  const snapshot = new MarketSnapshot({ store: store as unknown as ReadStore, app: app as unknown as AppStore, media });
+  const snapshot = new MarketSnapshot({ store: store as unknown as ReadStore, app: app as unknown as AppStore, media,
+    hasAudience: () => data.audience });
   return { snapshot, store, app, data };
 }
 
@@ -69,7 +71,7 @@ describe("bounded market snapshot work", () => {
   beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(NOW); });
   afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); });
 
-  it("rebuilds a quiet market once per ten seconds instead of on every two-second tick", async () => {
+  it("rebuilds a quiet market with readers once per ten seconds instead of on every two-second tick", async () => {
     const f = fixture();
     await f.snapshot.ready();
     f.snapshot.start();
@@ -80,6 +82,136 @@ describe("bounded market snapshot work", () => {
     f.snapshot.stop();
     await vi.advanceTimersByTimeAsync(60_000);
     expect(f.store.coins).toHaveBeenCalledTimes(7);
+  });
+
+  it("uses only a minute heartbeat without streams or market reads", async () => {
+    const f = fixture();
+    f.data.audience = false;
+    await f.snapshot.refresh(); // Startup initialization does not create reader interest.
+    f.snapshot.start();
+    await vi.advanceTimersByTimeAsync(59_999);
+    expect(f.store.coins).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(f.store.coins).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(f.store.coins).toHaveBeenCalledTimes(3);
+    expect(f.snapshot.current.nowSec).toBe((NOW + 120_000) / 1000);
+    f.snapshot.stop();
+    await vi.advanceTimersByTimeAsync(300_000);
+    expect(f.store.coins).toHaveBeenCalledTimes(3);
+  });
+
+  it("diagnostic current/healthy reads do not keep the market awake", async () => {
+    const f = fixture();
+    f.data.audience = false;
+    await f.snapshot.refresh();
+    f.snapshot.start();
+    for (let i = 0; i < 29; i++) {
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(f.snapshot.current.version).toBe(1);
+      expect(f.snapshot.healthy).toBe(true);
+    }
+    expect(f.store.coins).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(f.snapshot.current.version).toBe(2);
+  });
+
+  it("a market read wakes the ten-second cadence, then interest expires after twenty seconds", async () => {
+    const f = fixture();
+    f.data.audience = false;
+    await f.snapshot.refresh();
+    f.snapshot.start();
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(f.store.coins).toHaveBeenCalledTimes(1);
+    expect((await f.snapshot.ready()).version).toBe(2);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(f.store.coins).toHaveBeenCalledTimes(3);
+    await vi.advanceTimersByTimeAsync(59_999);
+    expect(f.store.coins).toHaveBeenCalledTimes(3);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(f.store.coins).toHaveBeenCalledTimes(4);
+  });
+
+  it("fresh reads extend interest without immediately rebuilding the full market", async () => {
+    const f = fixture();
+    f.data.audience = false;
+    await f.snapshot.ready();
+    f.snapshot.start();
+    await vi.advanceTimersByTimeAsync(12_000);
+    const current = f.snapshot.current;
+    expect(await f.snapshot.ready()).toBe(current);
+    expect(f.store.coins).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(f.store.coins).toHaveBeenCalledTimes(4); // Refreshes at 20s and 30s under the renewed lease.
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(f.store.coins).toHaveBeenCalledTimes(4);
+  });
+
+  it("a live subscriber wakes the quiet cadence and the last unsubscribe returns it to idle", async () => {
+    const f = fixture();
+    f.data.audience = false;
+    await f.snapshot.refresh();
+    f.snapshot.start();
+    await vi.advanceTimersByTimeAsync(30_000);
+    f.data.audience = true;
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(f.store.coins).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(f.store.coins).toHaveBeenCalledTimes(3);
+    f.data.audience = false;
+    await vi.advanceTimersByTimeAsync(58_000);
+    expect(f.store.coins).toHaveBeenCalledTimes(3);
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(f.store.coins).toHaveBeenCalledTimes(4);
+  });
+
+  it("coalesces the first reads after a long idle period and returns updated monetary state", async () => {
+    const f = fixture(true), blocked = gate();
+    f.data.audience = false;
+    await f.snapshot.refresh();
+    f.snapshot.start();
+    await vi.advanceTimersByTimeAsync(30_000);
+    f.data.coins[0] = { ...f.data.coins[0]!, feeBps: 50, creatorClaimed: 10n ** 18n };
+    f.store.coins.mockImplementationOnce(async () => { await blocked.promise; return f.data.coins; });
+    let finished = false;
+    const first = f.snapshot.ready().then(state => { finished = true; return state; });
+    const second = f.snapshot.ready();
+    await vi.advanceTimersByTimeAsync(6_000);
+    expect(finished).toBe(false);
+    expect(f.store.coins).toHaveBeenCalledTimes(2);
+    blocked.release();
+    const state = await first;
+    expect(await second).toBe(state);
+    expect(state.coins[0]!).toMatchObject({ terms: { feeBps: 50 }, stats: { creatorClaimedQuote: 1 } });
+  });
+
+  it("an idle heartbeat failure retries promptly and restores healthy state", async () => {
+    const f = fixture();
+    f.data.audience = false;
+    await f.snapshot.refresh();
+    f.snapshot.start();
+    f.store.coins.mockRejectedValueOnce(new Error("heartbeat database error"));
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(f.snapshot.healthy).toBe(false);
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(f.snapshot.healthy).toBe(true);
+    expect(f.store.coins).toHaveBeenCalledTimes(3);
+  });
+
+  it("observed activity retains the busy two-second cadence even without a subscriber lease", async () => {
+    const f = fixture();
+    f.data.audience = false;
+    await f.snapshot.refresh();
+    f.snapshot.start();
+    await vi.advanceTimersByTimeAsync(30_000);
+    await f.snapshot.noteActivity();
+    expect(f.store.coins).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(19_000);
+    expect(f.store.coins).toHaveBeenCalledTimes(11);
+    await vi.advanceTimersByTimeAsync(57_000);
+    expect(f.store.coins).toHaveBeenCalledTimes(11);
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(f.store.coins).toHaveBeenCalledTimes(12);
   });
 
   it("coalesces startup reads and waits for an already-running refresh", async () => {
