@@ -4,9 +4,9 @@ import { COIN_SUPPLY, COIN_SUPPLY_HUMAN } from "../../shared/core/constants";
 import { milestoneProgress } from "../../shared/core/milestones";
 import type { CoinLinks, QuoteAsset, QuoteKind } from "../../shared/core/types";
 import { getSqrtPriceAtTick } from "../../shared/core/uniswap/tickMath";
-import type { Candle, Coin, ModeStats, Trade } from "../../shared/market-types";
+import type { Candle, Coin, CoinMarket, ModeStats, Trade } from "../../shared/market-types";
 import { modeName } from "../indexer/effects";
-import { marketCapUsdE8, priceQuoteWad, priceUsdE18, priceUsdE18AtTick, toNumber } from "./math";
+import { type PoolSide, marketCapUsdE8, priceQuoteWad, priceUsdE18, priceUsdE18AtTick, toNumber } from "./math";
 
 /**
  * Indexed rows to the app's own types (shared/market-types.ts). Pure functions: the read API
@@ -161,6 +161,52 @@ export function openingMarketCapUsdE8(c: CoinRecord, quoteDecimals: number): big
   return marketCapUsdE8(price, 0n);
 }
 
+/** Coin and pool views use the same ledgers, quote units and epoch boundary. */
+function deriveModeStats(c: CoinRecord, q: QuoteRecord, side: PoolSide, nowSec: number, mode = modeName(c.mode)): ModeStats {
+  const units = (value: bigint) => toNumber.units(value, q.decimals);
+  const distributed = c.holdersReserved - c.holdersReturned;
+  return {
+    feesTotalQuote: units(c.feesTotal),
+    platformQuote: units(c.platformFees),
+    referralQuote: units(c.referralFees),
+    creatorEarnedQuote: units(c.creatorEarned),
+    creatorClaimedQuote: units(c.creatorClaimed),
+    burnedCoins: toNumber.coins(c.buybackBurned),
+    burnBudgetQuote: mode === "burn" ? units(c.destinationEarned - c.buybackSpent) : 0,
+    buybacks: c.buybacks,
+    holdersPaidQuote: mode === "holders" ? units(distributed) : 0,
+    epochPendingQuote: mode === "holders" ? units(c.destinationEarned - distributed) : 0,
+    nextEpochAt: nextEpochAt(nowSec) * 1000,
+    epochs: c.epochs,
+    floorQuote: mode === "floor" ? units(c.floorQuote) : 0,
+    floorPriceUsd: c.floorNearTick === null ? 0 : toNumber.usdE18(priceUsdE18AtTick(c.floorNearTick, side, q.priceUsdE8)),
+  };
+}
+
+/** A pool needs only its market fields, without a temporary Coin, sparkline or creator metadata. */
+function deriveMarket(input: { coin: MarketRecord; quote: QuoteRecord; windows: CoinWindows }, nowSec: number): { market: CoinMarket; priceE18: bigint } {
+  const { coin: c, quote: q, windows: w } = input;
+  const side = { quoteIsCurrency0: c.quoteIsCurrency0, quoteDecimals: q.decimals };
+  const priceE18 = priceUsdE18(c.sqrtPriceX96, side, q.priceUsdE8);
+  const priceUsd = toNumber.usdE18(priceE18);
+  return { priceE18, market: {
+    poolId: c.poolId as `0x${string}`,
+    quote: toQuoteAsset(q),
+    supplyRaw: c.supplyRaw.toString(),
+    supplyFraction: Number((c.supplyRaw * 1_000_000_000n) / COIN_SUPPLY) / 1e9,
+    poolCoins: toNumber.coins(c.poolCoins),
+    priceQuote: toNumber.wad(priceQuoteWad(c.sqrtPriceX96, side)),
+    priceUsd,
+    liquidityUsd: toNumber.units(c.poolQuote, q.decimals) * toNumber.usdE8(q.priceUsdE8) + toNumber.coins(c.poolCoins) * priceUsd,
+    volume24hUsd: toNumber.usdE8(w.volume24hUsdE8),
+    volumeTotalUsd: toNumber.usdE8(c.volumeUsdE8),
+    change5m: change(priceE18, w.priceAgoUsdE18.m5),
+    change1h: change(priceE18, w.priceAgoUsdE18.h1),
+    change24h: change(priceE18, w.priceAgoUsdE18.h24),
+    stats: deriveModeStats(c, q, side, nowSec),
+  } };
+}
+
 export function deriveCoin(input: {
   coin: CoinRecord;
   quote: QuoteRecord;
@@ -186,24 +232,7 @@ export function deriveCoin(input: {
   const circulating = COIN_SUPPLY - c.poolCoins - c.burned;
   const change1h = change(priceE18, w.priceAgoUsdE18.h1);
   const mode = modeName(c.mode);
-  const distributed = c.holdersReserved - c.holdersReturned;
-
-  const stats: ModeStats = {
-    feesTotalQuote: units(c.feesTotal),
-    platformQuote: units(c.platformFees),
-    referralQuote: units(c.referralFees),
-    creatorEarnedQuote: units(c.creatorEarned),
-    creatorClaimedQuote: units(c.creatorClaimed),
-    burnedCoins: toNumber.coins(c.buybackBurned),
-    burnBudgetQuote: mode === "burn" ? units(c.destinationEarned - c.buybackSpent) : 0,
-    buybacks: c.buybacks,
-    holdersPaidQuote: mode === "holders" ? units(distributed) : 0,
-    epochPendingQuote: mode === "holders" ? units(c.destinationEarned - distributed) : 0,
-    nextEpochAt: nextEpochAt(input.nowSec) * 1000,
-    epochs: c.epochs,
-    floorQuote: mode === "floor" ? units(c.floorQuote) : 0,
-    floorPriceUsd: c.floorNearTick === null ? 0 : toNumber.usdE18(priceUsdE18AtTick(c.floorNearTick, side, q.priceUsdE8)),
-  };
+  const stats = deriveModeStats(c, q, side, input.nowSec, mode);
 
   const result: Coin = {
     address: getAddress(c.address),
@@ -260,39 +289,21 @@ export function deriveCoin(input: {
     ...(input.flags.featured ? { featured: true } : {}),
   };
   if (input.markets?.length) {
-    const views = input.markets.map((m) => ({
-      record: m.coin,
-      view: deriveCoin({ ...input, markets: undefined, coin: { ...m.coin, burned: c.burned }, quote: m.quote, windows: m.windows }),
-    }));
-    result.markets = views.map(({ record, view }) => ({
-      poolId: record.poolId as `0x${string}`,
-      quote: view.quote,
-      supplyRaw: record.supplyRaw.toString(),
-      supplyFraction: Number((record.supplyRaw * 1_000_000_000n) / COIN_SUPPLY) / 1e9,
-      poolCoins: toNumber.coins(record.poolCoins),
-      priceQuote: view.priceQuote,
-      priceUsd: view.priceUsd,
-      liquidityUsd: view.liquidityUsd,
-      volume24hUsd: view.volume24hUsd,
-      volumeTotalUsd: view.volumeTotalUsd,
-      change5m: view.change5m,
-      change1h: view.change1h,
-      change24h: view.change24h,
-      stats: view.stats,
-    }));
-    const aggregatePrice = weightedMarketPrice(input.markets.map((m) => ({
+    const views = input.markets.map((m) => deriveMarket(m, input.nowSec));
+    result.markets = views.map(({ market }) => market);
+    const aggregatePrice = weightedMarketPrice(input.markets.map((m, i) => ({
       poolCoins: m.coin.poolCoins,
-      priceUsdE18: priceUsdE18(m.coin.sqrtPriceX96, { quoteIsCurrency0: m.coin.quoteIsCurrency0, quoteDecimals: m.quote.decimals }, m.quote.priceUsdE8),
+      priceUsdE18: views[i]!.priceE18,
     })), priceE18);
     result.priceUsd = toNumber.usdE18(aggregatePrice);
     result.marketCapUsd = toNumber.usdE8(marketCapUsdE8(aggregatePrice, c.burned));
     result.fdvUsd = result.priceUsd * COIN_SUPPLY_HUMAN;
     result.athMarketCapUsd = Math.max(result.marketCapUsd, toNumber.usdE8(c.athMarketCapUsdE8));
-    result.liquidityUsd = views.reduce((sum, m) => sum + m.view.liquidityUsd, 0);
-    result.volume24hUsd = views.reduce((sum, m) => sum + m.view.volume24hUsd, 0);
-    result.volumeTotalUsd = views.reduce((sum, m) => sum + m.view.volumeTotalUsd, 0);
-    result.buys24h = views.reduce((sum, m) => sum + m.view.buys24h, 0);
-    result.sells24h = views.reduce((sum, m) => sum + m.view.sells24h, 0);
+    result.liquidityUsd = views.reduce((sum, m) => sum + m.market.liquidityUsd, 0);
+    result.volume24hUsd = views.reduce((sum, m) => sum + m.market.volume24hUsd, 0);
+    result.volumeTotalUsd = views.reduce((sum, m) => sum + m.market.volumeTotalUsd, 0);
+    result.buys24h = input.markets.reduce((sum, m) => sum + m.windows.buys24h, 0);
+    result.sells24h = input.markets.reduce((sum, m) => sum + m.windows.sells24h, 0);
     result.change5m = change(aggregatePrice, w.priceAgoUsdE18.m5);
     result.change1h = change(aggregatePrice, w.priceAgoUsdE18.h1);
     result.change24h = change(aggregatePrice, w.priceAgoUsdE18.h24);

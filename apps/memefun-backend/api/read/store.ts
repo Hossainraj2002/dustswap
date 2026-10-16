@@ -173,6 +173,55 @@ function tradeRecord(r: Row): StoredTrade {
 const TRADE_COLUMNS = `id, coin, pool_id, quote, trader, kind, is_buy, quote_amount, coin_amount, fee, fee_bps, price_usd_e_18,
   market_cap_usd_e_8, is_creator, in_protection, timestamp, tx_hash, block_number, log_index`;
 
+// Read views do not need indexing-only fields such as pending launch JSON and transaction hashes.
+const COIN_COLUMNS = `address, pool_id, pending_creator, creator, launcher, quote, quote_is_currency0,
+  mode, module, fee_bps, platform_share_bps, referral_share_bps, creator_keep_bps, protection_start_bps,
+  protection_duration_sec, created_at, name, symbol, contract_uri, start_tick, launch_quote_usd_e_8,
+  sqrt_price_x_96, pool_quote, pool_coins, burned, ath_market_cap_usd_e_8, volume_usd_e_8, trades,
+  last_trade_at, holders, fees_total, platform_fees, referral_fees, creator_earned, creator_claimed,
+  destination_earned, buybacks, buyback_spent, buyback_burned, floor_quote, floor_near_tick,
+  holders_reserved, holders_returned, epochs, dev_sold, snipers, same_block_buys`;
+
+/** Fixed SQL fragments only; caller-supplied addresses and cutoffs remain bound parameters. */
+function windowSql(byMarket: boolean): string {
+  const pool = byMarket ? "c.coin" : "('0x' || repeat('0', 24) || substring(c.coin from 3))";
+  const match = `${byMarket ? "" : "coin = c.coin AND "}pool_id = ${pool}`;
+  // Move interval arithmetic off bucket so the existing (pool_id, interval, bucket) index can
+  // seek both recent ranges and historical closes. Each daily/recent range is scanned once.
+  return `SELECT c.coin, daily.vol24h, daily.trades24h, daily.buys24h, recent.vol1h, recent.trades15m,
+          (SELECT close_usd_e_18 FROM candle WHERE ${match} AND interval = 60 AND bucket <= $5 - 60 ORDER BY bucket DESC LIMIT 1) AS p5m,
+          (SELECT close_usd_e_18 FROM candle WHERE ${match} AND interval = 60 AND bucket <= $3 - 60 ORDER BY bucket DESC LIMIT 1) AS p1h,
+          (SELECT close_usd_e_18 FROM candle WHERE ${match} AND interval = 60 AND bucket <= $2 - 60 ORDER BY bucket DESC LIMIT 1) AS p24h
+     FROM UNNEST($1::text[]) AS c(coin)
+     CROSS JOIN LATERAL (
+       SELECT COALESCE(SUM(volume_usd_e_8), 0) AS vol24h, COALESCE(SUM(trades), 0) AS trades24h,
+              COALESCE(SUM(buys), 0) AS buys24h
+         FROM candle WHERE ${match} AND interval = 300 AND bucket > $2 - 300
+     ) daily
+     CROSS JOIN LATERAL (
+       SELECT COALESCE(SUM(volume_usd_e_8), 0) AS vol1h,
+              COALESCE(SUM(trades) FILTER (WHERE bucket > $4 - 60), 0) AS trades15m
+         FROM candle WHERE ${match} AND interval = 60 AND bucket > $3 - 60
+     ) recent`;
+}
+
+const COIN_WINDOWS_SQL = windowSql(false);
+const MARKET_WINDOWS_SQL = windowSql(true);
+
+async function readWindows(index: Queryable, ids: string[], nowSec: number, sql: string): Promise<Map<string, WindowAggregates>> {
+  const out = new Map<string, WindowAggregates>();
+  if (ids.length === 0) return out;
+  const result = await rows<Row>(index, sql, [ids, nowSec - 86_400, nowSec - 3_600, nowSec - 900, nowSec - 300]);
+  for (const r of result) {
+    out.set(String(r.coin), {
+      volume24hUsdE8: big(r.vol24h as string), trades24h: num(r.trades24h), buys24h: num(r.buys24h),
+      volume1hUsdE8: big(r.vol1h as string), trades15m: num(r.trades15m),
+      priceAgo: { m5: opt(r.p5m), h1: opt(r.p1h), h24: opt(r.p24h) },
+    });
+  }
+  return out;
+}
+
 export function createReadStore(index: Queryable): ReadStore {
   return {
     async latestTimestamp() {
@@ -199,10 +248,10 @@ export function createReadStore(index: Queryable): ReadStore {
     },
 
     async coins() {
-      return (await rows<Row>(index, `SELECT * FROM coin WHERE launched = true`)).map(coinRecord);
+      return (await rows<Row>(index, `SELECT ${COIN_COLUMNS} FROM coin WHERE launched = true`)).map(coinRecord);
     },
     async markets() {
-      return (await rows<Row>(index, `SELECT * FROM market WHERE launched = true`)).map((r) => ({
+      return (await rows<Row>(index, `SELECT ${COIN_COLUMNS}, supply_raw FROM market WHERE launched = true`)).map((r) => ({
         ...coinRecord(r), poolId: String(r.pool_id), supplyRaw: big(r.supply_raw as string),
       }));
     },
@@ -265,69 +314,11 @@ export function createReadStore(index: Queryable): ReadStore {
     },
 
     async windows(coins, nowSec) {
-      const out = new Map<string, WindowAggregates>();
-      if (coins.length === 0) return out;
-      // 24h from 5-minute candles, the last hour and 15 minutes from 1-minute candles, and the
-      // price at each look-back moment from the last 1-minute close that ended by then (an index
-      // seek per coin on the candle primary key).
-      const result = await rows<Row>(
-        index,
-        `SELECT c.coin,
-                (SELECT COALESCE(SUM(volume_usd_e_8), 0) FROM candle WHERE coin = c.coin AND pool_id = ('0x' || repeat('0', 24) || substring(c.coin from 3)) AND interval = 300 AND bucket + 300 > $2) AS vol24h,
-                (SELECT COALESCE(SUM(trades), 0) FROM candle WHERE coin = c.coin AND pool_id = ('0x' || repeat('0', 24) || substring(c.coin from 3)) AND interval = 300 AND bucket + 300 > $2) AS trades24h,
-                (SELECT COALESCE(SUM(buys), 0) FROM candle WHERE coin = c.coin AND pool_id = ('0x' || repeat('0', 24) || substring(c.coin from 3)) AND interval = 300 AND bucket + 300 > $2) AS buys24h,
-                (SELECT COALESCE(SUM(volume_usd_e_8), 0) FROM candle WHERE coin = c.coin AND pool_id = ('0x' || repeat('0', 24) || substring(c.coin from 3)) AND interval = 60 AND bucket + 60 > $3) AS vol1h,
-                (SELECT COALESCE(SUM(trades), 0) FROM candle WHERE coin = c.coin AND pool_id = ('0x' || repeat('0', 24) || substring(c.coin from 3)) AND interval = 60 AND bucket + 60 > $4) AS trades15m,
-                (SELECT close_usd_e_18 FROM candle WHERE coin = c.coin AND pool_id = ('0x' || repeat('0', 24) || substring(c.coin from 3)) AND interval = 60 AND bucket + 60 <= $5 ORDER BY bucket DESC LIMIT 1) AS p5m,
-                (SELECT close_usd_e_18 FROM candle WHERE coin = c.coin AND pool_id = ('0x' || repeat('0', 24) || substring(c.coin from 3)) AND interval = 60 AND bucket + 60 <= $3 ORDER BY bucket DESC LIMIT 1) AS p1h,
-                (SELECT close_usd_e_18 FROM candle WHERE coin = c.coin AND pool_id = ('0x' || repeat('0', 24) || substring(c.coin from 3)) AND interval = 60 AND bucket + 60 <= $2 ORDER BY bucket DESC LIMIT 1) AS p24h
-           FROM UNNEST($1::text[]) AS c(coin)`,
-        [coins, nowSec - 86_400, nowSec - 3_600, nowSec - 900, nowSec - 300],
-      );
-      for (const r of result) {
-        out.set(String(r.coin), {
-          volume24hUsdE8: big(r.vol24h as string),
-          trades24h: num(r.trades24h),
-          buys24h: num(r.buys24h),
-          volume1hUsdE8: big(r.vol1h as string),
-          trades15m: num(r.trades15m),
-          priceAgo: { m5: opt(r.p5m), h1: opt(r.p1h), h24: opt(r.p24h) },
-        });
-      }
-      return out;
+      return readWindows(index, coins, nowSec, COIN_WINDOWS_SQL);
     },
 
-    async marketWindows(coins, nowSec) {
-      const out = new Map<string, WindowAggregates>();
-      if (coins.length === 0) return out;
-      // 24h from 5-minute candles, the last hour and 15 minutes from 1-minute candles, and the
-      // price at each look-back moment from the last 1-minute close that ended by then (an index
-      // seek per coin on the candle primary key).
-      const result = await rows<Row>(
-        index,
-        `SELECT c.coin,
-                (SELECT COALESCE(SUM(volume_usd_e_8), 0) FROM candle WHERE pool_id = c.coin AND interval = 300 AND bucket + 300 > $2) AS vol24h,
-                (SELECT COALESCE(SUM(trades), 0) FROM candle WHERE pool_id = c.coin AND interval = 300 AND bucket + 300 > $2) AS trades24h,
-                (SELECT COALESCE(SUM(buys), 0) FROM candle WHERE pool_id = c.coin AND interval = 300 AND bucket + 300 > $2) AS buys24h,
-                (SELECT COALESCE(SUM(volume_usd_e_8), 0) FROM candle WHERE pool_id = c.coin AND interval = 60 AND bucket + 60 > $3) AS vol1h,
-                (SELECT COALESCE(SUM(trades), 0) FROM candle WHERE pool_id = c.coin AND interval = 60 AND bucket + 60 > $4) AS trades15m,
-                (SELECT close_usd_e_18 FROM candle WHERE pool_id = c.coin AND interval = 60 AND bucket + 60 <= $5 ORDER BY bucket DESC LIMIT 1) AS p5m,
-                (SELECT close_usd_e_18 FROM candle WHERE pool_id = c.coin AND interval = 60 AND bucket + 60 <= $3 ORDER BY bucket DESC LIMIT 1) AS p1h,
-                (SELECT close_usd_e_18 FROM candle WHERE pool_id = c.coin AND interval = 60 AND bucket + 60 <= $2 ORDER BY bucket DESC LIMIT 1) AS p24h
-           FROM UNNEST($1::text[]) AS c(coin)`,
-        [coins, nowSec - 86_400, nowSec - 3_600, nowSec - 900, nowSec - 300],
-      );
-      for (const r of result) {
-        out.set(String(r.coin), {
-          volume24hUsdE8: big(r.vol24h as string),
-          trades24h: num(r.trades24h),
-          buys24h: num(r.buys24h),
-          volume1hUsdE8: big(r.vol1h as string),
-          trades15m: num(r.trades15m),
-          priceAgo: { m5: opt(r.p5m), h1: opt(r.p1h), h24: opt(r.p24h) },
-        });
-      }
-      return out;
+    async marketWindows(poolIds, nowSec) {
+      return readWindows(index, poolIds, nowSec, MARKET_WINDOWS_SQL);
     },
 
     async sparklineCloses(coins, fromSec) {
@@ -336,7 +327,7 @@ export function createReadStore(index: Queryable): ReadStore {
       const result = await rows<Row>(
         index,
         `SELECT coin, bucket, close_usd_e_18 FROM candle
-          WHERE coin = ANY($1::text[]) AND pool_id = ('0x' || repeat('0', 24) || substring(coin from 3)) AND interval = 900 AND bucket + 900 > $2
+          WHERE coin = ANY($1::text[]) AND pool_id = ('0x' || repeat('0', 24) || substring(coin from 3)) AND interval = 900 AND bucket > $2 - 900
           ORDER BY coin, bucket`,
         [coins, fromSec],
       );

@@ -40,6 +40,10 @@ The API's shared market snapshot rebuilds every ten seconds for quiet readers, r
 
 The event hub performs no database polls without subscribers. Active streams retain their one-second polling cadence, initialize a fresh cursor on reconnect, and refresh the snapshot before deriving new trade/activity events. In-flight work from a previous audience cannot replay to a new one. A failed batch does not advance its cursors.
 
+Snapshot reads select only the 47 coin fields consumed by the view mapper, plus `supply_raw` for markets. They omit indexing-only launch payloads, transaction hashes and unused ledgers. Rolling-window sums share one daily and one recent candle scan per key. Time arithmetic is applied to the cutoff parameters rather than the indexed `bucket` column, so existing indexes can seek recent ranges and historical closes directly. Strict overlap and closed-candle boundaries, old pool lookbacks, aggregate-coin candle namespaces and raw per-quote amounts are preserved. No index or schema migration is needed.
+
+Per-pool views derive only their displayed market fields and reuse their exact bigint prices for aggregate weighting. They no longer construct and discard a full coin view, creator checksums and sparkline for every pool. Mode ledgers use the same shared calculations. Isolated history-query and DTO benchmarks showed lower execution/allocation work with identical outputs; those synthetic percentages are not hosting-bill savings.
+
 Share-card PNG storage is bounded to 16 MiB and 128 entries, with fixed one-minute expiry and concurrent requests for the same card sharing one render. Expired PNGs are released while idle. This limits retained cache data, not all HTTP rendering memory or total process RAM.
 
 Uploads, keeper image processing and share-card renders also use one configured Sharp instance with an 8 MB native operation-cache budget, at most 32 cached operations and no cached open files. Image dimensions, encoding, quality, validation and concurrency selection are unchanged. Temporary decoding/rendering buffers are outside these retained-cache budgets.
@@ -47,6 +51,8 @@ Uploads, keeper image processing and share-card renders also use one configured 
 Keeper metadata discovery uses a bounded database anti-join against the existing `memefun_app.coin_metadata` table and one batched, idempotent enqueue. Names/symbols are fetched only for the twenty due work items. Known resolved/unsupported records, retry limits, backoff and immutable queued URIs are preserved. The two schemas must remain in the same Postgres database, as in the existing deployment. No new migration is required.
 
 The keeper retains only pending job timers, instead of keeping every timer handle after it fires. A stock-price job with an explicitly disabled (`none`) source returns before unnecessary database or RPC reads. Job frequencies, financial thresholds and transaction rules are unchanged. Own-store canonical HTTPS metadata and image URLs resolve directly through the authenticated media store with CID and byte-size checks; arbitrary remote redirects remain rejected.
+
+Buyback and floor jobs discover their matching coins before reading chain time. An empty mode returns without RPC or transaction work. Nonempty modes retain their chain-based cooldowns, thresholds, candidate/run limits, simulations, logging and advisory locks; epoch recovery and scheduling are unchanged.
 
 Railway DNS and network-flow checks confirmed that the API and keeper already use private Postgres networking. Service CPU/RAM ceilings are not their metered usage; lowering a ceiling alone does not reduce the bill. Keep the active database and indexer running. An idle legacy database had a small measured footprint, so it was not deleted or disabled as part of this optimization.
 

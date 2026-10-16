@@ -34,11 +34,13 @@ async function coinsInMode(ctx: KeeperContext, mode: number) {
  * without moving the price more than ~2%, and refuses if the price was pumped in the same block.
  */
 export async function runBuybacks(ctx: KeeperContext): Promise<{ executed: number; skipped: number }> {
+  const candidates = (await coinsInMode(ctx, 1)).slice(0, 500);
+  if (candidates.length === 0) return { executed: 0, skipped: 0 };
   const d = ctx.deployment;
   const now = await ctx.chainNow();
   let executed = 0;
   let skipped = 0;
-  for (const c of (await coinsInMode(ctx, 1)).slice(0, 500)) {
+  for (const c of candidates) {
     if (executed >= MAX_PER_RUN) break;
     const coin = getAddress(c.address);
     const quote = getAddress(c.quote);
@@ -88,11 +90,13 @@ export async function runBuybacks(ctx: KeeperContext): Promise<{ executed: numbe
  * passed, call addFloor, which places them as quote-only liquidity 2x to 10x under the price.
  */
 export async function runFloors(ctx: KeeperContext): Promise<{ executed: number; skipped: number }> {
+  const candidates = (await coinsInMode(ctx, 3)).slice(0, 500);
+  if (candidates.length === 0) return { executed: 0, skipped: 0 };
   const d = ctx.deployment;
   const now = await ctx.chainNow();
   let executed = 0;
   let skipped = 0;
-  for (const c of (await coinsInMode(ctx, 3)).slice(0, 500)) {
+  for (const c of candidates) {
     if (executed >= MAX_PER_RUN) break;
     const coin = getAddress(c.address);
     const quote = getAddress(c.quote);
