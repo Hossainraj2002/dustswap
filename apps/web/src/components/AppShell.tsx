@@ -295,7 +295,7 @@ export function AppShell({ children }: AppShellProps) {
   } as CSSProperties;
   const mainShellClassName = isShelllessPage
     ? ''
-    : 'pb-[calc(77px+var(--safe-area-bottom))] md:ml-[236px] md:pb-0';
+    : 'pb-[calc(77px+var(--safe-area-bottom))] md:ml-[var(--ds-desktop-sidebar-width)] md:pb-0';
 
   return (
     <div
@@ -314,7 +314,7 @@ export function AppShell({ children }: AppShellProps) {
 
       {!isShelllessPage && (
         <nav
-          className={`fixed inset-y-0 left-0 z-50 hidden w-[236px] flex-col border-r backdrop-blur-2xl md:flex ${
+          className={`fixed inset-y-0 left-0 z-50 hidden w-[var(--ds-desktop-sidebar-width)] flex-col border-r backdrop-blur-2xl md:flex ${
             isLightShell
               ? 'border-slate-200/80 bg-white/78 shadow-[0_24px_80px_rgba(148,163,184,0.16)]'
               : 'border-white/10 bg-[rgba(6,10,18,0.84)]'
@@ -389,7 +389,7 @@ export function AppShell({ children }: AppShellProps) {
       )}
 
       <main
-        className={`relative z-10 flex-1 transition-opacity duration-100 ease-in-out ${mainShellClassName}`}
+        className={`relative z-10 min-w-0 flex-1 transition-opacity duration-100 ease-in-out ${mainShellClassName}`}
       >
         {children}
       </main>

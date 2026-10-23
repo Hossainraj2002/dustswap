@@ -1,0 +1,339 @@
+{
+  "startedAt": "2026-10-15T17:34:53.390Z",
+  "api": "https://dustswap-production.up.railway.app",
+  "chainId": 10,
+  "expectedRouter": "0x54C177426033d50686bA7D36B690d1a2d7E34625",
+  "expectedCollector": "0xE09495e955794708D4bC28045C46891cAf643733",
+  "scope": "Actual public production HTTP health/discovery/quote/build endpoints and public RPC reads. Production auth mode is preserved. Liquidity pool is a balance holder for metadata checks, not a wallet execution claim. No private keys, signing, transactions, reward recording or admin endpoints.",
+  "checks": [
+    {
+      "name": "production health",
+      "httpStatus": 200,
+      "status": "ok",
+      "service": "dustsweep-api",
+      "elapsedMs": 559
+    },
+    {
+      "name": "OP owner discovery",
+      "httpStatus": 200,
+      "chainId": 10,
+      "source": "alchemy",
+      "erc20BalanceCount": 31,
+      "truncated": false,
+      "swappableCount": 1,
+      "unavailableCount": 0,
+      "hiddenCount": 0,
+      "suspiciousCount": 30,
+      "providerWarning": "",
+      "elapsedMs": 1396
+    },
+    {
+      "name": "Base lightweight enabled-gate check",
+      "httpStatus": 400,
+      "message": "tokenIns, amounts, tokenOut, and userAddress are required",
+      "elapsedMs": 251,
+      "expectedValidationFailure": true
+    }
+  ],
+  "cases": [
+    {
+      "name": "WETH to native USDC",
+      "tokenIns": [
+        "0x4200000000000000000000000000000000000006"
+      ],
+      "amounts": [
+        "1000000000000000"
+      ],
+      "output": "0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85",
+      "passed": true,
+      "quote": {
+        "httpStatus": 200,
+        "elapsedMs": 609,
+        "chainId": 10,
+        "feeBps": 200,
+        "routeMaxCap": 10,
+        "executionLane": "owned_v2",
+        "deadline": 1792087501,
+        "permit2Nonce": "189155476800386194258992563169607923787",
+        "totalEstimatedOut": "2443356",
+        "netEstimatedOut": "2394489",
+        "minAmountOut": "2418922",
+        "gasEstimateETH": "0.00000030",
+        "gasEstimateUSD": 0.0007376686140000001,
+        "routes": [
+          {
+            "tokenIn": "0x4200000000000000000000000000000000000006",
+            "amountIn": "1000000000000000",
+            "amountOutMin": "2418922",
+            "dex": 0,
+            "dexName": "Uniswap V3"
+          }
+        ],
+        "skippedTokens": []
+      },
+      "build": {
+        "httpStatus": 200,
+        "message": "",
+        "elapsedMs": 378,
+        "routerAddress": "0x54c177426033d50686ba7d36b690d1a2d7e34625",
+        "contractAddress": "0x54c177426033d50686ba7d36b690d1a2d7e34625",
+        "requiresSignature": false,
+        "signatureMode": "none",
+        "callMode": "sweepV3Allowance",
+        "routeCount": 1,
+        "minAmountOut": "2418922",
+        "skippedTokens": [],
+        "decoded": {
+          "mode": 1,
+          "outputToken": "0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85",
+          "recipient": "0x1fb3cf6e48F1E7B10213E7b6d87D4c073C7Fdb7b",
+          "feeBpsOverride": 200,
+          "minAmountOut": "2418922",
+          "deadline": "1792087501",
+          "routes": [
+            {
+              "tokenIn": "0x4200000000000000000000000000000000000006",
+              "amountIn": "1000000000000000",
+              "target": "0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45",
+              "spender": "0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45",
+              "value": "0"
+            }
+          ]
+        },
+        "calldataBytes": 996,
+        "calldataHash": "0xcafb1882895e421e2f4e28dea719a58b64b6cfb03f53854e3e84be2bc5ba451f"
+      }
+    },
+    {
+      "name": "Native USDC to WETH",
+      "tokenIns": [
+        "0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85"
+      ],
+      "amounts": [
+        "1000000"
+      ],
+      "output": "0x4200000000000000000000000000000000000006",
+      "passed": true,
+      "quote": {
+        "httpStatus": 200,
+        "elapsedMs": 357,
+        "chainId": 10,
+        "feeBps": 200,
+        "routeMaxCap": 10,
+        "executionLane": "owned_v2",
+        "deadline": 1792087503,
+        "permit2Nonce": "51646196453206894255123218747514667631",
+        "totalEstimatedOut": "408861200602339",
+        "netEstimatedOut": "400683976590293",
+        "minAmountOut": "404772588596315",
+        "gasEstimateETH": "0.00000030",
+        "gasEstimateUSD": 0.0007376686140000001,
+        "routes": [
+          {
+            "tokenIn": "0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85",
+            "amountIn": "1000000",
+            "amountOutMin": "404772588596315",
+            "dex": 0,
+            "dexName": "Uniswap V3"
+          }
+        ],
+        "skippedTokens": []
+      },
+      "build": {
+        "httpStatus": 200,
+        "message": "",
+        "elapsedMs": 357,
+        "routerAddress": "0x54c177426033d50686ba7d36b690d1a2d7e34625",
+        "contractAddress": "0x54c177426033d50686ba7d36b690d1a2d7e34625",
+        "requiresSignature": false,
+        "signatureMode": "none",
+        "callMode": "sweepV3Allowance",
+        "routeCount": 1,
+        "minAmountOut": "404772588596315",
+        "skippedTokens": [],
+        "decoded": {
+          "mode": 1,
+          "outputToken": "0x4200000000000000000000000000000000000006",
+          "recipient": "0x1fb3cf6e48F1E7B10213E7b6d87D4c073C7Fdb7b",
+          "feeBpsOverride": 200,
+          "minAmountOut": "404772588596315",
+          "deadline": "1792087503",
+          "routes": [
+            {
+              "tokenIn": "0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85",
+              "amountIn": "1000000",
+              "target": "0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45",
+              "spender": "0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45",
+              "value": "0"
+            }
+          ]
+        },
+        "calldataBytes": 996,
+        "calldataHash": "0x72062ca1434fa686cb80795ad1a267e58145e4bdbfcff5ddeb11fd62f808daa0"
+      }
+    },
+    {
+      "name": "Native USDC plus WETH to native ETH",
+      "tokenIns": [
+        "0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85",
+        "0x4200000000000000000000000000000000000006"
+      ],
+      "amounts": [
+        "1000000",
+        "1000000000000000"
+      ],
+      "output": "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE",
+      "passed": true,
+      "quote": {
+        "httpStatus": 200,
+        "elapsedMs": 331,
+        "chainId": 10,
+        "feeBps": 200,
+        "routeMaxCap": 10,
+        "executionLane": "owned_v2",
+        "deadline": 1792087505,
+        "permit2Nonce": "101892134185602814202508818317074937043",
+        "totalEstimatedOut": "1408861200602339",
+        "netEstimatedOut": "1380683976590293",
+        "minAmountOut": "404772588596315",
+        "gasEstimateETH": "0.00000048",
+        "gasEstimateUSD": 0.0011802697824,
+        "routes": [
+          {
+            "tokenIn": "0x4200000000000000000000000000000000000006",
+            "amountIn": "1000000000000000",
+            "amountOutMin": "1000000000000000",
+            "dex": 11,
+            "dexName": "WETH → ETH"
+          },
+          {
+            "tokenIn": "0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85",
+            "amountIn": "1000000",
+            "amountOutMin": "404772588596315",
+            "dex": 0,
+            "dexName": "Uniswap V3"
+          }
+        ],
+        "skippedTokens": []
+      },
+      "build": {
+        "httpStatus": 200,
+        "message": "",
+        "elapsedMs": 359,
+        "routerAddress": "0x54c177426033d50686ba7d36b690d1a2d7e34625",
+        "contractAddress": "0x54c177426033d50686ba7d36b690d1a2d7e34625",
+        "requiresSignature": false,
+        "signatureMode": "none",
+        "callMode": "sweepV3Allowance",
+        "routeCount": 2,
+        "minAmountOut": "404772588596315",
+        "skippedTokens": [],
+        "decoded": {
+          "mode": 1,
+          "outputToken": "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE",
+          "recipient": "0x1fb3cf6e48F1E7B10213E7b6d87D4c073C7Fdb7b",
+          "feeBpsOverride": 200,
+          "minAmountOut": "404772588596315",
+          "deadline": "1792087505",
+          "routes": [
+            {
+              "tokenIn": "0x4200000000000000000000000000000000000006",
+              "amountIn": "1000000000000000",
+              "target": "0x4200000000000000000000000000000000000006",
+              "spender": "0x4200000000000000000000000000000000000006",
+              "value": "0"
+            },
+            {
+              "tokenIn": "0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85",
+              "amountIn": "1000000",
+              "target": "0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45",
+              "spender": "0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45",
+              "value": "0"
+            }
+          ]
+        },
+        "calldataBytes": 1252,
+        "calldataHash": "0x47c0a0c4bb43df9db6b4fc62956127a8b80ba1437f6462626b7ef3468a233944"
+      }
+    },
+    {
+      "name": "WETH passthrough to native ETH",
+      "tokenIns": [
+        "0x4200000000000000000000000000000000000006"
+      ],
+      "amounts": [
+        "1000000000000000"
+      ],
+      "output": "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE",
+      "passed": true,
+      "quote": {
+        "httpStatus": 200,
+        "elapsedMs": 281,
+        "chainId": 10,
+        "feeBps": 200,
+        "routeMaxCap": 10,
+        "executionLane": "owned_v2",
+        "deadline": 1792087507,
+        "permit2Nonce": "16204422171402220902753476003715344298",
+        "totalEstimatedOut": "1000000000000000",
+        "netEstimatedOut": "980000000000000",
+        "minAmountOut": "1000000000000000",
+        "gasEstimateETH": "0.00000030",
+        "gasEstimateUSD": 0.0007376686140000001,
+        "routes": [
+          {
+            "tokenIn": "0x4200000000000000000000000000000000000006",
+            "amountIn": "1000000000000000",
+            "amountOutMin": "1000000000000000",
+            "dex": 11,
+            "dexName": "WETH → ETH"
+          }
+        ],
+        "skippedTokens": []
+      },
+      "build": {
+        "httpStatus": 200,
+        "message": "",
+        "elapsedMs": 336,
+        "routerAddress": "0x54c177426033d50686ba7d36b690d1a2d7e34625",
+        "contractAddress": "0x54c177426033d50686ba7d36b690d1a2d7e34625",
+        "requiresSignature": false,
+        "signatureMode": "none",
+        "callMode": "sweepV3Allowance",
+        "routeCount": 1,
+        "minAmountOut": "1000000000000000",
+        "skippedTokens": [],
+        "decoded": {
+          "mode": 1,
+          "outputToken": "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE",
+          "recipient": "0x1fb3cf6e48F1E7B10213E7b6d87D4c073C7Fdb7b",
+          "feeBpsOverride": 200,
+          "minAmountOut": "1000000000000000",
+          "deadline": "1792087507",
+          "routes": [
+            {
+              "tokenIn": "0x4200000000000000000000000000000000000006",
+              "amountIn": "1000000000000000",
+              "target": "0x4200000000000000000000000000000000000006",
+              "spender": "0x4200000000000000000000000000000000000006",
+              "value": "0"
+            }
+          ]
+        },
+        "calldataBytes": 740,
+        "calldataHash": "0x061dace980914f079b7cd2e14e78a53c304243b9ebb82b754412cbcc0a00eada"
+      }
+    }
+  ],
+  "updatedAt": "2026-10-15T17:35:08.709Z",
+  "rpcBlock": 158243460,
+  "publicBalanceHolder": {
+    "address": "0x1fb3cf6e48F1E7B10213E7b6d87D4c073C7Fdb7b",
+    "WETH": "74152653803221357457",
+    "USDC": "80437158906",
+    "requestedWethAmount": "1000000000000000",
+    "requestedUsdcAmount": "1000000"
+  },
+  "productionAuthMode": "allowance",
+  "passed": true
+}

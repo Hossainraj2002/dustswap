@@ -1,0 +1,87 @@
+{
+  "appliedAt": "2026-10-15T17:14:22.582Z",
+  "registry": [
+    {
+      "chain_id": 10,
+      "chain_slug": "optimism",
+      "name": "Optimism",
+      "wrapped_token_address": "0x4200000000000000000000000000000000000006",
+      "explorer_url": "https://optimistic.etherscan.io"
+    }
+  ],
+  "seededTokens": [
+    {
+      "address": "0x01bff41798a0bcf287b996046ca68b395dbc1071",
+      "symbol": "USD₮0",
+      "decimals": 6,
+      "is_active": true,
+      "has_logo": true,
+      "passed": true
+    },
+    {
+      "address": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+      "symbol": "USDC",
+      "decimals": 6,
+      "is_active": true,
+      "has_logo": true,
+      "passed": true
+    },
+    {
+      "address": "0x4200000000000000000000000000000000000006",
+      "symbol": "WETH",
+      "decimals": 18,
+      "is_active": true,
+      "has_logo": true,
+      "passed": true
+    },
+    {
+      "address": "0x4200000000000000000000000000000000000042",
+      "symbol": "OP",
+      "decimals": 18,
+      "is_active": true,
+      "has_logo": true,
+      "passed": true
+    },
+    {
+      "address": "0x68f180fcce6836688e9084f035309e29bf0a2095",
+      "symbol": "WBTC",
+      "decimals": 8,
+      "is_active": true,
+      "has_logo": true,
+      "passed": true
+    },
+    {
+      "address": "0x7f5c764cbc14f9669b88837ca1490cca17c31607",
+      "symbol": "USDC",
+      "decimals": 6,
+      "is_active": true,
+      "has_logo": true,
+      "passed": true
+    },
+    {
+      "address": "0x94b008aa00579c1307b0ef2c499ad98a8ce58e58",
+      "symbol": "USDT",
+      "decimals": 6,
+      "is_active": true,
+      "has_logo": true,
+      "passed": true
+    },
+    {
+      "address": "0xda10009cbd5d07dd0cecc66161fc93d7c9000da1",
+      "symbol": "DAI",
+      "decimals": 18,
+      "is_active": true,
+      "has_logo": true,
+      "passed": true
+    }
+  ],
+  "index": [
+    {
+      "indexname": "idx_tokens_chain_address_unique",
+      "indexdef": "CREATE UNIQUE INDEX idx_tokens_chain_address_unique ON public.tokens USING btree (chain_id, address)"
+    }
+  ],
+  "nonOptimismTokenCountBefore": 13976,
+  "nonOptimismTokenCountAfter": 13976,
+  "verificationPassed": true
+}

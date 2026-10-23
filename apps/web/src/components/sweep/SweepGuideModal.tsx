@@ -2,6 +2,7 @@
 
 import Image from "next/image";
 import { useEffect, useState } from "react";
+import { SweepModal } from "@/components/sweep/SweepModal";
 
 const GUIDE_HIDDEN_KEY = "dustsweep:guide:never";
 
@@ -168,31 +169,13 @@ export function SweepGuideModal() {
     setIsOpen(false);
   };
 
-  useEffect(() => {
-    if (!isOpen) return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") close();
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen, neverShow]);
-
   if (!isOpen) return null;
 
   const isLastStep = step === STEPS.length - 1;
   const StepContent = STEPS[step];
 
   return (
-    <div
-      className="fixed inset-0 z-[90] flex items-center justify-center bg-slate-950/25 px-3 pb-[calc(0.75rem+var(--safe-area-bottom))] pt-[calc(0.75rem+env(safe-area-inset-top))] backdrop-blur-sm sm:px-4 sm:py-6"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="dustsweep-guide-title"
-      onMouseDown={(event) => {
-        if (event.target === event.currentTarget) close();
-      }}
-    >
+    <SweepModal onClose={close} className="z-[90] bg-slate-950/25" label="DustSweep guide">
       <div
         id="dustsweep-guide-title"
         className="max-h-[calc(100dvh_-_1.5rem_-_env(safe-area-inset-top)_-_var(--safe-area-bottom))] w-full max-w-[340px] overflow-y-auto overscroll-contain rounded-[24px] bg-white px-3.5 pb-3.5 pt-4 shadow-[0_26px_90px_rgba(15,23,42,0.28)] dark:bg-[#0b1220] sm:max-h-[calc(100dvh_-_3rem)] sm:max-w-[420px] sm:px-6 sm:pb-6 sm:pt-6"
@@ -258,6 +241,6 @@ export function SweepGuideModal() {
           Never show again
         </label>
       </div>
-    </div>
+    </SweepModal>
   );
 }

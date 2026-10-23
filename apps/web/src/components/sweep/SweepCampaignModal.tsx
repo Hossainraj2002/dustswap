@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useSignMessage } from "wagmi";
+import { SweepModal } from "@/components/sweep/SweepModal";
 import type { Hex } from "viem";
 import {
   buildCampaignClaimMessage,
@@ -203,15 +204,6 @@ export function SweepCampaignModal({
   const timersRef = useRef<Array<ReturnType<typeof setTimeout>>>([]);
 
   useEffect(() => {
-    if (!open) return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [onClose, open]);
-
-  useEffect(() => {
     return () => {
       for (const timer of timersRef.current) clearTimeout(timer);
       timersRef.current = [];
@@ -286,15 +278,7 @@ export function SweepCampaignModal({
   };
 
   return (
-    <div
-      className="fixed inset-0 z-[85] flex items-center justify-center bg-slate-950/25 px-3 pb-[calc(0.75rem+var(--safe-area-bottom))] pt-[calc(0.75rem+env(safe-area-inset-top))] backdrop-blur-sm sm:px-4 sm:py-6"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="sweep-campaign-title"
-      onMouseDown={(event) => {
-        if (event.target === event.currentTarget) onClose();
-      }}
-    >
+    <SweepModal onClose={onClose} layer={85} className="bg-slate-950/25" labelledBy="sweep-campaign-title">
       <div className="relative max-h-[calc(100dvh_-_1.5rem_-_env(safe-area-inset-top)_-_var(--safe-area-bottom))] w-full max-w-[420px] overflow-y-auto overscroll-contain rounded-[24px] bg-white px-4 pb-4 pt-6 shadow-[0_26px_90px_rgba(15,23,42,0.28)] dark:bg-[#0b1220] sm:max-h-[calc(100dvh_-_3rem)] sm:max-w-[480px] sm:px-6 sm:pb-6">
         {/* Gradient top rail */}
         <div
@@ -486,6 +470,6 @@ export function SweepCampaignModal({
           ))}
         </div>
       </div>
-    </div>
+    </SweepModal>
   );
 }

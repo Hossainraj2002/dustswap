@@ -1,0 +1,58 @@
+{
+  "checkedAt": "2026-10-14T17:36:34.537Z",
+  "method": "POST quote with only chainId; no wallet, amount, trade or transaction submitted",
+  "probes": [
+    {
+      "origin": "https://app.dustswap.wtf",
+      "chainId": 10,
+      "status": 400,
+      "body": {
+        "success": false,
+        "error": "DustSweep is not enabled on chain 10",
+        "code": "CHAIN_NOT_ENABLED",
+        "enabledChains": [
+          8453,
+          1,
+          56,
+          42161,
+          4663
+        ]
+      }
+    },
+    {
+      "origin": "https://app.dustswap.wtf",
+      "chainId": 8453,
+      "status": 400,
+      "body": {
+        "success": false,
+        "error": "tokenIns, amounts, tokenOut, and userAddress are required"
+      }
+    },
+    {
+      "origin": "https://dustswap-production.up.railway.app",
+      "chainId": 10,
+      "status": 400,
+      "body": {
+        "success": false,
+        "error": "DustSweep is not enabled on chain 10",
+        "code": "CHAIN_NOT_ENABLED",
+        "enabledChains": [
+          8453,
+          1,
+          56,
+          42161,
+          4663
+        ]
+      }
+    },
+    {
+      "origin": "https://dustswap-production.up.railway.app",
+      "chainId": 8453,
+      "status": 400,
+      "body": {
+        "success": false,
+        "error": "tokenIns, amounts, tokenOut, and userAddress are required"
+      }
+    }
+  ]
+}

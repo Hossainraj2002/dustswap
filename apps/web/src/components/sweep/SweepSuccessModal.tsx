@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect } from "react";
 import { formatUnits } from "viem";
 import { TokenLogo } from "@/components/sweep/TokenLogo";
+import { SweepModal } from "@/components/sweep/SweepModal";
 import { type DustSweepCompletionSummary } from "@/types/dustsweep";
 import { getExplorerTxUrl } from "@/lib/explorer";
 
@@ -188,7 +188,7 @@ function FlowGraphic({ summary }: { summary: DustSweepCompletionSummary }) {
               )}
               title={token.symbol}
             >
-              <TokenLogo token={token} size="sm" />
+              <TokenLogo token={token} size="sm" chainId={summary.chainId} />
             </span>
           ))}
           {hiddenCount > 0 ? (
@@ -201,7 +201,7 @@ function FlowGraphic({ summary }: { summary: DustSweepCompletionSummary }) {
         <FlowConnector />
 
         <div className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-white px-2 py-1.5 text-slate-950 shadow-sm ring-1 ring-slate-200 sm:gap-2 sm:px-2.5">
-          <TokenLogo token={summary.tokenOut} size="sm" />
+          <TokenLogo token={summary.tokenOut} size="sm" chainId={summary.chainId} />
           <span className="pr-0.5 text-xs font-bold sm:pr-1 sm:text-sm">{summary.tokenOut.symbol}</span>
         </div>
       </div>
@@ -216,34 +216,18 @@ export function SweepSuccessModal({
   summary: DustSweepCompletionSummary | null;
   onClose: () => void;
 }) {
-  useEffect(() => {
-    if (!summary) return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [onClose, summary]);
-
   if (!summary) return null;
 
   const explorerUrl = getExplorerTxUrl(summary.chainId, summary.txHash);
-  const outputAmount = formatTokenAmount(summary.tokenOutAmount, summary.tokenOut.decimals);
+  const outputAmount = summary.tokenOutAmount == null
+    ? null : formatTokenAmount(summary.tokenOutAmount, summary.tokenOut.decimals);
   const completedTime = new Date(summary.completedAt).toLocaleTimeString(undefined, {
     hour: "numeric",
     minute: "2-digit",
   });
 
   return (
-    <div
-      className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-950/25 px-3 pb-[calc(0.75rem+var(--safe-area-bottom))] pt-[calc(0.75rem+env(safe-area-inset-top))] backdrop-blur-sm sm:px-4 sm:py-6"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="dustsweep-success-title"
-      onMouseDown={(event) => {
-        if (event.target === event.currentTarget) onClose();
-      }}
-    >
+    <SweepModal onClose={onClose} layer={80} className="bg-slate-950/25" labelledBy="dustsweep-success-title">
       <div className="relative max-h-[calc(100dvh_-_1.5rem_-_env(safe-area-inset-top)_-_var(--safe-area-bottom))] w-full max-w-[350px] overflow-y-auto overscroll-contain rounded-[24px] bg-white px-4 pb-4 pt-7 text-center shadow-[0_26px_90px_rgba(15,23,42,0.28)] dark:bg-[#0b1220] sm:max-h-[calc(100dvh_-_3rem)] sm:max-w-[540px] sm:px-7 sm:pb-7 sm:pt-9">
         <button
           type="button"
@@ -257,32 +241,53 @@ export function SweepSuccessModal({
         <CheckBadge />
 
         <h2 id="dustsweep-success-title" className="mt-3 text-xl font-bold text-slate-950 sm:mt-5 sm:text-2xl">
-          Sweep complete
+          {outputAmount == null ? "Transaction confirmed" : "Sweep complete"}
         </h2>
         <p className="mt-2 text-[13px] font-medium leading-snug text-slate-500 sm:mt-3 sm:text-sm">
-          {summary.routeCount} token{summary.routeCount === 1 ? "" : "s"} converted through Dustswap at {completedTime}.
+          {outputAmount == null
+            ? `Confirmed at ${completedTime}. Output details could not be read from the receipt.`
+            : `${summary.routeCount} token${summary.routeCount === 1 ? "" : "s"} converted through Dustswap at ${completedTime}.`}
         </p>
+        {(summary.skippedRouteCount ?? 0) > 0 ? (
+          <p className="mt-2 text-xs font-medium text-amber-700 dark:text-amber-300">
+            {summary.skippedRouteCount} token{summary.skippedRouteCount === 1 ? " was" : "s were"} skipped.
+          </p>
+        ) : null}
+        {(summary.refundedTokenCount ?? 0) > 0 ? (
+          <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
+            Refunds sent for {summary.refundedTokenCount} token{summary.refundedTokenCount === 1 ? "" : "s"}.
+          </p>
+        ) : null}
+        {(summary.refundFailedTokenCount ?? 0) > 0 ? (
+          <p className="mt-2 text-xs font-medium text-amber-700 dark:text-amber-300">
+            {summary.refundFailedTokenCount} refund{summary.refundFailedTokenCount === 1 ? " could" : "s could"} not complete. Check the transaction details.
+          </p>
+        ) : null}
 
-        <div className="mt-5 sm:mt-8">
-          <FlowGraphic summary={summary} />
-        </div>
+        {summary.inputs.length > 0 ? (
+          <div className="mt-5 sm:mt-8">
+            <FlowGraphic summary={summary} />
+          </div>
+        ) : null}
 
         <div className="mt-5 sm:mt-9">
           <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-slate-400 sm:text-xs">
-            Received
+            {outputAmount == null ? "Output" : "Received"}
           </p>
-          <div className="mt-3 flex items-center justify-center gap-2 sm:mt-4 sm:gap-3">
+          {outputAmount != null ? <div className="mt-3 flex items-center justify-center gap-2 sm:mt-4 sm:gap-3">
             <span className="rounded-full bg-slate-100 p-1 sm:p-1.5">
-              <TokenLogo token={summary.tokenOut} size="sm" />
+              <TokenLogo token={summary.tokenOut} size="sm" chainId={summary.chainId} />
             </span>
             <p className="min-w-0 truncate font-mono text-[26px] font-bold leading-none text-slate-950 sm:text-[40px]">
               {outputAmount}
             </p>
             <span className="text-sm font-bold text-slate-800 sm:text-lg">{summary.tokenOut.symbol}</span>
-          </div>
-          <p className="mt-3 text-sm font-bold text-emerald-600 sm:mt-4 sm:text-base">
-            {formatUsd(summary.tokenOutValueUSD)} estimated output
-          </p>
+          </div> : <p className="mt-3 text-sm text-slate-500 dark:text-slate-400">View the received amount on the explorer.</p>}
+          {summary.tokenOutValueUSD != null ? (
+            <p className="mt-3 text-sm font-bold text-emerald-600 sm:mt-4 sm:text-base">
+              {formatUsd(summary.tokenOutValueUSD)} estimated value
+            </p>
+          ) : null}
         </div>
 
         <div className="mt-5 space-y-2 sm:mt-8 sm:space-y-3">
@@ -304,6 +309,6 @@ export function SweepSuccessModal({
           </button>
         </div>
       </div>
-    </div>
+    </SweepModal>
   );
 }

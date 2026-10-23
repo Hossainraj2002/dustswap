@@ -29,10 +29,12 @@ export function UnavailablePanel({
   tokens,
   onClearAll,
   onRemove,
+  chainId,
 }: {
   tokens: UnavailableToken[];
   onClearAll: () => void;
   onRemove: (address: string) => void;
+  chainId?: number;
 }) {
   if (tokens.length === 0) return null;
 
@@ -56,7 +58,7 @@ export function UnavailablePanel({
             title={reasonBadge(token.reason)}
             className="inline-flex h-[32px] items-center gap-1.5 rounded-[10px] border border-slate-200 bg-slate-50 pl-1.5 pr-1 text-sm text-slate-600 dark:border-white/10 dark:bg-white/[0.04] dark:text-slate-300"
           >
-            <TokenLogo token={token} size="sm" muted />
+            <TokenLogo token={token} size="sm" muted chainId={chainId} />
             <span className="font-semibold">{token.symbol}</span>
             <span className="text-red-400">
               <InfoIcon />

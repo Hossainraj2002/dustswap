@@ -73,6 +73,7 @@ export function TokenFromPanel({
   onOpenSettings,
   routeMaxCap,
   failedTokenAddresses,
+  chainId,
 }: {
   selectedTokens: SelectedToken[];
   onRemove: (address: string) => void;
@@ -83,6 +84,7 @@ export function TokenFromPanel({
   onOpenSettings: () => void;
   routeMaxCap: number;
   failedTokenAddresses: string[];
+  chainId?: number;
 }) {
   const [expanded, setExpanded] = useState(false);
   const failedSet = new Set(failedTokenAddresses.map((address) => address.toLowerCase()));
@@ -173,7 +175,7 @@ export function TokenFromPanel({
                   )}
                   title={failed ? `${tokenLabel} has no current route` : tokenLabel}
                 >
-                  <TokenLogo token={token} size="sm" muted={failed} />
+                  <TokenLogo token={token} size="sm" muted={failed} chainId={chainId} />
                   <div className="min-w-0 flex-1 leading-tight">
                     <span className="block truncate text-[13px] font-semibold tabular-nums">
                       {formatAmount(token.balanceFormatted)}

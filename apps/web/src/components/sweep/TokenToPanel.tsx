@@ -35,11 +35,13 @@ export function TokenToPanel({
   quote,
   balanceUSD,
   onOpenSelect,
+  chainId,
 }: {
   tokenOut: Token | null;
   quote: DustSweepQuoteResponse | null;
   balanceUSD: number;
   onOpenSelect: () => void;
+  chainId?: number;
 }) {
   const output = formatOutput(quote, tokenOut);
   const estimatedUsd = quote
@@ -80,7 +82,7 @@ export function TokenToPanel({
           className="sweep-select inline-flex h-11 shrink-0 items-center gap-2 px-3 text-[15px] font-bold text-slate-900 dark:text-white"
         >
           {tokenOut ? (
-            <TokenLogo token={tokenOut} size="sm" />
+            <TokenLogo token={tokenOut} size="sm" chainId={chainId} />
           ) : (
             <span className="flex h-7 w-7 items-center justify-center rounded-full bg-slate-100 text-slate-400 dark:bg-white/10">
               <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">

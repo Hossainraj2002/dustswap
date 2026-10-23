@@ -58,8 +58,8 @@ interface IWETH9 {
 ///         `route.amountIn` is the single source of truth. The user permits/approves EXACTLY
 ///         `route.amountIn` per token, the router pulls EXACTLY that, and approves the DEX EXACTLY
 ///         that amount, resetting to 0 immediately after. No infinite/standing allowance path
-///         exists. Fee-on-transfer tokens (where the router would hold < `amountIn`) are skipped
-///         and refunded rather than over-approved or failing the whole batch.
+///         exists. Inputs that cannot fund a route without spending pre-sweep balances are
+///         skipped and refunded best-effort. Failed refunds remain available for owner rescue.
 contract DustSwapSweepRouter is Ownable, ReentrancyGuard, Pausable {
     using SafeERC20 for IERC20;
 
@@ -273,7 +273,7 @@ contract DustSwapSweepRouter is Ownable, ReentrancyGuard, Pausable {
             _pullInputsWithAllowance(routes);
         }
 
-        _executeRoutesBestEffort(routes, params.deadline, actualOutput);
+        _executeRoutesBestEffort(routes, params.deadline, actualOutput, inputTokens, inputInitial);
         _refundLeftoverInputs(inputTokens, inputInitial, actualOutput);
     }
 
@@ -283,11 +283,26 @@ contract DustSwapSweepRouter is Ownable, ReentrancyGuard, Pausable {
     ///      On success, approvals are explicitly reset to 0 before returning.
     function executeRoute(SweepRoute calldata route, uint256 deadline) external {
         if (msg.sender != address(this)) revert NotSelf();
+        _executeRoute(route, deadline, 0);
+    }
+
+    /// @dev Self-only frame used by sweep(), reserving balances held before this sweep. Keep the
+    ///      original executeRoute selector available; no wallet-facing sweep or witness ABI changes.
+    function executeRouteWithReserve(SweepRoute calldata route, uint256 deadline, uint256 reserve)
+        external
+    {
+        if (msg.sender != address(this)) revert NotSelf();
+        _executeRoute(route, deadline, reserve);
+    }
+
+    function _executeRoute(SweepRoute calldata route, uint256 deadline, uint256 reserve) internal {
 
         IERC20 tokenIn = IERC20(route.tokenIn);
 
-        // Fee-on-transfer / under-delivery guard: never approve more than we actually hold.
-        if (tokenIn.balanceOf(address(this)) < route.amountIn) revert InsufficientHeldBalance();
+        // A fee-on-transfer input cannot use old router funds to mask under-delivery. Subtraction
+        // after the lower-bound check avoids overflow for large reserves/amounts.
+        uint256 held = tokenIn.balanceOf(address(this));
+        if (held < reserve || held - reserve < route.amountIn) revert InsufficientHeldBalance();
 
         // Router -> DEX approval == EXACTLY the amount about to be swapped.
         tokenIn.forceApprove(route.spender, 0);
@@ -318,6 +333,18 @@ contract DustSwapSweepRouter is Ownable, ReentrancyGuard, Pausable {
             }
             revert SwapCallFailed(route.target);
         }
+
+        // Some tokens charge an EXTRA fee to the sender. Roll back this entire route (including
+        // the DEX call and approvals) if that debit consumed any pre-sweep input balance.
+        if (tokenIn.balanceOf(address(this)) < reserve) revert InsufficientHeldBalance();
+    }
+
+    /// @dev Refund in a caught self-call so false/malformed return data, failed balance reads, or
+    ///      sender-paid extra tax can roll back only this refund, leaving other routes settled.
+    function refundInput(address token, address recipient, uint256 amount, uint256 reserve) external {
+        if (msg.sender != address(this)) revert NotSelf();
+        IERC20(token).safeTransfer(recipient, amount);
+        if (IERC20(token).balanceOf(address(this)) < reserve) revert InsufficientHeldBalance();
     }
 
     // ──────────────────────────── Internal: validation ─────────────
@@ -433,9 +460,13 @@ contract DustSwapSweepRouter is Ownable, ReentrancyGuard, Pausable {
 
     // ──────────────────────────── Internal: execution ──────────────
 
-    function _executeRoutesBestEffort(SweepRoute[] calldata routes, uint256 deadline, address actualOutput)
-        internal
-    {
+    function _executeRoutesBestEffort(
+        SweepRoute[] calldata routes,
+        uint256 deadline,
+        address actualOutput,
+        address[] memory inputTokens,
+        uint256[] memory inputInitial
+    ) internal {
         for (uint256 i; i < routes.length;) {
             SweepRoute calldata route = routes[i];
 
@@ -446,11 +477,21 @@ contract DustSwapSweepRouter is Ownable, ReentrancyGuard, Pausable {
                 // output). Emit with target/spender == tokenIn so the leg is still observable.
                 emit RouteExecuted(route.tokenIn, route.tokenIn, route.tokenIn, route.amountIn);
             } else {
-                try this.executeRoute(route, deadline) {
+                uint256 reserve;
+                for (uint256 j; j < inputTokens.length;) {
+                    if (inputTokens[j] == route.tokenIn) {
+                        reserve = inputInitial[j];
+                        break;
+                    }
+                    unchecked {
+                        ++j;
+                    }
+                }
+                try this.executeRouteWithReserve(route, deadline, reserve) {
                     emit RouteExecuted(route.tokenIn, route.target, route.spender, route.amountIn);
                 } catch (bytes memory reason) {
-                    // Best-effort: skip the failed leg. Its tokenIn stays in the router and is
-                    // returned to the user by _refundLeftoverInputs — never stranded, never reverted.
+                    // Best-effort: skip the failed leg and refund its input separately. Unsafe or
+                    // non-compliant refunds remain available for owner rescue.
                     emit RouteSkipped(route.tokenIn, route.amountIn, reason);
                 }
             }
@@ -522,22 +563,25 @@ contract DustSwapSweepRouter is Ownable, ReentrancyGuard, Pausable {
                 }
                 continue;
             }
-            uint256 current = IERC20(tokens[i]).balanceOf(address(this));
-            if (current > initialBalances[i]) {
-                uint256 refund = current - initialBalances[i];
-                (bool ok, bytes memory ret) = tokens[i].call(
-                    abi.encodeWithSelector(IERC20.transfer.selector, msg.sender, refund)
-                );
-                // A compliant transfer returns nothing or 32 bytes == true. Never abi.decode a
-                // short (1-31 byte) return: that itself reverts and would brick the whole sweep,
-                // defeating best-effort. Treat anything non-compliant as a failed refund instead.
-                bool refunded = ok && (ret.length == 0 || (ret.length >= 32 && abi.decode(ret, (bool))));
-                if (refunded) {
-                    emit InputRefunded(tokens[i], msg.sender, refund);
-                } else {
-                    // Leave it for rescue() rather than reverting the whole sweep.
-                    emit RefundFailed(tokens[i], msg.sender, refund);
+            // A typed try/catch does not catch ABI decoding errors in its caller. Check the
+            // low-level result length here so short balanceOf data also stays failure-isolated.
+            (bool readable, bytes memory balanceData) = tokens[i].staticcall(
+                abi.encodeWithSelector(IERC20.balanceOf.selector, address(this))
+            );
+            if (readable && balanceData.length >= 32) {
+                uint256 current = abi.decode(balanceData, (uint256));
+                if (current > initialBalances[i]) {
+                    uint256 refund = current - initialBalances[i];
+                    try this.refundInput(tokens[i], msg.sender, refund, initialBalances[i]) {
+                        emit InputRefunded(tokens[i], msg.sender, refund);
+                    } catch {
+                        // An unsafe or non-compliant refund stays available for owner rescue.
+                        emit RefundFailed(tokens[i], msg.sender, refund);
+                    }
                 }
+            } else {
+                // The amount is unknown when a token refuses balance reads after being pulled.
+                emit RefundFailed(tokens[i], msg.sender, 0);
             }
             unchecked {
                 ++i;
@@ -568,6 +612,12 @@ contract DustSwapSweepRouter is Ownable, ReentrancyGuard, Pausable {
             if (!success) revert NativeTransferFailed();
         } else {
             IERC20(st.actualOutput).safeTransfer(params.recipient, netAmountOut);
+        }
+
+        // Settlement must not subsidize an exotic output token's extra sender tax with funds
+        // held before this sweep. Reverting settlement rolls back the whole sweep atomically.
+        if (IERC20(st.actualOutput).balanceOf(address(this)) < st.initialOutputBalance) {
+            revert InsufficientHeldBalance();
         }
 
         emit DustSwept(

@@ -21,6 +21,11 @@
 // restoring the quote candidate + ladder entry in dustsweep.ts.
 export type AggregatorProviderId = "kyber" | "zerox" | "lifi" | "openocean";
 
+/** Provider transport/rate-limit failures say nothing about a token's liquidity. */
+export class AggregatorTransientError extends Error {
+  override name = "AggregatorTransientError";
+}
+
 const DEFAULT_MIN_INTERVAL_MS: Record<AggregatorProviderId, number> = {
   kyber: 250, // keyless public tier is comparatively generous
   zerox: 250, // keyed tier; the pre-governor code called it fully parallel without issues
@@ -69,12 +74,12 @@ class ProviderGovernor {
    * Run `fn` at the provider's pace (serialized, min interval between call starts), or return
    * null without running it when the breaker is open or the queue is already too deep.
    */
-  async schedule<T>(fn: () => Promise<T>): Promise<T | null> {
+  async schedule<T>(fn: () => Promise<T>, deadlineAt?: number): Promise<T | null> {
     if (this.isBreakerOpen()) return null;
 
     const now = Date.now();
     const projectedStart = Math.max(now, this.nextSlotAt);
-    if (projectedStart - now > MAX_QUEUE_WAIT_MS) return null; // shed instead of stacking
+    if (projectedStart - now > MAX_QUEUE_WAIT_MS || (deadlineAt !== undefined && projectedStart >= deadlineAt)) return null;
     this.nextSlotAt = projectedStart + envMinIntervalMs(this.provider);
 
     const previous = this.queueTail;
@@ -85,9 +90,12 @@ class ProviderGovernor {
 
     await previous;
     try {
+      // Fetch duration can make the real queue wait much longer than the pacing-slot estimate.
+      // Never start obsolete work after the caller's deadline or the queue's own wait cap.
+      if (Date.now() - now > MAX_QUEUE_WAIT_MS || (deadlineAt !== undefined && Date.now() >= deadlineAt)) return null;
       const wait = projectedStart - Date.now();
       if (wait > 0) await sleep(wait);
-      if (this.isBreakerOpen()) return null;
+      if (this.isBreakerOpen() || Date.now() - now > MAX_QUEUE_WAIT_MS || (deadlineAt !== undefined && Date.now() >= deadlineAt)) return null;
       return await fn();
     } finally {
       release();
@@ -101,8 +109,8 @@ const governors = new Map<string, ProviderGovernor>();
 const DEFAULT_CHAIN_ID = 8453;
 
 type CacheEntry = { value: unknown; expiresAt: number };
-// `ran=false` means the call was skipped (breaker open / load shed) and NEVER queried the
-// provider — every caller sharing the deduped promise must see that, not just the first one.
+// `ran=false` means the provider did not answer (skipped or transient failure). Every caller
+// sharing the deduped promise must see that, not just the first one.
 type GovernedOutcome = { value: unknown; ran: boolean };
 const resultCache = new Map<string, CacheEntry>();
 const inFlight = new Map<string, Promise<GovernedOutcome>>();
@@ -129,7 +137,8 @@ function sweepCacheIfDue() {
 
 /**
  * Candidate functions call this after each fetch so a 429 opens the provider's breaker.
- * Any other status is ignored — normal validation stays in the candidate function.
+ * Authentication/WAF, timeout and server failures are retryable too; they cannot establish
+ * that a token has no liquidity. Normal provider no-route validation stays in the adapter.
  */
 export function reportAggregatorHttpStatus(
   provider: AggregatorProviderId,
@@ -137,15 +146,17 @@ export function reportAggregatorHttpStatus(
   chainId: number = DEFAULT_CHAIN_ID,
 ) {
   if (status === 429) getGovernor(provider, chainId).tripBreaker();
+  if ([401, 403, 408, 425, 429].includes(status) || status >= 500) {
+    throw new AggregatorTransientError(`Aggregator ${provider} temporarily unavailable (HTTP ${status})`);
+  }
 }
 
 /**
  * Governed call wrapper: cache → in-flight dedupe → breaker/pace → run → cache result.
  * Returns null when the provider is cooling off or the queue is too deep right now; those
  * nulls are NOT cached (a later attempt should retry), while a null from `fn` itself
- * ("no route") is cached briefly. `onSkipped` fires when the call NEVER RAN (breaker open /
- * load shed) so callers can distinguish "throttled" from a definitive "no route" — a throttled
- * token must never be cached as unroutable.
+ * ("no route") is cached briefly. `onSkipped` fires for skipped calls and retryable provider
+ * failures so callers cannot persist an unanswered liquidity question as "no route".
  */
 export async function governAggregatorCall<T>(
   provider: AggregatorProviderId,
@@ -153,6 +164,7 @@ export async function governAggregatorCall<T>(
   fn: () => Promise<T | null>,
   onSkipped?: () => void,
   chainId: number = DEFAULT_CHAIN_ID,
+  deadlineAt?: number,
 ): Promise<T | null> {
   sweepCacheIfDue();
   // chainId in the key so the same (tokenIn,tokenOut,amount) on two chains never share a cache
@@ -171,7 +183,12 @@ export async function governAggregatorCall<T>(
         value = await getGovernor(provider, chainId).schedule(async () => {
           ran = true;
           return fn();
-        });
+        }, deadlineAt);
+      } catch (error) {
+        if (!(error instanceof AggregatorTransientError)) throw error;
+        // The provider ran but did not answer the liquidity question. Treat this like
+        // a skipped call for every deduped caller, without poisoning either negative cache.
+        ran = false;
       } finally {
         inFlight.delete(key);
       }

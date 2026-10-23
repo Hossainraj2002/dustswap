@@ -1,0 +1,3097 @@
+{
+  "observedAtUTC": "2026-10-14T17:37:05.201Z",
+  "chainId": 10,
+  "population": "Unique ERC-20 entries in the official Optimism token list; not all tokens on OP.",
+  "tokenList": {
+    "url": "https://raw.githubusercontent.com/ethereum-optimism/ethereum-optimism.github.io/master/optimism.tokenlist.json",
+    "timestamp": "2026-09-08T20:52:56.722Z"
+  },
+  "priceRead": {
+    "url": "https://li.quest/v1/tokens?chains=10",
+    "status": 200
+  },
+  "marketReads": [
+    {
+      "batchSize": 30,
+      "status": 200,
+      "elapsedMs": 411
+    },
+    {
+      "batchSize": 30,
+      "status": 200,
+      "elapsedMs": 325
+    },
+    {
+      "batchSize": 30,
+      "status": 200,
+      "elapsedMs": 359
+    },
+    {
+      "batchSize": 30,
+      "status": 200,
+      "elapsedMs": 357
+    },
+    {
+      "batchSize": 30,
+      "status": 200,
+      "elapsedMs": 318
+    },
+    {
+      "batchSize": 30,
+      "status": 200,
+      "elapsedMs": 323
+    },
+    {
+      "batchSize": 15,
+      "status": 200,
+      "elapsedMs": 384
+    }
+  ],
+  "rows": [
+    {
+      "address": "0xe0bb0d3de8c10976511e5030ca403dbf4c25165b",
+      "symbol": "0xBTC",
+      "decimals": 8,
+      "priceUSD": 0.03038101044,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0xad42d013ac31486b73b6b059e748172994736426",
+      "symbol": "1INCH",
+      "decimals": 18,
+      "priceUSD": 0.1214420332,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0x76fb31fb4af56892a25e32cfc43de717950c9278",
+      "symbol": "AAVE",
+      "decimals": 18,
+      "priceUSD": 157.2505551903,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 147800.86,
+      "indexedDexes": [
+        "uniswap"
+      ],
+      "quote": {
+        "status": "quoted",
+        "amountIn": "63592780247410",
+        "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+        "amountOut": "9933",
+        "httpStatus": 200,
+        "providerCode": 0,
+        "message": "successfully",
+        "elapsedMs": 174,
+        "checkedAtUTC": "2026-10-14T17:38:17.168Z",
+        "dexes": [
+          "uniswapv3"
+        ],
+        "pools": [
+          "0x9490e281c4f738fa7b3b2343f07998beef66a060"
+        ]
+      },
+      "bestIndexedPair": "0x782Dcc2cD3A65405bAeb794269703E9C29A175Cc"
+    },
+    {
+      "address": "0x764ad60e1b81f6cacfec1a2926393d688d4493e6",
+      "symbol": "aCRV",
+      "decimals": 18,
+      "priceUSD": 0,
+      "priceSource": null,
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0xff733b2a3557a7ed6697007ab5d11b79fdd1b76b",
+      "symbol": "ACX",
+      "decimals": 18,
+      "priceUSD": 0,
+      "priceSource": null,
+      "bestIndexedLiquidityUSD": 106.29,
+      "indexedDexes": [
+        "velodrome"
+      ],
+      "quote": null,
+      "bestIndexedPair": "0x2Cd32FB367431fD6F499328EDf34934fDbBC6b26"
+    },
+    {
+      "address": "0x61baadcf22d2565b0f471b291c475db5555e0b76",
+      "symbol": "AELIN",
+      "decimals": 18,
+      "priceUSD": 337.2779316642,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 6400.01,
+      "indexedDexes": [
+        "uniswap"
+      ],
+      "quote": {
+        "status": "quoted",
+        "amountIn": "29649138177105",
+        "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+        "amountOut": "9772",
+        "httpStatus": 200,
+        "providerCode": 0,
+        "message": "successfully",
+        "elapsedMs": 96,
+        "checkedAtUTC": "2026-10-14T17:38:17.575Z",
+        "dexes": [
+          "uniswapv3",
+          "uniswap"
+        ],
+        "pools": [
+          "0x5e8b0fc35065a5d980c11f96cb52381de390b13f",
+          "0x4c43646304492a925e335f2b6d840c1489f17815"
+        ]
+      },
+      "bestIndexedPair": "0x5e8B0fC35065a5d980c11F96cb52381De390B13f"
+    },
+    {
+      "address": "0x5e0f5388896a6b6232abf076ee89bc6dfc043685",
+      "symbol": "AJNA",
+      "decimals": 18,
+      "priceUSD": 0,
+      "priceSource": null,
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0x3e29d3a9316dab217754d13b28646b76607c5f04",
+      "symbol": "alETH",
+      "decimals": 18,
+      "priceUSD": 2378.2995458282,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 3289143.11,
+      "indexedDexes": [
+        "velodrome"
+      ],
+      "quote": {
+        "status": "quoted",
+        "amountIn": "4204684820943",
+        "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+        "amountOut": "9975",
+        "httpStatus": 200,
+        "providerCode": 0,
+        "message": "successfully",
+        "elapsedMs": 91,
+        "checkedAtUTC": "2026-10-14T17:38:17.973Z",
+        "dexes": [
+          "uniswapv3",
+          "uniswap"
+        ],
+        "pools": [
+          "0xbc138c394a6c48a4e2e6c2b4848e822f051a5243",
+          "0x4c43646304492a925e335f2b6d840c1489f17815"
+        ]
+      },
+      "bestIndexedPair": "0xa1055762336F92b4B8d2eDC032A0Ce45ead6280a"
+    },
+    {
+      "address": "0xc27d9bc194a648fe3069955a5126699c4e49351c",
+      "symbol": "AMKT",
+      "decimals": 18,
+      "priceUSD": 235.04081548930353,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0xc5b3ac2df8d8d7ac851f763a5b3ff23b4a696d59",
+      "symbol": "APT",
+      "decimals": 8,
+      "priceUSD": 0,
+      "priceSource": null,
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0x334cc734866e97d8452ae6261d68fd9bc9bfa31e",
+      "symbol": "ARPA",
+      "decimals": 18,
+      "priceUSD": 0.01072,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0xc62c9b7be5d4e5d415f682b2331bfa5f0c8d061a",
+      "symbol": "ATH",
+      "decimals": 18,
+      "priceUSD": 0,
+      "priceSource": null,
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0x1509706a6c66ca549ff0cb464de88231ddbe213b",
+      "symbol": "AURA",
+      "decimals": 18,
+      "priceUSD": 0,
+      "priceSource": null,
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0xfe8b128ba8c78aabc59d4c64cee7ff28e9379921",
+      "symbol": "BAL",
+      "decimals": 18,
+      "priceUSD": 0.0886773631,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 313.83,
+      "indexedDexes": [
+        "beethovenx"
+      ],
+      "quote": null,
+      "bestIndexedPair": "0xd6E5824b54f64CE6f1161210bc17eeBfFC77E031-0x4200000000000000000000000000000000000042-0xFE8B128bA8C78aabC59d4c64cEE7fF28e9379921"
+    },
+    {
+      "address": "0x29faf5905bff9cfcc7cf56a5ed91e0f091f8664b",
+      "symbol": "BANK",
+      "decimals": 18,
+      "priceUSD": 0.0001054106935,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0xdb9888b842408b0b8efa1f5477bd9f351754999e",
+      "symbol": "BAXA",
+      "decimals": 18,
+      "priceUSD": 0,
+      "priceSource": null,
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0x0af1580f49121d7a42b0f9125f5f7dc172f8a469",
+      "symbol": "BCAT",
+      "decimals": 9,
+      "priceUSD": 0,
+      "priceSource": null,
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0xd6909e9e702024eb93312b989ee46794c0fb1c9d",
+      "symbol": "BICO",
+      "decimals": 18,
+      "priceUSD": 0.6795971282,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0x5029c236320b8f15ef0a657054b84d90bfbeded3",
+      "symbol": "BitANT",
+      "decimals": 18,
+      "priceUSD": 0.00001301,
+      "priceSource": "dexscreener-pair>=1000usd",
+      "bestIndexedLiquidityUSD": 12901.29,
+      "indexedDexes": [
+        "uniswap"
+      ],
+      "quote": {
+        "status": "quoted",
+        "amountIn": "768639508070714782662",
+        "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+        "amountOut": "9956",
+        "httpStatus": 200,
+        "providerCode": 0,
+        "message": "successfully",
+        "elapsedMs": 85,
+        "checkedAtUTC": "2026-10-14T17:38:18.363Z",
+        "dexes": [
+          "uniswapv3",
+          "uniswap"
+        ],
+        "pools": [
+          "0x81a53cf23579cb251068a2d62ae8b2071ebe5a7d",
+          "0x4c43646304492a925e335f2b6d840c1489f17815"
+        ]
+      },
+      "bestIndexedPair": "0x81a53cf23579cB251068a2D62AE8b2071ebe5A7d"
+    },
+    {
+      "address": "0xc98b98d17435aa00830c87ea02474c5007e1f272",
+      "symbol": "BitBTC",
+      "decimals": 18,
+      "priceUSD": 0.08281183571,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0xb0b195aefa3650a6908f15cdac7d92f8a5791b0b",
+      "symbol": "BOB",
+      "decimals": 18,
+      "priceUSD": 0.9946565632,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 100038.25,
+      "indexedDexes": [
+        "uniswap"
+      ],
+      "quote": {
+        "status": "quoted",
+        "amountIn": "10053721425039505",
+        "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+        "amountOut": "10000",
+        "httpStatus": 200,
+        "providerCode": 0,
+        "message": "successfully",
+        "elapsedMs": 164,
+        "checkedAtUTC": "2026-10-14T17:38:18.829Z",
+        "dexes": [
+          "uniswapv3",
+          "uniswap"
+        ],
+        "pools": [
+          "0xda191ecf1a1b9fa1cc2042a1c15ce6f093d1549d",
+          "0x4c43646304492a925e335f2b6d840c1489f17815"
+        ]
+      },
+      "bestIndexedPair": "0x7b17Fc02d85Cb5589EC1d1C3dB507dC557590c79"
+    },
+    {
+      "address": "0x07ad578ff86b135be19a12759064b802cb88854d",
+      "symbol": "BOBA",
+      "decimals": 18,
+      "priceUSD": 0,
+      "priceSource": null,
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0x3e7ef8f50246f725885102e8238cbba33f276747",
+      "symbol": "BOND",
+      "decimals": 18,
+      "priceUSD": 0.08580080679,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0x647fe0cca3df596ba414c8c600d441bb3d10d616",
+      "symbol": "BOSON",
+      "decimals": 18,
+      "priceUSD": 0.02241,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0x7f5c764cbc14f9669b88837ca1490cca17c31607",
+      "symbol": "USDC.e",
+      "decimals": 6,
+      "priceUSD": 1.0039219353,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 100038.25,
+      "indexedDexes": [
+        "uniswap",
+        "velodrome"
+      ],
+      "quote": {
+        "status": "quoted",
+        "amountIn": "9961",
+        "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+        "amountOut": "9959",
+        "httpStatus": 200,
+        "providerCode": 0,
+        "message": "successfully",
+        "elapsedMs": 81,
+        "checkedAtUTC": "2026-10-14T17:38:19.215Z",
+        "dexes": [
+          "solidly-v3"
+        ],
+        "pools": [
+          "0x2b6b093a6c2aba51e078540ad89ed76a0c6716fa"
+        ]
+      },
+      "bestIndexedPair": "0x7b17Fc02d85Cb5589EC1d1C3dB507dC557590c79"
+    },
+    {
+      "address": "0x65334ce5aae9fb390c056574c7aa4de33cf1d40e",
+      "symbol": "BRIGHT",
+      "decimals": 18,
+      "priceUSD": 0.001430829883,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0xe9185ee218cae427af7b9764a011bb89fea761b4",
+      "symbol": "BRZ",
+      "decimals": 18,
+      "priceUSD": 0,
+      "priceSource": null,
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0xb260d236f5ea5094d31f016160705ff53ac45028",
+      "symbol": "BTREE",
+      "decimals": 18,
+      "priceUSD": 0,
+      "priceSource": null,
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0xed50ace88bd42b45cb0f49be15395021e141254e",
+      "symbol": "BTRST",
+      "decimals": 18,
+      "priceUSD": 0.05648,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0x6c518f9d1a163379235816c543e62922a79863fa",
+      "symbol": "bwAJNA",
+      "decimals": 18,
+      "priceUSD": 0,
+      "priceSource": null,
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0xca0eac34408e4b5906d3e161c73bb4611ff22ca1",
+      "symbol": "CANA",
+      "decimals": 18,
+      "priceUSD": 19.945293787178542,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0xaddb6a0412de1ba0f936dcaeb8aaa24578dcf3b2",
+      "symbol": "cbETH",
+      "decimals": 18,
+      "priceUSD": 2784.1500887781,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 10.69,
+      "indexedDexes": [
+        "uniswap"
+      ],
+      "quote": null,
+      "bestIndexedPair": "0x7ACf1c81e722827Ad460c0df10A20d0Ab3631349"
+    },
+    {
+      "address": "0xca0e54b636db823847b29f506bffee743f57729d",
+      "symbol": "CHI",
+      "decimals": 18,
+      "priceUSD": 0.07052606449,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0x1d015bf7d8a6fb0fc30959f3e12355530086b2a5",
+      "symbol": "CNG",
+      "decimals": 18,
+      "priceUSD": 0.0037729388682898987,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0x629c2fd5d5f432357465b59d7832389a89956f0b",
+      "symbol": "COC",
+      "decimals": 18,
+      "priceUSD": 0,
+      "priceSource": null,
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0x8b21e9b7daf2c4325bf3d18c1beb79a347fe902a",
+      "symbol": "COLLAB",
+      "decimals": 18,
+      "priceUSD": 0,
+      "priceSource": null,
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0x44805a7597ab90624e0b4aa6947a47f358ae4ef1",
+      "symbol": "COR",
+      "decimals": 18,
+      "priceUSD": 0.001527437027642187,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0x0994206dfe8de6ec6920ff4d779b0d950605fb53",
+      "symbol": "CRV",
+      "decimals": 18,
+      "priceUSD": 0.3298357086,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 14613.03,
+      "indexedDexes": [
+        "uniswap"
+      ],
+      "quote": {
+        "status": "quoted",
+        "amountIn": "30318124263880870",
+        "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+        "amountOut": "9876",
+        "httpStatus": 200,
+        "providerCode": 0,
+        "message": "successfully",
+        "elapsedMs": 123,
+        "checkedAtUTC": "2026-10-14T17:38:19.645Z",
+        "dexes": [
+          "uniswapv3"
+        ],
+        "pools": [
+          "0x3ee7b02885d8e0d0fb8a935bd999952574653a27"
+        ]
+      },
+      "bestIndexedPair": "0xE870BFE4AaCB6E234B645e535D26C53790D50E78"
+    },
+    {
+      "address": "0xc52d7f23a2e460248db6ee192cb23dd12bddcbf6",
+      "symbol": "crvUSD",
+      "decimals": 18,
+      "priceUSD": 1.0003483649,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0x01402d1bc10ae6e96c0e494a5860748517a3c070",
+      "symbol": "CRYO",
+      "decimals": 18,
+      "priceUSD": 0,
+      "priceSource": null,
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0xefcc1bacd639619135746bd8113b70abbfa6c7b0",
+      "symbol": "CTRAVL",
+      "decimals": 4,
+      "priceUSD": 0.002873426106,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0xec6adef5e1006bb305bb1975333e8fc4071295bf",
+      "symbol": "CTSI",
+      "decimals": 18,
+      "priceUSD": 0.1939526918,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0x03e5b5930f3a42b56af4a982b10e60957bdd2f61",
+      "symbol": "D2D",
+      "decimals": 18,
+      "priceUSD": 0,
+      "priceSource": null,
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0xda10009cbd5d07dd0cecc66161fc93d7c9000da1",
+      "symbol": "DAI",
+      "decimals": 18,
+      "priceUSD": 1.0031969918,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 48837.73,
+      "indexedDexes": [
+        "uniswap"
+      ],
+      "quote": {
+        "status": "quoted",
+        "amountIn": "9968131963850251",
+        "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+        "amountOut": "9961",
+        "httpStatus": 200,
+        "providerCode": 0,
+        "message": "successfully",
+        "elapsedMs": 105,
+        "checkedAtUTC": "2026-10-14T17:38:20.051Z",
+        "dexes": [
+          "velodrome-cl-2"
+        ],
+        "pools": [
+          "0x1737275d53a5ca5dac582a493aa32c85ba2cfad3"
+        ]
+      },
+      "bestIndexedPair": "0xbf16ef186e715668AA29ceF57e2fD7f9D48AdFE6"
+    },
+    {
+      "address": "0x1da650c3b2daa8aa9ff6f661d4156ce24d08a062",
+      "symbol": "DCN",
+      "decimals": 0,
+      "priceUSD": 0.000694445639,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0x9e5aac1ba1a2e6aed6b32689dfcf62a509ca96f3",
+      "symbol": "DF",
+      "decimals": 18,
+      "priceUSD": 0.0001012384378,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [
+        "velodrome"
+      ],
+      "quote": null
+    },
+    {
+      "address": "0xe85d2c93f7e26b99a46a8bb9350cbfb965fa4f82",
+      "symbol": "DHK",
+      "decimals": 18,
+      "priceUSD": 0,
+      "priceSource": null,
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0xaf9fe3b5ccdae78188b1f8b9a49da7ae9510f151",
+      "symbol": "DHT",
+      "decimals": 18,
+      "priceUSD": 0.04097391356,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 46225.67,
+      "indexedDexes": [
+        "velodrome"
+      ],
+      "quote": {
+        "status": "quoted",
+        "amountIn": "244057721880936190",
+        "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+        "amountOut": "10006",
+        "httpStatus": 200,
+        "providerCode": 0,
+        "message": "successfully",
+        "elapsedMs": 105,
+        "checkedAtUTC": "2026-10-14T17:38:20.468Z",
+        "dexes": [
+          "velodrome",
+          "rubicon-v2"
+        ],
+        "pools": [
+          "0x827ecd158b76f63010e8f129b19fe64a85e97e95",
+          "0x003eb393487bc6a3a93de63b9c8746b61f9f9b6c"
+        ]
+      },
+      "bestIndexedPair": "0x6da87897bB36D0E2bC4E69c407935bcC7FA9D9c9"
+    },
+    {
+      "address": "0x5eaa326fb2fc97facce6a79a304876dad0f2e96c",
+      "symbol": "DIMO",
+      "decimals": 18,
+      "priceUSD": 0,
+      "priceSource": null,
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0x8ae125e8653821e851f12a49f7765db9a9ce7384",
+      "symbol": "DOLA",
+      "decimals": 18,
+      "priceUSD": 0.9877350521,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 38397.16,
+      "indexedDexes": [
+        "velodrome"
+      ],
+      "quote": {
+        "status": "quoted",
+        "amountIn": "10124172447600435",
+        "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+        "amountOut": "10045",
+        "httpStatus": 200,
+        "providerCode": 0,
+        "message": "successfully",
+        "elapsedMs": 88,
+        "checkedAtUTC": "2026-10-14T17:38:20.870Z",
+        "dexes": [
+          "velodrome-cl-2"
+        ],
+        "pools": [
+          "0xc434486ef2b44a08707131dda5af98837e2d11eb"
+        ]
+      },
+      "bestIndexedPair": "0x67C253eB6C2e69F9E1114aEeAD0DB4FA8F417AC3"
+    },
+    {
+      "address": "0x05c87b79844227a4d95171e9969da3dd7d65914e",
+      "symbol": "DRODEC",
+      "decimals": 18,
+      "priceUSD": 0,
+      "priceSource": null,
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0x0e49ca6ea763190084c846d3fc18f28bc2ac689a",
+      "symbol": "DUCK",
+      "decimals": 18,
+      "priceUSD": 0,
+      "priceSource": null,
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0xe7bc9b3a936f122f08aac3b1fac3c3ec29a78874",
+      "symbol": "ECO",
+      "decimals": 18,
+      "priceUSD": 0,
+      "priceSource": null,
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0x65559aa14915a70190438ef90104769e5e890a00",
+      "symbol": "ENS",
+      "decimals": 18,
+      "priceUSD": 5.9108665083,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 2639.53,
+      "indexedDexes": [
+        "uniswap"
+      ],
+      "quote": {
+        "status": "quoted",
+        "amountIn": "1691799330260304",
+        "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+        "amountOut": "9978",
+        "httpStatus": 200,
+        "providerCode": 0,
+        "message": "successfully",
+        "elapsedMs": 93,
+        "checkedAtUTC": "2026-10-14T17:38:21.267Z",
+        "dexes": [
+          "uniswapv3",
+          "uniswap"
+        ],
+        "pools": [
+          "0xf3724a1c36c21b7ce558602cd6c031d5778660f4",
+          "0x4c43646304492a925e335f2b6d840c1489f17815"
+        ]
+      },
+      "bestIndexedPair": "0xf3724A1c36c21B7cE558602cD6c031d5778660f4"
+    },
+    {
+      "address": "0x76c37f9949e05b37c8373d155c1fef46a6858481",
+      "symbol": "ePendle",
+      "decimals": 18,
+      "priceUSD": 1.0859335591424628,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0xd1cac46a9a77169c310c2c780a4267ee6ca884f5",
+      "symbol": "EPOCH",
+      "decimals": 18,
+      "priceUSD": 0,
+      "priceSource": null,
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0xaf3a6f67af1624d3878a8d30b09fae7915dca2a0",
+      "symbol": "EQB",
+      "decimals": 18,
+      "priceUSD": 0.140306,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0x81ab7e0d570b01411fcc4afd3d50ec8c241cb74b",
+      "symbol": "EQZ",
+      "decimals": 18,
+      "priceUSD": 0.0001924681992,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0x7b0bcc23851bbf7601efc9e9fe532bf5284f65d3",
+      "symbol": "EST",
+      "decimals": 18,
+      "priceUSD": 9.8453071452,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0xdeaddeaddeaddeaddeaddeaddeaddeaddead0000",
+      "symbol": "ETH",
+      "decimals": 18,
+      "priceUSD": 0,
+      "priceSource": null,
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0xd8737ca46aa6285de7b8777a8e3db232911bad41",
+      "symbol": "FIS",
+      "decimals": 18,
+      "priceUSD": 0.3171994627,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0x86bea60374f220de9769b2fef2db725bc1cdd335",
+      "symbol": "FLASH",
+      "decimals": 18,
+      "priceUSD": 0.06590031007,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0xb58d1d90c4f0a89c96337387feafff0a7a75a722",
+      "symbol": "FLy",
+      "decimals": 4,
+      "priceUSD": 0,
+      "priceSource": null,
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0x79e6c6b6aaba4432fabacb30cc0c879d8f3e598e",
+      "symbol": "FOAM",
+      "decimals": 18,
+      "priceUSD": 0,
+      "priceSource": null,
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0xf1a0da3367bc7aa04f8d94ba57b862ff37ced174",
+      "symbol": "FOX",
+      "decimals": 18,
+      "priceUSD": 0,
+      "priceSource": null,
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0xc5d43a94e26fca47a9b21cf547ae4aa0268670e1",
+      "symbol": "FPI",
+      "decimals": 18,
+      "priceUSD": 0,
+      "priceSource": null,
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0x8368dca5ce2a4db530c0f6e535d90b6826428dee",
+      "symbol": "FPIS",
+      "decimals": 18,
+      "priceUSD": 0,
+      "priceSource": null,
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0x2e3d870790dc77a83dd1d18184acc7439a53f475",
+      "symbol": "FRAX",
+      "decimals": 18,
+      "priceUSD": 0.9981790467,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 92419.97,
+      "indexedDexes": [
+        "fraxswap",
+        "velodrome"
+      ],
+      "quote": {
+        "status": "quoted",
+        "amountIn": "10018242752199820",
+        "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+        "amountOut": "9985",
+        "httpStatus": 200,
+        "providerCode": 0,
+        "message": "successfully",
+        "elapsedMs": 84,
+        "checkedAtUTC": "2026-10-14T17:38:21.663Z",
+        "dexes": [
+          "uniswapv3"
+        ],
+        "pools": [
+          "0xacf0e452599c6783c29518e45256fac0ef5aa8b4"
+        ]
+      },
+      "bestIndexedPair": "0xCc4Dd8Bc7967D46060bA3fAAA8e525A35625F8b4"
+    },
+    {
+      "address": "0x6806411765af15bddd26f8f544a34cc40cb9838b",
+      "symbol": "frxETH",
+      "decimals": 18,
+      "priceUSD": 2436.0187649718,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 96349.42,
+      "indexedDexes": [
+        "velodrome"
+      ],
+      "quote": {
+        "status": "quoted",
+        "amountIn": "4105058689938",
+        "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+        "amountOut": "9978",
+        "httpStatus": 200,
+        "providerCode": 0,
+        "message": "successfully",
+        "elapsedMs": 81,
+        "checkedAtUTC": "2026-10-14T17:38:22.052Z",
+        "dexes": [
+          "wombat",
+          "uniswap"
+        ],
+        "pools": [
+          "0xb86ba65b75d34402bf377cf83b184554a18fcafa",
+          "0x4c43646304492a925e335f2b6d840c1489f17815"
+        ]
+      },
+      "bestIndexedPair": "0x1AD06Ca54de04DBe9e2817F4C13eCB406DCbeAf0"
+    },
+    {
+      "address": "0x67ccea5bb16181e7b4109c9c2143c24a1c2205be",
+      "symbol": "FXS",
+      "decimals": 18,
+      "priceUSD": 0.3093530423,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 60.18,
+      "indexedDexes": [
+        "velodrome"
+      ],
+      "quote": null,
+      "bestIndexedPair": "0xE2EA57FDF87624f4384EF6Da5f3844e8E9e5d878"
+    },
+    {
+      "address": "0x528cdc92eab044e1e39fe43b9514bfdab4412b98",
+      "symbol": "GIV",
+      "decimals": 18,
+      "priceUSD": 0.0004514834095,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 6412.57,
+      "indexedDexes": [
+        "velodrome"
+      ],
+      "quote": {
+        "status": "quoted",
+        "amountIn": "22149208120569930713",
+        "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+        "amountOut": "9931",
+        "httpStatus": 200,
+        "providerCode": 0,
+        "message": "successfully",
+        "elapsedMs": 96,
+        "checkedAtUTC": "2026-10-14T17:38:22.460Z",
+        "dexes": [
+          "uniswapv3",
+          "uniswap"
+        ],
+        "pools": [
+          "0xec381aedea0bdb75b991e49bca10f277916f78f4",
+          "0x4c43646304492a925e335f2b6d840c1489f17815"
+        ]
+      },
+      "bestIndexedPair": "0xC2ab457E31c224dA284dF7aFdA70C39523df4972"
+    },
+    {
+      "address": "0x53ed36b1d07a5f4b01e5f872fd054f8439335460",
+      "symbol": "GMAC",
+      "decimals": 18,
+      "priceUSD": 0,
+      "priceSource": null,
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0xecf46257ed31c329f204eb43e254c609dee143b3",
+      "symbol": "GRG",
+      "decimals": 18,
+      "priceUSD": 0,
+      "priceSource": null,
+      "bestIndexedLiquidityUSD": 0.5,
+      "indexedDexes": [
+        "uniswap"
+      ],
+      "quote": null,
+      "bestIndexedPair": "0x7467A629818460b383F8805B4637b106346860a0"
+    },
+    {
+      "address": "0xc871ccf95024efa2cbce69b5b775d2a1dcf49c1b",
+      "symbol": "GROW",
+      "decimals": 18,
+      "priceUSD": 0.121303548082303,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0x1eba7a6a72c894026cd654ac5cdcf83a46445b08",
+      "symbol": "GTC",
+      "decimals": 18,
+      "priceUSD": 0.1943809088,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 35316.08,
+      "indexedDexes": [
+        "uniswap"
+      ],
+      "quote": {
+        "status": "quoted",
+        "amountIn": "51445381450958623",
+        "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+        "amountOut": "9943",
+        "httpStatus": 200,
+        "providerCode": 0,
+        "message": "successfully",
+        "elapsedMs": 102,
+        "checkedAtUTC": "2026-10-14T17:38:22.878Z",
+        "dexes": [
+          "uniswapv3",
+          "uniswap"
+        ],
+        "pools": [
+          "0xd0fa3b5264ccde31e8b094b86bca4a1e97d3c603",
+          "0x4c43646304492a925e335f2b6d840c1489f17815"
+        ]
+      },
+      "bestIndexedPair": "0xd0fa3B5264CCDE31e8B094b86bcA4A1e97D3c603"
+    },
+    {
+      "address": "0x589d35656641d6ab57a545f08cf473ecd9b6d5f7",
+      "symbol": "GYEN",
+      "decimals": 6,
+      "priceUSD": 0.006335120307294411,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0x117cfd9060525452db4a34d51c0b3b7599087f05",
+      "symbol": "GYSR",
+      "decimals": 18,
+      "priceUSD": 0.009595712451,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0x5465145a47260d5e715733997333a175d97285bb",
+      "symbol": "HAIR",
+      "decimals": 18,
+      "priceUSD": 17.2111000783,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 11344.46,
+      "indexedDexes": [
+        "uniswap"
+      ],
+      "quote": {
+        "status": "quoted",
+        "amountIn": "581020385362127",
+        "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+        "amountOut": "9869",
+        "httpStatus": 200,
+        "providerCode": 0,
+        "message": "successfully",
+        "elapsedMs": 91,
+        "checkedAtUTC": "2026-10-14T17:38:23.287Z",
+        "dexes": [
+          "uniswapv3",
+          "uniswap"
+        ],
+        "pools": [
+          "0xbd77fcc8fec854d9de44bc9394a7c358184c5e7d",
+          "0x4c43646304492a925e335f2b6d840c1489f17815"
+        ]
+      },
+      "bestIndexedPair": "0xbd77FCC8fEc854d9dE44bc9394A7C358184C5e7D"
+    },
+    {
+      "address": "0x50bce64397c75488465253c0a034b8097fea6578",
+      "symbol": "HAN",
+      "decimals": 18,
+      "priceUSD": 0.0001943,
+      "priceSource": "dexscreener-pair>=1000usd",
+      "bestIndexedLiquidityUSD": 107962.09,
+      "indexedDexes": [
+        "uniswap"
+      ],
+      "quote": {
+        "status": "quoted",
+        "amountIn": "51466803911477093436",
+        "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+        "amountOut": "9641",
+        "httpStatus": 200,
+        "providerCode": 0,
+        "message": "successfully",
+        "elapsedMs": 75,
+        "checkedAtUTC": "2026-10-14T17:38:23.675Z",
+        "dexes": [
+          "uniswapv3",
+          "uniswap"
+        ],
+        "pools": [
+          "0x5b42a63d6741416ce9a7b9f4f16d8c9231ccddd4",
+          "0x4c43646304492a925e335f2b6d840c1489f17815"
+        ]
+      },
+      "bestIndexedPair": "0xD4344Ea0c5aDE7e22B9B275F0BdE7a145dEC5A23"
+    },
+    {
+      "address": "0xc3248a1bd9d72fa3da6e6ba701e58cbf818354eb",
+      "symbol": "HANeP",
+      "decimals": 18,
+      "priceUSD": 0,
+      "priceSource": null,
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0x01b8b6384298d4848e3be63d4c9d17830eee488a",
+      "symbol": "HAUS",
+      "decimals": 18,
+      "priceUSD": 18.7005974071,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0xc5102fe9359fd9a28f877a67e36b0f050d81a3cc",
+      "symbol": "HOP",
+      "decimals": 18,
+      "priceUSD": 0.0005293,
+      "priceSource": "dexscreener-pair>=1000usd",
+      "bestIndexedLiquidityUSD": 13787.91,
+      "indexedDexes": [
+        "velodrome"
+      ],
+      "quote": {
+        "status": "quoted",
+        "amountIn": "18892877385225769871",
+        "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+        "amountOut": "10031",
+        "httpStatus": 200,
+        "providerCode": 0,
+        "message": "successfully",
+        "elapsedMs": 107,
+        "checkedAtUTC": "2026-10-14T17:38:24.096Z",
+        "dexes": [
+          "velodrome",
+          "uniswap"
+        ],
+        "pools": [
+          "0xcc441718f7f50d55f497fd37e3f3f3fe4789cf6b",
+          "0x4c43646304492a925e335f2b6d840c1489f17815"
+        ]
+      },
+      "bestIndexedPair": "0x0e88a5bfF34d39DA66bdD32B82dC89a32D7Bb6c9"
+    },
+    {
+      "address": "0xbb6bbaa0f6d839a00c82b10747abc3b7e2eecc82",
+      "symbol": "IBEX",
+      "decimals": 18,
+      "priceUSD": 0,
+      "priceSource": null,
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0xa211e25f7246950e0cce054e3161c7c0b6379485",
+      "symbol": "IPT",
+      "decimals": 18,
+      "priceUSD": 0.03428259364,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0xa00e3a3511aac35ca78530c85007afcd31753819",
+      "symbol": "KNC",
+      "decimals": 18,
+      "priceUSD": 0.1259325811,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 14855.65,
+      "indexedDexes": [
+        "uniswap"
+      ],
+      "quote": {
+        "status": "quoted",
+        "amountIn": "79407568022918901",
+        "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+        "amountOut": "11070",
+        "httpStatus": 200,
+        "providerCode": 0,
+        "message": "successfully",
+        "elapsedMs": 101,
+        "checkedAtUTC": "2026-10-14T17:38:24.498Z",
+        "dexes": [
+          "kyberswap-static",
+          "solidly-v3"
+        ],
+        "pools": [
+          "0x061be7b24fd7b7913014d7c2f78373a01a0eb690",
+          "0x2b6b093a6c2aba51e078540ad89ed76a0c6716fa"
+        ]
+      },
+      "bestIndexedPair": "0x32263442a49650D89B2AB3dCB46B8C8DeC612F4D"
+    },
+    {
+      "address": "0x2ed6222cb75e353b8789bec7bb443b7ec9022021",
+      "symbol": "KRL",
+      "decimals": 18,
+      "priceUSD": 0.1365,
+      "priceSource": "dexscreener-pair>=1000usd",
+      "bestIndexedLiquidityUSD": 63901.65,
+      "indexedDexes": [
+        "uniswap"
+      ],
+      "quote": {
+        "status": "quoted",
+        "amountIn": "73260073260073250",
+        "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+        "amountOut": "9983",
+        "httpStatus": 200,
+        "providerCode": 0,
+        "message": "successfully",
+        "elapsedMs": 76,
+        "checkedAtUTC": "2026-10-14T17:38:24.877Z",
+        "dexes": [
+          "uniswapv3",
+          "uniswap"
+        ],
+        "pools": [
+          "0x1bc877326b683d8aeaca8dbbc604b649e5ad78e6",
+          "0x4c43646304492a925e335f2b6d840c1489f17815"
+        ]
+      },
+      "bestIndexedPair": "0x1bC877326B683D8aEacA8dbBc604b649e5aD78e6"
+    },
+    {
+      "address": "0xf98dcd95217e15e05d8638da4c91125e59590b07",
+      "symbol": "KROM",
+      "decimals": 18,
+      "priceUSD": 0.004578610184,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 62296.01,
+      "indexedDexes": [
+        "uniswap"
+      ],
+      "quote": {
+        "status": "quoted",
+        "amountIn": "2184068876390723002",
+        "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+        "amountOut": "9881",
+        "httpStatus": 200,
+        "providerCode": 0,
+        "message": "successfully",
+        "elapsedMs": 143,
+        "checkedAtUTC": "2026-10-14T17:38:25.336Z",
+        "dexes": [
+          "uniswapv3",
+          "uniswap"
+        ],
+        "pools": [
+          "0xe62bd99a9501ca33d98913105fc2bec5bae6e5dd",
+          "0x4c43646304492a925e335f2b6d840c1489f17815"
+        ]
+      },
+      "bestIndexedPair": "0xE62bd99a9501ca33D98913105Fc2BeC5BAE6e5dD"
+    },
+    {
+      "address": "0xfdb794692724153d1488ccdbe0c56c252596735f",
+      "symbol": "LDO",
+      "decimals": 18,
+      "priceUSD": 0.409522101,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 5354,
+      "indexedDexes": [
+        "velodrome"
+      ],
+      "quote": {
+        "status": "quoted",
+        "amountIn": "24418706525438538",
+        "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+        "amountOut": "9984",
+        "httpStatus": 200,
+        "providerCode": 0,
+        "message": "successfully",
+        "elapsedMs": 89,
+        "checkedAtUTC": "2026-10-14T17:38:25.734Z",
+        "dexes": [
+          "balancer-v2-weighted",
+          "uniswap"
+        ],
+        "pools": [
+          "0xbad8de88febc2d9364254e108fe5a547a7b6b4c0",
+          "0x4c43646304492a925e335f2b6d840c1489f17815"
+        ]
+      },
+      "bestIndexedPair": "0xC5c247580A4A6E4d3811c0DA6215057aaC480bAc"
+    },
+    {
+      "address": "0x350a791bfc2c21f9ed5d10980dad2e2638ffa7f6",
+      "symbol": "LINK",
+      "decimals": 18,
+      "priceUSD": 12.4449930842,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 163834.52,
+      "indexedDexes": [
+        "uniswap"
+      ],
+      "quote": {
+        "status": "quoted",
+        "amountIn": "803536002980658",
+        "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+        "amountOut": "9821",
+        "httpStatus": 200,
+        "providerCode": 0,
+        "message": "successfully",
+        "elapsedMs": 89,
+        "checkedAtUTC": "2026-10-14T17:38:26.138Z",
+        "dexes": [
+          "uniswapv3"
+        ],
+        "pools": [
+          "0xd5c134a1c8fe2cc66312ff8a4d45087ce8be5315"
+        ]
+      },
+      "bestIndexedPair": "0x19EA026886cbB7A900EcB2458636d72b5CaE223B"
+    },
+    {
+      "address": "0x0633e91f64c22d4fea53dbe6e77b7ba4093177b8",
+      "symbol": "LITKEY",
+      "decimals": 18,
+      "priceUSD": 0.00835105,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0x3bb4445d30ac020a84c1b5a8a2c6248ebc9779d0",
+      "symbol": "LIZ",
+      "decimals": 18,
+      "priceUSD": 0,
+      "priceSource": null,
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0x0b3e851cf6508a16266bc68a651ea68b31ef673b",
+      "symbol": "LPF",
+      "decimals": 18,
+      "priceUSD": 0.001116330196,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0xfeaa9194f9f8c1b65429e31341a103071464907e",
+      "symbol": "LRC",
+      "decimals": 18,
+      "priceUSD": 0.009422,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0xc40f949f8a4e094d1b49a23ea9241d289b7b2819",
+      "symbol": "LUSD",
+      "decimals": 18,
+      "priceUSD": 0.9992704017,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 26333.5,
+      "indexedDexes": [
+        "velodrome"
+      ],
+      "quote": {
+        "status": "quoted",
+        "amountIn": "10007301310023380",
+        "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+        "amountOut": "10004",
+        "httpStatus": 200,
+        "providerCode": 0,
+        "message": "successfully",
+        "elapsedMs": 93,
+        "checkedAtUTC": "2026-10-14T17:38:26.532Z",
+        "dexes": [
+          "velodrome-cl-2"
+        ],
+        "pools": [
+          "0x8ac2f9dac7a2852d44f3c09634444d533e4c078e"
+        ]
+      },
+      "bestIndexedPair": "0x4F3da11c5caDf644ae023Dbad01008a934C993E2"
+    },
+    {
+      "address": "0x50c5725949a6f0c72e6c4a641f24049a917db0cb",
+      "symbol": "LYRA",
+      "decimals": 18,
+      "priceUSD": 0.00014795328,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 10420.6,
+      "indexedDexes": [
+        "uniswap"
+      ],
+      "quote": {
+        "status": "quoted",
+        "amountIn": "67588903740424001398",
+        "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+        "amountOut": "9962",
+        "httpStatus": 200,
+        "providerCode": 0,
+        "message": "successfully",
+        "elapsedMs": 84,
+        "checkedAtUTC": "2026-10-14T17:38:26.928Z",
+        "dexes": [
+          "uniswapv3",
+          "uniswap"
+        ],
+        "pools": [
+          "0x4019d18956938d1381f87cc1eda4ee89818e0834",
+          "0x4c43646304492a925e335f2b6d840c1489f17815"
+        ]
+      },
+      "bestIndexedPair": "0xF334F6104A179207DdaCfb41FA3567FEea8595C2"
+    },
+    {
+      "address": "0x3390108e913824b8ead638444cc52b9abdf63798",
+      "symbol": "MASK",
+      "decimals": 18,
+      "priceUSD": 0,
+      "priceSource": null,
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0x9a2e53158e12bc09270af10c16a466cb2b5d7836",
+      "symbol": "MET",
+      "decimals": 18,
+      "priceUSD": 0.5147,
+      "priceSource": "dexscreener-pair>=1000usd",
+      "bestIndexedLiquidityUSD": 29542.29,
+      "indexedDexes": [
+        "velodrome"
+      ],
+      "quote": {
+        "status": "quoted",
+        "amountIn": "19428793471925391",
+        "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+        "amountOut": "9955",
+        "httpStatus": 200,
+        "providerCode": 0,
+        "message": "successfully",
+        "elapsedMs": 100,
+        "checkedAtUTC": "2026-10-14T17:38:27.334Z",
+        "dexes": [
+          "velodrome-v2",
+          "uniswap"
+        ],
+        "pools": [
+          "0xa8e4fa96327c5a93e159bd781f3ccfd860519d82",
+          "0x4c43646304492a925e335f2b6d840c1489f17815"
+        ]
+      },
+      "bestIndexedPair": "0xa8E4fA96327C5a93e159Bd781F3CCfD860519d82"
+    },
+    {
+      "address": "0xab7badef82e9fe11f6f33f87bc9bc2aa27f2fcb5",
+      "symbol": "MKR",
+      "decimals": 18,
+      "priceUSD": 940.6272823604,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 21.1,
+      "indexedDexes": [
+        "uniswap"
+      ],
+      "quote": null,
+      "bestIndexedPair": "0x353EC75F40edB3b794E10BC049532e60d89D5D19"
+    },
+    {
+      "address": "0x77d40cbc27f912dcdbf4348caf87b427c4d02486",
+      "symbol": "MOCHI",
+      "decimals": 18,
+      "priceUSD": 0,
+      "priceSource": null,
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0x5e70affe232e2919792f77eb94e566db0320fa88",
+      "symbol": "MOM",
+      "decimals": 18,
+      "priceUSD": 0.3696767539,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0x819845b60a192167ed1139040b4f8eca31834f27",
+      "symbol": "mpETH",
+      "decimals": 18,
+      "priceUSD": 0,
+      "priceSource": null,
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0x929b939f8524c3be977af57a4a0ad3fb1e374b50",
+      "symbol": "MTA",
+      "decimals": 18,
+      "priceUSD": 0.03116264293,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 240866.81,
+      "indexedDexes": [
+        "velodrome"
+      ],
+      "quote": {
+        "status": "quoted",
+        "amountIn": "320897044017184052",
+        "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+        "amountOut": "9952",
+        "httpStatus": 200,
+        "providerCode": 0,
+        "message": "successfully",
+        "elapsedMs": 95,
+        "checkedAtUTC": "2026-10-14T17:38:27.737Z",
+        "dexes": [
+          "velodrome-v2"
+        ],
+        "pools": [
+          "0x3aebe5b4b47a8a71ceb66cc0989fc0c81b2c66cd"
+        ]
+      },
+      "bestIndexedPair": "0x3aEbE5B4b47A8a71CEb66CC0989Fc0c81b2c66cD"
+    },
+    {
+      "address": "0x1164b451624e0d53bd8be84d3ff7f9591ba8922e",
+      "symbol": "MUGLOO",
+      "decimals": 4,
+      "priceUSD": 0,
+      "priceSource": null,
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0x8637725ada78db0674a679cea2a5e0a0869ef4a1",
+      "symbol": "NFTE",
+      "decimals": 18,
+      "priceUSD": 0,
+      "priceSource": null,
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0x2561aa2bb1d2eb6629edd7b0938d7679b8b49f9e",
+      "symbol": "OCEAN",
+      "decimals": 18,
+      "priceUSD": 0.13696310003050072,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0xfc2e6e6bcbd49ccf3a5f029c79984372dcbfe527",
+      "symbol": "OLAS",
+      "decimals": 18,
+      "priceUSD": 0.05351,
+      "priceSource": "dexscreener-pair>=1000usd",
+      "bestIndexedLiquidityUSD": 65158.85,
+      "indexedDexes": [
+        "beethovenx"
+      ],
+      "quote": {
+        "status": "quoted",
+        "amountIn": "186880956830498962",
+        "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+        "amountOut": "9657",
+        "httpStatus": 200,
+        "providerCode": 0,
+        "message": "successfully",
+        "elapsedMs": 84,
+        "checkedAtUTC": "2026-10-14T17:38:28.132Z",
+        "dexes": [
+          "balancer-v2-weighted",
+          "uniswap"
+        ],
+        "pools": [
+          "0x5bb3e58887264b667f915130fd04bbb56116c278",
+          "0x4c43646304492a925e335f2b6d840c1489f17815"
+        ]
+      },
+      "bestIndexedPair": "0x5BB3E58887264B667f915130fD04bbB56116C278"
+    },
+    {
+      "address": "0x4200000000000000000000000000000000000042",
+      "symbol": "OP",
+      "decimals": 18,
+      "priceUSD": 0.1391222614,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 541721.39,
+      "indexedDexes": [
+        "beethovenx",
+        "velodrome",
+        "sushiswap"
+      ],
+      "quote": {
+        "status": "quoted",
+        "amountIn": "71879222630289993",
+        "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+        "amountOut": "9994",
+        "httpStatus": 200,
+        "providerCode": 0,
+        "message": "successfully",
+        "elapsedMs": 84,
+        "checkedAtUTC": "2026-10-14T17:38:28.522Z",
+        "dexes": [
+          "balancer-v2-weighted"
+        ],
+        "pools": [
+          "0xf246fd9800a36907602a02c7c8bf2b11c585218a"
+        ]
+      },
+      "bestIndexedPair": "0x4DC22588Ade05C40338a9D95A6da9dCeE68Bcd60"
+    },
+    {
+      "address": "0x6af3cb766d6cd37449bfd321d961a61b0515c1bc",
+      "symbol": "OS",
+      "decimals": 18,
+      "priceUSD": 0,
+      "priceSource": null,
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0x00f932f0fe257456b32deda4758922e56a4f4b42",
+      "symbol": "PAPER",
+      "decimals": 18,
+      "priceUSD": 0.0002446702637,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0xbc7b1ff1c6989f006a1185318ed4e7b5796e66e1",
+      "symbol": "PENDLE",
+      "decimals": 18,
+      "priceUSD": 2.021375837,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 0.11,
+      "indexedDexes": [
+        "velodrome"
+      ],
+      "quote": null,
+      "bestIndexedPair": "0x616Ff9a5cEe8c9f2dbE6F99b2c7e718926ACd7bD"
+    },
+    {
+      "address": "0xc1c167cc44f7923cd0062c4370df962f9ddb16f5",
+      "symbol": "PEPE",
+      "decimals": 18,
+      "priceUSD": 0,
+      "priceSource": null,
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0x9e1028f5f1d5ede59748ffcee5532509976840e0",
+      "symbol": "PERP",
+      "decimals": 18,
+      "priceUSD": 0.02050505579,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 2514.31,
+      "indexedDexes": [
+        "velodrome"
+      ],
+      "quote": {
+        "status": "quoted",
+        "amountIn": "487684603368738256",
+        "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+        "amountOut": "9983",
+        "httpStatus": 200,
+        "providerCode": 0,
+        "message": "successfully",
+        "elapsedMs": 83,
+        "checkedAtUTC": "2026-10-14T17:38:28.911Z",
+        "dexes": [
+          "uniswapv3",
+          "uniswap"
+        ],
+        "pools": [
+          "0x535541f1aa08416e69dc4d610131099fa2ae7222",
+          "0x4c43646304492a925e335f2b6d840c1489f17815"
+        ]
+      },
+      "bestIndexedPair": "0xe0B1dA86D17B884c4D246e218a67AE3466ad841c"
+    },
+    {
+      "address": "0xfa956eb0c4b3e692ad5a6b2f08170ade55999aca",
+      "symbol": "PHTK",
+      "decimals": 18,
+      "priceUSD": 0,
+      "priceSource": null,
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0x395ae52bb17aef68c2888d941736a71dc6d4e125",
+      "symbol": "POOL",
+      "decimals": 18,
+      "priceUSD": 0.01364,
+      "priceSource": "dexscreener-pair>=1000usd",
+      "bestIndexedLiquidityUSD": 5561.42,
+      "indexedDexes": [
+        "velodrome"
+      ],
+      "quote": {
+        "status": "quoted",
+        "amountIn": "733137829912023475",
+        "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+        "amountOut": "9958",
+        "httpStatus": 200,
+        "providerCode": 0,
+        "message": "successfully",
+        "elapsedMs": 116,
+        "checkedAtUTC": "2026-10-14T17:38:29.335Z",
+        "dexes": [
+          "velodrome-v2",
+          "uniswap"
+        ],
+        "pools": [
+          "0xdb1fe6da83698885104da02a6e0b3b65c0b0de80",
+          "0x4c43646304492a925e335f2b6d840c1489f17815"
+        ]
+      },
+      "bestIndexedPair": "0xDB1FE6DA83698885104DA02A6e0b3b65c0B0dE80"
+    },
+    {
+      "address": "0x6f0fecbc276de8fc69257065fe47c5a03d986394",
+      "symbol": "POP",
+      "decimals": 18,
+      "priceUSD": 0.4628971936,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0x374ad0f47f4ca39c78e5cc54f1c9e426ff8f231a",
+      "symbol": "PREMIA",
+      "decimals": 18,
+      "priceUSD": 0.02272379894,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0xd3594e879b358f430e20f82bea61e83562d49d48",
+      "symbol": "PSP",
+      "decimals": 18,
+      "priceUSD": 0.0008987439702,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 5551.36,
+      "indexedDexes": [
+        "beethovenx"
+      ],
+      "quote": {
+        "status": "quoted",
+        "amountIn": "11126639322848165037",
+        "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+        "amountOut": "10425",
+        "httpStatus": 200,
+        "providerCode": 0,
+        "message": "successfully",
+        "elapsedMs": 112,
+        "checkedAtUTC": "2026-10-14T17:38:29.754Z",
+        "dexes": [
+          "uniswapv3"
+        ],
+        "pools": [
+          "0x309a8493028a48c3d9eb75e12458a49ee58f892a"
+        ]
+      },
+      "bestIndexedPair": "0x11f0b5CCA01B0F0A9Fe6265aD6E8ee3419c68440"
+    },
+    {
+      "address": "0x7fb688ccf682d58f86d7e38e03f9d22e7705448b",
+      "symbol": "RAI",
+      "decimals": 18,
+      "priceUSD": 2.9700054715,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 25618.68,
+      "indexedDexes": [
+        "uniswap"
+      ],
+      "quote": {
+        "status": "quoted",
+        "amountIn": "3366997164133002",
+        "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+        "amountOut": "9948",
+        "httpStatus": 200,
+        "providerCode": 0,
+        "message": "successfully",
+        "elapsedMs": 97,
+        "checkedAtUTC": "2026-10-14T17:38:30.160Z",
+        "dexes": [
+          "uniswapv3",
+          "uniswap"
+        ],
+        "pools": [
+          "0x9bb3267c4c3e69a961479c475f8fcc4c300af5bd",
+          "0x4c43646304492a925e335f2b6d840c1489f17815"
+        ]
+      },
+      "bestIndexedPair": "0x1B19825A9e32b1039080ACB1E1f9271314938b96"
+    },
+    {
+      "address": "0xf8397db1eedb800fdbce9e62ad83a28059cbb068",
+      "symbol": "RAZOR",
+      "decimals": 18,
+      "priceUSD": 0,
+      "priceSource": null,
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0x9bcef72be871e61ed4fbbc7630889bee758eb81d",
+      "symbol": "rETH",
+      "decimals": 18,
+      "priceUSD": 2860.3912732691,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 38854.82,
+      "indexedDexes": [
+        "velodrome"
+      ],
+      "quote": {
+        "status": "quoted",
+        "amountIn": "3496025209366",
+        "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+        "amountOut": "9903",
+        "httpStatus": 200,
+        "providerCode": 0,
+        "message": "successfully",
+        "elapsedMs": 102,
+        "checkedAtUTC": "2026-10-14T17:38:30.568Z",
+        "dexes": [
+          "balancer-v2-weighted",
+          "uniswap"
+        ],
+        "pools": [
+          "0xc931b64e181a4a29416f55e67921bfe16e4fe789",
+          "0x4c43646304492a925e335f2b6d840c1489f17815"
+        ]
+      },
+      "bestIndexedPair": "0x985612ff2C9409174FedcFf23d4F4761AF124F88"
+    },
+    {
+      "address": "0x6c2f7b6110a37b3b0fbdd811876be368df02e8b0",
+      "symbol": "rETH",
+      "decimals": 18,
+      "priceUSD": 1557.8149006917,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0xeaeadac73baaf4cb8b024de9d65b2eefa722856c",
+      "symbol": "RFWSTETH",
+      "decimals": 18,
+      "priceUSD": 0,
+      "priceSource": null,
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0xb548f63d4405466b36c0c0ac3318a22fdcec711a",
+      "symbol": "RGT",
+      "decimals": 18,
+      "priceUSD": 0.1359386681,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0xc81d1f0eb955b0c020e5d5b264e1ff72c14d1401",
+      "symbol": "RPL",
+      "decimals": 18,
+      "priceUSD": 290945.401383893,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0x7a1263ec3bf0a19e25c553b8a2c312e903262c5e",
+      "symbol": "SAIL",
+      "decimals": 18,
+      "priceUSD": 0.0007090220971,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0x7c6b91d9be155a6db01f749217d76ff02a7227f2",
+      "symbol": "SARCO",
+      "decimals": 18,
+      "priceUSD": 1.1248484896,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0x298b9b95708152ff6968aafd889c6586e9169f1d",
+      "symbol": "sBTC",
+      "decimals": 18,
+      "priceUSD": 18719.3443425896,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0x61ccfe71d8ee67780320b0d990a02d702d99c271",
+      "symbol": "SCM",
+      "decimals": 18,
+      "priceUSD": 0,
+      "priceSource": null,
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0x64ba55a341ec586a4c5d58d6297cde5125ab55bc",
+      "symbol": "SCRY",
+      "decimals": 18,
+      "priceUSD": 0.102721182,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0x2218a117083f5b482b0bb821d27056ba9c04b1d3",
+      "symbol": "sDAI",
+      "decimals": 18,
+      "priceUSD": 1.18,
+      "priceSource": "dexscreener-pair>=1000usd",
+      "bestIndexedLiquidityUSD": 67731.06,
+      "indexedDexes": [
+        "velodrome"
+      ],
+      "quote": {
+        "status": "quoted",
+        "amountIn": "8474576271186441",
+        "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+        "amountOut": "10014",
+        "httpStatus": 200,
+        "providerCode": 0,
+        "message": "successfully",
+        "elapsedMs": 120,
+        "checkedAtUTC": "2026-10-14T17:38:30.992Z",
+        "dexes": [
+          "velodrome-cl-2"
+        ],
+        "pools": [
+          "0x131525f3fa23d65dc2b1eb8b6483a28c43b06916"
+        ]
+      },
+      "bestIndexedPair": "0x131525f3FA23d65DC2B1EB8B6483a28c43B06916"
+    },
+    {
+      "address": "0xae31207ac34423c41576ff59bfb4e036150f9cf7",
+      "symbol": "SDL",
+      "decimals": 18,
+      "priceUSD": 0.01952829263,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0xe405de8f52ba7559f9df3c368500b6e6ae6cee49",
+      "symbol": "sETH",
+      "decimals": 18,
+      "priceUSD": 317.0556971264,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0x484c2d6e3cdd945a8b2df735e079178c1036578c",
+      "symbol": "sfrxETH",
+      "decimals": 18,
+      "priceUSD": 2892.0026242412,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0xaf1d71bf947709315655514467d5158e5d3046d5",
+      "symbol": "SHU",
+      "decimals": 18,
+      "priceUSD": 0.000999742550619162,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0xa6521c950b0ab5215337dab84d65f4ffa7f6df55",
+      "symbol": "Silo",
+      "decimals": 18,
+      "priceUSD": 0,
+      "priceSource": null,
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0xb94944669f7967e16588e55ac41be0d5ef399dcd",
+      "symbol": "SIPHER",
+      "decimals": 18,
+      "priceUSD": 0.1777634648,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0xc5db22719a06418028a40a9b5e9a7c02959d0d08",
+      "symbol": "sLINK",
+      "decimals": 18,
+      "priceUSD": 17.4416831135,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0x8eb99a441b04576282e9069977f6de6053ef6a97",
+      "symbol": "SMT",
+      "decimals": 18,
+      "priceUSD": 0,
+      "priceSource": null,
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0x650af3c15af43dcb218406d30784416d64cfb6b2",
+      "symbol": "SNT",
+      "decimals": 18,
+      "priceUSD": 0.01218978008,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0x8700daec35af8ff88c16bdf0418774cb3d7599b4",
+      "symbol": "SNX",
+      "decimals": 18,
+      "priceUSD": 0.2294340614,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 43056.27,
+      "indexedDexes": [
+        "uniswap"
+      ],
+      "quote": {
+        "status": "quoted",
+        "amountIn": "43585507482979159",
+        "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+        "amountOut": "9978",
+        "httpStatus": 200,
+        "providerCode": 0,
+        "message": "successfully",
+        "elapsedMs": 211,
+        "checkedAtUTC": "2026-10-14T17:38:31.508Z",
+        "dexes": [
+          "velodrome-cl-2"
+        ],
+        "pools": [
+          "0xf25bbc18a607bbe218c87ba1ff0e673d9b53dd58"
+        ]
+      },
+      "bestIndexedPair": "0x0392b358CE4547601BEFa962680BedE836606ae2"
+    },
+    {
+      "address": "0xba1cf949c382a32a09a17b2adf3587fc7fa664f1",
+      "symbol": "SOL",
+      "decimals": 9,
+      "priceUSD": 114.7368299611,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0xcfd1d50ce23c46d3cf6407487b2f8934e96dc8f9",
+      "symbol": "SPANK",
+      "decimals": 18,
+      "priceUSD": 0.006882169101,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0xe539298a99004a102e4b6997ef96e5137be42eab",
+      "symbol": "SPC",
+      "decimals": 18,
+      "priceUSD": 0,
+      "priceSource": null,
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0x0f5d45a7023612e9e244fe84fac5fcf3740d1492",
+      "symbol": "stkLYRA",
+      "decimals": 18,
+      "priceUSD": 0.06285114318,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0xef6301da234fc7b0545c6e877d3359fe0b9e50a4",
+      "symbol": "SUKU",
+      "decimals": 18,
+      "priceUSD": 1311649012323.17,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0x8c6f28f2f1a3c87f0f938b96d27520d9751ec8d9",
+      "symbol": "sUSD",
+      "decimals": 18,
+      "priceUSD": 0.2502614629,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0x3eaeb77b03dbc0f6321ae1b72b2e9adb0f60112b",
+      "symbol": "SUSHI",
+      "decimals": 18,
+      "priceUSD": 0,
+      "priceSource": null,
+      "bestIndexedLiquidityUSD": 1.84,
+      "indexedDexes": [
+        "sushiswap"
+      ],
+      "quote": null,
+      "bestIndexedPair": "0xc0DaCA0035a7E33eEA74867B74910a871a8FF602"
+    },
+    {
+      "address": "0xa925f4057d6e6c8faf8bde537ad14ba91a1d0337",
+      "symbol": "SYNTH",
+      "decimals": 18,
+      "priceUSD": 0.0001757867877,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0x747e42eb0591547a0ab429b3627816208c734ea7",
+      "symbol": "T",
+      "decimals": 18,
+      "priceUSD": 0,
+      "priceSource": null,
+      "bestIndexedLiquidityUSD": 91.28,
+      "indexedDexes": [
+        "velodrome"
+      ],
+      "quote": null,
+      "bestIndexedPair": "0x6ea8F428a4C0E2C4DAC9779700BA67E92B9A9bFc"
+    },
+    {
+      "address": "0x217d47011b23bb961eb6d93ca9945b7501a5bb11",
+      "symbol": "THALES",
+      "decimals": 18,
+      "priceUSD": 0.1979710306,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 79877.51,
+      "indexedDexes": [
+        "velodrome"
+      ],
+      "quote": {
+        "status": "quoted",
+        "amountIn": "50512440985393349",
+        "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+        "amountOut": "9897",
+        "httpStatus": 200,
+        "providerCode": 0,
+        "message": "successfully",
+        "elapsedMs": 122,
+        "checkedAtUTC": "2026-10-14T17:38:31.935Z",
+        "dexes": [
+          "uniswapv3",
+          "uniswap"
+        ],
+        "pools": [
+          "0xff7fbdf7832ae524deda39ca402e03d92adff7a5",
+          "0x4c43646304492a925e335f2b6d840c1489f17815"
+        ]
+      },
+      "bestIndexedPair": "0xDFF90E4A6c229565f25337B1DB9fA12f6d8cB118"
+    },
+    {
+      "address": "0xd8f365c2c85648f9b89d9f1bf72c0ae4b1c36cfd",
+      "symbol": "TheDAO",
+      "decimals": 16,
+      "priceUSD": 21.3777650194,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0x3eb398fec5f7327c6b15099a9681d9568ded2e82",
+      "symbol": "TKN",
+      "decimals": 18,
+      "priceUSD": 0.002091,
+      "priceSource": "dexscreener-pair>=1000usd",
+      "bestIndexedLiquidityUSD": 4871.19,
+      "indexedDexes": [
+        "velodrome"
+      ],
+      "quote": {
+        "status": "quoted",
+        "amountIn": "4782400765184122271",
+        "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+        "amountOut": "9906",
+        "httpStatus": 200,
+        "providerCode": 0,
+        "message": "successfully",
+        "elapsedMs": 107,
+        "checkedAtUTC": "2026-10-14T17:38:32.359Z",
+        "dexes": [
+          "velodrome-v2",
+          "uniswap"
+        ],
+        "pools": [
+          "0x0a8f0d4b3de04afade29ca0c84743177c4bcebb6",
+          "0x4c43646304492a925e335f2b6d840c1489f17815"
+        ]
+      },
+      "bestIndexedPair": "0x0a8f0D4b3dE04AfADe29ca0C84743177c4BcEbb6"
+    },
+    {
+      "address": "0xaf8ca653fa2772d58f4368b0a71980e9e3ceb888",
+      "symbol": "TRB",
+      "decimals": 18,
+      "priceUSD": 18.4,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0xb1ae0a34dc3976d98c1741c92b798daf8e0e1e11",
+      "symbol": "TRX",
+      "decimals": 6,
+      "priceUSD": 0.334469,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0xcb59a0a753fdb7491d5f3d794316f1ade197b21e",
+      "symbol": "TUSD",
+      "decimals": 18,
+      "priceUSD": 0.9580476142,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0xbb586ed34974b15049a876fd5366a4c2d1203115",
+      "symbol": "UBI",
+      "decimals": 18,
+      "priceUSD": 0.0001715167469,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0xc709c9116dbf29da9c25041b13a07a0e68ac5d2d",
+      "symbol": "UDT",
+      "decimals": 18,
+      "priceUSD": 39.7736349736,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0xe7798f023fc62146e8aa1b36da45fb70855a77ea",
+      "symbol": "UMA",
+      "decimals": 18,
+      "priceUSD": 0.393492,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0x6fd9d7ad17242c41f7131d257212c54a0e816691",
+      "symbol": "UNI",
+      "decimals": 18,
+      "priceUSD": 7.1825035849,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 85642.29,
+      "indexedDexes": [
+        "uniswap"
+      ],
+      "quote": {
+        "status": "quoted",
+        "amountIn": "1392272190580358",
+        "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+        "amountOut": "9930",
+        "httpStatus": 200,
+        "providerCode": 0,
+        "message": "successfully",
+        "elapsedMs": 89,
+        "checkedAtUTC": "2026-10-14T17:38:32.764Z",
+        "dexes": [
+          "uniswapv3"
+        ],
+        "pools": [
+          "0xe5cd7c4e9546c2d221e68059090dc27057ff6479"
+        ]
+      },
+      "bestIndexedPair": "0xAD4c666fC170B468B19988959eb931a3676f0e9F"
+    },
+    {
+      "address": "0x01bff41798a0bcf287b996046ca68b395dbc1071",
+      "symbol": "USD₮0",
+      "decimals": 6,
+      "priceUSD": 0.9992077953,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 6262606.5,
+      "indexedDexes": [
+        "velodrome"
+      ],
+      "quote": {
+        "status": "quoted",
+        "amountIn": "10008",
+        "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+        "amountOut": "9997",
+        "httpStatus": 200,
+        "providerCode": 0,
+        "message": "successfully",
+        "elapsedMs": 76,
+        "checkedAtUTC": "2026-10-14T17:38:33.142Z",
+        "dexes": [
+          "velodrome-cl-2"
+        ],
+        "pools": [
+          "0xf7f575f2c0f6c99fa9efe1bde9e11fa10be4fef9"
+        ]
+      },
+      "bestIndexedPair": "0x4DA46c6AFe7322b66EFEfda1f702605Cbe08E0Bd"
+    },
+    {
+      "address": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+      "symbol": "USDC",
+      "decimals": 6,
+      "priceUSD": 1.0017131629,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 874924.33,
+      "indexedDexes": [
+        "velodrome",
+        "uniswap"
+      ],
+      "quote": {
+        "status": "quoted",
+        "amountIn": "9983",
+        "tokenOut": "0x4200000000000000000000000000000000000006",
+        "amountOut": "4118785444307",
+        "httpStatus": 200,
+        "providerCode": 0,
+        "message": "successfully",
+        "elapsedMs": 112,
+        "checkedAtUTC": "2026-10-14T17:38:33.569Z",
+        "dexes": [
+          "balancer-v2-weighted"
+        ],
+        "pools": [
+          "0x085edd09c21b33f6b35dfa6ac2c5cd0dbe275799"
+        ]
+      },
+      "bestIndexedPair": "0x478946BcD4a5a22b316470F5486fAfb928C0bA25"
+    },
+    {
+      "address": "0x7113370218f31764c1b6353bdf6004d86ff6b9cc",
+      "symbol": "USDD",
+      "decimals": 18,
+      "priceUSD": 0.5668685449,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0x4f604735c1cf31399c6e711d5962b2b3e0225ad3",
+      "symbol": "USDGLO",
+      "decimals": 18,
+      "priceUSD": 0.9994291013,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 34021.4,
+      "indexedDexes": [
+        "uniswap"
+      ],
+      "quote": {
+        "status": "quoted",
+        "amountIn": "10005712248115023",
+        "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+        "amountOut": "10003",
+        "httpStatus": 200,
+        "providerCode": 0,
+        "message": "successfully",
+        "elapsedMs": 129,
+        "checkedAtUTC": "2026-10-14T17:38:34.006Z",
+        "dexes": [
+          "uniswapv3"
+        ],
+        "pools": [
+          "0x98c3648a2087df2a1c2a5b695de908bf95fa4f39"
+        ]
+      },
+      "bestIndexedPair": "0x98c3648A2087df2a1C2a5b695de908bF95fA4f39"
+    },
+    {
+      "address": "0x73cb180bf0521828d8849bc8cf2b920918e23032",
+      "symbol": "USD+",
+      "decimals": 6,
+      "priceUSD": 1.6691787519,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0x94b008aa00579c1307b0ef2c499ad98a8ce58e58",
+      "symbol": "USDT",
+      "decimals": 6,
+      "priceUSD": 0.9991958424,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 6262606.5,
+      "indexedDexes": [
+        "velodrome",
+        "uniswap"
+      ],
+      "quote": {
+        "status": "quoted",
+        "amountIn": "10008",
+        "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+        "amountOut": "9973",
+        "httpStatus": 200,
+        "providerCode": 0,
+        "message": "successfully",
+        "elapsedMs": 233,
+        "checkedAtUTC": "2026-10-14T17:38:34.548Z",
+        "dexes": [
+          "balancer-v2-weighted"
+        ],
+        "pools": [
+          "0x731290da2fa9970304e270940a91f3244b4637c9"
+        ]
+      },
+      "bestIndexedPair": "0x4DA46c6AFe7322b66EFEfda1f702605Cbe08E0Bd"
+    },
+    {
+      "address": "0xba28feb4b6a6b81e3f26f08b83a19e715c4294fd",
+      "symbol": "UST",
+      "decimals": 6,
+      "priceUSD": 0.0002334411451,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0xbfd291da8a403daaf7e5e9dc1ec0aceacd4848b9",
+      "symbol": "USX",
+      "decimals": 18,
+      "priceUSD": 0.3434163427,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 196317.64,
+      "indexedDexes": [
+        "velodrome"
+      ],
+      "quote": {
+        "status": "quoted",
+        "amountIn": "29119173308347041",
+        "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+        "amountOut": "9977",
+        "httpStatus": 200,
+        "providerCode": 0,
+        "message": "successfully",
+        "elapsedMs": 86,
+        "checkedAtUTC": "2026-10-14T17:38:34.951Z",
+        "dexes": [
+          "velodrome-v2"
+        ],
+        "pools": [
+          "0x2f748ee75538ccee11ec5f523084e810023d8c21"
+        ]
+      },
+      "bestIndexedPair": "0x2F748Ee75538CcEe11Ec5F523084E810023D8c21"
+    },
+    {
+      "address": "0x0a9aaa1c7542b42233ac7ffda364e97ade21f160",
+      "symbol": "VALX",
+      "decimals": 18,
+      "priceUSD": 0,
+      "priceSource": null,
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0x678d8f4ba8dfe6bad51796351824dcceceaeff2b",
+      "symbol": "veKWENTA",
+      "decimals": 18,
+      "priceUSD": 0,
+      "priceSource": null,
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0x3c8b650257cfb5f272f799f5e2b4e65093a11a05",
+      "symbol": "VELO",
+      "decimals": 18,
+      "priceUSD": 0.04162360133,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 55458.59,
+      "indexedDexes": [
+        "velodrome"
+      ],
+      "quote": {
+        "status": "quoted",
+        "amountIn": "240248312987577789",
+        "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+        "amountOut": "9968",
+        "httpStatus": 200,
+        "providerCode": 0,
+        "message": "successfully",
+        "elapsedMs": 129,
+        "checkedAtUTC": "2026-10-14T17:38:35.384Z",
+        "dexes": [
+          "uniswapv3",
+          "solidly-v3"
+        ],
+        "pools": [
+          "0xa1658249bcc69b0ab491cdc0449c0b0ea796de8d",
+          "0x2b6b093a6c2aba51e078540ad89ed76a0c6716fa"
+        ]
+      },
+      "bestIndexedPair": "0xe8537b6FF1039CB9eD0B71713f697DDbaDBb717d"
+    },
+    {
+      "address": "0x7d14206c937e70e19e3a5b94011faf0d5b3928e2",
+      "symbol": "VITA",
+      "decimals": 18,
+      "priceUSD": 0,
+      "priceSource": null,
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0x888a88eb9de9401237dbf543eaaf4b90b6574261",
+      "symbol": "VSP",
+      "decimals": 18,
+      "priceUSD": 0,
+      "priceSource": null,
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0x17b4f9da9e06d395db5de839e299cf829469e7ef",
+      "symbol": "VUSD",
+      "decimals": 18,
+      "priceUSD": 0,
+      "priceSource": null,
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0x703d57164ca270b0b330a87fd159cfef1490c0a5",
+      "symbol": "WAD",
+      "decimals": 18,
+      "priceUSD": 0.0432788385,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0x68f180fcce6836688e9084f035309e29bf0a2095",
+      "symbol": "WBTC",
+      "decimals": 8,
+      "priceUSD": 81479.2960528425,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 417789.27,
+      "indexedDexes": [
+        "uniswap",
+        "velodrome"
+      ],
+      "quote": {
+        "status": "quoted",
+        "amountIn": "12",
+        "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+        "amountOut": "9622",
+        "httpStatus": 200,
+        "providerCode": 0,
+        "message": "successfully",
+        "elapsedMs": 90,
+        "checkedAtUTC": "2026-10-14T17:38:35.784Z",
+        "dexes": [
+          "uniswap"
+        ],
+        "pools": [
+          "0x57befd16d7bbc4992463c3e5892f9b7bd5ceab0a"
+        ]
+      },
+      "bestIndexedPair": "0xCF50DEA65EE80eBDDAA61005a960ef5A5c995A99"
+    },
+    {
+      "address": "0xef4461891dfb3ac8572ccf7c794664a8dd927945",
+      "symbol": "WCT",
+      "decimals": 18,
+      "priceUSD": 0.04147413218,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 87078.03,
+      "indexedDexes": [
+        "uniswap"
+      ],
+      "quote": {
+        "status": "quoted",
+        "amountIn": "241114146924146705",
+        "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+        "amountOut": "9847",
+        "httpStatus": 200,
+        "providerCode": 0,
+        "message": "successfully",
+        "elapsedMs": 136,
+        "checkedAtUTC": "2026-10-14T17:38:36.224Z",
+        "dexes": [
+          "uniswapv3",
+          "uniswap"
+        ],
+        "pools": [
+          "0x7de4c593fe83417ca6ef98d7cf59c99d304f41c9",
+          "0x4c43646304492a925e335f2b6d840c1489f17815"
+        ]
+      },
+      "bestIndexedPair": "0x7De4c593fE83417Ca6ef98d7CF59c99d304f41c9"
+    },
+    {
+      "address": "0x346e03f8cce9fe01dcb3d0da3e9d00dc2c0e08f0",
+      "symbol": "weETH",
+      "decimals": 18,
+      "priceUSD": 0,
+      "priceSource": null,
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0x4200000000000000000000000000000000000006",
+      "symbol": "WETH",
+      "decimals": 18,
+      "priceUSD": 2437.27,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 3289143.11,
+      "indexedDexes": [
+        "uniswap",
+        "velodrome",
+        "fraxswap",
+        "beethovenx"
+      ],
+      "quote": {
+        "status": "quoted",
+        "amountIn": "4102951252836",
+        "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+        "amountOut": "10259",
+        "httpStatus": 200,
+        "providerCode": 0,
+        "message": "successfully",
+        "elapsedMs": 130,
+        "checkedAtUTC": "2026-10-14T17:38:36.670Z",
+        "dexes": [
+          "balancer-v2-weighted"
+        ],
+        "pools": [
+          "0x20ac7c9329822ee3cf61d244bd4816941b50cf7a"
+        ]
+      },
+      "bestIndexedPair": "0xa1055762336F92b4B8d2eDC032A0Ce45ead6280a"
+    },
+    {
+      "address": "0xdc6ff44d5d932cbd77b52e5612ba0529dc6226f1",
+      "symbol": "WLD",
+      "decimals": 18,
+      "priceUSD": 0.4947524376,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 64349.81,
+      "indexedDexes": [
+        "uniswap"
+      ],
+      "quote": {
+        "status": "quoted",
+        "amountIn": "20212128814380600",
+        "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+        "amountOut": "9967",
+        "httpStatus": 200,
+        "providerCode": 0,
+        "message": "successfully",
+        "elapsedMs": 86,
+        "checkedAtUTC": "2026-10-14T17:38:37.066Z",
+        "dexes": [
+          "velodrome-cl-2"
+        ],
+        "pools": [
+          "0x4e5541815227e3272c405886149f45d2f437c7ff"
+        ]
+      },
+      "bestIndexedPair": "0xD1F1baD4c9E6c44DeC1e9bF3B94902205c5Cd6C3"
+    },
+    {
+      "address": "0x871f2f2ff935fd1ed867842ff2a7bfd051a5e527",
+      "symbol": "WOO",
+      "decimals": 18,
+      "priceUSD": 0,
+      "priceSource": null,
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0x96bbd55479e9923512dcc95eb7df5edde6fb9874",
+      "symbol": "wOpenX",
+      "decimals": 18,
+      "priceUSD": 0,
+      "priceSource": null,
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0x1f32b1c2345538c0c6f582fcb022739c4a194ebb",
+      "symbol": "wstETH",
+      "decimals": 18,
+      "priceUSD": 3037.4755917315,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 187079.87,
+      "indexedDexes": [
+        "uniswap",
+        "velodrome"
+      ],
+      "quote": {
+        "status": "quoted",
+        "amountIn": "3292207524966",
+        "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+        "amountOut": "9989",
+        "httpStatus": 200,
+        "providerCode": 0,
+        "message": "successfully",
+        "elapsedMs": 86,
+        "checkedAtUTC": "2026-10-14T17:38:37.458Z",
+        "dexes": [
+          "velodrome-cl-3"
+        ],
+        "pools": [
+          "0x177f904d69ead90349ef4f358e897ccbfe2cf4d7"
+        ]
+      },
+      "bestIndexedPair": "0xEE1baC98527a9fDd57fcCf967817215B083cE1F0"
+    },
+    {
+      "address": "0xdb4ea87ff83eb1c80b8976fc47731da6a31d35e5",
+      "symbol": "wTBT",
+      "decimals": 18,
+      "priceUSD": 0.5835079784,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 0.48,
+      "indexedDexes": [
+        "uniswap"
+      ],
+      "quote": null,
+      "bestIndexedPair": "0x0BE0382a3EE50ba6A9d4CeeFc806675a77657608"
+    },
+    {
+      "address": "0xe4f27b04cc7729901876b44f4eaa5102ec150265",
+      "symbol": "XCHF",
+      "decimals": 18,
+      "priceUSD": 1.1071268522,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0xeb528f54676dc39e8d62eec1d4c1afb25c1b9bb1",
+      "symbol": "xKTON",
+      "decimals": 18,
+      "priceUSD": 0,
+      "priceSource": null,
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0x3e5d9d8a63cc8a88748f229999cf59487e90721e",
+      "symbol": "XMT",
+      "decimals": 18,
+      "priceUSD": 0.01003444708,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 7515.4,
+      "indexedDexes": [
+        "uniswap"
+      ],
+      "quote": {
+        "status": "quoted",
+        "amountIn": "996567117278573611",
+        "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+        "amountOut": "10006",
+        "httpStatus": 200,
+        "providerCode": 0,
+        "message": "successfully",
+        "elapsedMs": 85,
+        "checkedAtUTC": "2026-10-14T17:38:37.846Z",
+        "dexes": [
+          "uniswapv3",
+          "uniswap"
+        ],
+        "pools": [
+          "0xe9a72b149e8e40bab0806036727c53330c077fe2",
+          "0x4c43646304492a925e335f2b6d840c1489f17815"
+        ]
+      },
+      "bestIndexedPair": "0xe9a72b149e8E40bab0806036727C53330c077Fe2"
+    },
+    {
+      "address": "0x5ac3f9edb4896db1edc0ef9d91421e740083e6e8",
+      "symbol": "xRING",
+      "decimals": 18,
+      "priceUSD": 0,
+      "priceSource": null,
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0x9db118d43069b73b8a252bf0be49d50edbd81fc8",
+      "symbol": "XYO",
+      "decimals": 18,
+      "priceUSD": 0.003753394914,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0x9046d36440290ffde54fe0dd84db8b1cfee9107b",
+      "symbol": "YFI",
+      "decimals": 18,
+      "priceUSD": 3687.6568209226,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0xb962150760f9a3bb00e3e9cf48297ee20ada4a33",
+      "symbol": "xZOOMER",
+      "decimals": 18,
+      "priceUSD": 0,
+      "priceSource": null,
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0xd1917629b3e6a72e6772aab5dbe58eb7fa3c2f33",
+      "symbol": "ZRX",
+      "decimals": 18,
+      "priceUSD": 0.09365323106,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0x4a36562d5d7074f8ee664922b320e066e67c2a24",
+      "symbol": "ZUN",
+      "decimals": 18,
+      "priceUSD": 0.0012786377321291086,
+      "priceSource": "li.fi",
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0x805b93d5ff318cc054b46d6850af12feb55472d6",
+      "symbol": "zunETH",
+      "decimals": 18,
+      "priceUSD": 0,
+      "priceSource": null,
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0x93c3e0fa191141c957c2632752ec35c84d0c440a",
+      "symbol": "zunUSD",
+      "decimals": 18,
+      "priceUSD": 0,
+      "priceSource": null,
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    },
+    {
+      "address": "0x6e4cc0ab2b4d2edafa6723cfa1582229f1dd1be1",
+      "symbol": "ZUSD",
+      "decimals": 6,
+      "priceUSD": 0,
+      "priceSource": null,
+      "bestIndexedLiquidityUSD": 0,
+      "indexedDexes": [],
+      "quote": null
+    }
+  ],
+  "method": {
+    "quotedUSDApprox": 0.01,
+    "provider": "Kyber public route API",
+    "timeoutMs": 8000,
+    "minimumPauseMs": 300,
+    "minimumIndexedLiquidityUSD": 1000,
+    "buildOrExecutionTest": false,
+    "warning": "Recorded prices size inputs approximately and may be stale; positive routes do not establish fair value or execution."
+  },
+  "selectedEntries": 51,
+  "quoteProgress": {
+    "completed": 51,
+    "selected": 51
+  },
+  "completedAtUTC": "2026-10-14T17:38:38.152Z",
+  "summary": {
+    "listed": 195,
+    "priced": 132,
+    "unpriced": 63,
+    "indexedLiquidityAbove1000USD": 51,
+    "liquidityBackedQuoted": 51,
+    "quoted": 51,
+    "noValidQuote": 0,
+    "providerTransient": 0,
+    "notAttempted": 144,
+    "amountNotRepresentable": 0
+  }
+}

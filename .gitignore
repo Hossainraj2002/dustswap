@@ -55,6 +55,7 @@ docs/*
 !docs/docs.json
 !docs/favicon.svg
 !docs/tokenomics.md
+!docs/dustsweep-optimism-10-plan.md
 docs/site/
 docs/.cache/
 

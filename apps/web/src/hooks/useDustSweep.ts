@@ -54,6 +54,13 @@ import {
   requestWalletSendCalls,
 } from "@/lib/dustsweep-wallet-rpc";
 import { DATA_SUFFIX } from "@/lib/builderCode";
+import {
+  combineSweepReceiptResults,
+  estimateReceiptOutputUsd,
+  parseSweepReceiptLogs,
+  type SweepReceiptLog,
+  type SweepReceiptResult,
+} from "@/lib/dustsweep-results";
 import { buildBasePaymasterCapabilities } from "@/lib/paymaster";
 import { USDC_ADDRESS, WETH_ADDRESS } from "@/lib/tokens";
 import {
@@ -151,6 +158,8 @@ export type UseDustSweepReturn = {
   switchChain: () => Promise<boolean>;
   swappableTokens: SwappableToken[];
   unavailableTokens: UnavailableToken[];
+  /** Discovery filters plus current quote failures, for the full token picker. */
+  pickerUnavailableTokens: UnavailableToken[];
   selectedTokens: SelectedToken[];
   tokenOut: Token | null;
   quote: DustSweepQuoteResponse | null;
@@ -281,6 +290,7 @@ function normalizeQuotePayload(payload: unknown): DustSweepQuoteResponse {
 // transient and is eligible for carry-forward.
 const DEFINITIVE_SKIP_REASONS = new Set<UnavailableReason>([
   "CANT_TRANSFER",
+  "BALANCE_CHANGED",
   "BELOW_THRESHOLD",
   "NOT_WHITELISTED",
   "NATIVE_WRAP_REQUIRED",
@@ -868,6 +878,13 @@ export function useDustSweep(options?: { chainId?: number }): UseDustSweepReturn
   }, [atomicStatus, delegation.info, walletProfileBase]);
 
   const allSwappableTokens = balances.swappableTokens;
+  // Keep every discovered balance visible in the picker, including filtered assets.
+  // Quote failures take priority for duplicate addresses; the selected-route panel
+  // keeps its separate unavailableTokens list and remove/clear behavior.
+  const pickerUnavailableTokens = useMemo(
+    () => mergeUnavailableTokens(balances.unavailableTokens, unavailableTokens),
+    [balances.unavailableTokens, unavailableTokens],
+  );
   const outputTokens = useMemo(() => {
     const byAddress = new Map<string, Token>();
     for (const token of [...balances.swappableTokens, ...balances.unavailableTokens]) {
@@ -897,6 +914,7 @@ export function useDustSweep(options?: { chainId?: number }): UseDustSweepReturn
     setExecutionNotice(null);
     setSelectedTokens([]);
     setQuote(null);
+    setCompletionSummary(null);
     setQuoteError(null);
     setTxHash(null);
     setError(null);
@@ -919,10 +937,12 @@ export function useDustSweep(options?: { chainId?: number }): UseDustSweepReturn
     setQuote(null);
     setQuoteError(null);
     setTxHash(null);
+    setCompletionSummary(null);
     setError(null);
     setSweepStep("idle");
     setExecutionNotice(null);
     setAutoMode(false);
+    okxOneClickAbandonedRef.current = false;
   }, [sweepChainId, sweepChain.outputTokens]);
 
   useEffect(() => {
@@ -935,13 +955,15 @@ export function useDustSweep(options?: { chainId?: number }): UseDustSweepReturn
     }
   }, [address, isConnected]);
 
-  // Carried routes are only valid for a fixed (account, output token, slippage). When any
+  // Carried routes are only valid for a fixed (chain, account, output token, slippage). When any
   // of those change, every cached route is stale — drop them so nothing is carried across.
   // Deliberately NOT keyed on selectedTokens: surviving add/remove is the entire purpose.
   useEffect(() => {
+    quoteRequestSeqRef.current += 1;
+    setIsQuoting(false);
     carriedRoutesRef.current.clear();
     lastQuoteMetaRef.current = null;
-  }, [address, tokenOut, slippageBps]);
+  }, [sweepChainId, address, tokenOut, slippageBps]);
 
   useEffect(() => {
     if (tokenOut) {
@@ -971,7 +993,17 @@ export function useDustSweep(options?: { chainId?: number }): UseDustSweepReturn
 
     let cancelled = false;
     const chainIdHex = `0x${sweepChainId.toString(16)}`;
+    // Delegation and capability support belong to the selected network. Do not
+    // let the previous chain's result choose an execution lane during a probe.
+    setSupportsWalletSendCalls(false);
+    setAtomicStatus("unknown");
+    setDelegation({ address: null, info: { state: "none" } });
     setIsDetectingRoute(true);
+    // Some injected providers never settle unsupported capability requests.
+    // Release the UI to the existing unknown-capability fallback in that case.
+    const detectionTimeout = window.setTimeout(() => {
+      if (!cancelled) setIsDetectingRoute(false);
+    }, 10_000);
 
     // (b) Can the connected wallet batch atomically right now? (wallet_getCapabilities)
     async function detectCapabilities() {
@@ -1054,13 +1086,15 @@ export function useDustSweep(options?: { chainId?: number }): UseDustSweepReturn
     }
 
     void Promise.allSettled([detectCapabilities(), detectDelegation()]).finally(() => {
+      window.clearTimeout(detectionTimeout);
       if (!cancelled) setIsDetectingRoute(false);
     });
 
     return () => {
       cancelled = true;
+      window.clearTimeout(detectionTimeout);
     };
-  }, [address, walletClient, walletProfileBase.walletKey, publicClient]);
+  }, [sweepChainId, address, walletClient, walletProfileBase.walletKey, publicClient]);
 
   // ── Route resolution (single source of truth; UI never derives this) ──
   // Matrix from docs/eip7702-delegation-aware-workflow.md §4, hardened against
@@ -1164,6 +1198,8 @@ export function useDustSweep(options?: { chainId?: number }): UseDustSweepReturn
   }, [routeKind, delegation]);
 
   useEffect(() => {
+    quoteRequestSeqRef.current += 1;
+    setIsQuoting(false);
     setQuote(null);
     setQuoteError(null);
     setExecutionNotice(null);
@@ -1390,7 +1426,7 @@ export function useDustSweep(options?: { chainId?: number }): UseDustSweepReturn
     } finally {
       if (!isStale()) setIsQuoting(false);
     }
-  }, [address, removeFailedTokens, selectedTokens, slippageBps, tokenOut]);
+  }, [sweepChainId, sweepChain.weth, address, removeFailedTokens, selectedTokens, slippageBps, tokenOut]);
 
   useEffect(() => {
     if (!address || !tokenOut || selectedTokens.length === 0) {
@@ -1641,7 +1677,7 @@ export function useDustSweep(options?: { chainId?: number }): UseDustSweepReturn
     throw lastError instanceof Error
       ? lastError
       : new Error("TokenPocket transaction failed");
-  }, [address, walletClient]);
+  }, [sweepChainId, address, walletClient]);
 
   const sendTokenApprovals = useCallback(async (
     approvalRequirements: ApprovalRequirement[],
@@ -1715,6 +1751,8 @@ export function useDustSweep(options?: { chainId?: number }): UseDustSweepReturn
     }
   }, [
     address,
+    sweepChain.chain,
+    sweepChain.paymasterEligible,
     sendTokenPocketRawTransaction,
     waitForSuccessfulTransaction,
     walletClient,
@@ -1791,7 +1829,7 @@ export function useDustSweep(options?: { chainId?: number }): UseDustSweepReturn
       }
     }
     throw lastError instanceof Error ? lastError : new Error("TokenPocket wallet_sendCalls failed");
-  }, [address, walletClient]);
+  }, [sweepChainId, address, walletClient]);
 
   // Sends all approvals as a single wallet_sendCalls batch so TokenPocket shows
   // them all at once (see sendTokenPocketWalletSendCalls). TP estimates the gas.
@@ -2096,7 +2134,7 @@ export function useDustSweep(options?: { chainId?: number }): UseDustSweepReturn
     }
 
     throw new Error("Bundled sweep timed out before a transaction hash was available");
-  }, [walletClient]);
+  }, [sweepChainId, sweepChain.chain, walletClient]);
 
   const executeSweep = useCallback(async () => {
     if (!address || !walletClient || !publicClient) {
@@ -2109,8 +2147,19 @@ export function useDustSweep(options?: { chainId?: number }): UseDustSweepReturn
       return null;
     }
 
+    if (isDetectingRoute) {
+      setExecutionNotice("Checking wallet support on this network. Please wait.");
+      return null;
+    }
+
     if (!tokenOut || !quote || selectedTokens.length === 0) {
       setError("Select tokens and wait for a route");
+      return null;
+    }
+
+    if (quote.chainId != null && quote.chainId !== sweepChainId) {
+      setError("Network changed. Refreshing quote.");
+      await refreshQuote();
       return null;
     }
 
@@ -2230,11 +2279,12 @@ export function useDustSweep(options?: { chainId?: number }): UseDustSweepReturn
           inputValueUSD: wethToken?.valueUSD || quote.wethUnwrap.valueUSD,
           feeAmountUSD: 0,
           gasEstimateUSD: quote.gasEstimateUSD,
-          routeCount: 0,
+          routeCount: wethToken ? 1 : 0,
           walletName: walletProfile.walletName,
           routeKind,
           completedAt: Date.now(),
           chainId: sweepChainId,
+          outputSource: "unwrap",
           inputs: wethToken
             ? [
                 {
@@ -2294,6 +2344,15 @@ export function useDustSweep(options?: { chainId?: number }): UseDustSweepReturn
 
       const buildTx = payload as DustSweepBuildTxResponse;
       let canonicalCalldata = buildTx.calldata;
+      const updateBuildMinimum = (built: DustSweepBuildTxResponse) => {
+        if (built.minAmountOut == null) return;
+        setQuote((current) => current === quote || current?.routes === quote.routes ? {
+          ...current,
+          minAmountOut: built.minAmountOut,
+          feeBps: built.feeBpsOverride ?? current.feeBps,
+        } : current);
+      };
+      updateBuildMinimum(buildTx);
 
       // Tokens the backend pre-flight dropped because their transferFrom would
       // revert the atomic pull (transfer tax / max-tx / blacklist / honeypot).
@@ -2390,6 +2449,7 @@ export function useDustSweep(options?: { chainId?: number }): UseDustSweepReturn
                 : "Failed to finalize V3 sweep transaction";
             throw new Error(message);
           }
+          updateBuildMinimum(v3Payload as DustSweepBuildTxResponse);
           canonicalCalldata = v3Payload.calldata as Hex;
         } else {
           canonicalCalldata = encodeDustSweepV2Calldata(buildTx, signature);
@@ -2407,6 +2467,21 @@ export function useDustSweep(options?: { chainId?: number }): UseDustSweepReturn
       : undefined;
       const txValue = buildTx.value ? BigInt(buildTx.value) : 0n;
       const sweepTarget = buildTx.routerAddress || buildTx.contractAddress;
+      const confirmedSweepResults = new Map<Hex, SweepReceiptResult | null>();
+      const confirmSweepResult = async (hash: Hex, routerAddress: Address) => {
+        if (confirmedSweepResults.has(hash)) return;
+        const receipt = await waitForSuccessfulTransaction(hash);
+        if (receipt.transactionHash && !isSameAddress(receipt.transactionHash, hash)) {
+          throw new Error("Wallet returned a receipt for a different transaction");
+        }
+        confirmedSweepResults.set(hash, parseSweepReceiptLogs(receipt.logs as SweepReceiptLog[], {
+          routerAddress,
+          userAddress: address,
+          recipient: address,
+          outputToken: tokenOut.address,
+          transactionHash: hash,
+        }));
+      };
       const hasV2Approvals = isOwnedModernLane(lane) && approvalRequirements.length > 0;
       // (A/B) OKX can submit a raw wallet_sendCalls bundle even when
       // wallet_getCapabilities is unknown/unreliable. We only reach the batch route
@@ -2739,7 +2814,7 @@ export function useDustSweep(options?: { chainId?: number }): UseDustSweepReturn
           setExecutionNotice(notice);
         }
 
-        const routeChunks = chunkWalletCalls(quote.routes, OKX_COMBINED_CHUNK_SIZE);
+        const routeChunks = chunkWalletCalls(effectiveRoutes, OKX_COMBINED_CHUNK_SIZE);
         let lastHash: Hex | null = null;
 
         for (let index = 0; index < routeChunks.length; index += 1) {
@@ -2756,9 +2831,22 @@ export function useDustSweep(options?: { chainId?: number }): UseDustSweepReturn
           ) {
             throw new Error("OKX chunked combined batch requires the allowance lane");
           }
+          const chunkDropped = new Set((chunkBuild.skippedTokens ?? []).map((entry) => entry.token.toLowerCase()));
+          for (const token of chunkDropped) droppedAddresses.add(token);
+          const chunkEffectiveRoutes = chunkRoutes.filter((route) => !chunkDropped.has(route.tokenIn.toLowerCase()));
+          if (chunkDropped.size > 0) {
+            const droppedTokens = selectedTokens
+              .filter((token) => chunkDropped.has(token.address.toLowerCase()))
+              .map((token) => ({ ...token, reason: "CANT_TRANSFER" as UnavailableReason }));
+            setUnavailableTokens((current) => mergeUnavailableTokens(current, droppedTokens));
+            setQuoteFailedTokenAddresses((current) => Array.from(new Set([
+              ...current, ...droppedTokens.map((token) => token.address.toLowerCase()),
+            ])));
+          }
+          if (chunkEffectiveRoutes.length === 0) continue;
           const chunkSpender = (chunkBuild.approvalSpender || approvalSpender) as Address;
           const chunkApprovals = await getTokenApprovalRequirements(
-            chunkRoutes,
+            chunkEffectiveRoutes,
             chunkSpender,
           );
           // OKX: clean exact ERC20 approve calldata (no builder suffix) so OKX can
@@ -2769,7 +2857,7 @@ export function useDustSweep(options?: { chainId?: number }): UseDustSweepReturn
           const chunkValue = chunkBuild.value ? BigInt(chunkBuild.value) : 0n;
 
           // WETH→ETH unwrap joins the FIRST chunk only (clean ABI call, sweep stays last).
-          const chunkIncludesUnwrap = index === 0 && Boolean(wethUnwrapCall && !wethUnwrapDone);
+          const chunkIncludesUnwrap = Boolean(wethUnwrapCall && !wethUnwrapDone);
           const chunkCalls: WalletSendCall[] = [
             ...(chunkIncludesUnwrap && wethUnwrapCall ? [wethUnwrapCall] : []),
             ...chunkApprovalCalls,
@@ -2798,7 +2886,7 @@ export function useDustSweep(options?: { chainId?: number }): UseDustSweepReturn
             requireAtomic: true,
             appendDataSuffixes: true,
           });
-          await waitForSuccessfulTransaction(chunkHash);
+          await confirmSweepResult(chunkHash, chunkSweepTarget);
           if (chunkIncludesUnwrap) wethUnwrapDone = true;
           lastHash = chunkHash;
         }
@@ -3173,12 +3261,15 @@ export function useDustSweep(options?: { chainId?: number }): UseDustSweepReturn
       }
 
       setTxHash(hash);
-      await waitForSuccessfulTransaction(hash);
+      await confirmSweepResult(hash, sweepTarget);
+      const receiptResult = combineSweepReceiptResults([...confirmedSweepResults.values()]);
       // Sweep completed — clear the OKX fallback flag for the next sweep.
       okxOneClickAbandonedRef.current = false;
 
       const completedInputs: DustSweepCompletionSummary["inputs"] = [];
+      const executedTokens = receiptResult?.executedTokens;
       for (const route of effectiveRoutes) {
+        if (!receiptResult || (executedTokens && !executedTokens.some((token) => isSameAddress(token, route.tokenIn)))) continue;
         const token = selectedTokens.find((item) =>
           isSameAddress(item.address, route.tokenIn),
         );
@@ -3225,15 +3316,18 @@ export function useDustSweep(options?: { chainId?: number }): UseDustSweepReturn
       setCompletionSummary({
         txHash: hash,
         tokenOut,
-        tokenOutAmount: (
-          BigInt(quote.netEstimatedOut || quote.totalEstimatedOut || "0") + unwrapOutAmount
-        ).toString(),
-        tokenOutValueUSD:
-          (quote.netEstimatedOutUSD ?? quote.totalEstimatedOutUSD) + unwrapOutUSD,
+        tokenOutAmount: receiptResult ? (receiptResult.netAmountOut + unwrapOutAmount).toString() : null,
+        tokenOutValueUSD: receiptResult
+          ? (() => { const usd = estimateReceiptOutputUsd(quote, receiptResult.netAmountOut); return usd == null ? null : usd + unwrapOutUSD; })()
+          : null,
         inputValueUSD: completedInputs.reduce((sum, token) => sum + (token.valueUSD || 0), 0),
-        feeAmountUSD: quote.feeAmountUSD,
+        feeAmountUSD: receiptResult ? estimateReceiptOutputUsd(quote, receiptResult.feeAmount) ?? 0 : 0,
         gasEstimateUSD: quote.gasEstimateUSD,
-        routeCount: effectiveRoutes.length + (wethUnwrapDone ? 1 : 0),
+        routeCount: (receiptResult?.executedRouteCount ?? 0) + (wethUnwrapDone ? 1 : 0),
+        skippedRouteCount: (receiptResult?.skippedRouteCount ?? 0) + droppedAddresses.size,
+        refundedTokenCount: receiptResult?.refundedTokens.length ?? 0,
+        refundFailedTokenCount: receiptResult?.refundFailedTokens.length ?? 0,
+        outputSource: receiptResult ? "receipt" : "unavailable",
         walletName: walletProfile.walletName,
         routeKind,
         completedAt: Date.now(),
@@ -3243,14 +3337,17 @@ export function useDustSweep(options?: { chainId?: number }): UseDustSweepReturn
 
       setSweepStep("success");
       logSweepTelemetry("success");
+      // This advisory record belongs to the final transaction, while the modal
+      // can combine several independently confirmed OKX chunks.
+      const recordedReceipt = confirmedSweepResults.get(hash);
       await fetch("/api/dustsweep/record-sweep", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           txHash: hash,
           userAddress: address,
-          tokensSwapped: effectiveRoutes.length,
-          valueUSD: quote.totalEstimatedOutUSD,
+          tokensSwapped: recordedReceipt?.executedRouteCount ?? effectiveRoutes.length,
+          valueUSD: recordedReceipt ? estimateReceiptOutputUsd(quote, recordedReceipt.grossAmountOut) ?? 0 : quote.totalEstimatedOutUSD,
           walletKey: walletProfile.walletKey,
           delegateAddress: delegation.address,
           delegateLabel:
@@ -3311,9 +3408,12 @@ export function useDustSweep(options?: { chainId?: number }): UseDustSweepReturn
     }
   }, [
     address,
+    sweepChainId,
+    sweepChain,
     batchMode,
     delegation,
     getTokenApprovalRequirements,
+    isDetectingRoute,
     permit2SetupCount,
     publicClient,
     quote,
@@ -3362,6 +3462,7 @@ export function useDustSweep(options?: { chainId?: number }): UseDustSweepReturn
     switchChain,
     swappableTokens,
     unavailableTokens,
+    pickerUnavailableTokens,
     selectedTokens,
     tokenOut,
     quote,

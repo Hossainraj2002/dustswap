@@ -1,5 +1,5 @@
 import { createPublicClient, custom, defineChain, type Chain } from "viem";
-import { arbitrum, bsc, mainnet } from "viem/chains";
+import { arbitrum, bsc, mainnet, optimism } from "viem/chains";
 import {
   alchemyRpcRequest,
   baseRpcRequest,
@@ -29,6 +29,7 @@ export const ETHEREUM_CHAIN_ID = 1;
 export const BSC_CHAIN_ID = 56;
 export const ROBINHOOD_CHAIN_ID = 4663;
 export const ARBITRUM_CHAIN_ID = 42161;
+export const OPTIMISM_CHAIN_ID = 10;
 const BASE_CHAIN_ID = 8453;
 
 // viem (2.46/2.52 in this workspace) ships no Robinhood Chain definition — define it locally.
@@ -75,6 +76,20 @@ type ChainRpcSettings = {
 };
 
 const CHAIN_RPC_SETTINGS: Record<number, ChainRpcSettings> = {
+  [OPTIMISM_CHAIN_ID]: {
+    chainId: OPTIMISM_CHAIN_ID,
+    chain: optimism,
+    publicRpcUrl: "https://mainnet.optimism.io",
+    alchemyHost: "opt-mainnet.g.alchemy.com",
+    alchemyKeyEnvs: ["ALCHEMY_OPTIMISM_RPC_KEYS", "ALCHEMY_OPTIMISM_RPC_KEY"],
+    alchemyUrlEnvs: ["ALCHEMY_OPTIMISM_RPC_URLS", "ALCHEMY_OPTIMISM_RPC"],
+    rpcUrlEnvs: ["OPTIMISM_RPC_URLS", "OPTIMISM_RPC_URL"],
+    rotationCallsEnv: "OPTIMISM_RPC_ROTATION_CALLS",
+    publicFallbackEnv: "OPTIMISM_RPC_PUBLIC_FALLBACK",
+    dedicatedOnlyEnv: "ALCHEMY_OPTIMISM_RPC_DEDICATED_ONLY",
+    // Hosted Blockscout RPC is independent of the public REST discovery fallback.
+    blockscoutSupported: false,
+  },
   [ETHEREUM_CHAIN_ID]: {
     chainId: ETHEREUM_CHAIN_ID,
     chain: mainnet,

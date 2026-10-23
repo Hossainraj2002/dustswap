@@ -1,0 +1,26 @@
+{
+  "date": "2026-10-16",
+  "typeScriptErrors": 0,
+  "productionBuildExitCode": 0,
+  "staticPagesGenerated": 32,
+  "desktopViewport": { "width": 1280, "height": 720 },
+  "desktopWidgetCenterX": 758,
+  "desktopGuideCenterX": 758,
+  "mobileViewportsChecked": [
+    { "width": 320, "height": 740 },
+    { "width": 375, "height": 812 }
+  ],
+  "mobileMenuFits": true,
+  "networkButtonsWidth": 44,
+  "networkButtonsHeight": 44,
+  "networkButtonsHaveVisibleText": false,
+  "keyboardNetworkSwitchPassed": true,
+  "headerPickerOutputNetworkSyncPassed": true,
+  "overlappingModalFocusAndEscapePassed": true,
+  "scrollAndFocusRestorationPassed": true,
+  "temporaryQaRouteRemoved": true,
+  "gitPushed": false,
+  "cloudflareDeployed": false,
+  "walletConnected": false,
+  "transactionsSent": 0
+}

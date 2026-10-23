@@ -8,6 +8,8 @@
     "start": "next start --port 3000",
     "lint": "next lint",
     "test:wallet-rpc": "node --experimental-strip-types --test tests/dustsweep-wallet-rpc.test.mjs",
+    "test:sweep-chain-parity": "node --experimental-strip-types --test tests/dustsweep-chain-parity.test.mjs",
+    "test:sweep-results": "node --experimental-strip-types --test tests/dustsweep-results.test.mjs",
     "type-check": "tsc --noEmit",
     "preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
     "deploy": "opennextjs-cloudflare build && opennextjs-cloudflare deploy -- --keep-vars",

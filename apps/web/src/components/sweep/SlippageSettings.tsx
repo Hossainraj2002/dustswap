@@ -1,6 +1,7 @@
 "use client";
 
 import { type ReactNode, useEffect, useState } from "react";
+import { SweepModal } from "@/components/sweep/SweepModal";
 
 function cx(...parts: Array<string | false | null | undefined>) {
   return parts.filter(Boolean).join(" ");
@@ -118,8 +119,8 @@ export function SlippageSettings({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-[95] flex items-end justify-center bg-slate-950/45 px-0 backdrop-blur-sm sm:items-center sm:px-4">
-      <div className="w-full max-w-[400px] rounded-t-[24px] bg-white p-5 shadow-[0_30px_90px_rgba(15,23,42,0.28)] dark:bg-[#0b1220] sm:rounded-[24px]">
+    <SweepModal onClose={onClose} label="Sweep settings" layer={95}>
+      <div className="max-h-[86dvh] w-full max-w-[400px] overflow-y-auto overscroll-contain rounded-[24px] bg-white p-5 shadow-[0_30px_90px_rgba(15,23,42,0.28)] dark:bg-[#0b1220]">
         <div className="mb-5 flex items-center justify-between">
           <h2 className="text-xl font-bold tracking-[-0.01em] text-slate-950 dark:text-white">Settings</h2>
           <button
@@ -206,6 +207,6 @@ export function SlippageSettings({
           </SettingRow>
         </div>
       </div>
-    </div>
+    </SweepModal>
   );
 }

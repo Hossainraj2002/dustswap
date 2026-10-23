@@ -1,0 +1,332 @@
+{
+  "createdAt": "2026-10-15T17:28:04.487Z",
+  "sourceHead": "24bd21a2c476844fa639434a68be8d2eb9ca111f",
+  "releaseDirectory": "output/optimism-activation-20261015/release-api",
+  "railwayServiceRootDirectory": "/apps/api",
+  "archiveRootContains": "apps/api",
+  "runtimeEntry": "apps/api/src/index.ts",
+  "runtimeSourceCount": 53,
+  "fileCount": 57,
+  "totalBytes": 1715833,
+  "secretScan": {
+    "result": "pass",
+    "findings": 0,
+    "categories": [
+      "private-key-pem",
+      "aws-access-key-id",
+      "github-token",
+      "credential-url",
+      "database-credential-url",
+      "literal-jwt",
+      "literal-private-key",
+      "hardcoded-secret"
+    ],
+    "printsMatchedValues": false
+  },
+  "excluded": [
+    "all .env* files",
+    "data",
+    "node_modules",
+    "dist",
+    "output",
+    "credentials/private keys",
+    "tests",
+    "SQL/admin/maintenance scripts",
+    "unused bots and TypeScript sources outside runtime import closure"
+  ],
+  "knownRuntimeFallback": "Footprint private allowlist data intentionally excluded; footprintAirdrop logs a warning and falls back to on-chain activity when missing.",
+  "ancillaryPackageScripts": "package.json preserved verbatim. Only build/start are deployment targets; excluded admin/bot/test scripts are unavailable in this curated payload.",
+  "files": [
+    {
+      "path": "apps/api/package.json",
+      "bytes": 2554,
+      "sha256": "c24f548cb69dd97b7afdd102225395b9050bbe542f6593107ac6545934e8dbf1"
+    },
+    {
+      "path": "apps/api/pnpm-lock.yaml",
+      "bytes": 199094,
+      "sha256": "b00a7856895f7d92fe61e45e16702fe054f32296b3a8f39984d71e9fdba17603"
+    },
+    {
+      "path": "apps/api/pnpm-workspace.yaml",
+      "bytes": 18,
+      "sha256": "226909e7726c235c6b854540949bc8144625420ccdd6298fca1f7885d8bfe524"
+    },
+    {
+      "path": "apps/api/src/config/appOrigins.ts",
+      "bytes": 2417,
+      "sha256": "9281fb54c62b269aafd77f69df5da10ffbdef06595c6939b144cdc55b1b81393"
+    },
+    {
+      "path": "apps/api/src/config/dustsweepV3Sources.ts",
+      "bytes": 41447,
+      "sha256": "a33a36c1f75952af7ea2c98d499d033c8df74ec3e94e523e6c1c9bbb90e8e255"
+    },
+    {
+      "path": "apps/api/src/config/feeRates.ts",
+      "bytes": 3514,
+      "sha256": "7912a769d3cf75d2fcf4387871de0303eaa29c5efa8a53c7f0e5ae3aa03d1daa"
+    },
+    {
+      "path": "apps/api/src/config/swapChains.ts",
+      "bytes": 4812,
+      "sha256": "657b5a1e3a119bcf081c1cee937a0351f9c58fccbeacd48f7b029d99149dfaa3"
+    },
+    {
+      "path": "apps/api/src/config/swapownSources.ts",
+      "bytes": 10936,
+      "sha256": "06625730ae2f5ef70c9b18c23037f7bf47c730241b277fcc7e222bb4a64fca00"
+    },
+    {
+      "path": "apps/api/src/config/sweepChains.ts",
+      "bytes": 39793,
+      "sha256": "72bdea74d9554eb721257018657bb1bfaf5592f8a2ec80843f2a2d3b17653f90"
+    },
+    {
+      "path": "apps/api/src/index.ts",
+      "bytes": 11976,
+      "sha256": "4da09baa386b76889ed4d46fde8147527d2d836f4f8a35ff91c3f7fbe8ca56f8"
+    },
+    {
+      "path": "apps/api/src/lib/aggregatorGovernor.ts",
+      "bytes": 8588,
+      "sha256": "bcf57d484a50def1e23d195bed64f279d03fe2c32232dae376ee4b4bce500f58"
+    },
+    {
+      "path": "apps/api/src/lib/db.ts",
+      "bytes": 4021,
+      "sha256": "51fca6f16df10657f84831bf837a272fc2d58a755d8d6d287669b3cd5d858929"
+    },
+    {
+      "path": "apps/api/src/lib/dustsweepSolidly.ts",
+      "bytes": 3609,
+      "sha256": "81a968af763a404c0b938a9d87e7e2b824450843f39aec6531caf673df777eb8"
+    },
+    {
+      "path": "apps/api/src/lib/multicallBatcher.ts",
+      "bytes": 8725,
+      "sha256": "6acb369ad74e66d1c9c7172473a7f05fe10bb5a216e7c345c04617886eed067a"
+    },
+    {
+      "path": "apps/api/src/middleware/requireWalletAuth.ts",
+      "bytes": 1552,
+      "sha256": "6c50c8f4513668283de585ec261866d034a31ea1b626a7f3508ca9d97ea1d84d"
+    },
+    {
+      "path": "apps/api/src/routes/adminUsers.ts",
+      "bytes": 31607,
+      "sha256": "a148557f0cbf53b1233d669a5f939643816a3f35e11d95fb752104fc1d66a052"
+    },
+    {
+      "path": "apps/api/src/routes/auth.ts",
+      "bytes": 6725,
+      "sha256": "afa986f00b26518c994e1f47f832e5e5947b42938eb68b319d59b297e1a6c783"
+    },
+    {
+      "path": "apps/api/src/routes/dustsweep.ts",
+      "bytes": 329868,
+      "sha256": "b9a9525bc8e5df18ef8e97b01d82b0254d78d7b206244d558dcfab27091b7f55"
+    },
+    {
+      "path": "apps/api/src/routes/monitor.ts",
+      "bytes": 3748,
+      "sha256": "9f884bb49e68713f8f97cd2eef35d65045ae952498fd10dfe4a8911e23aed627"
+    },
+    {
+      "path": "apps/api/src/routes/notifications.ts",
+      "bytes": 5251,
+      "sha256": "b166650f1854fa56a5262b74b6da21f7286eb384cd9ca1390c98e6f01f97ce1a"
+    },
+    {
+      "path": "apps/api/src/routes/partner.ts",
+      "bytes": 9239,
+      "sha256": "3c8209ee036822c97fe7a4cd7af69869f754c0bfa053c00b5570b38368412ca1"
+    },
+    {
+      "path": "apps/api/src/routes/points.ts",
+      "bytes": 17665,
+      "sha256": "91bc89b454a34424e035f75314c9a9735401988f609f1e5ee77de25756850a57"
+    },
+    {
+      "path": "apps/api/src/routes/profileCompletion.ts",
+      "bytes": 2862,
+      "sha256": "d1b5ee19ed58ae0bda02587f0e9d4a9258f782f020d7fde9ee910d25ffe50cf1"
+    },
+    {
+      "path": "apps/api/src/routes/profileSettings.ts",
+      "bytes": 4844,
+      "sha256": "99e71e4a1e9a76480c7bfb9a626316d302be229053e0c5edf383ce96c1f2042f"
+    },
+    {
+      "path": "apps/api/src/routes/quests.ts",
+      "bytes": 17327,
+      "sha256": "6505db9b091fabd84501fbfbd666bd7f0c92861a0e4d8edfd49f2ac499fb7991"
+    },
+    {
+      "path": "apps/api/src/routes/swapown.ts",
+      "bytes": 27527,
+      "sha256": "9a583441eba9f0c453ad6e518a0f7892e97fb0a61eddfaf0be7c49d4811f90e0"
+    },
+    {
+      "path": "apps/api/src/routes/swaps.ts",
+      "bytes": 5839,
+      "sha256": "c4535bac3ad17fe3c59484f57081cbefb7abcbe0ae320a9a25ae023c41f7725a"
+    },
+    {
+      "path": "apps/api/src/routes/sweepCampaign.ts",
+      "bytes": 7690,
+      "sha256": "697479e08d9d23bc1ad34a80e324678d3e4c268430bf7521738c33c3bf611a99"
+    },
+    {
+      "path": "apps/api/src/routes/tokens.ts",
+      "bytes": 45430,
+      "sha256": "894ff9a41ce8d31be971f41fe07669f695eecdaa3953736d6d19a3a9654874ca"
+    },
+    {
+      "path": "apps/api/src/routes/walletLink.ts",
+      "bytes": 2946,
+      "sha256": "04a4d925cd638311cf4bca1ab77cc1cc31b1fb460a63d7928f34d693f50929fc"
+    },
+    {
+      "path": "apps/api/src/services/adminWalletReplacement.ts",
+      "bytes": 12124,
+      "sha256": "abfa163f8736bc631aea8013a3fa59f7efce82addb8ea504d19adf5a4440355c"
+    },
+    {
+      "path": "apps/api/src/services/baseNotifications.ts",
+      "bytes": 13893,
+      "sha256": "3f15e635b88b806d8c2a12321c924fc53434a72f1ea6f525b046c880d7f003b8"
+    },
+    {
+      "path": "apps/api/src/services/blockscoutClient.ts",
+      "bytes": 7105,
+      "sha256": "fdc34372868f04c261a4453d284a7a6feb70a51dda8c8cf3a98621f4efeff6f2"
+    },
+    {
+      "path": "apps/api/src/services/discordVerification.ts",
+      "bytes": 13155,
+      "sha256": "dcceebdb5400ec56a6492c1bb97d48d3ccb316dbe77057d3605e1ceec3003cb7"
+    },
+    {
+      "path": "apps/api/src/services/footprintAirdrop.ts",
+      "bytes": 7760,
+      "sha256": "e39cdbefeb0de01b58efef9b94aa56931f5d39a46d3535f0e046c79401b3dde2"
+    },
+    {
+      "path": "apps/api/src/services/monitoring.ts",
+      "bytes": 25658,
+      "sha256": "b5b6353b2e6abfadd9728d0604248b11e26cbc44973981d1fe50c2f309b201cd"
+    },
+    {
+      "path": "apps/api/src/services/notificationCampaigns.ts",
+      "bytes": 22745,
+      "sha256": "01a640e1d9b897eaa5a52c1c0f02252ddea81536aa17c0567ee98d46af59f2d3"
+    },
+    {
+      "path": "apps/api/src/services/notificationScheduler.ts",
+      "bytes": 26686,
+      "sha256": "cea3368d3f656f2030b58668428535228abab58ad846ab1aaa7dcd59ccc66008"
+    },
+    {
+      "path": "apps/api/src/services/partnerProgram.ts",
+      "bytes": 66887,
+      "sha256": "6787b2631fc0c09854b9153fad4ea7f37318d6e1884a364eac22f7dc5706e865"
+    },
+    {
+      "path": "apps/api/src/services/pointsEngine.ts",
+      "bytes": 185113,
+      "sha256": "3fc3930f69b04b6e5bf718c185556cbc86dbd659eb7b04f04e6f8f38ea66830c"
+    },
+    {
+      "path": "apps/api/src/services/postgres.ts",
+      "bytes": 17651,
+      "sha256": "896e9e4ae3a43e8abf7e4350af92a61e5514f1e745afc58bade5ff33a93aa661"
+    },
+    {
+      "path": "apps/api/src/services/profileCompletion.ts",
+      "bytes": 23611,
+      "sha256": "6c9712a95ccc773ff2f76ad7050374ed68e19348117ea4800718b8d8338b7eb5"
+    },
+    {
+      "path": "apps/api/src/services/profileSettings.ts",
+      "bytes": 23119,
+      "sha256": "3e3d6d44c35d20e84bb88b0b6ea23d99c5542209664b69d048e449fd6a3eaffc"
+    },
+    {
+      "path": "apps/api/src/services/questEngine.ts",
+      "bytes": 136876,
+      "sha256": "0c6edb29186cb818ddbcbe97aaa68067d86641348b7d5d2d24fabaaf0b19528f"
+    },
+    {
+      "path": "apps/api/src/services/repostQuestRewards.ts",
+      "bytes": 21469,
+      "sha256": "968bcc67d6fcefc625c70105904a95ced0d77c06ab9c9ceb450bd47433b356ca"
+    },
+    {
+      "path": "apps/api/src/services/swapRecorder.ts",
+      "bytes": 78114,
+      "sha256": "71e024883e5152b050769ba557821de05473fc3df0ed5e995fdcd67659e632de"
+    },
+    {
+      "path": "apps/api/src/services/sweepCampaign.ts",
+      "bytes": 76576,
+      "sha256": "4f6535c349dd16276b8a0e1520de5fc7377f361ebf4fbc3a5403eae2cc683feb"
+    },
+    {
+      "path": "apps/api/src/services/walletLink.ts",
+      "bytes": 20813,
+      "sha256": "c82be58086cb28c5a829c94004f03467192c8c5f6d292ae614d7d21254ec9890"
+    },
+    {
+      "path": "apps/api/src/services/xVerification.ts",
+      "bytes": 13299,
+      "sha256": "4eeb23d1308161e14015833561cb35c16459ba10acacd1f19099cb8eebbe0c74"
+    },
+    {
+      "path": "apps/api/src/utils/baseRpc.ts",
+      "bytes": 23647,
+      "sha256": "aab3cbec45ac736f6879b234d0522720ab56613ccda4e148d0ac3203ef424ce6"
+    },
+    {
+      "path": "apps/api/src/utils/chainRpc.ts",
+      "bytes": 23522,
+      "sha256": "258016a1e7cb563112aefc41fd954717327feefacd8fe7db2cdc6e702bfb713c"
+    },
+    {
+      "path": "apps/api/src/utils/clientIp.ts",
+      "bytes": 1376,
+      "sha256": "4f54ba2dadbdb62e960d68c43273ee0446c8a965500bc7dd5c53da702abf32a9"
+    },
+    {
+      "path": "apps/api/src/utils/maintenance.ts",
+      "bytes": 891,
+      "sha256": "fa069a6b160d490b13a85b8d3e3b421caac19125d1be161198a4d3af0dc2bac0"
+    },
+    {
+      "path": "apps/api/src/utils/maintenanceBypassToken.ts",
+      "bytes": 3905,
+      "sha256": "7deadd520be7dd6caf6d0150af996be61dbde54fba61064b45bb31416113898b"
+    },
+    {
+      "path": "apps/api/src/utils/runtimeCache.ts",
+      "bytes": 4486,
+      "sha256": "6cae26316d0991900707e595c1f733af995f24624de9a56dd18b0de7d29388b1"
+    },
+    {
+      "path": "apps/api/src/utils/sessionToken.ts",
+      "bytes": 3222,
+      "sha256": "5da6e44c0ef1a3efbe0eedd0f364106f3291ac5804cda47e025c775281b9ee3c"
+    },
+    {
+      "path": "apps/api/tsconfig.json",
+      "bytes": 506,
+      "sha256": "f29cab4c0462391c6e8f44fd72fd2f4c9f0ffee3068330aaaa281671c0b39df4"
+    }
+  ],
+  "archiveEstimate": {
+    "path": "output/optimism-activation-20261015/release-api.tar.gz",
+    "bytes": 397947,
+    "sha256": "d4c6cec8f52d163623630049ba18d69aa89a6cb280d721b9fa65c508b2b0361c",
+    "note": "CLI archive metadata/compression may differ; payload content is exactly the manifest file inventory."
+  }
+}

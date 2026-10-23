@@ -4901,7 +4901,8 @@ export class PointsEngine {
     address: string,
     txHash: string,
     tokenCount: number,
-    volumeUsd: number
+    volumeUsd: number,
+    chainId: number = base.id
   ): Promise<number> {
     const basePoints = tokenCount * CFG.SWEEP_PER_TOKEN * CFG.SWEEP_MULTIPLIER;
     const today = await this.todayBasePoints(address, "dust_sweep");
@@ -4913,6 +4914,7 @@ export class PointsEngine {
     const award = await this.addPoints(address, capped, "dust_sweep", txHash, {
       tokenCount,
       volumeUsd,
+      chainId,
     });
 
     return award.totalAwarded;

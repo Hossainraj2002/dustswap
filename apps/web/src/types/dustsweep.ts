@@ -329,6 +329,7 @@ export type DustSweepBuildTxResponse = {
   }[];
   minAmountOut?: string;
   value?: string;
+  feeBpsOverride?: number;
   contractAddress: Address;
   calldata: Hex;
   callMode?: string;
@@ -358,12 +359,16 @@ export type DustSweepCompletionInput = Pick<
 export type DustSweepCompletionSummary = {
   txHash: Hex;
   tokenOut: Token;
-  tokenOutAmount: string;
-  tokenOutValueUSD: number;
+  tokenOutAmount: string | null;
+  tokenOutValueUSD: number | null;
   inputValueUSD: number;
   feeAmountUSD: number;
   gasEstimateUSD: number;
   routeCount: number;
+  skippedRouteCount?: number;
+  refundedTokenCount?: number;
+  refundFailedTokenCount?: number;
+  outputSource?: "receipt" | "unwrap" | "unavailable";
   walletName: string;
   routeKind: SweepRouteKind;
   completedAt: number;
@@ -384,6 +389,7 @@ export type SweepButtonVisualState =
   | { state: "loading"; label: "Finding balances..." }
   | { state: "loading"; label: "Getting best route..." }
   | { state: "loading"; label: "Finding route..." }
+  | { state: "loading"; label: "Checking wallet..." }
   | { state: "approving"; label: "Approve tokens..." }
   | { state: "setup"; label: "Approve setup..." }
   | { state: "signing"; label: "Sign in wallet..." }

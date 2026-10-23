@@ -2,37 +2,11 @@
 
 import { formatUnits } from "viem";
 import { type DustSweepQuoteResponse, type Token } from "@/types/dustsweep";
+import { getSweepMinimumReceiveRaw } from "@/lib/dustsweep-results";
 
 function formatUsd(value: number) {
   if (value > 0 && value < 0.01) return "<$0.01";
   return `$${value.toFixed(2)}`;
-}
-
-// The `minAmountOut` the API returns is the router's per-batch revert floor — for
-// the V3 best-effort lane that's the single SMALLEST leg, so one refunded dust
-// route can't revert the whole sweep. That floor is a tiny fraction of what the
-// user actually receives, so surfacing it as "Minimum receive" is misleading
-// (e.g. 0.0002 ETH against a 0.0089 ETH output). Instead, sum every route's own
-// per-leg slippage floor and net out the protocol fee, mirroring the (net)
-// "Receive" amount's basis so the two numbers are consistent.
-function getMinimumReceiveRaw(quote: DustSweepQuoteResponse): string | null {
-  try {
-    // WETH→ETH unwrap is exact 1:1 with no fee or slippage — it adds directly to the floor.
-    const unwrapMin = quote.wethUnwrap ? BigInt(quote.wethUnwrap.amount) : 0n;
-    if (quote.routes.length === 0) {
-      return unwrapMin > 0n ? unwrapMin.toString() : null;
-    }
-    const grossMin = quote.routes.reduce(
-      (sum, route) => sum + BigInt(route.amountOutMin),
-      0n,
-    );
-    if (grossMin <= 0n && unwrapMin <= 0n) return null;
-    const feeBps = BigInt(Math.max(0, Math.round(quote.feeBps ?? 0)));
-    const netMin = grossMin - (grossMin * feeBps) / 10_000n;
-    return (netMin + unwrapMin).toString();
-  } catch {
-    return null;
-  }
 }
 
 // Format a raw on-chain amount into a human token amount, mirroring the
@@ -66,7 +40,7 @@ export function SweepDetails({
 }) {
   if (!quote) return null;
 
-  const minimumReceive = formatTokenAmount(getMinimumReceiveRaw(quote), tokenOut);
+  const minimumReceive = formatTokenAmount(getSweepMinimumReceiveRaw(quote), tokenOut);
 
   // Price impact is intentionally NOT displayed for now (model parked; the server still
   // computes it and uses it for aggregator rescue routing). Revisit later.

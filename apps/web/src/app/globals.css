@@ -40,6 +40,7 @@
     --ds-danger-bg: #fff1f2;
     --ds-danger-text: #be123c;
     --safe-area-bottom: env(safe-area-inset-bottom, 0px);
+    --ds-desktop-sidebar-width: 236px;
   }
 
   :root.dark {
@@ -1213,6 +1214,15 @@
 
 }
 /* ===== DUSTSWEEP — PREMIUM SWEEP SURFACES ===== */
+.sweep-modal-stage {
+  left: 0;
+}
+@media (min-width: 768px) {
+  .sweep-modal-stage {
+    left: var(--ds-desktop-sidebar-width);
+  }
+}
+
 /* Signature surfaces for the /dustsweep widget. Light + dark are defined here
    so the component markup stays clean and theme parity is centralized. */
 .sweep-card {

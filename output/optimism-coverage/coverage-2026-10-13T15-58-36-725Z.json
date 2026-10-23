@@ -1,0 +1,2087 @@
+{
+  "startedAt": "2026-10-13T15:58:36.725Z",
+  "updatedAt": "2026-10-13T15:59:37.066Z",
+  "chainId": 10,
+  "block": 158154170,
+  "tokenListTimestamp": "2026-09-08T20:52:56.722Z",
+  "tokenListUrl": "https://raw.githubusercontent.com/ethereum-optimism/ethereum-optimism.github.io/master/optimism.tokenlist.json",
+  "priceUrl": "https://li.quest/v1/tokens?chains=10",
+  "summary": {
+    "sampledTokens": 20,
+    "officialListPopulation": 195,
+    "officialListSampled": 19,
+    "metadataPassed": 20,
+    "metadataFailed": 0,
+    "unpricedTokens": [
+      "PEPE"
+    ],
+    "providerRequests": 76,
+    "providerQuoted": 74,
+    "providerNoQuote": 2,
+    "providerErrors": 0,
+    "unsafeResponses": 0
+  },
+  "limitations": [
+    "Deliberate representative basket, not a random sample or proof of most Optimism tokens.",
+    "Amounts are approximately $1/$10 using the recorded LI.FI price snapshot; prices may be stale or unavailable.",
+    "Quote availability does not prove token transferability, built-calldata execution, gas affordability, or future liquidity.",
+    "Public quote API requests are sequential and paced at least 275 ms apart. No transactions were signed or broadcast."
+  ],
+  "metadata": [
+    {
+      "label": "AAVE",
+      "symbol": "AAVE",
+      "address": "0x76FB31fb4af56892A25e32cFC43De717950c9278",
+      "addressSource": "https://raw.githubusercontent.com/ethereum-optimism/ethereum-optimism.github.io/master/optimism.tokenlist.json",
+      "listedDecimals": 18,
+      "listedName": "Aave Token",
+      "codeBytes": 10899,
+      "decimals": 18,
+      "onchainSymbol": "AAVE",
+      "onchainName": "Aave Token",
+      "symbolMatchesList": true,
+      "priceUSD": "160.6753540296",
+      "status": "ok"
+    },
+    {
+      "label": "DAI",
+      "symbol": "DAI",
+      "address": "0xDA10009cBd5D07dd0CeCc66161FC93D7c9000da1",
+      "addressSource": "https://raw.githubusercontent.com/ethereum-optimism/ethereum-optimism.github.io/master/optimism.tokenlist.json",
+      "listedDecimals": 18,
+      "listedName": "Dai Stablecoin",
+      "codeBytes": 4782,
+      "decimals": 18,
+      "onchainSymbol": "DAI",
+      "onchainName": "Dai Stablecoin",
+      "symbolMatchesList": true,
+      "priceUSD": "0.9996322656",
+      "status": "ok"
+    },
+    {
+      "label": "LINK",
+      "symbol": "LINK",
+      "address": "0x350a791bfc2c21f9ed5d10980dad2e2638ffa7f6",
+      "addressSource": "https://raw.githubusercontent.com/ethereum-optimism/ethereum-optimism.github.io/master/optimism.tokenlist.json",
+      "listedDecimals": 18,
+      "listedName": "Chainlink",
+      "codeBytes": 6271,
+      "decimals": 18,
+      "onchainSymbol": "LINK",
+      "onchainName": "ChainLink Token",
+      "symbolMatchesList": true,
+      "priceUSD": "12.8155556871",
+      "status": "ok"
+    },
+    {
+      "label": "LUSD",
+      "symbol": "LUSD",
+      "address": "0xc40f949f8a4e094d1b49a23ea9241d289b7b2819",
+      "addressSource": "https://raw.githubusercontent.com/ethereum-optimism/ethereum-optimism.github.io/master/optimism.tokenlist.json",
+      "listedDecimals": 18,
+      "listedName": "LUSD Stablecoin",
+      "codeBytes": 3890,
+      "decimals": 18,
+      "onchainSymbol": "LUSD",
+      "onchainName": "LUSD Stablecoin",
+      "symbolMatchesList": true,
+      "priceUSD": "0.9985814013",
+      "status": "ok"
+    },
+    {
+      "label": "OP",
+      "symbol": "OP",
+      "address": "0x4200000000000000000000000000000000000042",
+      "addressSource": "https://raw.githubusercontent.com/ethereum-optimism/ethereum-optimism.github.io/master/optimism.tokenlist.json",
+      "listedDecimals": 18,
+      "listedName": "Optimism",
+      "codeBytes": 16528,
+      "decimals": 18,
+      "onchainSymbol": "OP",
+      "onchainName": "Optimism",
+      "symbolMatchesList": true,
+      "priceUSD": "0.1416119317",
+      "status": "ok"
+    },
+    {
+      "label": "PEPE",
+      "symbol": "PEPE",
+      "address": "0xc1c167cc44f7923cd0062c4370df962f9ddb16f5",
+      "addressSource": "https://raw.githubusercontent.com/ethereum-optimism/ethereum-optimism.github.io/master/optimism.tokenlist.json",
+      "listedDecimals": 18,
+      "listedName": "Pepe",
+      "codeBytes": 5835,
+      "decimals": 18,
+      "onchainSymbol": "PEPE",
+      "onchainName": "Pepe",
+      "symbolMatchesList": true,
+      "priceUSD": null,
+      "status": "ok"
+    },
+    {
+      "label": "rETH",
+      "symbol": "rETH",
+      "address": "0x9bcef72be871e61ed4fbbc7630889bee758eb81d",
+      "addressSource": "https://raw.githubusercontent.com/ethereum-optimism/ethereum-optimism.github.io/master/optimism.tokenlist.json",
+      "listedDecimals": 18,
+      "listedName": "Rocket Pool ETH",
+      "codeBytes": 3890,
+      "decimals": 18,
+      "onchainSymbol": "rETH",
+      "onchainName": "Rocket Pool ETH",
+      "symbolMatchesList": true,
+      "priceUSD": "2935.2425634023",
+      "status": "ok"
+    },
+    {
+      "label": "sETH",
+      "symbol": "sETH",
+      "address": "0xE405de8F52ba7559f9df3C368500B6E6ae6Cee49",
+      "addressSource": "https://raw.githubusercontent.com/ethereum-optimism/ethereum-optimism.github.io/master/optimism.tokenlist.json",
+      "listedDecimals": 18,
+      "listedName": "Synthetic Ether",
+      "codeBytes": 3715,
+      "decimals": 18,
+      "onchainSymbol": "sETH",
+      "onchainName": "Synth sETH",
+      "symbolMatchesList": true,
+      "priceUSD": "317.0556971264",
+      "status": "ok"
+    },
+    {
+      "label": "SNX",
+      "symbol": "SNX",
+      "address": "0x8700daec35af8ff88c16bdf0418774cb3d7599b4",
+      "addressSource": "https://raw.githubusercontent.com/ethereum-optimism/ethereum-optimism.github.io/master/optimism.tokenlist.json",
+      "listedDecimals": 18,
+      "listedName": "Synthetix",
+      "codeBytes": 3715,
+      "decimals": 18,
+      "onchainSymbol": "SNX",
+      "onchainName": "Synthetix Network Token",
+      "symbolMatchesList": true,
+      "priceUSD": "0.2338122523",
+      "status": "ok"
+    },
+    {
+      "label": "sUSD",
+      "symbol": "sUSD",
+      "address": "0x8c6f28f2F1A3C87F0f938b96d27520d9751ec8d9",
+      "addressSource": "https://raw.githubusercontent.com/ethereum-optimism/ethereum-optimism.github.io/master/optimism.tokenlist.json",
+      "listedDecimals": 18,
+      "listedName": "Synthetix USD",
+      "codeBytes": 3715,
+      "decimals": 18,
+      "onchainSymbol": "sUSD",
+      "onchainName": "Synth sUSD (retired)",
+      "symbolMatchesList": true,
+      "priceUSD": "0.2502614629",
+      "status": "ok"
+    },
+    {
+      "label": "UNI",
+      "symbol": "UNI",
+      "address": "0x6fd9d7ad17242c41f7131d257212c54a0e816691",
+      "addressSource": "https://raw.githubusercontent.com/ethereum-optimism/ethereum-optimism.github.io/master/optimism.tokenlist.json",
+      "listedDecimals": 18,
+      "listedName": "Uniswap",
+      "codeBytes": 3890,
+      "decimals": 18,
+      "onchainSymbol": "UNI",
+      "onchainName": "Uniswap",
+      "symbolMatchesList": true,
+      "priceUSD": "7.5349364493",
+      "status": "ok"
+    },
+    {
+      "label": "USD₮0",
+      "symbol": "USD₮0",
+      "address": "0x01bFF41798a0BcF287b996046Ca68b395DbC1071",
+      "addressSource": "https://raw.githubusercontent.com/ethereum-optimism/ethereum-optimism.github.io/master/optimism.tokenlist.json",
+      "listedDecimals": 6,
+      "listedName": "USD₮0",
+      "codeBytes": 2227,
+      "decimals": 6,
+      "onchainSymbol": "USD₮0",
+      "onchainName": "USD₮0",
+      "symbolMatchesList": true,
+      "priceUSD": "0.9993514604",
+      "status": "ok"
+    },
+    {
+      "label": "USDC",
+      "symbol": "USDC",
+      "address": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+      "addressSource": "https://raw.githubusercontent.com/ethereum-optimism/ethereum-optimism.github.io/master/optimism.tokenlist.json",
+      "listedDecimals": 6,
+      "listedName": "USD Coin",
+      "codeBytes": 1852,
+      "decimals": 6,
+      "onchainSymbol": "USDC",
+      "onchainName": "USD Coin",
+      "symbolMatchesList": true,
+      "priceUSD": "1.000945143",
+      "status": "ok"
+    },
+    {
+      "label": "USDC.e",
+      "symbol": "USDC.e",
+      "address": "0x7F5c764cBc14f9669B88837ca1490cCa17c31607",
+      "addressSource": "https://raw.githubusercontent.com/ethereum-optimism/ethereum-optimism.github.io/master/optimism.tokenlist.json",
+      "listedDecimals": 6,
+      "listedName": "Bridged USDC",
+      "codeBytes": 14725,
+      "decimals": 6,
+      "onchainSymbol": "USDC",
+      "onchainName": "USD Coin",
+      "symbolMatchesList": false,
+      "priceUSD": "1.0004077978",
+      "status": "ok"
+    },
+    {
+      "label": "USDT",
+      "symbol": "USDT",
+      "address": "0x94b008aA00579c1307B0EF2c499aD98a8ce58e58",
+      "addressSource": "https://raw.githubusercontent.com/ethereum-optimism/ethereum-optimism.github.io/master/optimism.tokenlist.json",
+      "listedDecimals": 6,
+      "listedName": "Tether USD",
+      "codeBytes": 6774,
+      "decimals": 6,
+      "onchainSymbol": "USDT",
+      "onchainName": "Tether USD",
+      "symbolMatchesList": true,
+      "priceUSD": "1.0003351286",
+      "status": "ok"
+    },
+    {
+      "label": "VELO v1",
+      "symbol": "VELO",
+      "address": "0x3c8B650257cFb5f272f799F5e2b4e65093a11a05",
+      "addressSource": "https://raw.githubusercontent.com/ethereum-optimism/ethereum-optimism.github.io/master/optimism.tokenlist.json",
+      "listedDecimals": 18,
+      "listedName": "Velodrome",
+      "codeBytes": 2092,
+      "decimals": 18,
+      "onchainSymbol": "VELO",
+      "onchainName": "Velodrome",
+      "symbolMatchesList": true,
+      "priceUSD": "0.04182408369",
+      "status": "ok"
+    },
+    {
+      "label": "VELO v2",
+      "symbol": "VELO",
+      "address": "0x9560e827aF36c94D2Ac33a39bCE1Fe78631088Db",
+      "addressSource": "https://raw.githubusercontent.com/velodrome-finance/contracts/main/README.md",
+      "listedDecimals": 18,
+      "listedName": "VelodromeV2",
+      "codeBytes": 4940,
+      "decimals": 18,
+      "onchainSymbol": "VELO",
+      "onchainName": "VelodromeV2",
+      "symbolMatchesList": true,
+      "priceUSD": "0.03874462848",
+      "status": "ok"
+    },
+    {
+      "label": "WBTC",
+      "symbol": "WBTC",
+      "address": "0x68f180fcCe6836688e9084f035309E29Bf0A2095",
+      "addressSource": "https://raw.githubusercontent.com/ethereum-optimism/ethereum-optimism.github.io/master/optimism.tokenlist.json",
+      "listedDecimals": 8,
+      "listedName": "Wrapped BTC",
+      "codeBytes": 6733,
+      "decimals": 8,
+      "onchainSymbol": "WBTC",
+      "onchainName": "Wrapped BTC",
+      "symbolMatchesList": true,
+      "priceUSD": "83048.7122173705",
+      "status": "ok"
+    },
+    {
+      "label": "WETH",
+      "symbol": "WETH",
+      "address": "0x4200000000000000000000000000000000000006",
+      "addressSource": "https://raw.githubusercontent.com/ethereum-optimism/ethereum-optimism.github.io/master/optimism.tokenlist.json",
+      "listedDecimals": 18,
+      "listedName": "Wrapped Ether",
+      "codeBytes": 2041,
+      "decimals": 18,
+      "onchainSymbol": "WETH",
+      "onchainName": "Wrapped Ether",
+      "symbolMatchesList": true,
+      "priceUSD": "2504.75",
+      "status": "ok"
+    },
+    {
+      "label": "wstETH",
+      "symbol": "wstETH",
+      "address": "0x1F32b1c2345538c0c6f582fCB022739c4A194Ebb",
+      "addressSource": "https://raw.githubusercontent.com/ethereum-optimism/ethereum-optimism.github.io/master/optimism.tokenlist.json",
+      "listedDecimals": 18,
+      "listedName": "Wrapped liquid staked Ether 2.0",
+      "codeBytes": 3296,
+      "decimals": 18,
+      "onchainSymbol": "wstETH",
+      "onchainName": "Wrapped liquid staked Ether 2.0",
+      "symbolMatchesList": true,
+      "priceUSD": "3122.4831732465",
+      "status": "ok"
+    }
+  ],
+  "results": [
+    {
+      "token": "AAVE",
+      "tokenIn": "0x76FB31fb4af56892A25e32cFC43De717950c9278",
+      "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+      "requestedUsd": 1,
+      "inputPriceUSD": "160.6753540296",
+      "amountIn": "6223729868463695",
+      "provider": "kyber",
+      "timestamp": "2026-10-13T15:58:39.850Z",
+      "httpStatus": 200,
+      "amountOut": "990469",
+      "amountOutUsd": "0.9894212397224075",
+      "gasUsd": "0.0011854481838443221",
+      "target": "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5",
+      "spender": "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5",
+      "venues": [
+        "uniswapv3",
+        "velodrome-cl-2"
+      ],
+      "status": "quoted"
+    },
+    {
+      "token": "AAVE",
+      "tokenIn": "0x76FB31fb4af56892A25e32cFC43De717950c9278",
+      "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+      "requestedUsd": 1,
+      "inputPriceUSD": "160.6753540296",
+      "amountIn": "6223729868463695",
+      "provider": "lifi",
+      "timestamp": "2026-10-13T15:58:40.032Z",
+      "httpStatus": 200,
+      "amountOut": "988342",
+      "amountOutUsd": "0.9893",
+      "gasUsd": [
+        "0.0001"
+      ],
+      "target": "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE",
+      "spender": "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE",
+      "venues": [
+        "feeCollection",
+        "Integrator Fee",
+        "okx",
+        "OKX Dex Aggregator"
+      ],
+      "status": "quoted",
+      "builtCalldataBytes": 2660
+    },
+    {
+      "token": "AAVE",
+      "tokenIn": "0x76FB31fb4af56892A25e32cFC43De717950c9278",
+      "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+      "requestedUsd": 10,
+      "inputPriceUSD": "160.6753540296",
+      "amountIn": "62237298684636952",
+      "provider": "kyber",
+      "timestamp": "2026-10-13T15:58:40.910Z",
+      "httpStatus": 200,
+      "amountOut": "9909863",
+      "amountOutUsd": "9.899379925004432",
+      "gasUsd": "0.0033537785308466912",
+      "target": "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5",
+      "spender": "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5",
+      "venues": [
+        "uniswapv3",
+        "pmm-13"
+      ],
+      "status": "quoted"
+    },
+    {
+      "token": "AAVE",
+      "tokenIn": "0x76FB31fb4af56892A25e32cFC43De717950c9278",
+      "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+      "requestedUsd": 10,
+      "inputPriceUSD": "160.6753540296",
+      "amountIn": "62237298684636952",
+      "provider": "lifi",
+      "timestamp": "2026-10-13T15:58:41.073Z",
+      "httpStatus": 200,
+      "amountOut": "9883089",
+      "amountOutUsd": "9.8924",
+      "gasUsd": [
+        "0.0001"
+      ],
+      "target": "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE",
+      "spender": "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE",
+      "venues": [
+        "feeCollection",
+        "Integrator Fee",
+        "okx",
+        "OKX Dex Aggregator"
+      ],
+      "status": "quoted",
+      "builtCalldataBytes": 2660
+    },
+    {
+      "token": "DAI",
+      "tokenIn": "0xDA10009cBd5D07dd0CeCc66161FC93D7c9000da1",
+      "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+      "requestedUsd": 1,
+      "inputPriceUSD": "0.9996322656",
+      "amountIn": "1000367869678335440",
+      "provider": "kyber",
+      "timestamp": "2026-10-13T15:58:42.401Z",
+      "httpStatus": 200,
+      "amountOut": "999754",
+      "amountOutUsd": "0.9986964176540969",
+      "gasUsd": "0.0008386489039531576",
+      "target": "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5",
+      "spender": "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5",
+      "venues": [
+        "velodrome-cl-2"
+      ],
+      "status": "quoted"
+    },
+    {
+      "token": "DAI",
+      "tokenIn": "0xDA10009cBd5D07dd0CeCc66161FC93D7c9000da1",
+      "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+      "requestedUsd": 1,
+      "inputPriceUSD": "0.9996322656",
+      "amountIn": "1000367869678335440",
+      "provider": "lifi",
+      "timestamp": "2026-10-13T15:58:42.504Z",
+      "httpStatus": 200,
+      "amountOut": "997453",
+      "amountOutUsd": "0.9984",
+      "gasUsd": [
+        "0.0001"
+      ],
+      "target": "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE",
+      "spender": "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE",
+      "venues": [
+        "feeCollection",
+        "Integrator Fee",
+        "okx",
+        "OKX Dex Aggregator"
+      ],
+      "status": "quoted",
+      "builtCalldataBytes": 2660
+    },
+    {
+      "token": "DAI",
+      "tokenIn": "0xDA10009cBd5D07dd0CeCc66161FC93D7c9000da1",
+      "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+      "requestedUsd": 10,
+      "inputPriceUSD": "0.9996322656",
+      "amountIn": "10003678696783354408",
+      "provider": "kyber",
+      "timestamp": "2026-10-13T15:58:43.492Z",
+      "httpStatus": 200,
+      "amountOut": "10001126",
+      "amountOutUsd": "9.990546383117493",
+      "gasUsd": "0.0034129842029749194",
+      "target": "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5",
+      "spender": "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5",
+      "venues": [
+        "curve-stable-plain",
+        "uniswapv3",
+        "pmm-13"
+      ],
+      "status": "quoted"
+    },
+    {
+      "token": "DAI",
+      "tokenIn": "0xDA10009cBd5D07dd0CeCc66161FC93D7c9000da1",
+      "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+      "requestedUsd": 10,
+      "inputPriceUSD": "0.9996322656",
+      "amountIn": "10003678696783354408",
+      "provider": "lifi",
+      "timestamp": "2026-10-13T15:58:43.611Z",
+      "httpStatus": 200,
+      "amountOut": "9974048",
+      "amountOutUsd": "9.9835",
+      "gasUsd": [
+        "0.0001"
+      ],
+      "target": "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE",
+      "spender": "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE",
+      "venues": [
+        "feeCollection",
+        "Integrator Fee",
+        "okx",
+        "OKX Dex Aggregator"
+      ],
+      "status": "quoted",
+      "builtCalldataBytes": 2788
+    },
+    {
+      "token": "LINK",
+      "tokenIn": "0x350a791bfc2c21f9ed5d10980dad2e2638ffa7f6",
+      "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+      "requestedUsd": 1,
+      "inputPriceUSD": "12.8155556871",
+      "amountIn": "78030170865442003",
+      "provider": "kyber",
+      "timestamp": "2026-10-13T15:58:45.066Z",
+      "httpStatus": 200,
+      "amountOut": "1002486",
+      "amountOutUsd": "1.0014255276281816",
+      "gasUsd": "0.0012505741743578296",
+      "target": "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5",
+      "spender": "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5",
+      "venues": [
+        "uniswap-v4",
+        "velodrome-cl-2"
+      ],
+      "status": "quoted"
+    },
+    {
+      "token": "LINK",
+      "tokenIn": "0x350a791bfc2c21f9ed5d10980dad2e2638ffa7f6",
+      "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+      "requestedUsd": 1,
+      "inputPriceUSD": "12.8155556871",
+      "amountIn": "78030170865442003",
+      "provider": "lifi",
+      "timestamp": "2026-10-13T15:58:45.183Z",
+      "httpStatus": 200,
+      "amountOut": "1000231",
+      "amountOutUsd": "1.0012",
+      "gasUsd": [
+        "0.0001"
+      ],
+      "target": "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE",
+      "spender": "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE",
+      "venues": [
+        "feeCollection",
+        "Integrator Fee",
+        "okx",
+        "OKX Dex Aggregator"
+      ],
+      "status": "quoted",
+      "builtCalldataBytes": 2820
+    },
+    {
+      "token": "LINK",
+      "tokenIn": "0x350a791bfc2c21f9ed5d10980dad2e2638ffa7f6",
+      "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+      "requestedUsd": 10,
+      "inputPriceUSD": "12.8155556871",
+      "amountIn": "780301708654420037",
+      "provider": "kyber",
+      "timestamp": "2026-10-13T15:58:46.032Z",
+      "httpStatus": 200,
+      "amountOut": "10022056",
+      "amountOutUsd": "10.011454242472395",
+      "gasUsd": "0.0027252942972451877",
+      "target": "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5",
+      "spender": "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5",
+      "venues": [
+        "uniswap-v4",
+        "pmm-13"
+      ],
+      "status": "quoted"
+    },
+    {
+      "token": "LINK",
+      "tokenIn": "0x350a791bfc2c21f9ed5d10980dad2e2638ffa7f6",
+      "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+      "requestedUsd": 10,
+      "inputPriceUSD": "12.8155556871",
+      "amountIn": "780301708654420037",
+      "provider": "lifi",
+      "timestamp": "2026-10-13T15:58:46.174Z",
+      "httpStatus": 200,
+      "amountOut": "9996119",
+      "amountOutUsd": "10.0056",
+      "gasUsd": [
+        "0.0001"
+      ],
+      "target": "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE",
+      "spender": "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE",
+      "venues": [
+        "feeCollection",
+        "Integrator Fee",
+        "okx",
+        "OKX Dex Aggregator"
+      ],
+      "status": "quoted",
+      "builtCalldataBytes": 2820
+    },
+    {
+      "token": "LUSD",
+      "tokenIn": "0xc40f949f8a4e094d1b49a23ea9241d289b7b2819",
+      "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+      "requestedUsd": 1,
+      "inputPriceUSD": "0.9985814013",
+      "amountIn": "1001420613981146856",
+      "provider": "kyber",
+      "timestamp": "2026-10-13T15:58:47.498Z",
+      "httpStatus": 200,
+      "amountOut": "1001525",
+      "amountOutUsd": "1.0004655442148962",
+      "gasUsd": "0.0012505741743578296",
+      "target": "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5",
+      "spender": "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5",
+      "venues": [
+        "uniswapv3",
+        "uniswap-v4"
+      ],
+      "status": "quoted"
+    },
+    {
+      "token": "LUSD",
+      "tokenIn": "0xc40f949f8a4e094d1b49a23ea9241d289b7b2819",
+      "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+      "requestedUsd": 1,
+      "inputPriceUSD": "0.9985814013",
+      "amountIn": "1001420613981146856",
+      "provider": "lifi",
+      "timestamp": "2026-10-13T15:58:47.655Z",
+      "httpStatus": 200,
+      "amountOut": "999232",
+      "amountOutUsd": "1.0002",
+      "gasUsd": [
+        "0.0001"
+      ],
+      "target": "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE",
+      "spender": "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE",
+      "venues": [
+        "feeCollection",
+        "Integrator Fee",
+        "okx",
+        "OKX Dex Aggregator"
+      ],
+      "status": "quoted",
+      "builtCalldataBytes": 3204
+    },
+    {
+      "token": "LUSD",
+      "tokenIn": "0xc40f949f8a4e094d1b49a23ea9241d289b7b2819",
+      "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+      "requestedUsd": 10,
+      "inputPriceUSD": "0.9985814013",
+      "amountIn": "10014206139811468567",
+      "provider": "kyber",
+      "timestamp": "2026-10-13T15:58:48.590Z",
+      "httpStatus": 200,
+      "amountOut": "10014438",
+      "amountOutUsd": "10.003844301117134",
+      "gasUsd": "0.0016237594246224446",
+      "target": "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5",
+      "spender": "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5",
+      "venues": [
+        "velodrome",
+        "uniswap-v4"
+      ],
+      "status": "quoted"
+    },
+    {
+      "token": "LUSD",
+      "tokenIn": "0xc40f949f8a4e094d1b49a23ea9241d289b7b2819",
+      "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+      "requestedUsd": 10,
+      "inputPriceUSD": "0.9985814013",
+      "amountIn": "10014206139811468567",
+      "provider": "lifi",
+      "timestamp": "2026-10-13T15:58:48.760Z",
+      "httpStatus": 200,
+      "amountOut": "9989458",
+      "amountOutUsd": "9.9989",
+      "gasUsd": [
+        "0.0001"
+      ],
+      "target": "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE",
+      "spender": "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE",
+      "venues": [
+        "feeCollection",
+        "Integrator Fee",
+        "okx",
+        "OKX Dex Aggregator"
+      ],
+      "status": "quoted",
+      "builtCalldataBytes": 3332
+    },
+    {
+      "token": "OP",
+      "tokenIn": "0x4200000000000000000000000000000000000042",
+      "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+      "requestedUsd": 1,
+      "inputPriceUSD": "0.1416119317",
+      "amountIn": "7061551862158518949",
+      "provider": "kyber",
+      "timestamp": "2026-10-13T15:58:50.268Z",
+      "httpStatus": 200,
+      "amountOut": "1001087",
+      "amountOutUsd": "1.0000280075499441",
+      "gasUsd": "0.0008386232000694913",
+      "target": "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5",
+      "spender": "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5",
+      "venues": [
+        "velodrome-cl-3"
+      ],
+      "status": "quoted"
+    },
+    {
+      "token": "OP",
+      "tokenIn": "0x4200000000000000000000000000000000000042",
+      "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+      "requestedUsd": 1,
+      "inputPriceUSD": "0.1416119317",
+      "amountIn": "7061551862158518949",
+      "provider": "lifi",
+      "timestamp": "2026-10-13T15:58:50.365Z",
+      "httpStatus": 200,
+      "amountOut": "997898",
+      "amountOutUsd": "0.9988",
+      "gasUsd": [
+        "0.0001"
+      ],
+      "target": "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE",
+      "spender": "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE",
+      "venues": [
+        "feeCollection",
+        "Integrator Fee",
+        "okx",
+        "OKX Dex Aggregator"
+      ],
+      "status": "quoted",
+      "builtCalldataBytes": 2660
+    },
+    {
+      "token": "OP",
+      "tokenIn": "0x4200000000000000000000000000000000000042",
+      "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+      "requestedUsd": 10,
+      "inputPriceUSD": "0.1416119317",
+      "amountIn": "70615518621585189491",
+      "provider": "kyber",
+      "timestamp": "2026-10-13T15:58:51.324Z",
+      "httpStatus": 200,
+      "amountOut": "10010837",
+      "amountOutUsd": "10.000247110408248",
+      "gasUsd": "0.0008386232000694913",
+      "target": "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5",
+      "spender": "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5",
+      "venues": [
+        "velodrome-cl-3"
+      ],
+      "status": "quoted"
+    },
+    {
+      "token": "OP",
+      "tokenIn": "0x4200000000000000000000000000000000000042",
+      "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+      "requestedUsd": 10,
+      "inputPriceUSD": "0.1416119317",
+      "amountIn": "70615518621585189491",
+      "provider": "lifi",
+      "timestamp": "2026-10-13T15:58:51.435Z",
+      "httpStatus": 200,
+      "amountOut": "9977708",
+      "amountOutUsd": "9.9871",
+      "gasUsd": [
+        "0.0001"
+      ],
+      "target": "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE",
+      "spender": "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE",
+      "venues": [
+        "feeCollection",
+        "Integrator Fee",
+        "okx",
+        "OKX Dex Aggregator"
+      ],
+      "status": "quoted",
+      "builtCalldataBytes": 2660
+    },
+    {
+      "token": "rETH",
+      "tokenIn": "0x9bcef72be871e61ed4fbbc7630889bee758eb81d",
+      "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+      "requestedUsd": 1,
+      "inputPriceUSD": "2935.2425634023",
+      "amountIn": "340687346411629",
+      "provider": "kyber",
+      "timestamp": "2026-10-13T15:58:53.424Z",
+      "httpStatus": 200,
+      "amountOut": "999389",
+      "amountOutUsd": "0.9983318037666368",
+      "gasUsd": "0.0012505457364530125",
+      "target": "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5",
+      "spender": "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5",
+      "venues": [
+        "uniswap-v4",
+        "velodrome-cl-2"
+      ],
+      "status": "quoted"
+    },
+    {
+      "token": "rETH",
+      "tokenIn": "0x9bcef72be871e61ed4fbbc7630889bee758eb81d",
+      "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+      "requestedUsd": 1,
+      "inputPriceUSD": "2935.2425634023",
+      "amountIn": "340687346411629",
+      "provider": "lifi",
+      "timestamp": "2026-10-13T15:58:53.523Z",
+      "httpStatus": 200,
+      "amountOut": "997151",
+      "amountOutUsd": "0.9981",
+      "gasUsd": [
+        "0.0001"
+      ],
+      "target": "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE",
+      "spender": "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE",
+      "venues": [
+        "feeCollection",
+        "Integrator Fee",
+        "okx",
+        "OKX Dex Aggregator"
+      ],
+      "status": "quoted",
+      "builtCalldataBytes": 2564
+    },
+    {
+      "token": "rETH",
+      "tokenIn": "0x9bcef72be871e61ed4fbbc7630889bee758eb81d",
+      "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+      "requestedUsd": 10,
+      "inputPriceUSD": "2935.2425634023",
+      "amountIn": "3406873464116299",
+      "provider": "kyber",
+      "timestamp": "2026-10-13T15:58:54.542Z",
+      "httpStatus": 200,
+      "amountOut": "10004543",
+      "amountOutUsd": "9.993959768469415",
+      "gasUsd": "0.004142510771484248",
+      "target": "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5",
+      "spender": "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5",
+      "venues": [
+        "balancer-v3-stable",
+        "pmm-13",
+        "velodrome-cl-2"
+      ],
+      "status": "quoted"
+    },
+    {
+      "token": "rETH",
+      "tokenIn": "0x9bcef72be871e61ed4fbbc7630889bee758eb81d",
+      "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+      "requestedUsd": 10,
+      "inputPriceUSD": "2935.2425634023",
+      "amountIn": "3406873464116299",
+      "provider": "lifi",
+      "timestamp": "2026-10-13T15:58:54.692Z",
+      "httpStatus": 200,
+      "amountOut": "9970479",
+      "amountOutUsd": "9.9799",
+      "gasUsd": [
+        "0.0001"
+      ],
+      "target": "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE",
+      "spender": "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE",
+      "venues": [
+        "feeCollection",
+        "Integrator Fee",
+        "1inch"
+      ],
+      "status": "quoted",
+      "builtCalldataBytes": 2724
+    },
+    {
+      "token": "sETH",
+      "tokenIn": "0xE405de8F52ba7559f9df3C368500B6E6ae6Cee49",
+      "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+      "requestedUsd": 1,
+      "inputPriceUSD": "317.0556971264",
+      "amountIn": "3154019968930985",
+      "provider": "kyber",
+      "timestamp": "2026-10-13T15:58:56.326Z",
+      "httpStatus": 200,
+      "amountOut": "1732711",
+      "amountOutUsd": "1.7308780645337232",
+      "gasUsd": "0.0022786413954301262",
+      "target": "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5",
+      "spender": "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5",
+      "venues": [
+        "velodrome",
+        "velodrome-cl-3"
+      ],
+      "status": "quoted"
+    },
+    {
+      "token": "sETH",
+      "tokenIn": "0xE405de8F52ba7559f9df3C368500B6E6ae6Cee49",
+      "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+      "requestedUsd": 1,
+      "inputPriceUSD": "317.0556971264",
+      "amountIn": "3154019968930985",
+      "provider": "lifi",
+      "timestamp": "2026-10-13T15:58:56.412Z",
+      "httpStatus": 422,
+      "status": "no_quote",
+      "error": "None of the available routes could successfully generate a tx",
+      "providerCode": 1001
+    },
+    {
+      "token": "sETH",
+      "tokenIn": "0xE405de8F52ba7559f9df3C368500B6E6ae6Cee49",
+      "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+      "requestedUsd": 10,
+      "inputPriceUSD": "317.0556971264",
+      "amountIn": "31540199689309853",
+      "provider": "kyber",
+      "timestamp": "2026-10-13T15:58:58.692Z",
+      "httpStatus": 200,
+      "amountOut": "16017309",
+      "amountOutUsd": "16.00036520860004",
+      "gasUsd": "0.0030333326588710616",
+      "target": "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5",
+      "spender": "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5",
+      "venues": [
+        "velodrome",
+        "pmm-13"
+      ],
+      "status": "quoted"
+    },
+    {
+      "token": "sETH",
+      "tokenIn": "0xE405de8F52ba7559f9df3C368500B6E6ae6Cee49",
+      "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+      "requestedUsd": 10,
+      "inputPriceUSD": "317.0556971264",
+      "amountIn": "31540199689309853",
+      "provider": "lifi",
+      "timestamp": "2026-10-13T15:58:58.895Z",
+      "httpStatus": 422,
+      "status": "no_quote",
+      "error": "None of the available routes could successfully generate a tx",
+      "providerCode": 1001
+    },
+    {
+      "token": "SNX",
+      "tokenIn": "0x8700daec35af8ff88c16bdf0418774cb3d7599b4",
+      "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+      "requestedUsd": 1,
+      "inputPriceUSD": "0.2338122523",
+      "amountIn": "4276935832759180002",
+      "provider": "kyber",
+      "timestamp": "2026-10-13T15:59:03.125Z",
+      "httpStatus": 200,
+      "amountOut": "1003144",
+      "amountOutUsd": "1.002082831567767",
+      "gasUsd": "0.0011853930983434105",
+      "target": "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5",
+      "spender": "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5",
+      "venues": [
+        "uniswapv3",
+        "velodrome-cl-2"
+      ],
+      "status": "quoted"
+    },
+    {
+      "token": "SNX",
+      "tokenIn": "0x8700daec35af8ff88c16bdf0418774cb3d7599b4",
+      "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+      "requestedUsd": 1,
+      "inputPriceUSD": "0.2338122523",
+      "amountIn": "4276935832759180002",
+      "provider": "lifi",
+      "timestamp": "2026-10-13T15:59:03.272Z",
+      "httpStatus": 200,
+      "amountOut": "1000780",
+      "amountOutUsd": "1.0017",
+      "gasUsd": [
+        "0.0001"
+      ],
+      "target": "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE",
+      "spender": "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE",
+      "venues": [
+        "feeCollection",
+        "Integrator Fee",
+        "okx",
+        "OKX Dex Aggregator"
+      ],
+      "status": "quoted",
+      "builtCalldataBytes": 2660
+    },
+    {
+      "token": "SNX",
+      "tokenIn": "0x8700daec35af8ff88c16bdf0418774cb3d7599b4",
+      "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+      "requestedUsd": 10,
+      "inputPriceUSD": "0.2338122523",
+      "amountIn": "42769358327591800029",
+      "provider": "kyber",
+      "timestamp": "2026-10-13T15:59:04.405Z",
+      "httpStatus": 200,
+      "amountOut": "10030937",
+      "amountOutUsd": "10.020325847772485",
+      "gasUsd": "0.002660058895021982",
+      "target": "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5",
+      "spender": "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5",
+      "venues": [
+        "uniswapv3",
+        "pmm-13"
+      ],
+      "status": "quoted"
+    },
+    {
+      "token": "SNX",
+      "tokenIn": "0x8700daec35af8ff88c16bdf0418774cb3d7599b4",
+      "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+      "requestedUsd": 10,
+      "inputPriceUSD": "0.2338122523",
+      "amountIn": "42769358327591800029",
+      "provider": "lifi",
+      "timestamp": "2026-10-13T15:59:04.507Z",
+      "httpStatus": 200,
+      "amountOut": "10004438",
+      "amountOutUsd": "10.0139",
+      "gasUsd": [
+        "0.0001"
+      ],
+      "target": "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE",
+      "spender": "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE",
+      "venues": [
+        "feeCollection",
+        "Integrator Fee",
+        "okx",
+        "OKX Dex Aggregator"
+      ],
+      "status": "quoted",
+      "builtCalldataBytes": 2660
+    },
+    {
+      "token": "sUSD",
+      "tokenIn": "0x8c6f28f2F1A3C87F0f938b96d27520d9751ec8d9",
+      "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+      "requestedUsd": 1,
+      "inputPriceUSD": "0.2502614629",
+      "amountIn": "3995820964251224314",
+      "provider": "kyber",
+      "timestamp": "2026-10-13T15:59:06.097Z",
+      "httpStatus": 200,
+      "amountOut": "1616978",
+      "amountOutUsd": "1.6152674918284762",
+      "gasUsd": "0.0022785918314393297",
+      "target": "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5",
+      "spender": "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5",
+      "venues": [
+        "velodrome",
+        "velodrome-cl-3"
+      ],
+      "status": "quoted"
+    },
+    {
+      "token": "sUSD",
+      "tokenIn": "0x8c6f28f2F1A3C87F0f938b96d27520d9751ec8d9",
+      "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+      "requestedUsd": 1,
+      "inputPriceUSD": "0.2502614629",
+      "amountIn": "3995820964251224314",
+      "provider": "lifi",
+      "timestamp": "2026-10-13T15:59:06.243Z",
+      "httpStatus": 200,
+      "amountOut": "1485861",
+      "amountOutUsd": "1.4873",
+      "gasUsd": [
+        "0.0001"
+      ],
+      "target": "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE",
+      "spender": "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE",
+      "venues": [
+        "feeCollection",
+        "Integrator Fee",
+        "sushiswap",
+        "SushiSwap Aggregator"
+      ],
+      "status": "quoted",
+      "builtCalldataBytes": 1924
+    },
+    {
+      "token": "sUSD",
+      "tokenIn": "0x8c6f28f2F1A3C87F0f938b96d27520d9751ec8d9",
+      "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+      "requestedUsd": 10,
+      "inputPriceUSD": "0.2502614629",
+      "amountIn": "39958209642512243142",
+      "provider": "kyber",
+      "timestamp": "2026-10-13T15:59:07.386Z",
+      "httpStatus": 200,
+      "amountOut": "14597846",
+      "amountOutUsd": "14.58240377699533",
+      "gasUsd": "0.002932729299863051",
+      "target": "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5",
+      "spender": "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5",
+      "venues": [
+        "uniswapv3",
+        "pmm-13"
+      ],
+      "status": "quoted"
+    },
+    {
+      "token": "sUSD",
+      "tokenIn": "0x8c6f28f2F1A3C87F0f938b96d27520d9751ec8d9",
+      "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+      "requestedUsd": 10,
+      "inputPriceUSD": "0.2502614629",
+      "amountIn": "39958209642512243142",
+      "provider": "lifi",
+      "timestamp": "2026-10-13T15:59:07.509Z",
+      "httpStatus": 200,
+      "amountOut": "14552837",
+      "amountOutUsd": "14.5666",
+      "gasUsd": [
+        "0.0001"
+      ],
+      "target": "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE",
+      "spender": "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE",
+      "venues": [
+        "feeCollection",
+        "Integrator Fee",
+        "sushiswap",
+        "SushiSwap Aggregator"
+      ],
+      "status": "quoted",
+      "builtCalldataBytes": 2020
+    },
+    {
+      "token": "UNI",
+      "tokenIn": "0x6fd9d7ad17242c41f7131d257212c54a0e816691",
+      "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+      "requestedUsd": 1,
+      "inputPriceUSD": "7.5349364493",
+      "amountIn": "132715120655450330",
+      "provider": "kyber",
+      "timestamp": "2026-10-13T15:59:09.135Z",
+      "httpStatus": 200,
+      "amountOut": "990735",
+      "amountOutUsd": "0.9896869583362824",
+      "gasUsd": "0.0011853930983434105",
+      "target": "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5",
+      "spender": "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5",
+      "venues": [
+        "uniswapv3",
+        "velodrome-cl-2"
+      ],
+      "status": "quoted"
+    },
+    {
+      "token": "UNI",
+      "tokenIn": "0x6fd9d7ad17242c41f7131d257212c54a0e816691",
+      "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+      "requestedUsd": 1,
+      "inputPriceUSD": "7.5349364493",
+      "amountIn": "132715120655450330",
+      "provider": "lifi",
+      "timestamp": "2026-10-13T15:59:09.305Z",
+      "httpStatus": 200,
+      "amountOut": "988333",
+      "amountOutUsd": "0.9893",
+      "gasUsd": [
+        "0.0001"
+      ],
+      "target": "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE",
+      "spender": "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE",
+      "venues": [
+        "feeCollection",
+        "Integrator Fee",
+        "okx",
+        "OKX Dex Aggregator"
+      ],
+      "status": "quoted",
+      "builtCalldataBytes": 2660
+    },
+    {
+      "token": "UNI",
+      "tokenIn": "0x6fd9d7ad17242c41f7131d257212c54a0e816691",
+      "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+      "requestedUsd": 10,
+      "inputPriceUSD": "7.5349364493",
+      "amountIn": "1327151206554503302",
+      "provider": "kyber",
+      "timestamp": "2026-10-13T15:59:10.129Z",
+      "httpStatus": 200,
+      "amountOut": "9908381",
+      "amountOutUsd": "9.897899492727129",
+      "gasUsd": "0.002660058895021982",
+      "target": "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5",
+      "spender": "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5",
+      "venues": [
+        "uniswapv3",
+        "pmm-13"
+      ],
+      "status": "quoted"
+    },
+    {
+      "token": "UNI",
+      "tokenIn": "0x6fd9d7ad17242c41f7131d257212c54a0e816691",
+      "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+      "requestedUsd": 10,
+      "inputPriceUSD": "7.5349364493",
+      "amountIn": "1327151206554503302",
+      "provider": "lifi",
+      "timestamp": "2026-10-13T15:59:10.287Z",
+      "httpStatus": 200,
+      "amountOut": "9883616",
+      "amountOutUsd": "9.8930",
+      "gasUsd": [
+        "0.0001"
+      ],
+      "target": "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE",
+      "spender": "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE",
+      "venues": [
+        "feeCollection",
+        "Integrator Fee",
+        "kyberswap",
+        "Kyberswap"
+      ],
+      "status": "quoted",
+      "builtCalldataBytes": 6724
+    },
+    {
+      "token": "USD₮0",
+      "tokenIn": "0x01bFF41798a0BcF287b996046Ca68b395DbC1071",
+      "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+      "requestedUsd": 1,
+      "inputPriceUSD": "0.9993514604",
+      "amountIn": "1000648",
+      "provider": "kyber",
+      "timestamp": "2026-10-13T15:59:12.075Z",
+      "httpStatus": 200,
+      "amountOut": "999436",
+      "amountOutUsd": "0.9983787540480358",
+      "gasUsd": "0.0008386099335488895",
+      "target": "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5",
+      "spender": "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5",
+      "venues": [
+        "velodrome-cl-2"
+      ],
+      "status": "quoted"
+    },
+    {
+      "token": "USD₮0",
+      "tokenIn": "0x01bFF41798a0BcF287b996046Ca68b395DbC1071",
+      "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+      "requestedUsd": 1,
+      "inputPriceUSD": "0.9993514604",
+      "amountIn": "1000648",
+      "provider": "lifi",
+      "timestamp": "2026-10-13T15:59:12.172Z",
+      "httpStatus": 200,
+      "amountOut": "997121",
+      "amountOutUsd": "0.9981",
+      "gasUsd": [
+        "0.0001"
+      ],
+      "target": "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE",
+      "spender": "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE",
+      "venues": [
+        "feeCollection",
+        "Integrator Fee",
+        "okx",
+        "OKX Dex Aggregator"
+      ],
+      "status": "quoted",
+      "builtCalldataBytes": 2788
+    },
+    {
+      "token": "USD₮0",
+      "tokenIn": "0x01bFF41798a0BcF287b996046Ca68b395DbC1071",
+      "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+      "requestedUsd": 10,
+      "inputPriceUSD": "0.9993514604",
+      "amountIn": "10006489",
+      "provider": "kyber",
+      "timestamp": "2026-10-13T15:59:13.122Z",
+      "httpStatus": 200,
+      "amountOut": "9996391",
+      "amountOutUsd": "9.985816392002087",
+      "gasUsd": "0.0011857262107955633",
+      "target": "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5",
+      "spender": "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5",
+      "venues": [
+        "velodrome-cl-2",
+        "solidly-v3"
+      ],
+      "status": "quoted"
+    },
+    {
+      "token": "USD₮0",
+      "tokenIn": "0x01bFF41798a0BcF287b996046Ca68b395DbC1071",
+      "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+      "requestedUsd": 10,
+      "inputPriceUSD": "0.9993514604",
+      "amountIn": "10006489",
+      "provider": "lifi",
+      "timestamp": "2026-10-13T15:59:13.228Z",
+      "httpStatus": 200,
+      "amountOut": "9971216",
+      "amountOutUsd": "9.9806",
+      "gasUsd": [
+        "0.0001"
+      ],
+      "target": "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE",
+      "spender": "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE",
+      "venues": [
+        "feeCollection",
+        "Integrator Fee",
+        "okx",
+        "OKX Dex Aggregator"
+      ],
+      "status": "quoted",
+      "builtCalldataBytes": 2788
+    },
+    {
+      "token": "USDC",
+      "tokenIn": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+      "tokenOut": "0x4200000000000000000000000000000000000006",
+      "requestedUsd": 1,
+      "inputPriceUSD": "1.000945143",
+      "amountIn": "999055",
+      "provider": "kyber",
+      "timestamp": "2026-10-13T15:59:14.618Z",
+      "httpStatus": 200,
+      "amountOut": "397800351422279",
+      "amountOutUsd": "0.9980065230339547",
+      "gasUsd": "0.001363481350683593",
+      "target": "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5",
+      "spender": "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5",
+      "venues": [
+        "uniswap-v4-fee"
+      ],
+      "status": "quoted"
+    },
+    {
+      "token": "USDC",
+      "tokenIn": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+      "tokenOut": "0x4200000000000000000000000000000000000006",
+      "requestedUsd": 1,
+      "inputPriceUSD": "1.000945143",
+      "amountIn": "999055",
+      "provider": "lifi",
+      "timestamp": "2026-10-13T15:59:14.784Z",
+      "httpStatus": 200,
+      "amountOut": "396768534289655",
+      "amountOutUsd": "0.9938",
+      "gasUsd": [
+        "0.0001"
+      ],
+      "target": "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE",
+      "spender": "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE",
+      "venues": [
+        "feeCollection",
+        "Integrator Fee",
+        "okx",
+        "OKX Dex Aggregator"
+      ],
+      "status": "quoted",
+      "builtCalldataBytes": 2756
+    },
+    {
+      "token": "USDC",
+      "tokenIn": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+      "tokenOut": "0x4200000000000000000000000000000000000006",
+      "requestedUsd": 10,
+      "inputPriceUSD": "1.000945143",
+      "amountIn": "9990557",
+      "provider": "kyber",
+      "timestamp": "2026-10-13T15:59:15.668Z",
+      "httpStatus": 200,
+      "amountOut": "3975742224149565",
+      "amountOutUsd": "9.977195024521004",
+      "gasUsd": "0.0014320501196614832",
+      "target": "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5",
+      "spender": "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5",
+      "venues": [
+        "uniswap-v4-fee"
+      ],
+      "status": "quoted"
+    },
+    {
+      "token": "USDC",
+      "tokenIn": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+      "tokenOut": "0x4200000000000000000000000000000000000006",
+      "requestedUsd": 10,
+      "inputPriceUSD": "1.000945143",
+      "amountIn": "9990557",
+      "provider": "lifi",
+      "timestamp": "2026-10-13T15:59:15.772Z",
+      "httpStatus": 200,
+      "amountOut": "3967104015078944",
+      "amountOutUsd": "9.9366",
+      "gasUsd": [
+        "0.0001"
+      ],
+      "target": "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE",
+      "spender": "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE",
+      "venues": [
+        "feeCollection",
+        "Integrator Fee",
+        "nordstern",
+        "Nordstern Finance"
+      ],
+      "status": "quoted",
+      "builtCalldataBytes": 1572
+    },
+    {
+      "token": "USDC.e",
+      "tokenIn": "0x7F5c764cBc14f9669B88837ca1490cCa17c31607",
+      "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+      "requestedUsd": 1,
+      "inputPriceUSD": "1.0004077978",
+      "amountIn": "999592",
+      "provider": "kyber",
+      "timestamp": "2026-10-13T15:59:17.395Z",
+      "httpStatus": 200,
+      "amountOut": "999430",
+      "amountOutUsd": "0.9983727603950913",
+      "gasUsd": "0.0009037275983119758",
+      "target": "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5",
+      "spender": "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5",
+      "venues": [
+        "uniswap-v4"
+      ],
+      "status": "quoted"
+    },
+    {
+      "token": "USDC.e",
+      "tokenIn": "0x7F5c764cBc14f9669B88837ca1490cCa17c31607",
+      "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+      "requestedUsd": 1,
+      "inputPriceUSD": "1.0004077978",
+      "amountIn": "999592",
+      "provider": "lifi",
+      "timestamp": "2026-10-13T15:59:17.711Z",
+      "httpStatus": 200,
+      "amountOut": "996952",
+      "amountOutUsd": "0.9979",
+      "gasUsd": [
+        "0.0001"
+      ],
+      "target": "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE",
+      "spender": "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE",
+      "venues": [
+        "feeCollection",
+        "Integrator Fee",
+        "okx",
+        "OKX Dex Aggregator"
+      ],
+      "status": "quoted",
+      "builtCalldataBytes": 2788
+    },
+    {
+      "token": "USDC.e",
+      "tokenIn": "0x7F5c764cBc14f9669B88837ca1490cCa17c31607",
+      "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+      "requestedUsd": 10,
+      "inputPriceUSD": "1.0004077978",
+      "amountIn": "9995923",
+      "provider": "kyber",
+      "timestamp": "2026-10-13T15:59:18.462Z",
+      "httpStatus": 200,
+      "amountOut": "9996767",
+      "amountOutUsd": "9.981860725967897",
+      "gasUsd": "0.0034136260216778925",
+      "target": "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5",
+      "spender": "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5",
+      "venues": [
+        "curve-stable-plain",
+        "velodrome-cl-2",
+        "pmm-13"
+      ],
+      "status": "quoted"
+    },
+    {
+      "token": "USDC.e",
+      "tokenIn": "0x7F5c764cBc14f9669B88837ca1490cCa17c31607",
+      "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+      "requestedUsd": 10,
+      "inputPriceUSD": "1.0004077978",
+      "amountIn": "9995923",
+      "provider": "lifi",
+      "timestamp": "2026-10-13T15:59:18.981Z",
+      "httpStatus": 200,
+      "amountOut": "9969501",
+      "amountOutUsd": "9.9789",
+      "gasUsd": [
+        "0.0001"
+      ],
+      "target": "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE",
+      "spender": "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE",
+      "venues": [
+        "feeCollection",
+        "Integrator Fee",
+        "okx",
+        "OKX Dex Aggregator"
+      ],
+      "status": "quoted",
+      "builtCalldataBytes": 2788
+    },
+    {
+      "token": "USDT",
+      "tokenIn": "0x94b008aA00579c1307B0EF2c499aD98a8ce58e58",
+      "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+      "requestedUsd": 1,
+      "inputPriceUSD": "1.0003351286",
+      "amountIn": "999664",
+      "provider": "kyber",
+      "timestamp": "2026-10-13T15:59:20.342Z",
+      "httpStatus": 200,
+      "amountOut": "998630",
+      "amountOutUsd": "0.9971409333410812",
+      "gasUsd": "0.0008388066136054074",
+      "target": "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5",
+      "spender": "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5",
+      "venues": [
+        "solidly-v3"
+      ],
+      "status": "quoted"
+    },
+    {
+      "token": "USDT",
+      "tokenIn": "0x94b008aA00579c1307B0EF2c499aD98a8ce58e58",
+      "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+      "requestedUsd": 1,
+      "inputPriceUSD": "1.0003351286",
+      "amountIn": "999664",
+      "provider": "lifi",
+      "timestamp": "2026-10-13T15:59:20.562Z",
+      "httpStatus": 200,
+      "amountOut": "996130",
+      "amountOutUsd": "0.9971",
+      "gasUsd": [
+        "0.0001"
+      ],
+      "target": "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE",
+      "spender": "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE",
+      "venues": [
+        "feeCollection",
+        "Integrator Fee",
+        "okx",
+        "OKX Dex Aggregator"
+      ],
+      "status": "quoted",
+      "builtCalldataBytes": 2148
+    },
+    {
+      "token": "USDT",
+      "tokenIn": "0x94b008aA00579c1307B0EF2c499aD98a8ce58e58",
+      "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+      "requestedUsd": 10,
+      "inputPriceUSD": "1.0003351286",
+      "amountIn": "9996649",
+      "provider": "kyber",
+      "timestamp": "2026-10-13T15:59:21.279Z",
+      "httpStatus": 200,
+      "amountOut": "9988853",
+      "amountOutUsd": "9.974510003914263",
+      "gasUsd": "0.0034136260216778925",
+      "target": "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5",
+      "spender": "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5",
+      "venues": [
+        "curve-stable-plain",
+        "velodrome-cl-2",
+        "pmm-13"
+      ],
+      "status": "quoted"
+    },
+    {
+      "token": "USDT",
+      "tokenIn": "0x94b008aA00579c1307B0EF2c499aD98a8ce58e58",
+      "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+      "requestedUsd": 10,
+      "inputPriceUSD": "1.0003351286",
+      "amountIn": "9996649",
+      "provider": "lifi",
+      "timestamp": "2026-10-13T15:59:21.390Z",
+      "httpStatus": 200,
+      "amountOut": "9961356",
+      "amountOutUsd": "9.9708",
+      "gasUsd": [
+        "0.0001"
+      ],
+      "target": "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE",
+      "spender": "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE",
+      "venues": [
+        "feeCollection",
+        "Integrator Fee",
+        "okx",
+        "OKX Dex Aggregator"
+      ],
+      "status": "quoted",
+      "builtCalldataBytes": 3300
+    },
+    {
+      "token": "VELO v1",
+      "tokenIn": "0x3c8B650257cFb5f272f799F5e2b4e65093a11a05",
+      "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+      "requestedUsd": 1,
+      "inputPriceUSD": "0.04182408369",
+      "amountIn": "23909669065603383216",
+      "provider": "kyber",
+      "timestamp": "2026-10-13T15:59:22.741Z",
+      "httpStatus": 200,
+      "amountOut": "999850",
+      "amountOutUsd": "0.9984143151784971",
+      "gasUsd": "0.0015589664227737964",
+      "target": "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5",
+      "spender": "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5",
+      "venues": [
+        "velodrome",
+        "velodrome-cl-3"
+      ],
+      "status": "quoted"
+    },
+    {
+      "token": "VELO v1",
+      "tokenIn": "0x3c8B650257cFb5f272f799F5e2b4e65093a11a05",
+      "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+      "requestedUsd": 1,
+      "inputPriceUSD": "0.04182408369",
+      "amountIn": "23909669065603383216",
+      "provider": "lifi",
+      "timestamp": "2026-10-13T15:59:22.856Z",
+      "httpStatus": 200,
+      "amountOut": "996947",
+      "amountOutUsd": "0.9979",
+      "gasUsd": [
+        "0.0001"
+      ],
+      "target": "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE",
+      "spender": "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE",
+      "venues": [
+        "feeCollection",
+        "Integrator Fee",
+        "okx",
+        "OKX Dex Aggregator"
+      ],
+      "status": "quoted",
+      "builtCalldataBytes": 3204
+    },
+    {
+      "token": "VELO v1",
+      "tokenIn": "0x3c8B650257cFb5f272f799F5e2b4e65093a11a05",
+      "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+      "requestedUsd": 10,
+      "inputPriceUSD": "0.04182408369",
+      "amountIn": "239096690656033832166",
+      "provider": "kyber",
+      "timestamp": "2026-10-13T15:59:23.814Z",
+      "httpStatus": 200,
+      "amountOut": "9985922",
+      "amountOutUsd": "9.971031897050196",
+      "gasUsd": "0.0016241145536691037",
+      "target": "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5",
+      "spender": "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5",
+      "venues": [
+        "velodrome",
+        "uniswap-v4"
+      ],
+      "status": "quoted"
+    },
+    {
+      "token": "VELO v1",
+      "tokenIn": "0x3c8B650257cFb5f272f799F5e2b4e65093a11a05",
+      "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+      "requestedUsd": 10,
+      "inputPriceUSD": "0.04182408369",
+      "amountIn": "239096690656033832166",
+      "provider": "lifi",
+      "timestamp": "2026-10-13T15:59:23.935Z",
+      "httpStatus": 200,
+      "amountOut": "9961017",
+      "amountOutUsd": "9.9704",
+      "gasUsd": [
+        "0.0001"
+      ],
+      "target": "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE",
+      "spender": "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE",
+      "venues": [
+        "feeCollection",
+        "Integrator Fee",
+        "okx",
+        "OKX Dex Aggregator"
+      ],
+      "status": "quoted",
+      "builtCalldataBytes": 3332
+    },
+    {
+      "token": "VELO v2",
+      "tokenIn": "0x9560e827aF36c94D2Ac33a39bCE1Fe78631088Db",
+      "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+      "requestedUsd": 1,
+      "inputPriceUSD": "0.03874462848",
+      "amountIn": "25810029395847751848",
+      "provider": "kyber",
+      "timestamp": "2026-10-13T15:59:26.444Z",
+      "httpStatus": 200,
+      "amountOut": "1003714",
+      "amountOutUsd": "1.002272766860099",
+      "gasUsd": "0.0019322413468585058",
+      "target": "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5",
+      "spender": "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5",
+      "venues": [
+        "velodrome-v2"
+      ],
+      "status": "quoted"
+    },
+    {
+      "token": "VELO v2",
+      "tokenIn": "0x9560e827aF36c94D2Ac33a39bCE1Fe78631088Db",
+      "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+      "requestedUsd": 1,
+      "inputPriceUSD": "0.03874462848",
+      "amountIn": "25810029395847751848",
+      "provider": "lifi",
+      "timestamp": "2026-10-13T15:59:26.549Z",
+      "httpStatus": 200,
+      "amountOut": "1000478",
+      "amountOutUsd": "1.0014",
+      "gasUsd": [
+        "0.0001"
+      ],
+      "target": "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE",
+      "spender": "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE",
+      "venues": [
+        "feeCollection",
+        "Integrator Fee",
+        "1inch"
+      ],
+      "status": "quoted",
+      "builtCalldataBytes": 2404
+    },
+    {
+      "token": "VELO v2",
+      "tokenIn": "0x9560e827aF36c94D2Ac33a39bCE1Fe78631088Db",
+      "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+      "requestedUsd": 10,
+      "inputPriceUSD": "0.03874462848",
+      "amountIn": "258100293958477518481",
+      "provider": "kyber",
+      "timestamp": "2026-10-13T15:59:27.879Z",
+      "httpStatus": 200,
+      "amountOut": "10030053",
+      "amountOutUsd": "10.015097092897783",
+      "gasUsd": "0.004166098540046679",
+      "target": "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5",
+      "spender": "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5",
+      "venues": [
+        "velodrome-v2",
+        "uniswap-v4",
+        "pmm-13"
+      ],
+      "status": "quoted"
+    },
+    {
+      "token": "VELO v2",
+      "tokenIn": "0x9560e827aF36c94D2Ac33a39bCE1Fe78631088Db",
+      "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+      "requestedUsd": 10,
+      "inputPriceUSD": "0.03874462848",
+      "amountIn": "258100293958477518481",
+      "provider": "lifi",
+      "timestamp": "2026-10-13T15:59:28.108Z",
+      "httpStatus": 200,
+      "amountOut": "9990026",
+      "amountOutUsd": "9.9995",
+      "gasUsd": [
+        "0.0001"
+      ],
+      "target": "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE",
+      "spender": "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE",
+      "venues": [
+        "feeCollection",
+        "Integrator Fee",
+        "okx",
+        "OKX Dex Aggregator"
+      ],
+      "status": "quoted",
+      "builtCalldataBytes": 2660
+    },
+    {
+      "token": "WBTC",
+      "tokenIn": "0x68f180fcCe6836688e9084f035309E29Bf0A2095",
+      "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+      "requestedUsd": 1,
+      "inputPriceUSD": "83048.7122173705",
+      "amountIn": "1204",
+      "provider": "kyber",
+      "timestamp": "2026-10-13T15:59:29.515Z",
+      "httpStatus": 200,
+      "amountOut": "1000420",
+      "amountOutUsd": "0.998928264255114",
+      "gasUsd": "0.002071251479179578",
+      "target": "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5",
+      "spender": "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5",
+      "venues": [
+        "uniswap-v4-passthru",
+        "velodrome-cl-2"
+      ],
+      "status": "quoted"
+    },
+    {
+      "token": "WBTC",
+      "tokenIn": "0x68f180fcCe6836688e9084f035309E29Bf0A2095",
+      "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+      "requestedUsd": 1,
+      "inputPriceUSD": "83048.7122173705",
+      "amountIn": "1204",
+      "provider": "lifi",
+      "timestamp": "2026-10-13T15:59:29.663Z",
+      "httpStatus": 200,
+      "amountOut": "997752",
+      "amountOutUsd": "0.9987",
+      "gasUsd": [
+        "0.0001"
+      ],
+      "target": "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE",
+      "spender": "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE",
+      "venues": [
+        "feeCollection",
+        "Integrator Fee",
+        "okx",
+        "OKX Dex Aggregator"
+      ],
+      "status": "quoted",
+      "builtCalldataBytes": 2660
+    },
+    {
+      "token": "WBTC",
+      "tokenIn": "0x68f180fcCe6836688e9084f035309E29Bf0A2095",
+      "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+      "requestedUsd": 10,
+      "inputPriceUSD": "83048.7122173705",
+      "amountIn": "12041",
+      "provider": "kyber",
+      "timestamp": "2026-10-13T15:59:30.562Z",
+      "httpStatus": 200,
+      "amountOut": "10010283",
+      "amountOutUsd": "9.995356572132179",
+      "gasUsd": "0.0033542997629156684",
+      "target": "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5",
+      "spender": "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5",
+      "venues": [
+        "velodrome-cl-2",
+        "pmm-13",
+        "uniswapv3"
+      ],
+      "status": "quoted"
+    },
+    {
+      "token": "WBTC",
+      "tokenIn": "0x68f180fcCe6836688e9084f035309E29Bf0A2095",
+      "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+      "requestedUsd": 10,
+      "inputPriceUSD": "83048.7122173705",
+      "amountIn": "12041",
+      "provider": "lifi",
+      "timestamp": "2026-10-13T15:59:30.787Z",
+      "httpStatus": 200,
+      "amountOut": "9983338",
+      "amountOutUsd": "9.9928",
+      "gasUsd": [
+        "0.0001"
+      ],
+      "target": "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE",
+      "spender": "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE",
+      "venues": [
+        "feeCollection",
+        "Integrator Fee",
+        "okx",
+        "OKX Dex Aggregator"
+      ],
+      "status": "quoted",
+      "builtCalldataBytes": 2660
+    },
+    {
+      "token": "WETH",
+      "tokenIn": "0x4200000000000000000000000000000000000006",
+      "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+      "requestedUsd": 1,
+      "inputPriceUSD": "2504.75",
+      "amountIn": "399241441261602",
+      "provider": "kyber",
+      "timestamp": "2026-10-13T15:59:32.063Z",
+      "httpStatus": 200,
+      "amountOut": "1002919",
+      "amountOutUsd": "1.0014789084007631",
+      "gasUsd": "0.0008387966609188941",
+      "target": "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5",
+      "spender": "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5",
+      "venues": [
+        "velodrome-cl-2"
+      ],
+      "status": "quoted"
+    },
+    {
+      "token": "WETH",
+      "tokenIn": "0x4200000000000000000000000000000000000006",
+      "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+      "requestedUsd": 1,
+      "inputPriceUSD": "2504.75",
+      "amountIn": "399241441261602",
+      "provider": "lifi",
+      "timestamp": "2026-10-13T15:59:32.202Z",
+      "httpStatus": 200,
+      "amountOut": "1000747",
+      "amountOutUsd": "1.0017",
+      "gasUsd": [
+        "0.0001"
+      ],
+      "target": "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE",
+      "spender": "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE",
+      "venues": [
+        "feeCollection",
+        "Integrator Fee",
+        "okx",
+        "OKX Dex Aggregator"
+      ],
+      "status": "quoted",
+      "builtCalldataBytes": 2020
+    },
+    {
+      "token": "WETH",
+      "tokenIn": "0x4200000000000000000000000000000000000006",
+      "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+      "requestedUsd": 10,
+      "inputPriceUSD": "2504.75",
+      "amountIn": "3992414412616029",
+      "provider": "kyber",
+      "timestamp": "2026-10-13T15:59:33.035Z",
+      "httpStatus": 200,
+      "amountOut": "10032715",
+      "amountOutUsd": "10.01775512356435",
+      "gasUsd": "0.001790501240201774",
+      "target": "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5",
+      "spender": "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5",
+      "venues": [
+        "woofi-v3"
+      ],
+      "status": "quoted"
+    },
+    {
+      "token": "WETH",
+      "tokenIn": "0x4200000000000000000000000000000000000006",
+      "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+      "requestedUsd": 10,
+      "inputPriceUSD": "2504.75",
+      "amountIn": "3992414412616029",
+      "provider": "lifi",
+      "timestamp": "2026-10-13T15:59:33.249Z",
+      "httpStatus": 200,
+      "amountOut": "10000473",
+      "amountOutUsd": "10.0099",
+      "gasUsd": [
+        "0.0001"
+      ],
+      "target": "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE",
+      "spender": "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE",
+      "venues": [
+        "feeCollection",
+        "Integrator Fee",
+        "1inch"
+      ],
+      "status": "quoted",
+      "builtCalldataBytes": 1924
+    },
+    {
+      "token": "wstETH",
+      "tokenIn": "0x1F32b1c2345538c0c6f582fCB022739c4A194Ebb",
+      "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+      "requestedUsd": 1,
+      "inputPriceUSD": "3122.4831732465",
+      "amountIn": "320257930793036",
+      "provider": "kyber",
+      "timestamp": "2026-10-13T15:59:34.915Z",
+      "httpStatus": 200,
+      "amountOut": "1002087",
+      "amountOutUsd": "1.0005927785756126",
+      "gasUsd": "0.0008387792437174958",
+      "target": "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5",
+      "spender": "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5",
+      "venues": [
+        "velodrome-cl-2"
+      ],
+      "status": "quoted"
+    },
+    {
+      "token": "wstETH",
+      "tokenIn": "0x1F32b1c2345538c0c6f582fCB022739c4A194Ebb",
+      "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+      "requestedUsd": 1,
+      "inputPriceUSD": "3122.4831732465",
+      "amountIn": "320257930793036",
+      "provider": "lifi",
+      "timestamp": "2026-10-13T15:59:35.236Z",
+      "httpStatus": 200,
+      "amountOut": "1000197",
+      "amountOutUsd": "1.0011",
+      "gasUsd": [
+        "0.0001"
+      ],
+      "target": "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE",
+      "spender": "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE",
+      "venues": [
+        "feeCollection",
+        "Integrator Fee",
+        "okx",
+        "OKX Dex Aggregator"
+      ],
+      "status": "quoted",
+      "builtCalldataBytes": 2820
+    },
+    {
+      "token": "wstETH",
+      "tokenIn": "0x1F32b1c2345538c0c6f582fCB022739c4A194Ebb",
+      "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+      "requestedUsd": 10,
+      "inputPriceUSD": "3122.4831732465",
+      "amountIn": "3202579307930369",
+      "provider": "kyber",
+      "timestamp": "2026-10-13T15:59:36.064Z",
+      "httpStatus": 200,
+      "amountOut": "10027278",
+      "amountOutUsd": "10.012879829448828",
+      "gasUsd": "0.002202500423517156",
+      "target": "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5",
+      "spender": "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5",
+      "venues": [
+        "uniswap-v4",
+        "woofi-v3"
+      ],
+      "status": "quoted"
+    },
+    {
+      "token": "wstETH",
+      "tokenIn": "0x1F32b1c2345538c0c6f582fCB022739c4A194Ebb",
+      "tokenOut": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+      "requestedUsd": 10,
+      "inputPriceUSD": "3122.4831732465",
+      "amountIn": "3202579307930369",
+      "provider": "lifi",
+      "timestamp": "2026-10-13T15:59:36.142Z",
+      "httpStatus": 200,
+      "amountOut": "10001972",
+      "amountOutUsd": "10.0114",
+      "gasUsd": [
+        "0.0001"
+      ],
+      "target": "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE",
+      "spender": "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE",
+      "venues": [
+        "feeCollection",
+        "Integrator Fee",
+        "okx",
+        "OKX Dex Aggregator"
+      ],
+      "status": "quoted",
+      "builtCalldataBytes": 2820
+    }
+  ]
+}

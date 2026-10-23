@@ -31,12 +31,14 @@ import {
   getBaseDustSweepV3Allowlist,
   getActiveDustSweepV3TargetsForChain,
   getDustSweepV3AllowlistForChain,
+  getDustSweepV3TargetsForChain,
 } from "../config/dustsweepV3Sources";
 import {
   ARBITRUM_CHAIN_ID,
   BASE_CONFIG,
   BSC_CHAIN_ID,
   ETHEREUM_CHAIN_ID,
+  OPTIMISM_CHAIN_ID,
   ROBINHOOD_CHAIN_ID,
   getChainAllowedAggregatorAddresses,
   getChainRouterV3Address,
@@ -48,11 +50,19 @@ import {
 import { chainRpcRequest, chainAlchemyRpcRequest } from "../utils/chainRpc";
 import { getProxiedClientIp } from "../utils/clientIp";
 import {
+  AggregatorTransientError,
   governAggregatorCall,
   reportAggregatorHttpStatus,
   type AggregatorProviderId,
 } from "../lib/aggregatorGovernor";
 import { batchedEthCall, isMulticallBatchingEnabled } from "../lib/multicallBatcher";
+import {
+  SOLIDLY_DEX_ID,
+  SOLIDLY_ROUTER_ABI,
+  buildSolidlySwapCall,
+  encodeSolidlyDexData,
+  getSolidlyQuotePaths,
+} from "../lib/dustsweepSolidly";
 
 const dustsweepRoutes = new Hono();
 
@@ -342,6 +352,10 @@ const DISCOVERY_METADATA_CONCURRENCY = boundedEnvNumber("DUST_SWEEP_METADATA_CON
 // each token so slow/dead tokens are skipped instead of blocking the rest.
 const QUOTE_TOKEN_CONCURRENCY = boundedEnvNumber("DUST_SWEEP_QUOTE_CONCURRENCY", 10, 1, 50);
 const QUOTE_TOKEN_TIMEOUT_MS = boundedEnvNumber("DUST_SWEEP_QUOTE_TOKEN_TIMEOUT_MS", 12_000, 3_000, 30_000);
+const OPTIMISM_NATIVE_QUOTE_BUDGET_MS = Math.min(
+  boundedEnvNumber("DUST_SWEEP_NATIVE_QUOTE_BUDGET_MS_10", 5_000, 500, 15_000),
+  QUOTE_TOKEN_TIMEOUT_MS - 1_000,
+);
 // Concurrency for the build-tx pre-flight balance/allowance reads. These used to
 // run one RPC call per token in series, so a 50-token sweep took ~a minute before
 // the wallet prompt could even open. Reading them in parallel collapses that to
@@ -452,6 +466,7 @@ const DEX = {
   // No swap. tokenIn already IS the output token (WETH swept into native ETH). The upgraded V3
   // router pulls it and settles/unwraps it directly. target/spender/data are unused.
   PASSTHROUGH: 11,
+  SOLIDLY_GENERIC: SOLIDLY_DEX_ID,
 } as const;
 
 type DustSweepExecutionLane = "owned_v1" | "owned_v2" | "basket_aggregator";
@@ -520,7 +535,7 @@ function getRouterAddressForLane(executionLane: DustSweepExecutionLane) {
 // the contract's MAX_FEE_BPS so a misconfigured env can never make sweep() revert with FeeTooHigh.
 const V3_MAX_FEE_BPS = 300;
 function getV3FeeBps(chain: SweepChainConfig = BASE_CONFIG) {
-  return Math.max(0, Math.min(V3_MAX_FEE_BPS, getFeeBps(chain)));
+  return Math.max(0, Math.min(V3_MAX_FEE_BPS, Math.floor(getFeeBps(chain))));
 }
 
 function parseAddressSet(value: string | undefined, fallback: Address[] = []) {
@@ -2324,6 +2339,16 @@ function isDecimalsVerifiedSource(source?: string | null) {
   return value.startsWith("onchain") || value === "default" || value === "seed";
 }
 
+// Match discovery's final balance formatter: trust verified seed/on-chain rows, otherwise
+// use live metadata before an importer hint. Price inference must use the same token units.
+function effectiveDiscoveryDecimals(row?: TokenWhitelistRow, metadata?: Erc20Metadata) {
+  const preferred = row && isDecimalsVerifiedSource(row.source)
+    ? row.decimals
+    : metadata?.decimals ?? row?.decimals ?? 18;
+  const decimals = Number(preferred);
+  return Number.isFinite(decimals) ? decimals : 18;
+}
+
 function isOutputAssetAddress(address: string, chain: SweepChainConfig = BASE_CONFIG) {
   const key = address.toLowerCase();
   return (
@@ -2347,6 +2372,7 @@ const DETERMINISTIC_LOGO_CHAIN_IDS = new Set<number>([
   BSC_CHAIN_ID,
   ROBINHOOD_CHAIN_ID, // verified 2026-07-26: llamao serves 4663 (HTTP 200 for WETH + USDG)
   ARBITRUM_CHAIN_ID, // 42161 — confirm llamao returns HTTP 200 for WETH from Railway pre-flip
+  OPTIMISM_CHAIN_ID,
 ]);
 
 function deterministicTokenLogo(address: Address, chain: SweepChainConfig): string | undefined {
@@ -2443,6 +2469,7 @@ function getAlchemyPricesNetwork(chain: SweepChainConfig) {
   if (chain.chainId === BSC_CHAIN_ID) return "bnb-mainnet";
   if (chain.chainId === ROBINHOOD_CHAIN_ID) return "robinhood-mainnet";
   if (chain.chainId === ARBITRUM_CHAIN_ID) return "arb-mainnet";
+  if (chain.chainId === OPTIMISM_CHAIN_ID) return "opt-mainnet";
   return null;
 }
 
@@ -2527,6 +2554,7 @@ function getCoinGeckoPlatform(chain: SweepChainConfig) {
   // CoinGecko's asset-platform id for Arbitrum One. NOTE this also arms reconcileThinPoolPrices,
   // which early-returns without a platform — confirm from Railway alongside COINGECKO_API_KEY.
   if (chain.chainId === ARBITRUM_CHAIN_ID) return "arbitrum-one";
+  if (chain.chainId === OPTIMISM_CHAIN_ID) return "optimistic-ethereum";
   return null;
 }
 
@@ -2698,10 +2726,10 @@ async function fetchTokenMarketHints(
 // Mutates `marketHints` in place so the downstream discovery builder picks up the corrected price.
 /**
  * Prices tokens that NO off-chain source could price, by quoting them on chain against the
- * chain's wrapped native through the same Uniswap-V3-style quoters the sweep itself executes
- * against. Routability is the ground truth for a dust sweeper: if the quoter returns an amount
- * for the user's exact balance, that token can be swept and we now know what it is worth; if it
- * returns nothing, it stays hidden — which is correct, because sweeping it would revert anyway.
+ * chain's wrapped native through executable native venues (Optimism includes V2, Velodrome,
+ * and V3 indirect paths). A positive quote for the user's exact balance supplies an executable
+ * price hint. Without a price from any source, the token remains hidden as UNKNOWN_PRICE;
+ * this bounded native probe does not establish that every aggregator also lacks a route.
  *
  * This is what removes the whitelist as a prerequisite for visibility. Mutates `marketHints`.
  * Strictly additive: only touches tokens whose price is still 0 after every other source.
@@ -2734,14 +2762,28 @@ async function probeOnchainPricesForUnpriced(
   if (venues.length === 0) return { probed: 0, priced: 0 };
 
   const wethKey = chain.weth.toLowerCase();
-  const candidates: Array<{ address: Address; amountIn: bigint; decimals: number }> = [];
+  const candidates: Array<{ address: Address; amountIn: bigint; decimals: number; priority: number }> = [];
   for (const balance of balances) {
-    if (candidates.length >= DISCOVERY_ONCHAIN_PROBE_MAX_TOKENS) break;
+    if (chain.chainId !== OPTIMISM_CHAIN_ID && candidates.length >= DISCOVERY_ONCHAIN_PROBE_MAX_TOKENS) break;
     if (!isAddress(balance.contractAddress)) continue;
     const address = normalizeAddress(balance.contractAddress);
     const key = address.toLowerCase();
     if (key === wethKey || isNativeTokenAddress(key)) continue;
     if ((marketHints[key]?.priceUSD || 0) > 0) continue; // already priced — skip
+    let priority = 0;
+    if (chain.chainId === OPTIMISM_CHAIN_ID) {
+      const metadata = metadataByAddress.get(key) ?? whitelist.get(key);
+      const fallbackLabel = `${address.slice(0, 6)}...${address.slice(-4)}`;
+      const riskIfPriced = getRiskClassification({
+        symbol: metadata?.symbol ?? fallbackLabel, name: metadata?.name ?? fallbackLabel,
+        tokenAddress: address, hasMetadata: Boolean(metadata), priceUSD: 1,
+        liquidityUSD: 0, isVerifiedHint: whitelist.has(key),
+      });
+      if (riskIfPriced.blockedFromSweep) continue;
+      // Unknown metadata may still describe a real asset. Keep it eligible, but spend the
+      // bounded budget on tokens that a positive price would make selectable first.
+      priority = riskIfPriced.hiddenByDefault ? 0 : 1;
+    }
 
     let amountIn: bigint;
     try {
@@ -2751,40 +2793,46 @@ async function probeOnchainPricesForUnpriced(
     }
     if (amountIn <= 0n) continue;
 
-    const decimalsRaw = Number(
-      whitelist.get(key)?.decimals ?? metadataByAddress.get(key)?.decimals ?? 18,
-    );
     candidates.push({
       address,
       amountIn,
-      decimals: Number.isFinite(decimalsRaw) ? decimalsRaw : 18,
+      decimals: effectiveDiscoveryDecimals(whitelist.get(key), metadataByAddress.get(key)),
+      priority,
     });
   }
   if (candidates.length === 0) return { probed: 0, priced: 0 };
+  const probeCandidates = chain.chainId === OPTIMISM_CHAIN_ID
+    ? candidates.sort((a, b) => b.priority - a.priority).slice(0, DISCOVERY_ONCHAIN_PROBE_MAX_TOKENS)
+    : candidates;
 
   const nativeUsd = await fetchNativeUsdPrice(chain).catch(() => 0);
   if (!Number.isFinite(nativeUsd) || nativeUsd <= 0) return { probed: 0, priced: 0 };
 
   let priced = 0;
   await pLimit(
-    candidates.map((candidate) => async () => {
+    probeCandidates.map((candidate) => async () => {
       // Probe EVERY tier/venue and keep the BEST output. Taking the first non-zero quote is
       // wrong: a token often has a near-empty pool at one fee tier alongside its real pool at
       // another, and the shallow one quotes catastrophically low (measured: cbBTC -100%, AERO
       // -92% against market). The best quote is both the true price basis and what the sweep
       // would actually route through.
       let bestOut = 0n;
-      for (const venue of venues) {
-        for (const fee of venue.feeTiers) {
-          const amountOut = await tryQuoteV3Single(
-            venue.quoter,
-            candidate.address,
-            chain.weth,
-            candidate.amountIn,
-            fee,
-            chain.chainId,
-          ).catch(() => null);
-          if (amountOut && amountOut > bestOut) bestOut = amountOut;
+      let bestDex = "UNISWAP_V3";
+      if (chain.chainId === OPTIMISM_CHAIN_ID) {
+        const best = pickBestCandidate(await getNativeQuoteCandidates(candidate.address, chain.weth, candidate.amountIn, chain));
+        if (best) {
+          bestOut = best.amountOut;
+          bestDex = best.dex === DEX.SOLIDLY_GENERIC ? "VELODROME_V2"
+            : best.dex === DEX.UNIV2_GENERIC ? "UNISWAP_V2" : "UNISWAP_V3";
+        }
+      } else {
+        for (const venue of venues) {
+          for (const fee of venue.feeTiers) {
+            const amountOut = await tryQuoteV3Single(
+              venue.quoter, candidate.address, chain.weth, candidate.amountIn, fee, chain.chainId,
+            ).catch(() => null);
+            if (amountOut && amountOut > bestOut) bestOut = amountOut;
+          }
         }
       }
       if (bestOut <= 0n) return;
@@ -2803,7 +2851,7 @@ async function probeOnchainPricesForUnpriced(
         // Liquidity is unknown from a single quote; leave it 0 rather than inventing a number.
         // The token becomes visible because it now has a real, execution-backed price.
         liquidityUSD: 0,
-        bestDex: "UNISWAP_V3",
+        bestDex,
         source: "onchain",
         confidence: "MEDIUM",
       };
@@ -2812,7 +2860,7 @@ async function probeOnchainPricesForUnpriced(
     DISCOVERY_ONCHAIN_PROBE_CONCURRENCY,
   );
 
-  return { probed: candidates.length, priced };
+  return { probed: probeCandidates.length, priced };
 }
 
 async function reconcileThinPoolPrices(
@@ -2835,10 +2883,7 @@ async function reconcileThinPoolPrices(
     if (!hint || hint.source !== "dexscreener" || hint.priceUSD <= 0) continue;
     if (hint.liquidityUSD >= DISCOVERY_THIN_POOL_LIQUIDITY_USD) continue;
 
-    const decimalsRaw = Number(
-      whitelist.get(key)?.decimals ?? metadataByAddress.get(key)?.decimals ?? 18,
-    );
-    const decimals = Number.isFinite(decimalsRaw) ? decimalsRaw : 18;
+    const decimals = effectiveDiscoveryDecimals(whitelist.get(key), metadataByAddress.get(key));
     let valueUSD = 0;
     try {
       valueUSD = Number(formatUnits(BigInt(balance.tokenBalance), decimals)) * hint.priceUSD;
@@ -3116,6 +3161,34 @@ function encodeV3DexData(fee: number, path: Hex = "0x") {
   ]);
 }
 
+// A slow pool must not discard candidates already quoted by another pool. Keep probe order
+// for deterministic tie-breaking, and leave time for aggregator fallback inside the token cap.
+async function collectOptimismQuoteCandidates(
+  probes: Array<() => Promise<QuoteCandidate | null>>,
+  onTransientFailure?: () => void,
+  budgetMs = OPTIMISM_NATIVE_QUOTE_BUDGET_MS,
+): Promise<QuoteCandidate[]> {
+  const candidates: Array<QuoteCandidate | null> = probes.map(() => null);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      Promise.all(probes.map(async (probe, index) => {
+        try {
+          candidates[index] = await probe();
+        } catch (error) {
+          if (!(error instanceof RpcDeterministicError)) onTransientFailure?.();
+        }
+      })),
+      new Promise<void>((resolve) => {
+        timer = setTimeout(() => { onTransientFailure?.(); resolve(); }, Math.max(0, budgetMs));
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+  return candidates.filter((candidate): candidate is QuoteCandidate => candidate !== null);
+}
+
 async function getV3QuoteCandidates(args: {
   dex: typeof DEX.UNISWAP_V3 | typeof DEX.PANCAKESWAP_V3;
   dexName: string;
@@ -3128,11 +3201,45 @@ async function getV3QuoteCandidates(args: {
   chainId?: number;
   weth?: Address;
   usdc?: Address;
+  onTransientFailure?: () => void;
 }): Promise<QuoteCandidate[]> {
   const candidates: QuoteCandidate[] = [];
   const chainId = args.chainId ?? BASE_CHAIN_ID;
   const weth = args.weth ?? WETH_ADDRESS;
   const usdc = args.usdc ?? USDC_ADDRESS;
+
+  if (chainId === OPTIMISM_CHAIN_ID) {
+    const probes: Array<() => Promise<QuoteCandidate | null>> = [];
+    const candidate = (amountOut: bigint | null, fee: number, path: Hex = "0x", label = ""): QuoteCandidate | null =>
+      amountOut ? {
+        tokenIn: args.tokenIn,
+        amountIn: args.amountIn.toString(),
+        amountOutMin: "0",
+        estimatedOut: amountOut.toString(),
+        dex: args.dex,
+        dexName: `${args.dexName}${label}`,
+        dexData: encodeV3DexData(fee, path),
+        poolFee: fee,
+        amountOut,
+      } : null;
+    for (const fee of args.feeTiers) {
+      probes.push(async () => candidate(await tryQuoteV3Single(
+        args.quoter, args.tokenIn, args.tokenOut, args.amountIn, fee, chainId,
+      ), fee));
+    }
+    // Compare indirect pools even when a shallow direct pool exists, including WETH input
+    // via USDC. Probe all supported fee pairs (100/500/3000/10000), not the Base short list.
+    for (const [mid, label] of [[weth, wrappedNativeSymbol(chainId)], [usdc, "USDC"]] as const) {
+      if ([args.tokenIn, args.tokenOut].some((token) => token.toLowerCase() === mid.toLowerCase())) continue;
+      for (const feeA of args.feeTiers) {
+        for (const feeB of args.feeTiers) {
+          const path = encodeV3Path(args.tokenIn, feeA, mid, feeB, args.tokenOut);
+          probes.push(async () => candidate(await tryQuoteV3Path(args.quoter, path, args.amountIn, chainId), feeA, path, ` via ${label}`));
+        }
+      }
+    }
+    return collectOptimismQuoteCandidates(probes, args.onTransientFailure);
+  }
 
   for (const fee of args.feeTiers) {
     try {
@@ -3442,8 +3549,8 @@ async function get0xQuoteCandidate(
       ]),
       amountOut,
     };
-  } catch {
-    return null;
+  } catch (error) {
+    throw error instanceof AggregatorTransientError ? error : new AggregatorTransientError("0x quote request failed");
   }
 }
 
@@ -3546,8 +3653,8 @@ async function getLifiQuoteCandidate(
       ]),
       amountOut,
     };
-  } catch {
-    return null;
+  } catch (error) {
+    throw error instanceof AggregatorTransientError ? error : new AggregatorTransientError("LI.FI quote request failed");
   }
 }
 
@@ -3645,8 +3752,8 @@ async function getOpenOceanQuoteCandidate(
       ]),
       amountOut,
     };
-  } catch {
-    return null;
+  } catch (error) {
+    throw error instanceof AggregatorTransientError ? error : new AggregatorTransientError("OpenOcean quote request failed");
   }
 }
 
@@ -3772,8 +3879,8 @@ async function getKyberQuoteCandidate(
       ]),
       amountOut,
     };
-  } catch {
-    return null;
+  } catch (error) {
+    throw error instanceof AggregatorTransientError ? error : new AggregatorTransientError("KyberSwap quote request failed");
   }
 }
 
@@ -4101,6 +4208,7 @@ async function getUniV2QuoteCandidates(args: {
   amountIn: bigint;
   chain?: SweepChainConfig;
   embedRouter?: boolean;
+  onTransientFailure?: () => void;
 }): Promise<QuoteCandidate[]> {
   const chain = args.chain ?? BASE_CONFIG;
   const weth = chain.weth;
@@ -4120,28 +4228,32 @@ async function getUniV2QuoteCandidates(args: {
     paths.push([args.tokenIn, usdc, args.tokenOut]);
   }
 
+  const quotePath = async (path: Address[]): Promise<QuoteCandidate | null> => {
+    const amountOut = await tryQuoteUniV2Path(args.router, args.amountIn, path, chain.chainId);
+    if (!amountOut) return null;
+    const midLabel = path.length > 2
+      ? path[1].toLowerCase() === weth.toLowerCase() ? ` via ${wrappedNativeSymbol(chain.chainId)}` : " via USDC"
+      : "";
+    return {
+      tokenIn: args.tokenIn,
+      amountIn: args.amountIn.toString(),
+      amountOutMin: "0",
+      estimatedOut: amountOut.toString(),
+      dex: args.embedRouter ? DEX.UNIV2_GENERIC : args.dex,
+      dexName: `${args.dexName}${midLabel}`,
+      dexData: args.embedRouter
+        ? encodeAbiParameters([{ type: "address" }, { type: "address[]" }], [args.router, path])
+        : encodeAbiParameters([{ type: "address[]" }], [path]),
+      amountOut,
+    };
+  };
+  if (chain.chainId === OPTIMISM_CHAIN_ID) {
+    return collectOptimismQuoteCandidates(paths.map((path) => () => quotePath(path)), args.onTransientFailure);
+  }
   for (const path of paths) {
     try {
-      const amountOut = await tryQuoteUniV2Path(args.router, args.amountIn, path, chain.chainId);
-      if (!amountOut) continue;
-      const midLabel =
-        path.length > 2
-          ? path[1].toLowerCase() === weth.toLowerCase()
-            ? ` via ${wrappedNativeSymbol(chain.chainId)}`
-            : " via USDC"
-          : "";
-      candidates.push({
-        tokenIn: args.tokenIn,
-        amountIn: args.amountIn.toString(),
-        amountOutMin: "0",
-        estimatedOut: amountOut.toString(),
-        dex: args.embedRouter ? DEX.UNIV2_GENERIC : args.dex,
-        dexName: `${args.dexName}${midLabel}`,
-        dexData: args.embedRouter
-          ? encodeAbiParameters([{ type: "address" }, { type: "address[]" }], [args.router, path])
-          : encodeAbiParameters([{ type: "address[]" }], [path]),
-        amountOut,
-      });
+      const candidate = await quotePath(path);
+      if (candidate) candidates.push(candidate);
     } catch {
       // Try the next path.
     }
@@ -4167,11 +4279,61 @@ async function getAlienBaseQuoteCandidates(
 
 // All native, on-chain DEX quote adapters. Aggregators (0x, LI.FI) are intentionally NOT here —
 // they are only consulted as a fallback when these return nothing.
+async function getSolidlyQuoteCandidates(
+  tokenIn: Address,
+  tokenOut: Address,
+  amountIn: bigint,
+  source: { router: Address; factory: Address; dexName: string },
+  chain: SweepChainConfig,
+  onTransientFailure?: () => void,
+): Promise<QuoteCandidate[]> {
+  const paths = getSolidlyQuotePaths({
+    tokenIn,
+    tokenOut,
+    factory: source.factory,
+    intermediates: [chain.weth, chain.usdc],
+  });
+  // At most ten paths. Start them together so Multicall can batch them and a missing pool
+  // cannot delay healthy quotes from the other native venues by one RPC timeout per path.
+  const probes = paths.map((routes) => async (): Promise<QuoteCandidate | null> => {
+      const data = encodeFunctionData({
+        abi: SOLIDLY_ROUTER_ABI,
+        functionName: "getAmountsOut",
+        args: [amountIn, routes],
+      });
+      const result = await callContract(source.router, data, undefined, chain.chainId);
+      if (!result || result === "0x") return null;
+      const amounts = decodeFunctionResult({
+        abi: SOLIDLY_ROUTER_ABI,
+        functionName: "getAmountsOut",
+        data: result,
+      });
+      const amountOut = amounts[amounts.length - 1] ?? 0n;
+      if (amountOut <= 0n) return null;
+      return {
+        tokenIn,
+        amountIn: amountIn.toString(),
+        amountOutMin: "0",
+        estimatedOut: amountOut.toString(),
+        dex: DEX.SOLIDLY_GENERIC,
+        dexName: routes.length > 1
+          ? `${source.dexName} via ${routes[0].to.toLowerCase() === chain.weth.toLowerCase() ? wrappedNativeSymbol(chain.chainId) : "USDC"}`
+          : `${source.dexName}${routes[0].stable ? " Stable" : ""}`,
+        dexData: encodeSolidlyDexData(source.router, routes),
+        amountOut,
+      };
+  });
+  if (chain.chainId === OPTIMISM_CHAIN_ID) return collectOptimismQuoteCandidates(probes, onTransientFailure);
+  const candidates = await Promise.all(probes.map((probe) => probe().catch(() => null)));
+  return candidates.filter((candidate): candidate is QuoteCandidate => candidate !== null);
+}
+
 async function getNativeQuoteCandidates(
   tokenIn: Address,
   tokenOut: Address,
   amountIn: bigint,
   chain: SweepChainConfig = BASE_CONFIG,
+  onTransientFailure?: () => void,
 ): Promise<QuoteCandidate[]> {
   // Non-Base chains describe their native ladder declaratively (chain.nativeSources). Base keeps
   // nativeSources === null and runs the original hardcoded task list below, byte-identical.
@@ -4193,6 +4355,7 @@ async function getNativeQuoteCandidates(
             chainId: chain.chainId,
             weth: chain.weth,
             usdc: chain.usdc,
+            onTransientFailure,
           }),
         );
       } else if (source.kind === "uniswap_v4" && source.quoter) {
@@ -4208,6 +4371,15 @@ async function getNativeQuoteCandidates(
             source.feeTiers,
           ),
         );
+      } else if (source.kind === "solidly" && source.factory) {
+        tasks.push(getSolidlyQuoteCandidates(
+          tokenIn,
+          tokenOut,
+          amountIn,
+          { router: source.router, factory: source.factory, dexName: source.dexName },
+          chain,
+          onTransientFailure,
+        ));
       } else if (source.kind === "univ2") {
         // Native UniswapV2-style router (Ethereum: Uniswap V2, SushiSwap). Router embedded in
         // dexData so build-tx targets exactly this router (DEX.UNIV2_GENERIC).
@@ -4221,6 +4393,7 @@ async function getNativeQuoteCandidates(
             amountIn,
             chain,
             embedRouter: true,
+            onTransientFailure,
           }),
         );
       }
@@ -4323,6 +4496,7 @@ function isAggregatorLiveForChain(
   chain: SweepChainConfig,
 ): boolean {
   if (chain.chainId === BASE_CHAIN_ID) return baseEnabled();
+  if (process.env.DUST_SWEEP_ENABLE_AGGREGATORS === "false") return false;
   if (!chain.aggregators[provider]) return false;
   // Shared preconditions still apply per chain: a non-empty allowlist, and (for 0x) an API key.
   if (getChainAllowedAggregatorAddresses(chain).size === 0) return false;
@@ -4349,14 +4523,22 @@ async function getGovernedAggregatorCandidate(
   slippageBps: number,
   chain: SweepChainConfig = BASE_CONFIG,
   onSkipped?: () => void,
+  deadlineAt?: number,
 ) {
-  const cacheKey = `${tokenIn.toLowerCase()}:${tokenOut.toLowerCase()}:${amountIn.toString()}:${slippageBps}`;
+  const executor = getSweepRouterForChain(chain).toLowerCase();
+  const cacheKey = `${executor}:${tokenIn.toLowerCase()}:${tokenOut.toLowerCase()}:${amountIn.toString()}:${slippageBps}`;
   return governAggregatorCall(
     provider,
     cacheKey,
-    () => fetchCandidate(tokenIn, tokenOut, amountIn, slippageBps, chain),
+    () => {
+      if (getSweepRouterForChain(chain).toLowerCase() !== executor) {
+        throw new AggregatorTransientError("Sweep executor changed while quote was queued");
+      }
+      return fetchCandidate(tokenIn, tokenOut, amountIn, slippageBps, chain);
+    },
     onSkipped,
     chain.chainId,
+    deadlineAt,
   );
 }
 
@@ -4370,10 +4552,51 @@ async function getBestQuote(
   chain: SweepChainConfig = BASE_CONFIG,
 ) {
   // 1) Native DEX routers first.
-  const nativeCandidates = (await getNativeQuoteCandidates(tokenIn, tokenOut, amountIn, chain)).filter(
+  const quoteDeadline = Date.now() + QUOTE_TOKEN_TIMEOUT_MS - 250;
+  let nativeTemporarilyUnavailable = false;
+  const nativeCandidates = (await getNativeQuoteCandidates(tokenIn, tokenOut, amountIn, chain, () => {
+    nativeTemporarilyUnavailable = true;
+  })).filter(
     (candidate) => isCandidateExecutableInLane(candidate, executionLane),
   );
   const bestNative = pickBestCandidate(nativeCandidates);
+
+  if (chain.chainId === OPTIMISM_CHAIN_ID) {
+    const nativeImpactBps = bestNative ? computeMarketImpactBps(bestNative.amountOut, market) : null;
+    if (bestNative && nativeImpactBps !== null) bestNative.priceImpactBps = nativeImpactBps;
+    const rescueBps = getAggregatorRescueImpactBps();
+    if (bestNative && (nativeImpactBps === null || rescueBps <= 0 || nativeImpactBps <= rescueBps)) return bestNative;
+
+    // Long-tail liquidity can live on venues indexed by only one provider. Probe live OP
+    // providers together so a slow Kyber request cannot prevent LI.FI from rescuing the token.
+    let providerTemporarilyUnavailable = false;
+    const aggregatorDeadline = Math.min(Date.now() + AGGREGATOR_RESCUE_BUDGET_MS, quoteDeadline);
+    const probes = AGGREGATOR_LADDER.filter(({ provider, enabled }) =>
+      isAggregatorLiveForChain(provider, enabled, chain),
+    ).map(({ provider, fetch: fetchCandidate }) => async () => {
+      const candidate = await getGovernedAggregatorCandidate(
+        provider, fetchCandidate, tokenIn, tokenOut, amountIn, slippageBps, chain,
+        () => { providerTemporarilyUnavailable = true; },
+        aggregatorDeadline,
+      );
+      return candidate && isCandidateExecutableInLane(candidate, executionLane) ? candidate : null;
+    });
+    const aggregateCandidates = await collectOptimismQuoteCandidates(
+      probes,
+      () => { providerTemporarilyUnavailable = true; },
+      Math.max(0, aggregatorDeadline - Date.now()),
+    );
+    const best = pickBestCandidate([...nativeCandidates, ...aggregateCandidates]);
+    if (best) {
+      const impactBps = computeMarketImpactBps(best.amountOut, market);
+      if (impactBps !== null) best.priceImpactBps = impactBps;
+      return best;
+    }
+    if (nativeTemporarilyUnavailable || providerTemporarilyUnavailable) {
+      throw new Error("Quote providers are temporarily unavailable; retry shortly.");
+    }
+    return null;
+  }
 
   if (bestNative) {
     // Real (market-value based) price impact for the winning native route. Replaces the old
@@ -4462,7 +4685,7 @@ async function getBestQuote(
   // definitively unroutable. Throw a transient error so the caller records QUOTE_FAILED
   // (retryable, carry-forward eligible) instead of caching NO_ROUTE for minutes.
   if (anyProviderSkipped) {
-    throw new Error("Aggregator quotes are busy right now; retry shortly.");
+    throw new Error("Aggregator quotes are temporarily unavailable; retry shortly.");
   }
 
   return null;
@@ -4951,12 +5174,43 @@ function buildV2Route(
       [{ type: "address" }, { type: "address[]" }],
       route.dexData as Hex,
     );
+    if (chain.chainId === OPTIMISM_CHAIN_ID) {
+      const configured = chain.nativeSources?.some(
+        (source) => source.kind === "univ2" && source.router.toLowerCase() === router.toLowerCase(),
+      );
+      if (!configured) throw new Error("Uniswap V2 router is not in the Optimism native allowlist");
+      if (
+        path.length < 2 || path.length > 3 ||
+        path[0].toLowerCase() !== route.tokenIn.toLowerCase() ||
+        path[path.length - 1].toLowerCase() !== tokenOut.toLowerCase() ||
+        new Set(path.map((token: Address) => token.toLowerCase())).size !== path.length
+      ) {
+        throw new Error("Malformed Uniswap V2 input/output path");
+      }
+    }
     const data = encodeFunctionData({
       abi: BASESWAP_SWAP_ABI, // standard UniV2 swapExactTokensForTokens(uint,uint,address[],address,uint)
       functionName: "swapExactTokensForTokens",
       args: [amountIn, amountOutMin, path as Address[], receiver, BigInt(deadline)],
     });
     return { tokenIn: route.tokenIn, amountIn, target: router as Address, spender: router as Address, value: 0n, data };
+  }
+
+  if (route.dex === DEX.SOLIDLY_GENERIC) {
+    return {
+      tokenIn: route.tokenIn,
+      amountIn,
+      ...buildSolidlySwapCall({
+        dexData: route.dexData as Hex,
+        tokenIn: route.tokenIn,
+        tokenOut,
+        amountIn,
+        amountOutMin,
+        receiver,
+        deadline,
+        sources: chain.nativeSources ?? [],
+      }),
+    };
   }
 
   if (route.dex === DEX.UNISWAP_V3) {
@@ -4969,8 +5223,29 @@ function buildV2Route(
             ? ROBINHOOD_UNISWAP_V3_SWAP_ROUTER
             : chain.chainId === ARBITRUM_CHAIN_ID
               ? ARBITRUM_UNISWAP_V3_SWAP_ROUTER
-              : UNISWAP_V3_SWAP_ROUTER_ADDRESS;
+              : chain.chainId === OPTIMISM_CHAIN_ID
+                ? chain.nativeSources!.find((source) => source.kind === "uniswap_v3")!.router
+                : UNISWAP_V3_SWAP_ROUTER_ADDRESS;
     const v3 = decodeV3DexData(route.dexData as Hex);
+    if (chain.chainId === OPTIMISM_CHAIN_ID) {
+      const tiers = chain.nativeSources?.find((source) => source.kind === "uniswap_v3")?.feeTiers ?? UNISWAP_FEE_TIERS;
+      if (!tiers.includes(v3.fee)) throw new Error("Uniswap V3 fee tier is not configured on Optimism");
+      if (v3.isMultiHop) {
+        const packed = v3.path.slice(2);
+        const tokenCount = (packed.length / 2 - 20) / 23 + 1;
+        if (!isHex(v3.path) || !Number.isInteger(tokenCount) || tokenCount < 2 || tokenCount > 3) {
+          throw new Error("Malformed Uniswap V3 path");
+        }
+        const tokens = Array.from({ length: tokenCount }, (_, index) => `0x${packed.slice(index * 46, index * 46 + 40)}`.toLowerCase());
+        if (
+          tokens[0] !== route.tokenIn.toLowerCase() ||
+          tokens[tokens.length - 1] !== tokenOut.toLowerCase() ||
+          new Set(tokens).size !== tokens.length ||
+          Array.from({ length: tokenCount - 1 }, (_, index) => Number.parseInt(packed.slice(index * 46 + 40, index * 46 + 46), 16))
+            .some((fee) => !tiers.includes(fee))
+        ) throw new Error("Malformed Uniswap V3 input/output path or fee tier");
+      }
+    }
     const data = v3.isMultiHop
       ? encodeFunctionData({
           abi: SWAP_ROUTER_02_ABI,
@@ -5183,6 +5458,15 @@ function buildV2Route(
     const [decoded] = decodeAbiParameters(GENERIC_DEX_DATA_PARAMETERS, route.dexData as Hex);
     if (!isAddress(decoded.target) || !isAddress(decoded.spender) || !isHex(decoded.data)) {
       throw new Error("Malformed generic route data");
+    }
+    if (chain.chainId === OPTIMISM_CHAIN_ID) {
+      const providers: AggregatorProviderId[] = ["kyber", "zerox", "lifi", "openocean"];
+      const configured = getDustSweepV3TargetsForChain(chain.chainId).some((source) =>
+        providers.some((provider) => source.id.includes(provider) && isAggregatorLiveForChain(provider, () => false, chain)) &&
+        source.target.toLowerCase() === decoded.target.toLowerCase() &&
+        source.spender.toLowerCase() === decoded.spender.toLowerCase(),
+      );
+      if (!configured) throw new Error("Aggregator route provider is disabled or not configured on Optimism");
     }
 
     return {
@@ -7633,7 +7917,9 @@ async function computeSweepGasEstimate(
   ]);
   const ethCost = Number(formatUnits(gasUnits * gasPriceWei, 18));
   const usd = nativeUsd > 0 && Number.isFinite(ethCost) ? ethCost * nativeUsd : 0;
-  return { eth: ethCost.toFixed(8), usd: Math.round(usd * 100) / 100 };
+  // OP execution gas is frequently below one cent. Preserve that positive estimate so
+  // the UI can show <$0.01 and compare it honestly with a small dust basket.
+  return { eth: ethCost.toFixed(8), usd: chain.chainId === OPTIMISM_CHAIN_ID ? usd : Math.round(usd * 100) / 100 };
 }
 
 dustsweepRoutes.post("/quote", async (c) => {
@@ -7650,11 +7936,14 @@ dustsweepRoutes.post("/quote", async (c) => {
   if (!resolved.ok) return resolved.response;
   const chain = resolved.chain;
 
-  if (!body.tokenIns?.length || !body.amounts?.length || !body.tokenOut || !body.userAddress) {
+  if (!Array.isArray(body.tokenIns) || !body.tokenIns.length || !Array.isArray(body.amounts) || !body.amounts.length || !body.tokenOut || !body.userAddress) {
     return c.json(errorJson("tokenIns, amounts, tokenOut, and userAddress are required"), 400);
   }
   if (body.tokenIns.length !== body.amounts.length) {
     return c.json(errorJson("tokenIns and amounts length mismatch"), 400);
+  }
+  if (new Set(body.tokenIns.map((token) => String(token).toLowerCase())).size !== body.tokenIns.length) {
+    return c.json(errorJson("Each input token may appear only once", { code: "DUPLICATE_INPUT_TOKEN" }), 400);
   }
 
   // Chain-aware lane: Ethereum is V3-only (owned modern lane); Base honors DUST_SWEEP_EXECUTION_LANE.
@@ -7673,7 +7962,11 @@ dustsweepRoutes.post("/quote", async (c) => {
   const tokenOut = normalizeAddress(body.tokenOut);
   const actualTokenOut = tokenOut.toLowerCase() === NATIVE_TOKEN_SENTINEL.toLowerCase() ? chain.weth : tokenOut;
   const isNativeOutput = isNativeTokenAddress(tokenOut);
-  const slippageBps = Math.max(1, Math.min(3000, Number(body.slippageBps || 50)));
+  const requestedSlippageBps = Number(body.slippageBps ?? 50);
+  if (!Number.isFinite(requestedSlippageBps)) {
+    return c.json(errorJson("slippageBps must be a finite number"), 400);
+  }
+  const slippageBps = Math.max(1, Math.min(3000, Math.round(requestedSlippageBps)));
   let routes: DustSweepRoute[] = [];
   const skippedTokens: QuoteSkippedToken[] = [];
   const whitelist = await loadWhitelist(chain);
@@ -7856,7 +8149,7 @@ dustsweepRoutes.post("/quote", async (c) => {
   const quoteTasks = readyToQuote.map(
     ({ tokenIn, amountIn }) =>
       async () => {
-        const cacheKey = `routeability:${chain.chainId}:${tokenIn.toLowerCase()}:${tokenOut.toLowerCase()}`;
+        const cacheKey = `routeability:${chain.chainId}:${tokenIn.toLowerCase()}:${tokenOut.toLowerCase()}${chain.chainId === OPTIMISM_CHAIN_ID ? `:${amountIn.toString()}` : ""}`;
 
         // 1. Check runtime memory cache (fastest)
         const memCached = runtimeCache.get<{ status: string; checkedAt: number }>(cacheKey);
@@ -7921,8 +8214,9 @@ dustsweepRoutes.post("/quote", async (c) => {
         // fallback) must never stall the whole basket. On timeout we skip just
         // this token; the quotePromise keeps running in the background so its
         // routeability cache still gets populated for the next quote.
-        const timeoutPromise = new Promise<QuoteTaskResult>((resolve) =>
-          setTimeout(
+        let quoteTimer: ReturnType<typeof setTimeout> | undefined;
+        const timeoutPromise = new Promise<QuoteTaskResult>((resolve) => {
+          quoteTimer = setTimeout(
             () =>
               resolve({
                 tokenIn,
@@ -7932,10 +8226,14 @@ dustsweepRoutes.post("/quote", async (c) => {
                 cachedNoRoute: false,
               }),
             QUOTE_TOKEN_TIMEOUT_MS,
-          ),
-        );
+          );
+        });
 
-        return Promise.race([quotePromise, timeoutPromise]);
+        try {
+          return await Promise.race([quotePromise, timeoutPromise]);
+        } finally {
+          if (quoteTimer) clearTimeout(quoteTimer);
+        }
       },
   );
 
@@ -8029,7 +8327,9 @@ dustsweepRoutes.post("/quote", async (c) => {
   const outputPrice = prices[tokenOut.toLowerCase()] || (tokenOut.toLowerCase() === chain.usdc.toLowerCase() ? 1 : 0);
   const totalEstimatedOutUSD =
     Number(formatUnits(totalEstimatedOut, outputDecimals)) * outputPrice;
-  const feeBps = getFeeBps(chain);
+  const feeBps = isOwnedModernLane(executionLane) && (chain.chainId !== BASE_CHAIN_ID || isV3Active())
+    ? getV3FeeBps(chain)
+    : getFeeBps(chain);
   const protocolFeeAmount = (totalEstimatedOut * BigInt(feeBps)) / 10_000n;
   const netEstimatedOut = totalEstimatedOut - protocolFeeAmount;
   const minAmountOut = getRouterMinAmountOut(
@@ -8089,9 +8389,14 @@ dustsweepRoutes.post("/quote", async (c) => {
   const gasEstimate = await computeSweepGasEstimate(chain, cappedRoutes.length);
   // Basket value the gas is compared against (net of fee): the UI warns when gas is a large
   // fraction of it. On Base gas is ~0 so the ratio is negligible and nothing changes.
-  const basketValueForGas = Math.max(0.01, Math.round(netEstimatedOutUSD * 100) / 100);
-  const gasToBasketRatio =
-    gasEstimate.usd > 0 ? Math.round((gasEstimate.usd / basketValueForGas) * 1000) / 1000 : 0;
+  const basketValueForGas = chain.chainId === OPTIMISM_CHAIN_ID && Number.isFinite(netEstimatedOutUSD) && netEstimatedOutUSD > 0
+    ? netEstimatedOutUSD
+    : Math.max(0.01, Math.round(netEstimatedOutUSD * 100) / 100);
+  const gasToBasketRatio = gasEstimate.usd > 0
+    ? chain.chainId === OPTIMISM_CHAIN_ID
+      ? Number((gasEstimate.usd / basketValueForGas).toPrecision(6))
+      : Math.round((gasEstimate.usd / basketValueForGas) * 1000) / 1000
+    : 0;
 
   return c.json({
     chainId: chain.chainId,
@@ -8152,7 +8457,7 @@ dustsweepRoutes.post("/build-tx", async (c) => {
       ? "permit2"
       : "allowance";
 
-  if (!body.routes?.length || !body.tokenOut || !body.receiver || !body.deadline || !body.userAddress) {
+  if (!Array.isArray(body.routes) || !body.routes.length || !body.tokenOut || !body.receiver || !body.deadline || !body.userAddress) {
     return c.json(errorJson("routes, tokenOut, receiver, deadline, and userAddress are required"), 400);
   }
   if (body.routes.length > routeMaxCap) {
@@ -8161,11 +8466,22 @@ dustsweepRoutes.post("/build-tx", async (c) => {
   if (!isAddress(body.tokenOut) || !isAddress(body.receiver) || !isAddress(body.userAddress)) {
     return c.json(errorJson("Invalid tokenOut, receiver, or userAddress"), 400);
   }
+  if (body.receiver.toLowerCase() === ZERO_ADDRESS.toLowerCase() || !Number.isSafeInteger(Number(body.deadline))) {
+    return c.json(errorJson("Invalid receiver or deadline"), 400);
+  }
+  body.deadline = Number(body.deadline);
   if (Number(body.deadline) <= Math.floor(Date.now() / 1000)) {
     return c.json(errorJson("Deadline expired. Refresh quote and try again.", { code: "DEADLINE_EXPIRED" }), 409);
   }
   if (executionLane === "owned_v2" && v2AuthMode === "permit2" && !body.permit2Nonce) {
     return c.json(errorJson("permit2Nonce is required for owned_v2 Permit2 mode"), 400);
+  }
+  if (executionLane === "owned_v2" && v2AuthMode === "permit2") {
+    try {
+      if (BigInt(body.permit2Nonce!) < 0n || BigInt(body.permit2Nonce!) >= (1n << 256n)) throw new Error();
+    } catch {
+      return c.json(errorJson("Invalid Permit2 nonce"), 400);
+    }
   }
   if (executionLane === "basket_aggregator") {
     return c.json(errorJson("basket_aggregator build is not wired yet. Use assembled aggregator transactions as-is."), 501);
@@ -8197,6 +8513,9 @@ dustsweepRoutes.post("/build-tx", async (c) => {
     )
   ) {
     return c.json(errorJson("Invalid route payload"), 400);
+  }
+  if (new Set(routes.map((route) => route.tokenIn.toLowerCase())).size !== routes.length) {
+    return c.json(errorJson("Each input token may appear only once", { code: "DUPLICATE_INPUT_TOKEN" }), 400);
   }
   if (routes.some((route) => isNativeTokenAddress(route.tokenIn))) {
     return c.json(
@@ -8230,6 +8549,13 @@ dustsweepRoutes.post("/build-tx", async (c) => {
   const buildTokenOut = normalizeAddress(body.tokenOut);
   const buildReceiver = normalizeAddress(body.receiver);
   const actualTokenOut = isNativeTokenAddress(buildTokenOut) ? chain.weth : buildTokenOut;
+  if (routes.some((route) => route.dex === DEX.PASSTHROUGH && (
+    !chain.supportsWethPassthrough || !isNativeTokenAddress(buildTokenOut) ||
+    route.tokenIn.toLowerCase() !== chain.weth.toLowerCase() ||
+    BigInt(route.amountOutMin) > BigInt(route.amountIn)
+  ))) {
+    return c.json(errorJson("Passthrough requires wrapped native input and native output", { code: "INVALID_PASSTHROUGH" }), 400);
+  }
 
   if (
     routes.some(
@@ -8583,6 +8909,7 @@ dustsweepRoutes.post("/record-sweep", async (c) => {
         body.txHash,
         tokensSwapped,
         valueUSD,
+        chain.chainId,
       );
     } catch (error) {
       console.error("[dustsweep/record-sweep] points error:", error);
@@ -8654,8 +8981,9 @@ async function getDbRouteability(
   chainId: number = BASE_CHAIN_ID,
 ) {
   try {
-    // Bucket amount to normalize cache keys (e.g. 1.23 ETH and 1.24 ETH are same bucket)
-    const amountBucket = amountIn.toString().slice(0, 3);
+    // Optimism negatives require the exact amount. The versioned prefix ignores earlier
+    // lossy buckets, which conflated both nearby amounts and different decimal magnitudes.
+    const amountBucket = chainId === OPTIMISM_CHAIN_ID ? `v2:${amountIn.toString()}` : amountIn.toString().slice(0, 3);
     const { data } = await postgresDb
       .from("dustsweep_routeability_cache")
       .select("*")
@@ -8683,7 +9011,7 @@ async function setDbRouteability(
   chainId: number = BASE_CHAIN_ID,
 ) {
   try {
-    const amountBucket = amountIn.toString().slice(0, 3);
+    const amountBucket = chainId === OPTIMISM_CHAIN_ID ? `v2:${amountIn.toString()}` : amountIn.toString().slice(0, 3);
     await postgresDb.from("dustsweep_routeability_cache").upsert({
       chain_id: chainId,
       token_in: tokenIn.toLowerCase(),

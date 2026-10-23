@@ -1,4 +1,4 @@
-import { arbitrum, base, bsc, mainnet } from "wagmi/chains";
+import { arbitrum, base, bsc, mainnet, optimism } from "wagmi/chains";
 import type { Chain } from "wagmi/chains";
 import { type Address } from "viem";
 import { type Token } from "@/types/dustsweep";
@@ -18,17 +18,18 @@ export const ETHEREUM_CHAIN_ID = 1;
 export const BSC_CHAIN_ID = 56;
 export const ROBINHOOD_CHAIN_ID = 4663;
 export const ARBITRUM_CHAIN_ID = 42161;
+export const OPTIMISM_CHAIN_ID = 10;
 
 const NATIVE_TOKEN_SENTINEL = "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE" as Address;
 
 export type SweepChain = {
   id: number;
-  key: "base" | "ethereum" | "bsc" | "robinhood" | "arbitrum";
+  key: "base" | "ethereum" | "bsc" | "robinhood" | "arbitrum" | "optimism";
   label: string;
   chain: Chain;
   weth: Address;
   usdc: Address;
-  /** Per-chain output token list; USDC first = the default tokenOut. */
+  /** Per-chain output token list; the first entry is the default tokenOut. */
   outputTokens: Token[];
   explorerUrl: string;
   /** Explorer brand name for UI copy ("Swept! View on …"). */
@@ -211,6 +212,41 @@ const ARBITRUM_OUTPUT_TOKENS: Token[] = [
   },
 ];
 
+// OP Mainnet uses ETH for gas and the canonical OP Stack WETH predeploy. Native Circle USDC
+// is the default stable output; legacy bridged USDC.e remains an ordinary sweepable input.
+// USDT is the legacy OP token-list asset, distinct from the separate USDT0 deployment.
+const OPTIMISM_OUTPUT_TOKENS: Token[] = [
+  {
+    address: NATIVE_TOKEN_SENTINEL,
+    symbol: "ETH",
+    name: "Ethereum",
+    decimals: 18,
+    logoURI: "https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/info/logo.png",
+    isNative: true,
+  },
+  {
+    address: "0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85" as Address,
+    symbol: "USDC",
+    name: "USD Coin",
+    decimals: 6,
+    logoURI: "https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/assets/0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48/logo.png",
+  },
+  {
+    address: "0x4200000000000000000000000000000000000006" as Address,
+    symbol: "WETH",
+    name: "Wrapped Ether",
+    decimals: 18,
+    logoURI: "https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/info/logo.png",
+  },
+  {
+    address: "0x94b008aA00579c1307B0EF2c499aD98a8ce58e58" as Address,
+    symbol: "USDT",
+    name: "Tether USD",
+    decimals: 6,
+    logoURI: "https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/assets/0xdAC17F958D2ee523a2206206994597C13D831ec7/logo.png",
+  },
+];
+
 export const SWEEP_CHAINS: SweepChain[] = [
   {
     id: BASE_CHAIN_ID,
@@ -287,22 +323,38 @@ export const SWEEP_CHAINS: SweepChain[] = [
     paymasterEligible: false,
     approvalWaitTimeoutMs: 90_000, // ~250ms blocks — Base-like cadence
   },
+  {
+    id: OPTIMISM_CHAIN_ID,
+    key: "optimism",
+    label: "Optimism",
+    chain: optimism,
+    weth: "0x4200000000000000000000000000000000000006" as Address,
+    usdc: "0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85" as Address,
+    outputTokens: OPTIMISM_OUTPUT_TOKENS,
+    explorerUrl: "https://optimistic.etherscan.io",
+    explorerName: "OP Mainnet Etherscan",
+    routerV3Env: "NEXT_PUBLIC_DUST_SWEEP_ROUTER_V3_ADDRESS_10",
+    selectLimitEnv: "NEXT_PUBLIC_DUST_SWEEP_AUTO_SELECT_LIMIT_10",
+    paymasterEligible: false,
+    approvalWaitTimeoutMs: 90_000,
+  },
 ];
 
 /**
  * Per-chain selection ceiling used when the chain's env is unset. Base/Ethereum/BSC keep their
- * historical behavior (no code default → fall back to the lane cap), so only Robinhood declares
- * one: a brand-new chain with thin liquidity, where 10 tokens per sweep keeps batches small and
+ * historical behavior (no code default → fall back to the lane cap). Robinhood declares a cap
+ * for its thin liquidity, where 10 tokens per sweep keeps batches small and
  * predictable. This is a HARD cap on Auto, "Select all" AND manual adds (see useDustSweep).
  *
- * Arbitrum declares 10 for the same reason as Robinhood: small, predictable 7702 batches. This
- * MUST stay in sync with routeMaxCap in apps/api/src/config/sweepChains.ts (also 10) — the server
+ * Arbitrum and Optimism declare 10 for small, predictable 7702 batches. These limits MUST stay
+ * in sync with routeMaxCap in apps/api/src/config/sweepChains.ts (also 10) — the server
  * value is the authoritative cap returned to the UI as quote.routeMaxCap, and a mismatch would let
  * the UI offer more tokens than a sweep can actually carry.
  */
 const DEFAULT_SELECT_LIMIT_BY_CHAIN: Record<number, number> = {
   [ROBINHOOD_CHAIN_ID]: 10,
   [ARBITRUM_CHAIN_ID]: 10,
+  [OPTIMISM_CHAIN_ID]: 10,
 };
 
 // NEXT_PUBLIC_* envs are inlined at build time, so read them explicitly (not via a dynamic key).
@@ -316,7 +368,9 @@ function readSelectLimit(chainId: number): number | null {
           ? process.env.NEXT_PUBLIC_DUST_SWEEP_AUTO_SELECT_LIMIT_4663
           : chainId === ARBITRUM_CHAIN_ID
             ? process.env.NEXT_PUBLIC_DUST_SWEEP_AUTO_SELECT_LIMIT_42161
-            : process.env.NEXT_PUBLIC_DUST_SWEEP_AUTO_SELECT_LIMIT;
+            : chainId === OPTIMISM_CHAIN_ID
+              ? process.env.NEXT_PUBLIC_DUST_SWEEP_AUTO_SELECT_LIMIT_10
+              : process.env.NEXT_PUBLIC_DUST_SWEEP_AUTO_SELECT_LIMIT;
   const parsed = Number(raw);
   if (Number.isFinite(parsed) && parsed > 0) return Math.floor(parsed);
   return DEFAULT_SELECT_LIMIT_BY_CHAIN[chainId] ?? null;
@@ -332,7 +386,9 @@ function readRouterV3(chainId: number): Address | null {
           ? process.env.NEXT_PUBLIC_DUST_SWEEP_ROUTER_V3_ADDRESS_4663
           : chainId === ARBITRUM_CHAIN_ID
             ? process.env.NEXT_PUBLIC_DUST_SWEEP_ROUTER_V3_ADDRESS_42161
-            : process.env.NEXT_PUBLIC_DUST_SWEEP_ROUTER_V3_ADDRESS;
+            : chainId === OPTIMISM_CHAIN_ID
+              ? process.env.NEXT_PUBLIC_DUST_SWEEP_ROUTER_V3_ADDRESS_10
+              : process.env.NEXT_PUBLIC_DUST_SWEEP_ROUTER_V3_ADDRESS;
   return raw && /^0x[0-9a-fA-F]{40}$/.test(raw) ? (raw as Address) : null;
 }
 

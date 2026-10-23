@@ -1,0 +1,19 @@
+Generated with the built-in image generation tool.
+Reference: C:/dustswap/apps/memefun/public/memefun-logo.png
+Transparent background: false
+
+Use case: ads-marketing. Create one polished LANDSCAPE 16:9 social announcement image for an X post, 1920x1080 composition, for the MemeFun by DustSwap launch airdrop. Input image 1 is the official MemeFun brand mark REFERENCE; faithfully preserve the exact angular black, white and electric-blue F/M isometric cube identity. This is a brand announcement poster, not a website screenshot.
+Art direction: premium, very clean, confident typography-led crypto launch graphic. Deep midnight navy background with a subtle electric-blue radial light and very restrained fine cyan geometric arcs echoing the cube. Electric blue, white and pale icy blue. Strong white sans-serif type, precise alignment, generous empty space, beautiful legibility at phone size, crisp deliberate editorial layout. A tasteful large dimensional version of the supplied F/M cube occupies the right third; maintain the recognizable reference geometry and colors. No extra unrelated coins or logos. Small supplied logo plus 'MemeFun' wordmark and 'by DustSwap' at upper left. Main text occupies left two-thirds, balanced against the cube. A tiny blue LIVE pill is allowed near the title. At bottom, two spacious aligned statistic areas clearly communicate the individual reward and eligibility cap, then the site URL and a readable rules footer. Leave comfortable safe margins for X preview crop.
+Required exact text (preserve spelling, numbers and case; render all text cleanly, not handwritten):
+'MemeFun'
+'by DustSwap'
+'LAUNCH AIRDROP'
+'100M MEMEFUN'
+'TOTAL REWARDS'
+'100,000 MEMEFUN'
+'PER WALLET'
+'FIRST 1,000'
+'ELIGIBLE WALLETS'
+'memefun.dustswap.wtf'
+'One reward per wallet • Only launches after activation qualify.'
+Hierarchy: LAUNCH AIRDROP is the clear title, 100M MEMEFUN is the oversized focal statistic and TOTAL REWARDS explains it; 100,000 MEMEFUN PER WALLET and FIRST 1,000 ELIGIBLE WALLETS are equally readable secondary statistics. Avoid too many boxes. No fake buttons, no QR code, no browser frame, no promises of investment returns, no price charts, no money imagery, no extra dates, no watermark, no irrelevant slogans. Finished print-sharp premium digital campaign artwork.

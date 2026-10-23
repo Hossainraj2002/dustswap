@@ -3,6 +3,7 @@ import {
   ARBITRUM_WETH_ADDRESS,
   BSC_WBNB_ADDRESS,
   ETHEREUM_WETH_ADDRESS,
+  OPTIMISM_WETH_ADDRESS,
   PERMIT2_ADDRESS,
   ROBINHOOD_WETH_ADDRESS,
   WETH_ADDRESS as BASE_WETH_ADDRESS,
@@ -26,6 +27,7 @@ export const ETHEREUM_CHAIN_ID = 1;
 export const BSC_CHAIN_ID = 56;
 export const ROBINHOOD_CHAIN_ID = 4663;
 export const ARBITRUM_CHAIN_ID = 42161;
+export const OPTIMISM_CHAIN_ID = 10;
 
 export const NATIVE_TOKEN_SENTINEL =
   "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE" as Address;
@@ -35,7 +37,8 @@ export type NativeSourceKind =
   | "uniswap_v3" // exactInput/exactInputSingle via QuoterV2
   | "pancake_v3" // same QuoterV2 quote shape, but routes build against the Pancake SmartRouter ABI
   | "uniswap_v4" // V4Quoter.quoteExactInputSingle(PoolKey); executes via Universal Router + Permit2
-  | "univ2"; // getAmountsOut via a UniswapV2Router02-compatible router
+  | "univ2" // getAmountsOut via a UniswapV2Router02-compatible router
+  | "solidly"; // Velodrome V2-style (from,to,stable,factory) routes
 
 export type NativeSourceSpec = {
   kind: NativeSourceKind;
@@ -63,7 +66,7 @@ export type AggregatorEnableFlags = {
 
 export type SweepChainConfig = {
   chainId: number;
-  slug: "base" | "ethereum" | "bsc" | "robinhood" | "arbitrum";
+  slug: "base" | "ethereum" | "bsc" | "robinhood" | "arbitrum" | "optimism";
   name: string;
   explorerUrl: string;
 
@@ -615,12 +618,85 @@ function withResolvedRouters(config: SweepChainConfig): SweepChainConfig {
   return { ...config, nativeSources };
 }
 
+// OP Mainnet is V3-only and stays disabled until explicitly listed in the chain enable flag.
+// USDC is Circle's native deployment; bridged USDC.e and USDT0 are separate token addresses.
+function optimismConfig(): SweepChainConfig {
+  const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
+  return {
+    chainId: OPTIMISM_CHAIN_ID,
+    slug: "optimism",
+    name: "Optimism",
+    explorerUrl: "https://optimistic.etherscan.io",
+    weth: OPTIMISM_WETH_ADDRESS,
+    usdc: "0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85" as Address,
+    usdt: "0x94b008aA00579c1307B0EF2c499aD98a8ce58e58" as Address,
+    dai: "0xDA10009cBd5D07dd0CeCc66161FC93D7c9000da1" as Address,
+    wbtc: "0x68f180fcCe6836688e9084f035309E29Bf0A2095" as Address,
+    extraStables: [
+      "0x7F5c764cBc14f9669B88837ca1490cCa17c31607" as Address, // bridged USDC.e, 6 decimals
+      "0x01bFF41798a0BcF287b996046Ca68b395DbC1071" as Address, // USDT0, 6 decimals
+    ],
+    usdcDecimals: 6,
+    routerV3Env: "DUST_SWEEP_ROUTER_V3_ADDRESS_10",
+    supportsLegacyLanes: false,
+    supportsWethPassthrough: boolEnv("DUST_SWEEP_WETH_PASSTHROUGH_10", true),
+    routeMaxCap: numberEnv("DUST_SWEEP_ROUTE_MAX_CAP_10", 10, 1, 50),
+    minValueUsd: numberEnv("DUST_SWEEP_MIN_VALUE_USD_10", 0.01, 0, 1_000),
+    // Execution-gas display only. The wallet estimates the full OP fee including L1 data costs.
+    gasModel: {
+      baseUnits: numberEnv("DUST_SWEEP_GAS_UNITS_BASE_10", 120_000, 21_000, 5_000_000),
+      perRouteUnits: numberEnv("DUST_SWEEP_GAS_UNITS_PER_ROUTE_10", 180_000, 21_000, 2_000_000),
+    },
+    kyberSlug: "optimism",
+    openOceanSlug: "optimism",
+    dexscreenerSlug: "optimism",
+    openOceanGasPriceGwei: numberEnv("DUST_SWEEP_OPENOCEAN_GAS_PRICE_GWEI_10", 0.01, 0.001, 500),
+    aggregators: {
+      kyber: boolEnv("DUST_SWEEP_ENABLE_KYBER_10", true),
+      zerox: boolEnv("DUST_SWEEP_ENABLE_ZEROX_10", false),
+      lifi: boolEnv("DUST_SWEEP_ENABLE_LIFI_10", true),
+      openocean: boolEnv("DUST_SWEEP_ENABLE_OPENOCEAN_10", false),
+    },
+    allowedAggregatorTargetsEnv: "DUST_SWEEP_ALLOWED_AGGREGATOR_TARGETS_10",
+    nativeSources: [
+      {
+        kind: "uniswap_v3",
+        dexName: "Uniswap V3",
+        router: envAddress("UNISWAP_V3_SWAP_ROUTER_ADDRESS_10") !== ZERO_ADDRESS
+          ? envAddress("UNISWAP_V3_SWAP_ROUTER_ADDRESS_10")
+          : "0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45" as Address,
+        quoter: envAddress("UNISWAP_V3_QUOTER_ADDRESS_10") !== ZERO_ADDRESS
+          ? envAddress("UNISWAP_V3_QUOTER_ADDRESS_10")
+          : "0x61fFE014bA17989E743c5F6cB21bF9697530B21e" as Address,
+        factory: envAddress("UNISWAP_V3_FACTORY_ADDRESS_10") !== ZERO_ADDRESS
+          ? envAddress("UNISWAP_V3_FACTORY_ADDRESS_10")
+          : "0x1F98431c8aD98523631AE4a59f267346ea31F984" as Address,
+        feeTiers: [500, 3000, 100, 10000],
+      },
+      {
+        kind: "univ2",
+        dexName: "Uniswap V2",
+        router: "0x4A7b5Da61326A6379179b40d00F57E5bbDC962c2" as Address,
+        factory: "0x0c3c1c532F1e39EdF36BE9Fe0bE1410313E074Bf" as Address,
+      },
+      {
+        kind: "solidly",
+        dexName: "Velodrome V2",
+        router: "0xa062aE8A9c5e11aaA026fc2670B0D65cCc8B2858" as Address,
+        factory: "0xF1046053aa5682b4F9a81b5481394DA16BE5FF5a" as Address,
+      },
+    ],
+    blockscoutRestBaseUrl: "https://optimism.blockscout.com/api/v2",
+  };
+}
+
 const CHAIN_CONFIGS: Record<number, () => SweepChainConfig> = {
   [BASE_CHAIN_ID]: () => BASE_CONFIG,
   [ETHEREUM_CHAIN_ID]: () => withResolvedRouters(ethereumConfig()),
   [BSC_CHAIN_ID]: () => withResolvedRouters(bscConfig()),
   [ROBINHOOD_CHAIN_ID]: () => withResolvedRouters(robinhoodConfig()),
   [ARBITRUM_CHAIN_ID]: () => withResolvedRouters(arbitrumConfig()),
+  [OPTIMISM_CHAIN_ID]: () => optimismConfig(),
 };
 
 /** Chains DustSweep will serve. Default: Base only. Flip DUST_SWEEP_ENABLED_CHAIN_IDS to open ETH. */

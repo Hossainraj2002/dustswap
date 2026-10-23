@@ -81,7 +81,11 @@ const rpcUrlsByChainId: Record<number, string[]> = {
     ...splitEnv(process.env.NEXT_PUBLIC_ARBITRUM_RPC_URLS),
     ...toRpcUrlList(process.env.NEXT_PUBLIC_ARBITRUM_RPC_URL),
   ]),
-  [optimism.id]: toRpcUrlList(process.env.NEXT_PUBLIC_OPTIMISM_RPC_URL),
+  // Public RPC only in the browser bundle; paid Optimism discovery keys stay on the API.
+  [optimism.id]: unique([
+    ...splitEnv(process.env.NEXT_PUBLIC_OPTIMISM_RPC_URLS),
+    ...toRpcUrlList(process.env.NEXT_PUBLIC_OPTIMISM_RPC_URL),
+  ]),
   [polygon.id]: toRpcUrlList(process.env.NEXT_PUBLIC_POLYGON_RPC_URL),
   [bsc.id]: toRpcUrlList(process.env.NEXT_PUBLIC_BSC_RPC_URL),
   [avalanche.id]: toRpcUrlList(process.env.NEXT_PUBLIC_AVALANCHE_RPC_URL),

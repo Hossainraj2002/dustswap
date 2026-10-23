@@ -1,0 +1,860 @@
+import { isAddress, type Address } from "viem";
+
+/**
+ * DustSweep V3 (DustSwapSweepRouter) — verified Base (chainId 8453) DEX target registry.
+ *
+ * ADDITIVE + STANDALONE: this module does not import, replace, or alter the working V1/V2
+ * DustSweep flow. It is the single source of truth for:
+ *   1. the on-chain allowlist the owner sets on DustSwapSweepRouter after deploy
+ *      (`setAllowedTarget` / `setAllowedSpender`), and
+ *   2. which per-DEX calldata builder the app should use for each routable token.
+ *
+ * Every address below was confirmed live on Base via `eth_getCode` (contract present) and
+ * cross-checked against the protocol's official docs / a verified BaseScan label on 2026-06-09.
+ * See packages/contracts/remix/DustSwapSweepRouter-V3-Deploy.md for the source table.
+ *
+ * SPENDER MODEL (this is what makes exact, per-sweep approvals correct):
+ *   - "permit2": the router pulls tokens through Permit2. Whitelist Permit2 as the spender and
+ *     the DustSwapSweepRouter sets a transient Permit2 AllowanceTransfer approval == amountIn,
+ *     reset to 0 after the swap. Used by Uniswap Universal Router (V3+V4) and Aerodrome's
+ *     Universal Router (a Velodrome/Uniswap UR fork).
+ *   - "self": the DEX pulls tokens via a plain ERC-20 allowance, so the DEX router IS the
+ *     spender. DustSwapSweepRouter `forceApprove(router, amountIn)` then resets to 0.
+ *
+ * In BOTH models the approval is EXACTLY route.amountIn and returns to 0 after each route —
+ * there is never a standing/unlimited allowance.
+ */
+
+export const BASE_CHAIN_ID = 8453;
+export const ETHEREUM_CHAIN_ID = 1;
+export const BSC_CHAIN_ID = 56;
+export const ROBINHOOD_CHAIN_ID = 4663;
+export const ARBITRUM_CHAIN_ID = 42161;
+export const OPTIMISM_CHAIN_ID = 10;
+
+/** Canonical Permit2 (same address on every chain). Verified live on Base. */
+export const PERMIT2_ADDRESS: Address = "0x000000000022D473030F116dDEE9F6B43aC78BA3";
+
+/** WETH on Base. Verified live on Base. Constructor arg for DustSwapSweepRouter. */
+export const WETH_ADDRESS: Address = "0x4200000000000000000000000000000000000006";
+
+/** OP Mainnet's wrapped native ETH, distinct from any token on Base despite sharing an address. */
+export const OPTIMISM_WETH_ADDRESS: Address = "0x4200000000000000000000000000000000000006";
+
+/** WETH on Ethereum mainnet. Constructor arg for the mainnet DustSwapSweepRouter. */
+export const ETHEREUM_WETH_ADDRESS: Address = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2";
+
+/**
+ * WBNB on BSC (the chain's wrapped native). Constructor arg for the BSC DustSwapSweepRouter.
+ * Verified live 2026-07-10 via eth_getCode + decimals()=18 + symbol()=WBNB on bsc-dataseed.
+ */
+export const BSC_WBNB_ADDRESS: Address = "0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c";
+
+/**
+ * WETH on Robinhood Chain (native gas token IS ETH — no WBNB-style rename needed). Constructor
+ * arg for the Robinhood DustSwapSweepRouter. Verified live 2026-07-26 via eth_getCode (2202 bytes)
+ * + name()=WETH + symbol()=WETH + decimals()=18 on rpc.mainnet.chain.robinhood.com.
+ */
+export const ROBINHOOD_WETH_ADDRESS: Address = "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73";
+
+/**
+ * WETH on Arbitrum One (native gas token IS ETH — same reasoning as Robinhood/Ethereum, so no
+ * WBNB-style rename anywhere). Constructor arg for the Arbitrum DustSwapSweepRouter.
+ * Verified live 2026-08-07: contract present, symbol()=WETH, decimals()=18, name="Arbitrum Bridged
+ * WETH (Arbitrum One)", 411k holders.
+ */
+export const ARBITRUM_WETH_ADDRESS: Address = "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1";
+
+export type DustSweepV3SpenderModel = "permit2" | "self";
+
+export type DustSweepV3CalldataStyle =
+  | "uniswap_universal_router" // UR commands + Permit2 (covers Uniswap V3 and V4 pools)
+  | "uniswap_v3_swaprouter02" // exactInputSingle / exactInput
+  | "aerodrome_universal_router" // Aerodrome UR commands (classic + Slipstream) + Permit2
+  | "aerodrome_classic_router" // Solidly swapExactTokensForTokens(Route[]{from,to,stable,factory})
+  | "aerodrome_slipstream_router" // Uniswap-V3-style exactInputSingle with tickSpacing
+  | "pancake_smart_router" // PancakeSwap SmartRouter (V2 + V3 + stable)
+  | "alienbase_smart_router" // AlienBase SmartRouter (V2 + stable + V3) — not on-chain quotable
+  | "alienbase_v2_router" // AlienBase UniV2-style router (getAmountsOut / swapExactTokensForTokens)
+  | "algebra_swaprouter" // QuickSwap Algebra Integral SwapRouter (exactInputSingle w/ deployer)
+  | "dackie_smart_router" // DackieSwap SmartRouter
+  | "baseswap_router"; // BaseSwap UniV2-style router
+
+export type DustSweepV3Target = {
+  id: string;
+  name: string;
+  /** The contract DustSwapSweepRouter calls — must be allowlisted via setAllowedTarget. */
+  target: Address;
+  /** The address that pulls the input token — must be allowlisted via setAllowedSpender. */
+  spender: Address;
+  spenderModel: DustSweepV3SpenderModel;
+  calldataStyle: DustSweepV3CalldataStyle;
+  /** UniV3-style fee tiers, in hundredths of a bip, where applicable. */
+  feeTiers?: number[];
+  enabled: boolean;
+  /** Short provenance note for the verified-address table. */
+  source: string;
+};
+
+/**
+ * Verified Base targets for DustSweep V3. Order is the recommended quote/whitelist order
+ * (deepest, most-reliable liquidity first). A token is "routable" if ANY enabled target quotes.
+ */
+export const BASE_DUSTSWEEP_V3_TARGETS: DustSweepV3Target[] = [
+  {
+    id: "uniswap-universal-router",
+    name: "Uniswap Universal Router (V3+V4)",
+    target: "0x6fF5693b99212Da76ad316178A184AB56D299b43",
+    spender: PERMIT2_ADDRESS,
+    spenderModel: "permit2",
+    calldataStyle: "uniswap_universal_router",
+    feeTiers: [100, 500, 3000, 10000],
+    enabled: true,
+    source: "Uniswap official docs (developers.uniswap.org, Base deployments) + eth_getCode",
+  },
+  {
+    id: "uniswap-v3-swaprouter02",
+    name: "Uniswap V3 SwapRouter02",
+    target: "0x2626664c2603336E57B271c5C0b26F421741e481",
+    spender: "0x2626664c2603336E57B271c5C0b26F421741e481",
+    spenderModel: "self",
+    calldataStyle: "uniswap_v3_swaprouter02",
+    feeTiers: [100, 500, 3000, 10000],
+    enabled: true,
+    source: "Uniswap official docs (Base v3 deployments) + eth_getCode; already used by V1/V2",
+  },
+  {
+    id: "aerodrome-universal-router",
+    name: "Aerodrome Universal Router (classic + Slipstream)",
+    target: "0x6Cb442acF35158D5eDa88fe602221b67B400Be3E",
+    spender: PERMIT2_ADDRESS,
+    spenderModel: "permit2",
+    calldataStyle: "aerodrome_universal_router",
+    enabled: true,
+    source: "BaseScan verified label 'Aerodrome: Universal Router' (5M+ txs) + eth_getCode",
+  },
+  {
+    id: "aerodrome-classic-router",
+    name: "Aerodrome Classic Router (Solidly)",
+    target: "0xcF77a3Ba9A5CA399B7c97c74d54e5b1Beb874E43",
+    spender: "0xcF77a3Ba9A5CA399B7c97c74d54e5b1Beb874E43",
+    spenderModel: "self",
+    calldataStyle: "aerodrome_classic_router",
+    enabled: true,
+    source: "Aerodrome docs/GitHub + eth_getCode; already used by V1/V2",
+  },
+  {
+    id: "aerodrome-slipstream-router",
+    name: "Aerodrome Slipstream SwapRouter (CL)",
+    target: "0xBE6D8f0d05cC4be24d5167a3eF062215bE6D18a5",
+    spender: "0xBE6D8f0d05cC4be24d5167a3eF062215bE6D18a5",
+    spenderModel: "self",
+    calldataStyle: "aerodrome_slipstream_router",
+    enabled: true,
+    source: "Aerodrome Slipstream docs + eth_getCode",
+  },
+  {
+    id: "pancakeswap-smart-router",
+    name: "PancakeSwap SmartRouter (V2+V3+stable)",
+    target: "0x1b81D678ffb9C0263b24A97847620C99d213eB14",
+    spender: "0x1b81D678ffb9C0263b24A97847620C99d213eB14",
+    spenderModel: "self",
+    calldataStyle: "pancake_smart_router",
+    feeTiers: [100, 500, 2500, 10000],
+    enabled: true,
+    source: "PancakeSwap docs + eth_getCode; already used by V1/V2",
+  },
+  {
+    id: "quickswap-algebra-swaprouter",
+    name: "QuickSwap Algebra Integral SwapRouter",
+    target: "0xe6c9bb24ddB4aE5c6632dbE0DE14e3E474c6Cb04",
+    spender: "0xe6c9bb24ddB4aE5c6632dbE0DE14e3E474c6Cb04",
+    spenderModel: "self",
+    calldataStyle: "algebra_swaprouter",
+    enabled: true,
+    source:
+      "QuickSwap Algebra Integral — verified live 2026-06-15: router.factory()=0xC539…9C7b, " +
+      "poolDeployer()=0xE080…aA75, WNativeToken()=WETH; QuoterV2 0x23E0…7fb5 returns a live " +
+      "WETH/USDC quote (pool 0x5a9A…be1a). App-side gated by DUST_SWEEP_ENABLE_ALGEBRA.",
+  },
+  {
+    id: "hydrex-algebra-swaprouter",
+    name: "Hydrex SwapRouter (Algebra Integral)",
+    target: "0x6f4bE24d7dC93b6ffcBAb3Fd0747c5817Cea3F9e",
+    spender: "0x6f4bE24d7dC93b6ffcBAb3Fd0747c5817Cea3F9e",
+    spenderModel: "self",
+    calldataStyle: "algebra_swaprouter",
+    enabled: true,
+    source:
+      "Hydrex (Algebra Integral fork) — verified live 2026-07-03: router.factory()=0x3607…A29E, " +
+      "poolDeployer()=0x1595…Ab94, WNativeToken()=WETH; QuoterV2 0x08b4…3Fdb answers the Integral " +
+      "QuoterV2 struct (0xe94764c4) with live CHECK/WETH + WETH/USDC quotes. Addresses from " +
+      "Hydrex's own app config, router cross-checked against the BaseScan 'Hydrex: Router' label. " +
+      "App-side gated by DUST_SWEEP_ENABLE_HYDREX.",
+  },
+  {
+    // AlienBase's SmartRouter (0xB20C…9411) is NOT on-chain quotable (no getAmountsOut), so the
+    // app routes AlienBase through its UniV2-style router instead. Verified live 2026-06-15:
+    // getAmountsOut(1 WETH→USDC) succeeds and factory()=0x3E84…FdE7 resolves.
+    id: "alienbase-v2-router",
+    name: "AlienBase Router (UniV2)",
+    target: "0x8c1A3cF8f83074169FE5D7aD50B978e1cD6b37c7",
+    spender: "0x8c1A3cF8f83074169FE5D7aD50B978e1cD6b37c7",
+    spenderModel: "self",
+    calldataStyle: "alienbase_v2_router",
+    enabled: true,
+    source:
+      "AlienBase UniV2 router — verified live 2026-06-15 (getAmountsOut ok, factory() resolves). " +
+      "App-side gated by DUST_SWEEP_ENABLE_ALIENBASE.",
+  },
+  {
+    id: "dackieswap-smart-router",
+    name: "DackieSwap SmartRouter",
+    target: "0x195FBc5B8Fbd5Ac739C1BA57D4Ef6D5a704F34f7",
+    spender: "0x195FBc5B8Fbd5Ac739C1BA57D4Ef6D5a704F34f7",
+    spenderModel: "self",
+    calldataStyle: "dackie_smart_router",
+    enabled: true,
+    source: "DackieSwap docs + eth_getCode",
+  },
+  {
+    id: "baseswap-router",
+    name: "BaseSwap Router",
+    target: "0x327Df1E6de05895d2ab08513aaDD9313Fe505d86",
+    spender: "0x327Df1E6de05895d2ab08513aaDD9313Fe505d86",
+    spenderModel: "self",
+    calldataStyle: "baseswap_router",
+    enabled: true,
+    source: "BaseSwap docs + eth_getCode; already used by V1/V2",
+  },
+];
+
+/**
+ * Verified Ethereum mainnet (chainId 1) targets for DustSweep V3.
+ *
+ * Native execution ships with Uniswap V3 + V2 + SushiSwap (deepest native liquidity); the
+ * aggregator ladder (Kyber / 0x / LI.FI) covers Curve, Balancer, Pancake, Fluid, etc. via the
+ * rescue path. OpenOcean is PRE-ALLOWLISTED but PARKED (enabled: false) — the on-chain
+ * allowlist is inert until DUST_SWEEP_ENABLE_*_1 + DUST_SWEEP_ALLOWED_AGGREGATOR_TARGETS_1 open
+ * it. Odos was REMOVED as a provider entirely (2026-07-27); if its router is still allowlisted
+ * on-chain from an earlier deploy it is inert, because the app can no longer build an Odos route.
+ * Every address must be re-verified live via eth_getCode before the owner allowlist txs;
+ * see packages/contracts/remix/DustSwapSweepRouter-Ethereum-Deploy.md.
+ */
+export const ETHEREUM_DUSTSWEEP_V3_TARGETS: DustSweepV3Target[] = [
+  {
+    id: "uniswap-v3-swaprouter02",
+    name: "Uniswap V3 SwapRouter02",
+    target: "0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45",
+    spender: "0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45",
+    spenderModel: "self",
+    calldataStyle: "uniswap_v3_swaprouter02",
+    feeTiers: [100, 500, 3000, 10000],
+    enabled: true,
+    source: "Uniswap official docs (mainnet v3 deployments); re-verify eth_getCode pre-allowlist",
+  },
+  {
+    id: "uniswap-universal-router",
+    name: "Uniswap Universal Router (V3+V4)",
+    target: "0x66a9893cC07D91D95644AEDD05D03f95e1dBA8Af",
+    spender: PERMIT2_ADDRESS,
+    spenderModel: "permit2",
+    calldataStyle: "uniswap_universal_router",
+    feeTiers: [100, 500, 3000, 10000],
+    // Parked until the V4 native adapter ships on mainnet; allowlisted so it can be flipped on
+    // without a new owner tx. V3-style routing already covered by SwapRouter02 above.
+    enabled: false,
+    source: "Uniswap official docs (mainnet UR v4); re-verify eth_getCode pre-allowlist",
+  },
+  {
+    id: "uniswap-v2-router",
+    name: "Uniswap V2 Router02",
+    target: "0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D",
+    spender: "0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D",
+    spenderModel: "self",
+    calldataStyle: "baseswap_router", // UniV2 getAmountsOut/swapExactTokensForTokens shape
+    enabled: true,
+    source: "Uniswap V2 canonical router (mainnet); re-verify eth_getCode pre-allowlist",
+  },
+  {
+    id: "sushiswap-v2-router",
+    name: "SushiSwap Router (UniV2)",
+    target: "0xd9e1cE17f2641f24aE83637ab66a2cca9C378B9F",
+    spender: "0xd9e1cE17f2641f24aE83637ab66a2cca9C378B9F",
+    spenderModel: "self",
+    calldataStyle: "baseswap_router",
+    enabled: true,
+    source: "SushiSwap canonical router (mainnet); re-verify eth_getCode pre-allowlist",
+  },
+  {
+    id: "kyber-meta-aggregation-router-v2",
+    name: "KyberSwap MetaAggregationRouterV2",
+    target: "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5",
+    spender: "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5",
+    spenderModel: "self",
+    calldataStyle: "uniswap_v3_swaprouter02", // GENERIC aggregator route; calldata is opaque
+    enabled: true,
+    source: "KyberSwap docs (same router address across chains); re-verify eth_getCode",
+  },
+  {
+    id: "zerox-allowance-holder",
+    name: "0x AllowanceHolder",
+    target: "0x0000000000001fF3684f28c67538d4D072C22734",
+    spender: "0x0000000000001fF3684f28c67538d4D072C22734",
+    spenderModel: "self",
+    calldataStyle: "uniswap_v3_swaprouter02",
+    enabled: true,
+    source: "0x docs (AllowanceHolder, same address across chains); re-verify eth_getCode",
+  },
+  {
+    id: "lifi-diamond",
+    name: "LI.FI Diamond",
+    target: "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE",
+    spender: "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE",
+    spenderModel: "self",
+    calldataStyle: "uniswap_v3_swaprouter02",
+    enabled: true,
+    source: "LI.FI docs (Diamond, same address across chains); re-verify eth_getCode",
+  },
+  {
+    id: "openocean-exchange-proxy",
+    name: "OpenOcean Exchange Proxy",
+    target: "0x6352a56caadC4F1E25CD6c75970Fa768A3304e64",
+    spender: "0x6352a56caadC4F1E25CD6c75970Fa768A3304e64",
+    spenderModel: "self",
+    calldataStyle: "uniswap_v3_swaprouter02",
+    enabled: false, // PARKED — pre-allowlist on-chain, enable via DUST_SWEEP_ENABLE_OPENOCEAN_1
+    source: "OpenOcean docs; parked pending enable + live quote verification",
+  },
+  // Odos REMOVED (2026-07-27): no longer a routing provider on any chain. Its former RouterV2
+  // entry (0xCf5540fF…2559) is gone so it can never enter the default aggregator allowlist.
+];
+
+/**
+ * Verified BSC (chainId 56) targets for DustSweep V3.
+ *
+ * Native execution ships with PancakeSwap V3 + V2, Uniswap V3 (BSC) and Biswap — the only venues
+ * with meaningful 24h volume (DeFiLlama 2026-07-10: Pancake V3 $253M, Pancake V2 $30M, Uni V3
+ * $24.7M; everything else <$3M). ApeSwap/BakerySwap/MDEX/THENA etc. are reached via the
+ * aggregator rescue path (Kyber / 0x / LI.FI). OpenOcean is PRE-ALLOWLISTED but PARKED
+ * (enabled: false) — inert until DUST_SWEEP_ENABLE_*_56 + DUST_SWEEP_ALLOWED_AGGREGATOR_TARGETS_56
+ * open it. Odos was REMOVED as a provider entirely (2026-07-27); any leftover on-chain allowlist
+ * entry is inert because the app can no longer build an Odos route.
+ * Every address below was verified live on 2026-07-10 via eth_getCode on
+ * bsc-dataseed.bnbchain.org AND a functional probe (getAmountsOut / quoteExactInputSingle / live
+ * aggregator API response) — never explorer labels. Re-verify via eth_getCode before the owner
+ * allowlist txs; see packages/contracts/remix/DustSwapSweepRouter-BSC-Deploy.md.
+ */
+export const BSC_DUSTSWEEP_V3_TARGETS: DustSweepV3Target[] = [
+  {
+    id: "pancakeswap-v3-smart-router",
+    name: "PancakeSwap V3 SmartRouter",
+    target: "0x13f4EA83D0bd40E75C8222255bc855a974568Dd4",
+    spender: "0x13f4EA83D0bd40E75C8222255bc855a974568Dd4",
+    spenderModel: "self",
+    calldataStyle: "pancake_smart_router",
+    feeTiers: [100, 500, 2500, 10000],
+    enabled: true,
+    source:
+      "Verified live 2026-07-10: eth_getCode ok; QuoterV2 0xB048…5997 answered quoteExactInputSingle " +
+      "WBNB→USDT at fee 100 and 500 (~573 USDT/WBNB).",
+  },
+  {
+    id: "pancakeswap-v2-router",
+    name: "PancakeSwap V2 Router",
+    target: "0x10ED43C718714eb63d5aA57B78B54704E256024E",
+    spender: "0x10ED43C718714eb63d5aA57B78B54704E256024E",
+    spenderModel: "self",
+    calldataStyle: "baseswap_router", // UniV2 getAmountsOut/swapExactTokensForTokens shape
+    enabled: true,
+    source:
+      "Verified live 2026-07-10: eth_getCode ok; getAmountsOut(1 WBNB→USDT) returned ~572 USDT.",
+  },
+  {
+    id: "uniswap-v3-swaprouter02",
+    name: "Uniswap V3 SwapRouter02 (BSC)",
+    target: "0xB971eF87ede563556b2ED4b1C0b0019111Dd85d2",
+    spender: "0xB971eF87ede563556b2ED4b1C0b0019111Dd85d2",
+    spenderModel: "self",
+    calldataStyle: "uniswap_v3_swaprouter02",
+    feeTiers: [100, 500, 3000, 10000],
+    enabled: true,
+    source:
+      "Verified live 2026-07-10: eth_getCode ok; QuoterV2 0x78D7…B077 answered quoteExactInputSingle " +
+      "WBNB→USDT at fee 500/3000 (~573 USDT/WBNB).",
+  },
+  {
+    id: "biswap-router",
+    name: "Biswap Router (UniV2)",
+    target: "0x3a6d8cA21D1CF76F653A67577FA0D27453350dD8",
+    spender: "0x3a6d8cA21D1CF76F653A67577FA0D27453350dD8",
+    spenderModel: "self",
+    calldataStyle: "baseswap_router",
+    enabled: true,
+    source:
+      "Verified live 2026-07-10: eth_getCode ok; getAmountsOut(1 WBNB→USDT) returned ~570.6 USDT " +
+      "(competitive with Pancake).",
+  },
+  {
+    id: "kyber-meta-aggregation-router-v2",
+    name: "KyberSwap MetaAggregationRouterV2",
+    target: "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5",
+    spender: "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5",
+    spenderModel: "self",
+    calldataStyle: "uniswap_v3_swaprouter02", // GENERIC aggregator route; calldata is opaque
+    enabled: true,
+    source:
+      "Verified live 2026-07-10: Kyber /bsc/api/v1/routes returned routerAddress == this address; " +
+      "eth_getCode ok on BSC.",
+  },
+  {
+    id: "zerox-allowance-holder",
+    name: "0x AllowanceHolder",
+    target: "0x0000000000001fF3684f28c67538d4D072C22734",
+    spender: "0x0000000000001fF3684f28c67538d4D072C22734",
+    spenderModel: "self",
+    calldataStyle: "uniswap_v3_swaprouter02",
+    enabled: true,
+    source:
+      "Verified live 2026-07-10: 0x v2 allowance-holder quote chainId=56 returned to+spender == " +
+      "this address; eth_getCode ok on BSC.",
+  },
+  {
+    id: "lifi-diamond",
+    name: "LI.FI Diamond",
+    target: "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE",
+    spender: "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE",
+    spenderModel: "self",
+    calldataStyle: "uniswap_v3_swaprouter02",
+    enabled: true,
+    source:
+      "Verified live 2026-07-10: LI.FI /v1/quote fromChain=56 returned approvalAddress + " +
+      "transactionRequest.to == this address; eth_getCode ok on BSC.",
+  },
+  {
+    id: "openocean-exchange-proxy",
+    name: "OpenOcean Exchange Proxy",
+    target: "0x6352a56caadC4F1E25CD6c75970Fa768A3304e64",
+    spender: "0x6352a56caadC4F1E25CD6c75970Fa768A3304e64",
+    spenderModel: "self",
+    calldataStyle: "uniswap_v3_swaprouter02",
+    enabled: false, // PARKED — pre-allowlist on-chain, enable via DUST_SWEEP_ENABLE_OPENOCEAN_56
+    source:
+      "Verified live 2026-07-10: eth_getCode ok on BSC; OpenOcean v4/bsc/quote responds. Parked " +
+      "pending enable + swap-payload verification.",
+  },
+  // Odos REMOVED (2026-07-27): no longer a routing provider on any chain. Its former BSC
+  // RouterV2 entry (0x89b8AA89…850E) is gone so it can never enter the default allowlist.
+];
+
+/**
+ * Verified Robinhood Chain (chainId 4663) targets for DustSweep V3.
+ *
+ * DECOY WARNING — the canonical mainnet Uniswap addresses are FAKE on this chain: 0x1F98431c…
+ * ("UniswapV3Factory", but compiled with Solidity 0.4.26, 2109 bytes, getPool() returns empty)
+ * and 0x61fFE014… (identical 2109-byte stub); canonical SwapRouter02 0x68b34658… has NO code.
+ * NEVER wire canonical mainnet Uniswap addresses on 4663.
+ *
+ * The REAL Uniswap deployment (one deployer, 0x9701fb0a…, shipped factory+router+quoter+V2):
+ * V3 factory 0x1f7d7550…, SwapRouter02 0xCaf681a6…, QuoterV2 0x33e885eD…, V2 Router02
+ * 0x89e5DB8B…. All verified live 2026-07-26 via eth_getCode + factory()/WETH9() cross-links +
+ * functional quotes (QuoterV2 fee-100: 188.26 USDG / 0.1 WETH; V2 getAmountsOut: 188.15), and
+ * DexScreener labels the factory's WETH/USDG pools "uniswap v3" ($5.9M/$2.4M/$0.45M reserves).
+ *
+ * Uniswap V3+V2 hold effectively all real depth on this young chain, so the native ladder is
+ * Uniswap-only. PancakeSwap V3 deployed its SmartRouter/factory deterministically here but its
+ * QuoterV2 is NOT at the BSC address and could not be located/verified, and its top pool holds
+ * only ~$84K — Pancake plus every V3 fork (SwapHood, RobinSwap, Up, Sheriff, DyorSwap, …) is
+ * reached via the aggregator rescue path instead. Odos is not a provider on any chain (removed
+ * 2026-07-27) and does not support 4663 anyway ("Invalid chain ID") — no Odos entry exists.
+ * OpenOcean is PRE-ALLOWLISTED but PARKED (enabled: false) per the standard pattern. Re-verify
+ * every address via eth_getCode before the owner allowlist txs; see
+ * packages/contracts/remix/DustSwapSweepRouter-Robinhood-Deploy.md.
+ */
+export const ROBINHOOD_DUSTSWEEP_V3_TARGETS: DustSweepV3Target[] = [
+  {
+    id: "uniswap-v3-swaprouter02",
+    name: "Uniswap V3 SwapRouter02 (Robinhood)",
+    target: "0xCaf681a66D020601342297493863E78C959E5cb2",
+    spender: "0xCaf681a66D020601342297493863E78C959E5cb2",
+    spenderModel: "self",
+    calldataStyle: "uniswap_v3_swaprouter02",
+    feeTiers: [100, 500, 3000, 10000],
+    enabled: true,
+    source:
+      "Verified live 2026-07-26: eth_getCode ok (24497 B); factory()=0x1f7d7550…, WETH9()=WETH; " +
+      "official QuoterV2 0x33e885eD… quoted WETH→USDG fee 100 at ~188.26 USDG / 0.1 WETH.",
+  },
+  {
+    // Uniswap V4 executes through the Universal Router with PERMIT2 as the spender (not self).
+    // NOT the canonical mainnet/Base UR address — those exist on 4663 but are unused decoys
+    // (21 and 17 txs). This is the production UR: 8.2M txs / 29.6M transfers, and the V4
+    // PoolManager it serves (0x8366a39C…) holds 56M transfers. Verified live 2026-08-13.
+    id: "uniswap-v4-universal-router",
+    name: "Uniswap Universal Router (V4)",
+    target: "0x8876789976dEcBfCbBbe364623C63652db8C0904",
+    spender: PERMIT2_ADDRESS,
+    spenderModel: "permit2",
+    calldataStyle: "uniswap_universal_router",
+    feeTiers: [100, 500, 3000, 10000],
+    enabled: true,
+    source:
+      "Verified live 2026-08-13: real UR by activity (8.2M txs) vs canonical-address decoys; " +
+      "V4Quoter 0x5c3db48cFd… (poolManager()==0x8366a39C…) quoted 0.1 WETH -> 246.51 USDG at fee 500.",
+  },
+  {
+    id: "uniswap-v2-router",
+    name: "Uniswap V2 Router02 (Robinhood)",
+    target: "0x89e5DB8B5aA49aA85AC63f691524311AEB649eba",
+    spender: "0x89e5DB8B5aA49aA85AC63f691524311AEB649eba",
+    spenderModel: "self",
+    calldataStyle: "baseswap_router", // UniV2 getAmountsOut/swapExactTokensForTokens shape
+    enabled: true,
+    source:
+      "Verified live 2026-07-26: eth_getCode ok; same official deployer as the V3 stack; WETH() " +
+      "correct; getAmountsOut(0.1 WETH→USDG) returned ~188.15 USDG.",
+  },
+  {
+    id: "kyber-meta-aggregation-router-v2",
+    name: "KyberSwap MetaAggregationRouterV2",
+    target: "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5",
+    spender: "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5",
+    spenderModel: "self",
+    calldataStyle: "uniswap_v3_swaprouter02", // GENERIC aggregator route; calldata is opaque
+    enabled: true,
+    source:
+      "Verified live 2026-07-26: Kyber /robinhood/api/v1/routes returned routerAddress == this " +
+      "address with a real WETH→USDG route; eth_getCode ok on 4663 (13724 B).",
+  },
+  {
+    id: "zerox-allowance-holder",
+    name: "0x AllowanceHolder",
+    target: "0x0000000000001fF3684f28c67538d4D072C22734",
+    spender: "0x0000000000001fF3684f28c67538d4D072C22734",
+    spenderModel: "self",
+    calldataStyle: "uniswap_v3_swaprouter02",
+    enabled: true,
+    source:
+      "Verified live 2026-07-26: eth_getCode ok on 4663 (1009 B). API-level chainId=4663 support " +
+      "needs a keyed quote test — app-side gated by DUST_SWEEP_ENABLE_ZEROX_4663 (default OFF).",
+  },
+  {
+    id: "lifi-diamond",
+    name: "LI.FI Diamond (Robinhood)",
+    // NOT the canonical LI.FI Diamond address — 0x1231DEB6… has NO code on 4663. LI.FI's real
+    // executor here is a Blockscout-VERIFIED "LiFiDiamond" at this chain-specific address; live
+    // /v1/quote responses return it as BOTH approvalAddress and transactionRequest.to (stable
+    // across amounts and both trade directions, tool "fly").
+    target: "0xB477751B76CF82d00a686A1232f5fCD772414Af3",
+    spender: "0xB477751B76CF82d00a686A1232f5fCD772414Af3",
+    spenderModel: "self",
+    calldataStyle: "uniswap_v3_swaprouter02",
+    enabled: true,
+    source:
+      "Verified live 2026-07-26: LI.FI /v1/quote fromChain=4663 returned approvalAddress + " +
+      "transactionRequest.to == this address; Blockscout-verified contract name 'LiFiDiamond'; " +
+      "eth_getCode ok on 4663.",
+  },
+  {
+    id: "openocean-exchange-proxy",
+    name: "OpenOcean Exchange Proxy",
+    target: "0x6352a56caadC4F1E25CD6c75970Fa768A3304e64",
+    spender: "0x6352a56caadC4F1E25CD6c75970Fa768A3304e64",
+    spenderModel: "self",
+    calldataStyle: "uniswap_v3_swaprouter02",
+    enabled: false, // PARKED — pre-allowlist on-chain, enable via DUST_SWEEP_ENABLE_OPENOCEAN_4663
+    source:
+      "Verified live 2026-07-26: eth_getCode ok on 4663 (2161 B); OpenOcean v4/robinhood/quote " +
+      "returned a real WETH→USDG quote. Parked pending enable + swap-payload verification.",
+  },
+];
+
+/**
+ * Verified Arbitrum One (chainId 42161) targets for DustSweep V3.
+ *
+ * Unlike Robinhood, there is NO decoy problem here: the canonical mainnet Uniswap addresses are
+ * GENUINE on Arbitrum. SwapRouter02 0x68b34658…, QuoterV2 0x61fFE014… and the V3 factory
+ * 0x1F98431c… all share deployer 0x6C9FC64A… and carry verified contract names. Every
+ * Permit2/Multicall3/aggregator dependency also sits at its canonical cross-chain address.
+ *
+ * Native execution ships with Uniswap V3 + SushiSwap V2. Everything else on Arbitrum — Camelot,
+ * GMX V2, Ramses, TraderJoe, Fluid, Pendle, Maverick, Curve, Uniswap V4, +60 more — is reached
+ * (and price-optimized across) by the aggregator rescue path.
+ *
+ * ARBITRUM-ONLY DEVIATION: OpenOcean ships ENABLED here rather than parked. Its live
+ * v4/arbitrum/dexList (2026-08-07) indexes 66 DEXes including CamelotV3, Camelot, GMXV2, FluidDex,
+ * Pendle, RamsesCL, TraderJoeV2.2, MaverickV2, SolidlyV3 and UniswapV4 — materially wider long-tail
+ * coverage than Uniswap V3 + Sushi + Kyber + LI.FI combined, and it is what recovers the long-tail
+ * reach lost by deferring a native Camelot adapter. Gated by DUST_SWEEP_ENABLE_OPENOCEAN_42161,
+ * which is the kill switch if the end-to-end swap-payload test fails. OpenOcean stays PARKED on
+ * Base/Ethereum/BSC/Robinhood — this deviation does not touch them.
+ *
+ * CAMELOT IS PRE-ALLOWLISTED BUT NOT EXECUTABLE — see the entry's comment. Odos is not a provider
+ * on any chain (removed 2026-07-27), so no Odos entry exists.
+ *
+ * Every address below was verified live 2026-08-07 via eth_getCode / Blockscout is_contract +
+ * verified contract name, plus a functional probe (factory() call or live aggregator response) —
+ * never explorer labels alone. Re-verify via eth_getCode before the owner allowlist txs; see
+ * packages/contracts/remix/DustSwapSweepRouter-Arbitrum-Deploy.md.
+ */
+export const ARBITRUM_DUSTSWEEP_V3_TARGETS: DustSweepV3Target[] = [
+  {
+    id: "uniswap-v3-swaprouter02",
+    name: "Uniswap V3 SwapRouter02 (Arbitrum)",
+    target: "0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45",
+    spender: "0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45",
+    spenderModel: "self",
+    calldataStyle: "uniswap_v3_swaprouter02",
+    feeTiers: [500, 3000, 100, 10000],
+    enabled: true,
+    source:
+      "Verified live 2026-08-07: contract present, verified name 'SwapRouter02', deployer " +
+      "0x6C9FC64A… shared with QuoterV2 0x61fFE014… ('QuoterV2') and factory 0x1F98431c… " +
+      "('UniswapV3Factory') — canonical mainnet addresses are GENUINE on Arbitrum.",
+  },
+  {
+    id: "sushiswap-v2-router",
+    name: "SushiSwap Router (UniV2)",
+    target: "0x1b02dA8Cb0d097eB8D57A175b88c7D8b47997506",
+    spender: "0x1b02dA8Cb0d097eB8D57A175b88c7D8b47997506",
+    spenderModel: "self",
+    calldataStyle: "baseswap_router", // UniV2 getAmountsOut/swapExactTokensForTokens shape
+    enabled: true,
+    source:
+      "Verified live 2026-08-07: contract present, verified name 'UniswapV2Router02'; " +
+      "factory() returned 0xc35DADB65012eC5796536bD9864eD8773aBc74C4.",
+  },
+  {
+    id: "kyber-meta-aggregation-router-v2",
+    name: "KyberSwap MetaAggregationRouterV2",
+    target: "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5",
+    spender: "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5",
+    spenderModel: "self",
+    calldataStyle: "uniswap_v3_swaprouter02", // GENERIC aggregator route; calldata is opaque
+    enabled: true,
+    source:
+      "Verified live 2026-08-07: /arbitrum/api/v1/routes returned routerAddress == this address " +
+      "with a real WETH→USDC route (0.1 WETH → 191.408468 USDC); verified name " +
+      "'MetaAggregationRouterV2'. Slug is 'arbitrum', NOT 'arb'.",
+  },
+  {
+    id: "lifi-diamond",
+    name: "LI.FI Diamond (Arbitrum)",
+    target: "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE",
+    spender: "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE",
+    spenderModel: "self",
+    calldataStyle: "uniswap_v3_swaprouter02",
+    enabled: true,
+    source:
+      "Verified live 2026-08-07: /v1/quote fromChain=42161 returned approvalAddress AND " +
+      "transactionRequest.to == this address; verified name 'LiFiDiamond' (EIP-2535 diamond with " +
+      "GenericSwapFacetV3 present). CANONICAL address — unlike Robinhood, where it was absent.",
+  },
+  {
+    id: "zerox-allowance-holder",
+    name: "0x AllowanceHolder",
+    target: "0x0000000000001fF3684f28c67538d4D072C22734",
+    spender: "0x0000000000001fF3684f28c67538d4D072C22734",
+    spenderModel: "self",
+    calldataStyle: "uniswap_v3_swaprouter02",
+    enabled: true,
+    source:
+      "Verified live 2026-08-07: contract present at the canonical address, verified name " +
+      "'AllowanceHolder'. API-level chainId=42161 support needs a KEYED quote test (the v2 API " +
+      "authenticates via an 0x-api-key header) — app-side gated by DUST_SWEEP_ENABLE_ZEROX_42161 " +
+      "(default OFF), same staging as Robinhood.",
+  },
+  {
+    id: "openocean-exchange-proxy",
+    name: "OpenOcean Exchange Proxy",
+    target: "0x6352a56caadC4F1E25CD6c75970Fa768A3304e64",
+    spender: "0x6352a56caadC4F1E25CD6c75970Fa768A3304e64",
+    spenderModel: "self",
+    calldataStyle: "uniswap_v3_swaprouter02",
+    // LIVE on Arbitrum (deliberate, chain-scoped deviation from the parked-everywhere default).
+    enabled: true,
+    source:
+      "Verified live 2026-08-07: contract present at the canonical address, verified name " +
+      "'OpenOceanExchangeProxy' (EIP-1967 → OpenOceanExchange); v4/arbitrum/dexList returned 66 " +
+      "indexed DEXes incl. CamelotV3, Camelot, GMXV2, FluidDex, Pendle, RamsesCL, TraderJoeV2.2, " +
+      "MaverickV2, SolidlyV3, UniswapV4. ENABLED at launch for long-tail coverage; kill switch is " +
+      "DUST_SWEEP_ENABLE_OPENOCEAN_42161=false.",
+  },
+  {
+    // PARKED AND NOT FLIP-ABLE: Camelot V3 is Algebra V1.9, a DIFFERENT interface generation from
+    // the Algebra INTEGRAL wiring this codebase already has for QuickSwap/Hydrex on Base.
+    // Verified live 2026-08-07 from the on-chain verified ABIs:
+    //   router.exactInputSingle((tokenIn,tokenOut,recipient,deadline,amountIn,amountOutMinimum,
+    //     limitSqrtPrice))                                    -> selector 0xbc651188  (NO deployer)
+    //   vs Base's Integral shape (…,deployer,…)               -> selector 0x1679c792
+    //   quoter.quoteExactInputSingle(address,address,uint256,uint160) -> selector 0x2d9ebd1d
+    //     returning (uint256 amountOut, uint16 fee)
+    //   vs Base's Integral struct quoter                      -> selector 0xe94764c4
+    // So ALGEBRA_SWAP_ROUTER_ABI / ALGEBRA_QUOTER_ABI / getAlgebraQuoteCandidates CANNOT be
+    // parameterized onto it — enabling this needs a NEW calldata builder + DEX enum, not a flag.
+    // Allowlisted on-chain now so that future work needs no owner tx. Camelot liquidity is
+    // reachable today through OpenOcean (CamelotV3 + Camelot), Kyber and LI.FI.
+    // Router/quoter/factory all share deployer 0x6c0db7c0…; factory 0x1a3c9B1d… is 'AlgebraFactory'.
+    id: "camelot-v3-swaprouter",
+    name: "Camelot V3 SwapRouter (Algebra V1.9) — allowlist only",
+    target: "0x1F721E2E82F6676FCE4eA07A5958cF098D339e18",
+    spender: "0x1F721E2E82F6676FCE4eA07A5958cF098D339e18",
+    spenderModel: "self",
+    // Placeholder only — the app can NOT build valid Camelot calldata with this style. See above.
+    calldataStyle: "uniswap_v3_swaprouter02",
+    enabled: false,
+    source:
+      "Verified live 2026-08-07: contract present, verified name 'SwapRouter', factory() = " +
+      "0x1a3c9B1d2F0529D97f2afC5136Cc23e58f1FD35B ('AlgebraFactory'), quoter " +
+      "0x0Fc73040b26E9bC8514fA028D998E73A254Fa76E ('Quoter'). Algebra V1.9 — NOT Integral; " +
+      "requires a new calldata builder before it can be enabled.",
+  },
+  // Odos REMOVED (2026-07-27): not a routing provider on any chain. No entry exists here, so its
+  // routers can never enter the default aggregator allowlist.
+];
+
+/**
+ * OP Mainnet targets. Native addresses come from official Uniswap/Velodrome deployment tables;
+ * Kyber and LI.FI target/spender addresses were confirmed with live OP quote payloads 2026-10-12.
+ * 0x/OpenOcean remain parked until their complete API payload and settlement are verified.
+ */
+export const OPTIMISM_DUSTSWEEP_V3_TARGETS: DustSweepV3Target[] = [
+  {
+    id: "uniswap-v3-swaprouter02",
+    name: "Uniswap V3 SwapRouter02 (Optimism)",
+    target: "0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45",
+    spender: "0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45",
+    spenderModel: "self",
+    calldataStyle: "uniswap_v3_swaprouter02",
+    feeTiers: [500, 3000, 100, 10000],
+    enabled: true,
+    source: "Official Uniswap OP V3 deployments: developers.uniswap.org/docs/protocols/v3/deployments/v3-optimism-deployments; recheck code before launch.",
+  },
+  {
+    id: "uniswap-v2-router",
+    name: "Uniswap V2 Router02 (Optimism)",
+    target: "0x4A7b5Da61326A6379179b40d00F57E5bbDC962c2",
+    spender: "0x4A7b5Da61326A6379179b40d00F57E5bbDC962c2",
+    spenderModel: "self",
+    calldataStyle: "baseswap_router",
+    enabled: true,
+    source: "Official Uniswap V2 deployments: developers.uniswap.org/docs/protocols/v2/deployments; getAmountsOut WETH/native USDC verified 2026-10-12.",
+  },
+  {
+    id: "velodrome-v2-router",
+    name: "Velodrome V2 Router (Optimism)",
+    target: "0xa062aE8A9c5e11aaA026fc2670B0D65cCc8B2858",
+    spender: "0xa062aE8A9c5e11aaA026fc2670B0D65cCc8B2858",
+    spenderModel: "self",
+    calldataStyle: "aerodrome_classic_router",
+    enabled: true,
+    source: "Official github.com/velodrome-finance/contracts deployment table; defaultFactory() and WETH/native USDC getAmountsOut verified 2026-10-12. Chain-scoped Solidly calldata builder.",
+  },
+  {
+    id: "kyber-meta-aggregation-router-v2",
+    name: "KyberSwap MetaAggregationRouterV2 (Optimism)",
+    target: "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5",
+    spender: "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5",
+    spenderModel: "self",
+    calldataStyle: "uniswap_v3_swaprouter02",
+    enabled: true,
+    source: "Live 2026-10-12: aggregator-api.kyberswap.com/optimism/api/v1/routes WETH/native USDC routerAddress matches this self-spender target. Covers Velodrome Slipstream and other long-tail venues.",
+  },
+  {
+    id: "lifi-diamond",
+    name: "LI.FI Diamond (Optimism)",
+    target: "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE",
+    spender: "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE",
+    spenderModel: "self",
+    calldataStyle: "uniswap_v3_swaprouter02",
+    enabled: true,
+    source: "Live 2026-10-12: li.quest/v1/quote fromChain=toChain=10 WETH/native USDC approvalAddress and transactionRequest.to both match this target.",
+  },
+  {
+    id: "zerox-allowance-holder",
+    name: "0x AllowanceHolder (Optimism, parked)",
+    target: "0x0000000000001fF3684f28c67538d4D072C22734",
+    spender: "0x0000000000001fF3684f28c67538d4D072C22734",
+    spenderModel: "self",
+    calldataStyle: "uniswap_v3_swaprouter02",
+    enabled: false,
+    source: "Parked: DUST_SWEEP_ENABLE_ZEROX_10 defaults false; verify a keyed quote/build payload's target and spender before launch.",
+  },
+  {
+    id: "openocean-exchange-proxy",
+    name: "OpenOcean Exchange Proxy (Optimism, parked)",
+    target: "0x6352a56caadC4F1E25CD6c75970Fa768A3304e64",
+    spender: "0x6352a56caadC4F1E25CD6c75970Fa768A3304e64",
+    spenderModel: "self",
+    calldataStyle: "uniswap_v3_swaprouter02",
+    enabled: false,
+    source: "Parked: DUST_SWEEP_ENABLE_OPENOCEAN_10 defaults false; verify an OP swap payload and settlement before enabling.",
+  },
+];
+
+function unique(addresses: Address[]): Address[] {
+  const seen = new Set<string>();
+  const out: Address[] = [];
+  for (const addr of addresses) {
+    const key = addr.toLowerCase();
+    if (!seen.has(key) && isAddress(addr)) {
+      seen.add(key);
+      out.push(addr);
+    }
+  }
+  return out;
+}
+
+export function getActiveBaseDustSweepV3Targets(): DustSweepV3Target[] {
+  return BASE_DUSTSWEEP_V3_TARGETS.filter((t) => t.enabled);
+}
+
+/**
+ * The exact owner-only allowlist the V3 router needs after deploy. Feed `targets` into
+ * `setAllowedTarget(addr, true)` and `spenders` into `setAllowedSpender(addr, true)`.
+ */
+export function getBaseDustSweepV3Allowlist(): { targets: Address[]; spenders: Address[] } {
+  const active = getActiveBaseDustSweepV3Targets();
+  return {
+    targets: unique(active.map((t) => t.target)),
+    spenders: unique(active.map((t) => t.spender)),
+  };
+}
+
+/** Resolve the deployed V3 router address from env (single switch value, no V2/V3 fallback). */
+export function getDustSweepV3RouterAddress(): Address | null {
+  const candidate = process.env.DUST_SWEEP_ROUTER_V3_ADDRESS;
+  return candidate && isAddress(candidate) ? (candidate as Address) : null;
+}
+
+// ── Per-chain accessors (additive; Base callers keep using the Base-specific exports above) ──
+
+/** All configured V3 targets for a chain (Base default). */
+export function getDustSweepV3TargetsForChain(chainId: number): DustSweepV3Target[] {
+  if (chainId === ETHEREUM_CHAIN_ID) return ETHEREUM_DUSTSWEEP_V3_TARGETS;
+  if (chainId === BSC_CHAIN_ID) return BSC_DUSTSWEEP_V3_TARGETS;
+  if (chainId === ROBINHOOD_CHAIN_ID) return ROBINHOOD_DUSTSWEEP_V3_TARGETS;
+  if (chainId === ARBITRUM_CHAIN_ID) return ARBITRUM_DUSTSWEEP_V3_TARGETS;
+  if (chainId === OPTIMISM_CHAIN_ID) return OPTIMISM_DUSTSWEEP_V3_TARGETS;
+  return BASE_DUSTSWEEP_V3_TARGETS;
+}
+
+export function getActiveDustSweepV3TargetsForChain(chainId: number): DustSweepV3Target[] {
+  return getDustSweepV3TargetsForChain(chainId).filter((t) => t.enabled);
+}
+
+/**
+ * The exact owner-only allowlist a chain's V3 router needs after deploy.
+ * NOTE: for Ethereum this INCLUDES parked (enabled:false) aggregator targets so the owner can
+ * pre-allowlist them on-chain; app-side execution stays gated by the enable flags.
+ */
+export function getDustSweepV3AllowlistForChain(chainId: number): {
+  targets: Address[];
+  spenders: Address[];
+} {
+  const all = getDustSweepV3TargetsForChain(chainId);
+  return {
+    targets: unique(all.map((t) => t.target)),
+    spenders: unique(all.map((t) => t.spender)),
+  };
+}

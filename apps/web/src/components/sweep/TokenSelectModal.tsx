@@ -1,7 +1,9 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { TokenLogo } from "@/components/sweep/TokenLogo";
+import { SweepModal } from "@/components/sweep/SweepModal";
+import { SweepNetworkIcon } from "@/components/sweep/SweepNetworkIcon";
 import { type SweepChain } from "@/config/sweepChainConfig";
 import {
   type SelectedToken,
@@ -13,8 +15,6 @@ import {
 function cx(...parts: Array<string | false | null | undefined>) {
   return parts.filter(Boolean).join(" ");
 }
-
-const BASE_ICON = "https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/base/info/logo.png";
 
 function SearchIcon() {
   return (
@@ -46,6 +46,7 @@ function reasonText(reason: UnavailableToken["reason"]) {
   if (reason === "NO_LIQUIDITY") return "No liquidity";
   if (reason === "NOT_WHITELISTED") return "Not whitelisted";
   if (reason === "BALANCE_CHANGED") return "Balance changed";
+  if (reason === "CANT_TRANSFER") return "Can't transfer";
   if (reason === "QUOTE_FAILED") return "Quote failed";
   if (reason === "NATIVE_WRAP_REQUIRED") return "Wrap to WETH required";
   if (reason === "OUTPUT_ASSET") return "Output asset";
@@ -96,15 +97,6 @@ function confidenceDot(token: Token, mutedReason?: string) {
   return "bg-slate-300 dark:bg-slate-600";
 }
 
-const CHAIN_ICON: Record<string, string> = {
-  base: BASE_ICON,
-  ethereum:
-    "https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/info/logo.png",
-  bsc: "/dex/bnb.png", // local asset (same BNB mark used for route pills) — no remote dependency
-  robinhood: "/dex/robinhood.png", // local asset — no remote dependency
-  arbitrum: "/dex/arbitrum.png", // local asset — no remote dependency
-};
-
 function NetworkRow({
   chains,
   activeChainId,
@@ -116,30 +108,35 @@ function NetworkRow({
   onChainChange: (chainId: number) => void;
   disabled?: boolean;
 }) {
+  const activeButtonRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    activeButtonRef.current?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }, [activeChainId]);
+
   return (
-    <div className="flex items-center gap-2">
+    <div role="group" aria-label="Sweep network" className="flex w-full min-w-0 items-center gap-2 overflow-x-auto py-1">
       {chains.map((chain) => {
         const active = chain.id === activeChainId;
         return (
           <button
+            ref={active ? activeButtonRef : undefined}
             key={chain.id}
             type="button"
+            aria-label={`${chain.label} network`}
+            title={chain.label}
             aria-pressed={active}
             disabled={disabled && !active}
             onClick={() => {
               if (!active) onChainChange(chain.id);
             }}
             className={cx(
-              "inline-flex h-11 items-center gap-2 rounded-[13px] px-3.5 text-[15px] transition disabled:opacity-50",
+              "inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-[12px] transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 disabled:opacity-50 dark:focus-visible:ring-offset-slate-900",
               active
                 ? "border-[1.5px] border-[#0052ff] bg-blue-50 font-bold text-slate-900 shadow-[0_1px_2px_rgba(16,24,40,0.05)] dark:bg-blue-400/10 dark:text-white"
                 : "border border-slate-300 font-semibold text-slate-500 hover:border-blue-300 hover:text-slate-900 dark:border-white/15 dark:text-slate-400 dark:hover:text-white",
             )}
           >
-            {CHAIN_ICON[chain.key] ? (
-              <img src={CHAIN_ICON[chain.key]} alt={chain.label} className="h-5 w-5 rounded-full" />
-            ) : null}
-            {chain.label}
+            <SweepNetworkIcon chainId={chain.id} decorative />
           </button>
         );
       })}
@@ -255,6 +252,7 @@ export function TokenSelectModal({
   enabledChains,
   chainId,
   onChainChange,
+  chainChangeDisabled,
 }: {
   isOpen: boolean;
   mode: "multi" | "single";
@@ -275,6 +273,7 @@ export function TokenSelectModal({
   enabledChains: SweepChain[];
   chainId: number;
   onChainChange: (chainId: number) => void;
+  chainChangeDisabled?: boolean;
 }) {
   const activeChain = enabledChains.find((chain) => chain.id === chainId) ?? enabledChains[0];
   const [query, setQuery] = useState("");
@@ -332,8 +331,8 @@ export function TokenSelectModal({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-[90] flex items-end justify-center bg-slate-950/45 px-0 backdrop-blur-sm sm:items-center sm:px-4">
-      <div className="flex max-h-[86dvh] w-full max-w-[540px] flex-col rounded-t-[24px] bg-white shadow-[0_30px_90px_rgba(15,23,42,0.28)] dark:bg-[#0b1220] sm:rounded-[24px]">
+    <SweepModal onClose={onClose} label={title}>
+      <div className="flex max-h-[86dvh] w-full max-w-[540px] flex-col rounded-[24px] bg-white shadow-[0_30px_90px_rgba(15,23,42,0.28)] dark:bg-[#0b1220]">
         <div className="flex items-center justify-between px-5 pb-3 pt-5">
           <h2 className="text-xl font-bold tracking-[-0.01em] text-slate-950 dark:text-white">{title}</h2>
           <button
@@ -365,7 +364,7 @@ export function TokenSelectModal({
             chains={enabledChains}
             activeChainId={chainId}
             onChainChange={onChainChange}
-            disabled={isScanning}
+            disabled={isScanning || chainChangeDisabled}
           />
 
           {mode === "single" ? (
@@ -506,6 +505,6 @@ export function TokenSelectModal({
           </div>
         </div>
       </div>
-    </div>
+    </SweepModal>
   );
 }

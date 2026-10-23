@@ -30,12 +30,16 @@ export const ETHEREUM_CHAIN_ID = 1;
 export const BSC_CHAIN_ID = 56;
 export const ROBINHOOD_CHAIN_ID = 4663;
 export const ARBITRUM_CHAIN_ID = 42161;
+export const OPTIMISM_CHAIN_ID = 10;
 
 /** Canonical Permit2 (same address on every chain). Verified live on Base. */
 export const PERMIT2_ADDRESS: Address = "0x000000000022D473030F116dDEE9F6B43aC78BA3";
 
 /** WETH on Base. Verified live on Base. Constructor arg for DustSwapSweepRouter. */
 export const WETH_ADDRESS: Address = "0x4200000000000000000000000000000000000006";
+
+/** OP Mainnet's wrapped native ETH, distinct from any token on Base despite sharing an address. */
+export const OPTIMISM_WETH_ADDRESS: Address = "0x4200000000000000000000000000000000000006";
 
 /** WETH on Ethereum mainnet. Constructor arg for the mainnet DustSwapSweepRouter. */
 export const ETHEREUM_WETH_ADDRESS: Address = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2";
@@ -709,6 +713,85 @@ export const ARBITRUM_DUSTSWEEP_V3_TARGETS: DustSweepV3Target[] = [
   // routers can never enter the default aggregator allowlist.
 ];
 
+/**
+ * OP Mainnet targets. Native addresses come from official Uniswap/Velodrome deployment tables;
+ * Kyber and LI.FI target/spender addresses were confirmed with live OP quote payloads 2026-10-12.
+ * 0x/OpenOcean remain parked until their complete API payload and settlement are verified.
+ */
+export const OPTIMISM_DUSTSWEEP_V3_TARGETS: DustSweepV3Target[] = [
+  {
+    id: "uniswap-v3-swaprouter02",
+    name: "Uniswap V3 SwapRouter02 (Optimism)",
+    target: "0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45",
+    spender: "0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45",
+    spenderModel: "self",
+    calldataStyle: "uniswap_v3_swaprouter02",
+    feeTiers: [500, 3000, 100, 10000],
+    enabled: true,
+    source: "Official Uniswap OP V3 deployments: developers.uniswap.org/docs/protocols/v3/deployments/v3-optimism-deployments; recheck code before launch.",
+  },
+  {
+    id: "uniswap-v2-router",
+    name: "Uniswap V2 Router02 (Optimism)",
+    target: "0x4A7b5Da61326A6379179b40d00F57E5bbDC962c2",
+    spender: "0x4A7b5Da61326A6379179b40d00F57E5bbDC962c2",
+    spenderModel: "self",
+    calldataStyle: "baseswap_router",
+    enabled: true,
+    source: "Official Uniswap V2 deployments: developers.uniswap.org/docs/protocols/v2/deployments; getAmountsOut WETH/native USDC verified 2026-10-12.",
+  },
+  {
+    id: "velodrome-v2-router",
+    name: "Velodrome V2 Router (Optimism)",
+    target: "0xa062aE8A9c5e11aaA026fc2670B0D65cCc8B2858",
+    spender: "0xa062aE8A9c5e11aaA026fc2670B0D65cCc8B2858",
+    spenderModel: "self",
+    calldataStyle: "aerodrome_classic_router",
+    enabled: true,
+    source: "Official github.com/velodrome-finance/contracts deployment table; defaultFactory() and WETH/native USDC getAmountsOut verified 2026-10-12. Chain-scoped Solidly calldata builder.",
+  },
+  {
+    id: "kyber-meta-aggregation-router-v2",
+    name: "KyberSwap MetaAggregationRouterV2 (Optimism)",
+    target: "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5",
+    spender: "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5",
+    spenderModel: "self",
+    calldataStyle: "uniswap_v3_swaprouter02",
+    enabled: true,
+    source: "Live 2026-10-12: aggregator-api.kyberswap.com/optimism/api/v1/routes WETH/native USDC routerAddress matches this self-spender target. Covers Velodrome Slipstream and other long-tail venues.",
+  },
+  {
+    id: "lifi-diamond",
+    name: "LI.FI Diamond (Optimism)",
+    target: "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE",
+    spender: "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE",
+    spenderModel: "self",
+    calldataStyle: "uniswap_v3_swaprouter02",
+    enabled: true,
+    source: "Live 2026-10-12: li.quest/v1/quote fromChain=toChain=10 WETH/native USDC approvalAddress and transactionRequest.to both match this target.",
+  },
+  {
+    id: "zerox-allowance-holder",
+    name: "0x AllowanceHolder (Optimism, parked)",
+    target: "0x0000000000001fF3684f28c67538d4D072C22734",
+    spender: "0x0000000000001fF3684f28c67538d4D072C22734",
+    spenderModel: "self",
+    calldataStyle: "uniswap_v3_swaprouter02",
+    enabled: false,
+    source: "Parked: DUST_SWEEP_ENABLE_ZEROX_10 defaults false; verify a keyed quote/build payload's target and spender before launch.",
+  },
+  {
+    id: "openocean-exchange-proxy",
+    name: "OpenOcean Exchange Proxy (Optimism, parked)",
+    target: "0x6352a56caadC4F1E25CD6c75970Fa768A3304e64",
+    spender: "0x6352a56caadC4F1E25CD6c75970Fa768A3304e64",
+    spenderModel: "self",
+    calldataStyle: "uniswap_v3_swaprouter02",
+    enabled: false,
+    source: "Parked: DUST_SWEEP_ENABLE_OPENOCEAN_10 defaults false; verify an OP swap payload and settlement before enabling.",
+  },
+];
+
 function unique(addresses: Address[]): Address[] {
   const seen = new Set<string>();
   const out: Address[] = [];
@@ -752,6 +835,7 @@ export function getDustSweepV3TargetsForChain(chainId: number): DustSweepV3Targe
   if (chainId === BSC_CHAIN_ID) return BSC_DUSTSWEEP_V3_TARGETS;
   if (chainId === ROBINHOOD_CHAIN_ID) return ROBINHOOD_DUSTSWEEP_V3_TARGETS;
   if (chainId === ARBITRUM_CHAIN_ID) return ARBITRUM_DUSTSWEEP_V3_TARGETS;
+  if (chainId === OPTIMISM_CHAIN_ID) return OPTIMISM_DUSTSWEEP_V3_TARGETS;
   return BASE_DUSTSWEEP_V3_TARGETS;
 }
 

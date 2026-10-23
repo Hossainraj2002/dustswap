@@ -1,0 +1,29 @@
+[
+  {
+    "overflow": "",
+    "phase": "before"
+  },
+  {
+    "dialogs": [
+      "Preview Settings",
+      "Preview Completion"
+    ],
+    "focusedDialog": "Preview Settings",
+    "overflow": "hidden",
+    "phase": "both open"
+  },
+  {
+    "dialogs": [
+      "Preview Completion"
+    ],
+    "focusedDialog": "Preview Completion",
+    "overflow": "hidden",
+    "phase": "top closed"
+  },
+  {
+    "dialogs": 0,
+    "focus": "Open settings and completion",
+    "overflow": "",
+    "phase": "both closed"
+  }
+]

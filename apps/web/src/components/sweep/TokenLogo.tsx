@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { type Token } from "@/types/dustsweep";
+import { SWEEP_NETWORK_ICONS, SweepNetworkIcon } from "@/components/sweep/SweepNetworkIcon";
 
 function cx(...parts: Array<string | false | null | undefined>) {
   return parts.filter(Boolean).join(" ");
@@ -11,7 +12,7 @@ function cx(...parts: Array<string | false | null | undefined>) {
 // Mirrors the server-side fallback in apps/api. Used here as an extra client candidate so a token
 // still renders a real icon when the server logo is missing OR its URL 404s (e.g. a dead
 // DexScreener image). Unknown tokens 404 here too and cleanly fall through to the letter avatar.
-const DETERMINISTIC_LOGO_CHAIN_IDS = new Set<number>([8453, 1, 56]);
+const DETERMINISTIC_LOGO_CHAIN_IDS = new Set<number>([8453, 1, 56, 4663, 42161, 10]);
 
 function fallbackLogo(address: string | undefined, chainId: number): string | undefined {
   if (!address || !/^0x[a-fA-F0-9]{40}$/.test(address)) return undefined;
@@ -48,6 +49,15 @@ export function TokenLogo({
   }, [candidates]);
 
   const src = candidates[index];
+  const badge = SWEEP_NETWORK_ICONS[chainId];
+  const chainBadge = badge ? (
+    <span
+      title={`${badge.label} network`}
+      className="absolute -bottom-0.5 -right-0.5 flex h-4 w-4 items-center justify-center overflow-hidden rounded-full bg-white ring-1 ring-white dark:ring-slate-900"
+    >
+      <SweepNetworkIcon chainId={chainId} className="h-full w-full" />
+    </span>
+  ) : null;
 
   if (src) {
     return (
@@ -58,7 +68,7 @@ export function TokenLogo({
           onError={() => setIndex((current) => current + 1)}
           className={cx("h-full w-full rounded-full bg-slate-100 object-cover", muted && "grayscale")}
         />
-        <span className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-[3px] border-2 border-white bg-blue-600" />
+        {chainBadge}
       </span>
     );
   }
@@ -72,7 +82,7 @@ export function TokenLogo({
       )}
     >
       {token.symbol?.slice(0, 1) || "?"}
-      <span className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-[3px] border-2 border-white bg-blue-600" />
+      {chainBadge}
     </span>
   );
 }

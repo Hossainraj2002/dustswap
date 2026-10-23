@@ -59,6 +59,7 @@ function getDexIcon(dexName: string) {
   // SushiSwap is a native source on BOTH Ethereum and Arbitrum ("SushiSwap", "SushiSwap via WETH").
   // Without this it fell through to the generic icon on every Sushi route.
   if (name.includes("SUSHI")) return "/dex/sushiswap.png";
+  if (name.includes("VELODROME")) return "/dex/velodrome.svg";
   if (name.includes("AERODROME") || name.includes("AERO ")) return "/dex/aerodrome.png";
   if (name.includes("PANCAKE") || name.includes("CAKE")) return "/dex/pancakeswap.png";
   if (name.includes("BISWAP")) return "/dex/biswap.png";
@@ -91,6 +92,9 @@ function formatDexName(dexName: string) {
   }
   if (name.includes("AERODROME")) {
     return name.includes("SLIPSTREAM") ? "Aerodrome CL" : "Aerodrome";
+  }
+  if (name.includes("VELODROME")) {
+    return name.includes("SLIPSTREAM") ? "Velodrome CL" : "Velodrome";
   }
   if (name.includes("PANCAKE") || name.includes("CAKE")) return "PancakeSwap";
   if (name.includes("BISWAP")) return "Biswap";

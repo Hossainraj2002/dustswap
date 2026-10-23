@@ -47,11 +47,97 @@ contract FeeOnTransferERC20 is ERC20 {
     }
 }
 
+/// @notice Debits an extra fee from the configured sender, rather than reducing receipt.
+contract SenderPaidFeeERC20 is ERC20 {
+    address public taxedSender;
+    bool public taxTransfer;
+    bool public taxTransferFrom;
+
+    constructor() ERC20("Sender Paid Fee", "SPF") {}
+
+    function mint(address to, uint256 amount) external {
+        _mint(to, amount);
+    }
+
+    function configure(address sender, bool onTransfer, bool onTransferFrom) external {
+        taxedSender = sender;
+        taxTransfer = onTransfer;
+        taxTransferFrom = onTransferFrom;
+    }
+
+    function transfer(address to, uint256 amount) public override returns (bool) {
+        bool ok = super.transfer(to, amount);
+        if (taxTransfer && msg.sender == taxedSender) _burn(msg.sender, amount / 100);
+        return ok;
+    }
+
+    function transferFrom(address from, address to, uint256 amount) public override returns (bool) {
+        bool ok = super.transferFrom(from, to, amount);
+        if (taxTransferFrom && from == taxedSender) _burn(from, amount / 100);
+        return ok;
+    }
+}
+
+/// @notice Metadata works at snapshot time, but balance reads fail after input is pulled.
+contract PostPullReadFailureERC20 is ERC20 {
+    address public watched;
+    bool public rejectBalance;
+
+    constructor(address watched_) ERC20("Read Failure", "READ") {
+        watched = watched_;
+    }
+
+    function mint(address to, uint256 amount) external {
+        _mint(to, amount);
+    }
+
+    function setRejectBalance(bool reject) external {
+        rejectBalance = reject;
+    }
+
+    function balanceOf(address account) public view virtual override returns (uint256) {
+        require(!rejectBalance || account != watched, "balance read");
+        return super.balanceOf(account);
+    }
+
+    function rawBalanceOf(address account) external view returns (uint256) {
+        return super.balanceOf(account);
+    }
+
+    function transferFrom(address from, address to, uint256 amount) public override returns (bool) {
+        bool ok = super.transferFrom(from, to, amount);
+        if (to == watched) rejectBalance = true;
+        return ok;
+    }
+}
+
+/// @notice A successful external call with malformed ABI return data after input is pulled.
+contract PostPullMalformedBalanceERC20 is PostPullReadFailureERC20 {
+    constructor(address watched_) PostPullReadFailureERC20(watched_) {}
+
+    function balanceOf(address account) public view override returns (uint256) {
+        if (rejectBalance && account == watched) {
+            assembly {
+                mstore(0, 1)
+                return(0, 1)
+            }
+        }
+        return super.balanceOf(account);
+    }
+}
+
 /// @notice Token whose transfer() returns malformed (1-byte) data. abi.decode(bool) on that would
 ///         revert; the router must treat it as a failed refund, never brick the whole sweep.
 contract MalformedReturnERC20 {
     mapping(address => uint256) public balanceOf;
     mapping(address => mapping(address => uint256)) public allowance;
+    uint256 public returnLength = 1;
+    uint256 public returnWord = 1;
+
+    function setReturn(uint256 length, uint256 word) external {
+        returnLength = length;
+        returnWord = word;
+    }
 
     function mint(address to, uint256 amount) external {
         balanceOf[to] += amount;
@@ -71,9 +157,11 @@ contract MalformedReturnERC20 {
 
     // Returns 1 byte of junk (not a clean 32-byte bool) and does not move funds.
     function transfer(address, uint256) external {
+        uint256 length = returnLength;
+        uint256 word = returnWord;
         assembly {
-            mstore(0x00, 1)
-            return(0x00, 1)
+            mstore(0x00, word)
+            return(0x00, length)
         }
     }
 }
@@ -512,6 +600,227 @@ contract DustSwapSweepRouterTest is Test {
 
     // ── Best-effort partial failure ──────────────────────────────
 
+    function test_feeOnTransferCannotSpendPreexistingInputReserve() public {
+        FeeOnTransferERC20 fot = new FeeOnTransferERC20();
+        fot.mint(user, 100 ether);
+        fot.mint(address(router), 100 ether);
+        DustSwapSweepRouter.SweepRoute[] memory routes = new DustSwapSweepRouter.SweepRoute[](2);
+        routes[0] = _route(address(fot), 10 ether, 500_000, address(outputToken));
+        routes[1] = _route(address(tokenA), 5 ether, 600_000, address(outputToken));
+        vm.startPrank(user);
+        fot.approve(address(router), 10 ether);
+        tokenA.approve(address(router), 5 ether);
+        (uint256 gross,,) = router.sweep(
+            DustSwapSweepRouter.SweepMode.Allowance, routes,
+            _params(address(outputToken), 600_000, _sentinel()), _emptyPermit(), ""
+        );
+        vm.stopPrank();
+        assertEq(gross, 600_000, "Underdelivered leg must be skipped");
+        assertEq(fot.balanceOf(address(router)), 100 ether, "Old input must remain reserved");
+        assertEq(fot.balanceOf(address(target)), 0);
+        assertEq(fot.allowance(address(router), address(target)), 0);
+        assertEq(fot.balanceOf(user), 99.801 ether, "Only received input is refunded, with token tax");
+    }
+
+    function test_duplicateInputRoutesPreserveOneImmutableReserve() public {
+        tokenA.mint(address(router), 7 ether);
+        DustSwapSweepRouter.SweepRoute[] memory routes = new DustSwapSweepRouter.SweepRoute[](2);
+        routes[0] = _route(address(tokenA), 4 ether, 400_000, address(outputToken));
+        routes[1] = _route(address(tokenA), 6 ether, 600_000, address(outputToken));
+        vm.startPrank(user);
+        tokenA.approve(address(router), 10 ether);
+        (uint256 gross,,) = router.sweep(
+            DustSwapSweepRouter.SweepMode.Allowance, routes,
+            _params(address(outputToken), 1_000_000, _sentinel()), _emptyPermit(), ""
+        );
+        vm.stopPrank();
+        assertEq(gross, 1_000_000);
+        assertEq(tokenA.balanceOf(address(router)), 7 ether);
+        assertEq(tokenA.balanceOf(address(target)), 10 ether);
+        assertEq(tokenA.allowance(user, address(router)), 0);
+        assertEq(tokenA.allowance(address(router), address(target)), 0);
+    }
+
+    function test_duplicateInputFailureRefundsOnlyCurrentSweepFunds() public {
+        tokenA.mint(address(router), 7 ether);
+        DustSwapSweepRouter.SweepRoute[] memory routes = new DustSwapSweepRouter.SweepRoute[](2);
+        routes[0] = _route(address(tokenA), 4 ether, 400_000, address(outputToken));
+        routes[0].data = abi.encodeCall(MockSwapTarget.boom, ());
+        routes[1] = _route(address(tokenA), 6 ether, 600_000, address(outputToken));
+        vm.startPrank(user);
+        tokenA.approve(address(router), 10 ether);
+        (uint256 gross,,) = router.sweep(
+            DustSwapSweepRouter.SweepMode.Allowance, routes,
+            _params(address(outputToken), 600_000, _sentinel()), _emptyPermit(), ""
+        );
+        vm.stopPrank();
+        assertEq(gross, 600_000);
+        assertEq(tokenA.balanceOf(address(router)), 7 ether);
+        assertEq(tokenA.balanceOf(user), 994 ether);
+        assertEq(tokenA.balanceOf(address(target)), 6 ether);
+        assertEq(tokenA.allowance(address(router), address(target)), 0);
+    }
+
+    function test_senderPaidSwapTaxRollsBackOnlyUnsafeLeg() public {
+        SenderPaidFeeERC20 taxed = new SenderPaidFeeERC20();
+        taxed.configure(address(router), false, true);
+        taxed.mint(user, 100 ether);
+        taxed.mint(address(router), 100 ether);
+        DustSwapSweepRouter.SweepRoute[] memory routes = new DustSwapSweepRouter.SweepRoute[](2);
+        routes[0] = _route(address(taxed), 10 ether, 500_000, address(outputToken));
+        routes[1] = _route(address(tokenA), 5 ether, 600_000, address(outputToken));
+        vm.startPrank(user);
+        taxed.approve(address(router), 10 ether);
+        tokenA.approve(address(router), 5 ether);
+        (uint256 gross,,) = router.sweep(
+            DustSwapSweepRouter.SweepMode.Allowance, routes,
+            _params(address(outputToken), 600_000, _sentinel()), _emptyPermit(), ""
+        );
+        vm.stopPrank();
+        assertEq(gross, 600_000);
+        assertEq(taxed.balanceOf(address(router)), 100 ether);
+        assertEq(taxed.balanceOf(user), 100 ether);
+        assertEq(taxed.balanceOf(address(target)), 0, "Unsafe DEX transfer rolls back");
+        assertEq(taxed.allowance(address(router), address(target)), 0);
+    }
+
+    function test_senderPaidRefundTaxCannotSpendPreexistingInput() public {
+        SenderPaidFeeERC20 taxed = new SenderPaidFeeERC20();
+        taxed.configure(address(router), true, false);
+        taxed.mint(user, 100 ether);
+        taxed.mint(address(router), 100 ether);
+        DustSwapSweepRouter.SweepRoute[] memory routes = new DustSwapSweepRouter.SweepRoute[](2);
+        routes[0] = _route(address(taxed), 10 ether, 500_000, address(outputToken));
+        routes[0].data = abi.encodeCall(MockSwapTarget.boom, ());
+        routes[1] = _route(address(tokenA), 5 ether, 600_000, address(outputToken));
+        vm.startPrank(user);
+        taxed.approve(address(router), 10 ether);
+        tokenA.approve(address(router), 5 ether);
+        (uint256 gross,,) = router.sweep(
+            DustSwapSweepRouter.SweepMode.Allowance, routes,
+            _params(address(outputToken), 600_000, _sentinel()), _emptyPermit(), ""
+        );
+        vm.stopPrank();
+        assertEq(gross, 600_000, "Unsafe refund cannot brick a healthy leg");
+        assertEq(taxed.balanceOf(address(router)), 110 ether, "Refund rolls back, reserve remains for rescue");
+        assertEq(taxed.balanceOf(user), 90 ether);
+        assertEq(taxed.allowance(address(router), address(target)), 0);
+    }
+
+    function test_invalidBoolRefundReturnDoesNotBrickSweep() public {
+        MalformedReturnERC20 weird = new MalformedReturnERC20();
+        weird.setReturn(32, 2);
+        weird.mint(user, 10 ether);
+        DustSwapSweepRouter.SweepRoute[] memory routes = new DustSwapSweepRouter.SweepRoute[](2);
+        routes[0] = _route(address(weird), 4 ether, 500_000, address(outputToken));
+        routes[0].data = abi.encodeCall(MockSwapTarget.boom, ());
+        routes[1] = _route(address(tokenA), 5 ether, 600_000, address(outputToken));
+        vm.startPrank(user);
+        weird.approve(address(router), 4 ether);
+        tokenA.approve(address(router), 5 ether);
+        (uint256 gross,,) = router.sweep(
+            DustSwapSweepRouter.SweepMode.Allowance, routes,
+            _params(address(outputToken), 600_000, _sentinel()), _emptyPermit(), ""
+        );
+        vm.stopPrank();
+        assertEq(gross, 600_000);
+        assertEq(weird.balanceOf(address(router)), 4 ether);
+        assertEq(weird.allowance(address(router), address(target)), 0);
+    }
+
+    function test_postPullBalanceReadFailureDoesNotBrickHealthyLeg() public {
+        PostPullReadFailureERC20 weird = new PostPullReadFailureERC20(address(router));
+        weird.mint(user, 10 ether);
+        DustSwapSweepRouter.SweepRoute[] memory routes = new DustSwapSweepRouter.SweepRoute[](2);
+        routes[0] = _route(address(weird), 4 ether, 500_000, address(outputToken));
+        routes[1] = _route(address(tokenA), 5 ether, 600_000, address(outputToken));
+        vm.startPrank(user);
+        weird.approve(address(router), 4 ether);
+        tokenA.approve(address(router), 5 ether);
+        (uint256 gross,,) = router.sweep(
+            DustSwapSweepRouter.SweepMode.Allowance, routes,
+            _params(address(outputToken), 600_000, _sentinel()), _emptyPermit(), ""
+        );
+        vm.stopPrank();
+        assertEq(gross, 600_000);
+        assertEq(weird.rawBalanceOf(address(router)), 4 ether);
+        assertEq(weird.rawBalanceOf(address(target)), 0);
+        assertEq(weird.allowance(address(router), address(target)), 0);
+    }
+
+    function test_initialBalanceReadFailureFailsClosedBeforeAnyPull() public {
+        PostPullReadFailureERC20 weird = new PostPullReadFailureERC20(address(router));
+        weird.mint(user, 10 ether);
+        weird.setRejectBalance(true);
+        DustSwapSweepRouter.SweepRoute[] memory routes = new DustSwapSweepRouter.SweepRoute[](2);
+        routes[0] = _route(address(tokenA), 5 ether, 600_000, address(outputToken));
+        routes[1] = _route(address(weird), 4 ether, 500_000, address(outputToken));
+        DustSwapSweepRouter.SweepParams memory params = _params(address(outputToken), 1, _sentinel());
+        vm.startPrank(user);
+        tokenA.approve(address(router), 5 ether);
+        weird.approve(address(router), 4 ether);
+        vm.expectRevert("balance read");
+        router.sweep(
+            DustSwapSweepRouter.SweepMode.Allowance, routes, params, _emptyPermit(), ""
+        );
+        vm.stopPrank();
+        assertEq(tokenA.balanceOf(user), 1_000 ether);
+        assertEq(tokenA.allowance(user, address(router)), 5 ether);
+        assertEq(weird.rawBalanceOf(user), 10 ether);
+    }
+
+    function test_postPullMalformedBalanceReturnDoesNotBrickHealthyLeg() public {
+        PostPullMalformedBalanceERC20 weird = new PostPullMalformedBalanceERC20(address(router));
+        weird.mint(user, 10 ether);
+        DustSwapSweepRouter.SweepRoute[] memory routes = new DustSwapSweepRouter.SweepRoute[](2);
+        routes[0] = _route(address(weird), 4 ether, 500_000, address(outputToken));
+        routes[1] = _route(address(tokenA), 5 ether, 600_000, address(outputToken));
+        DustSwapSweepRouter.SweepParams memory params = _params(address(outputToken), 600_000, _sentinel());
+        vm.startPrank(user);
+        weird.approve(address(router), 4 ether);
+        tokenA.approve(address(router), 5 ether);
+        (uint256 gross,,) = router.sweep(
+            DustSwapSweepRouter.SweepMode.Allowance, routes, params, _emptyPermit(), ""
+        );
+        vm.stopPrank();
+        assertEq(gross, 600_000);
+        assertEq(weird.rawBalanceOf(address(router)), 4 ether);
+        assertEq(weird.rawBalanceOf(address(target)), 0);
+        assertEq(weird.allowance(address(router), address(target)), 0);
+    }
+
+    function test_senderPaidOutputTaxCannotSpendExistingOutputReserve() public {
+        SenderPaidFeeERC20 taxed = new SenderPaidFeeERC20();
+        taxed.configure(address(router), true, false);
+        taxed.mint(user, 10 ether);
+        taxed.mint(address(router), 100 ether);
+        DustSwapSweepRouter.SweepRoute[] memory routes = new DustSwapSweepRouter.SweepRoute[](1);
+        routes[0] = _passthrough(address(taxed), 10 ether);
+        DustSwapSweepRouter.SweepParams memory params = _params(address(taxed), 1, _sentinel());
+        vm.startPrank(user);
+        taxed.approve(address(router), 10 ether);
+        vm.expectRevert(DustSwapSweepRouter.InsufficientHeldBalance.selector);
+        router.sweep(
+            DustSwapSweepRouter.SweepMode.Allowance, routes, params, _emptyPermit(), ""
+        );
+        vm.stopPrank();
+        assertEq(taxed.balanceOf(address(router)), 100 ether);
+        assertEq(taxed.balanceOf(user), 10 ether);
+        assertEq(taxed.balanceOf(recipient), 0);
+        assertEq(taxed.balanceOf(feeCollector), 0);
+        assertEq(taxed.allowance(user, address(router)), 10 ether);
+    }
+
+    function test_routeAndRefundHelpersRejectExternalCallers() public {
+        DustSwapSweepRouter.SweepRoute memory route = _route(address(tokenA), 1 ether, 1, address(outputToken));
+        vm.expectRevert(DustSwapSweepRouter.NotSelf.selector);
+        router.executeRoute(route, DEADLINE);
+        vm.expectRevert(DustSwapSweepRouter.NotSelf.selector);
+        router.executeRouteWithReserve(route, DEADLINE, 0);
+        vm.expectRevert(DustSwapSweepRouter.NotSelf.selector);
+        router.refundInput(address(tokenA), user, 1 ether, 0);
+    }
+
     function test_bestEffort_partialFailure_refundsAndSettles() public {
         DustSwapSweepRouter.SweepRoute[] memory routes = new DustSwapSweepRouter.SweepRoute[](3);
         routes[0] = _route(address(tokenA), 4 ether, 500_000, address(outputToken)); // ok
@@ -620,6 +929,33 @@ contract DustSwapSweepRouterTest is Test {
     }
 
     // ── Fee override + cap ───────────────────────────────────────
+
+    function test_mixedNativeOutputPreservesExistingInputAndWethReserves() public {
+        tokenA.mint(address(router), 11 ether);
+        weth.mint(address(router), 7 ether);
+        weth.mint(user, 3 ether);
+        DustSwapSweepRouter.SweepRoute[] memory routes = new DustSwapSweepRouter.SweepRoute[](2);
+        routes[0] = _route(address(tokenA), 4 ether, 1 ether, address(weth));
+        routes[1] = _passthrough(address(weth), 2 ether);
+        DustSwapSweepRouter.SweepParams memory params = _params(router.NATIVE_TOKEN_SENTINEL(), 3 ether, _sentinel());
+        uint256 beforeNative = recipient.balance;
+        vm.startPrank(user);
+        tokenA.approve(address(router), 4 ether);
+        weth.approve(address(router), 2 ether);
+        (uint256 gross, uint256 fee, uint256 net) = router.sweep(
+            DustSwapSweepRouter.SweepMode.Allowance, routes, params, _emptyPermit(), ""
+        );
+        vm.stopPrank();
+        assertEq(gross, 3 ether);
+        assertEq(fee, (3 ether * DEFAULT_FEE) / 10_000);
+        assertEq(net, gross - fee);
+        assertEq(recipient.balance - beforeNative, net);
+        assertEq(weth.balanceOf(feeCollector), fee);
+        assertEq(weth.balanceOf(address(router)), 7 ether);
+        assertEq(tokenA.balanceOf(address(router)), 11 ether);
+        assertEq(weth.balanceOf(user), 1 ether);
+        assertEq(tokenA.allowance(address(router), address(target)), 0);
+    }
 
     function test_feeOverride_zeroMeansNoFee() public {
         DustSwapSweepRouter.SweepRoute[] memory routes = new DustSwapSweepRouter.SweepRoute[](1);

@@ -23,6 +23,7 @@ import { SweepDetails } from "@/components/sweep/SweepDetails";
 import { SweepGuideModal } from "@/components/sweep/SweepGuideModal";
 import { SweepStepper } from "@/components/sweep/SweepStepper";
 import { SweepSuccessModal } from "@/components/sweep/SweepSuccessModal";
+import { SweepNetworkSelect } from "@/components/sweep/SweepNetworkSelect";
 import { SwitchOrContinueCard } from "@/components/sweep/SwitchOrContinueCard";
 import { TokenFromPanel } from "@/components/sweep/TokenFromPanel";
 import { TokenSelectModal } from "@/components/sweep/TokenSelectModal";
@@ -103,6 +104,7 @@ function getSweepButtonState(args: {
   quoteReady: boolean;
   isLoading: boolean;
   isQuoting: boolean;
+  isDetectingRoute: boolean;
   hasQuoteError: boolean;
   sweepStep: ReturnType<typeof useDustSweep>["sweepStep"];
   routeKind: SweepRouteKind;
@@ -121,6 +123,7 @@ function getSweepButtonState(args: {
   if (args.selectedCount === 0) return { state: "disabled", label: "Select tokens" };
   if (!args.hasTokenOut) return { state: "disabled", label: "Select output token" };
   if (args.isQuoting) return { state: "loading", label: "Finding route..." };
+  if (args.isDetectingRoute) return { state: "loading", label: "Checking wallet..." };
   if (args.quoteReady) return { state: "ready", label: "Sweep" };
   if (args.hasQuoteError) return { state: "disabled", label: "No route available" };
   return { state: "loading", label: "Finding route..." };
@@ -415,6 +418,7 @@ export default function DustSweepPage() {
     ),
     isLoading: sweep.isLoading,
     isQuoting: sweep.isQuoting,
+    isDetectingRoute: sweep.isDetectingRoute,
     hasQuoteError: Boolean(sweep.quoteError),
     sweepStep: sweep.sweepStep,
     routeKind: sweep.routeKind,
@@ -494,7 +498,7 @@ export default function DustSweepPage() {
         mode={tokenModalMode || "multi"}
         title={tokenModalMode === "single" ? "Select a token" : "Select tokens"}
         swappableTokens={sweep.swappableTokens}
-        unavailableTokens={sweep.unavailableTokens}
+        unavailableTokens={sweep.pickerUnavailableTokens}
         selectedTokens={sweep.selectedTokens}
         outputTokens={sweep.outputTokens}
         selectedOutputToken={sweep.tokenOut}
@@ -509,6 +513,7 @@ export default function DustSweepPage() {
         enabledChains={enabledSweepChains}
         chainId={sweepChainId}
         onChainChange={setSweepChainId}
+        chainChangeDisabled={sweep.isSweeping || sweep.isSwitchingChain}
       />
 
       <SlippageSettings
@@ -544,25 +549,33 @@ export default function DustSweepPage() {
       <div className="relative z-10 mx-auto flex w-full max-w-[600px] flex-1 flex-col pb-[calc(69px+var(--safe-area-bottom))] sm:pb-8">
         {/* ── Header ── */}
         <div className="mb-5 flex items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
+          <div className="flex min-w-0 items-center gap-2 sm:gap-3">
             <Image
               src="/logo.png"
               alt="DustSwap"
               width={40}
               height={40}
               priority
-              className="rounded-[13px] shadow-[0_8px_18px_-6px_rgba(37,99,235,0.45)]"
+              className="h-8 w-8 shrink-0 rounded-[11px] shadow-[0_8px_18px_-6px_rgba(37,99,235,0.45)] sm:h-10 sm:w-10 sm:rounded-[13px]"
             />
-            <span className="text-[22px] font-bold tracking-[-0.02em] text-slate-900 dark:text-white">
+            <span className="text-lg font-bold tracking-[-0.02em] text-slate-900 dark:text-white sm:text-[22px]">
               Sweep
             </span>
           </div>
-          <WalletConnectButton
-            connectedLabel={address ? shortAddress(address) : undefined}
-            walletList={DUST_SWEEP_PRIVY_WALLET_LIST}
-            showDisconnect
-            className="rounded-full border-slate-200/80 bg-white/80 px-3.5 py-2 text-[13px] font-semibold text-slate-700 shadow-[0_1px_2px_rgba(16,24,40,0.05)] backdrop-blur hover:border-slate-300 hover:bg-white dark:border-white/10 dark:bg-white/[0.06] dark:text-slate-200 dark:hover:bg-white/10"
-          />
+          <div className="relative flex shrink-0 items-center gap-2">
+            <SweepNetworkSelect
+              chains={enabledSweepChains}
+              chainId={sweepChainId}
+              onChainChange={setSweepChainId}
+              disabled={sweep.isSweeping || sweep.isSwitchingChain}
+            />
+            <WalletConnectButton
+              connectedLabel={address ? shortAddress(address) : undefined}
+              walletList={DUST_SWEEP_PRIVY_WALLET_LIST}
+              showDisconnect
+              className="whitespace-nowrap rounded-full border-slate-200/80 bg-white/80 px-2.5 py-2 text-xs font-semibold text-slate-700 shadow-[0_1px_2px_rgba(16,24,40,0.05)] backdrop-blur hover:border-slate-300 hover:bg-white dark:border-white/10 dark:bg-white/[0.06] dark:text-slate-200 dark:hover:bg-white/10 sm:px-3.5 sm:text-[13px]"
+            />
+          </div>
         </div>
 
         {campaign.enabled ? (
@@ -613,6 +626,7 @@ export default function DustSweepPage() {
           {/* Unified trade card: From → merge → To → receiver */}
           <div className="sweep-card space-y-1.5 p-2.5">
             <TokenFromPanel
+              chainId={sweep.chainId}
               selectedTokens={sweep.selectedTokens}
               onRemove={sweep.removeToken}
               onClearAll={sweep.clearSelectedTokens}
@@ -631,6 +645,7 @@ export default function DustSweepPage() {
             </div>
 
             <TokenToPanel
+              chainId={sweep.chainId}
               tokenOut={sweep.tokenOut}
               quote={sweep.quote}
               balanceUSD={tokenOutBalanceUSD}
@@ -707,6 +722,7 @@ export default function DustSweepPage() {
           {/* Unavailable tokens */}
           {sweep.unavailableTokens.length > 0 ? (
             <UnavailablePanel
+              chainId={sweep.chainId}
               tokens={sweep.unavailableTokens}
               onClearAll={sweep.clearUnavailableTokens}
               onRemove={sweep.removeUnavailableToken}

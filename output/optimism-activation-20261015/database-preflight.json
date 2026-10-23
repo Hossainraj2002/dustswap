@@ -1,0 +1,25 @@
+{
+  "tables": [
+    {
+      "registry": "chain_registry",
+      "tokens": "tokens"
+    }
+  ],
+  "registry": [],
+  "tokenCounts": [
+    {
+      "chain_id": 8453,
+      "tokens": 13954
+    }
+  ],
+  "indexes": [
+    {
+      "indexname": "tokens_pkey",
+      "indexdef": "CREATE UNIQUE INDEX tokens_pkey ON public.tokens USING btree (id)"
+    },
+    {
+      "indexname": "idx_tokens_chain_address_unique",
+      "indexdef": "CREATE UNIQUE INDEX idx_tokens_chain_address_unique ON public.tokens USING btree (chain_id, address)"
+    }
+  ]
+}
