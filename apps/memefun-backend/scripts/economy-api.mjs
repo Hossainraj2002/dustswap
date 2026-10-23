@@ -45,7 +45,8 @@ export function economyConfig(env = process.env) {
     env, port, upstreamPort, schema, viewsSchema,
     idleMs: integer(env.MEMEFUN_API_IDLE_MS, 60_000, 10_000, 86_400_000, "MEMEFUN_API_IDLE_MS"),
     warmupMs: integer(env.MEMEFUN_API_WARMUP_MS, 600_000, 1_000, 1_800_000, "MEMEFUN_API_WARMUP_MS"),
-    requestWaitMs: integer(env.MEMEFUN_API_WAIT_MS, 25_000, 100, 600_000, "MEMEFUN_API_WAIT_MS"),
+    // Return an explicit retryable 503 before the browser's 15 s / keeper's 20 s attempt ends.
+    requestWaitMs: integer(env.MEMEFUN_API_WAIT_MS, 10_000, 100, 600_000, "MEMEFUN_API_WAIT_MS"),
     maxQueue: 100,
   };
 }

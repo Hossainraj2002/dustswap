@@ -16,7 +16,8 @@ Production preset:
 # API: runtime command above, /ready health check, 600-second startup allowance
 MEMEFUN_API_IDLE_MS=30000
 MEMEFUN_API_WARMUP_MS=600000
-MEMEFUN_API_WAIT_MS=25000
+# Below the frontend's 15-second / keeper's 20-second attempt timeouts.
+MEMEFUN_API_WAIT_MS=10000
 MALLOC_ARENA_MAX=2
 MEMEFUN_SHARP_CONCURRENCY=1
 MEMEFUN_PONDER_POOL_MAX=8
@@ -38,6 +39,10 @@ NEXT_TELEMETRY_DISABLED=1
 Native Railway Serverless and the API worker's idle state are different. Railway stops compute only after roughly five to ten minutes without outbound traffic. Five-minute keeper wake-ups can prevent the gateway container itself from reaching native sleep; its heavy child still stops between passes. Database compute, durable storage, object storage and the shared plan minimum can remain billable. Enabling a sleep flag is not proof of a percentage reduction or zero charges.
 
 Acceptance: verify a real same-schema sleep/wake cycle, matching launch/trade/claim outputs, canonical redirects and alias cache handling, cold CORS/GET retry, live SSE, and a successful keeper catch-up/pass/exit. Compare stable windows after the first deployment replay. Record both warm and idle memory, duty cycle, restart counts and remaining service costs before reporting savings.
+
+Keep the gateway's per-request wait below both clients' attempt limits: the 10-second preset returns an explicit 503 with CORS and `Retry-After` before the frontend's 15-second or keeper's 20-second abort. The separate 600-second worker startup budget allows recovery to continue between attempts; it does not make an individual browser request wait for ten minutes.
+
+During a rolling deployment or rollback, a late wake of an older gateway can re-promote its physical schema into the shared `memefun_mainnet` views. Wait until the old deployment and replicas have fully stopped, then verify a cold-to-warm recovery on the current deployment and confirm its views/checkpoint and latest data. Do not keep a comparison instance running against production's shared views. A new Railway deployment ID uses a fresh physical schema and can require a full cached replay; a worker wake within the same deployment reuses its existing schema and checkpoint.
 
 Rollback the API command to the direct Ponder launcher below and deploy. Restore the keeper daemon command below, clear its cron schedule, and restore restart policy `ALWAYS`. Existing contract addresses, public domains, persistent metadata and financial settings are unchanged by those launcher choices. Cost tests must not issue signing transactions locally or change dry-run settings.
 

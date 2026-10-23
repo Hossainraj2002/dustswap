@@ -119,9 +119,14 @@ describe("economy API gateway", () => {
     expect(() => economyConfig({ PORT: "0", RAILWAY_DEPLOYMENT_ID: "deployment" })).toThrow("PORT");
     expect(() => economyConfig({ PORT: "42069" })).toThrow("RAILWAY_DEPLOYMENT_ID");
     expect(() => economyConfig({ RAILWAY_DEPLOYMENT_ID: "deployment", MEMEFUN_API_IDLE_MS: "1" })).toThrow("IDLE");
-    expect(economyConfig({ PORT: "4000", RAILWAY_DEPLOYMENT_ID: "deployment" })).toMatchObject({
+    const defaults = economyConfig({ PORT: "4000", RAILWAY_DEPLOYMENT_ID: "deployment" });
+    expect(defaults).toMatchObject({
       port: 4000, upstreamPort: 4001, schema: "deployment", viewsSchema: "memefun_mainnet", idleMs: 60_000,
+      requestWaitMs: 10_000, warmupMs: 600_000,
     });
+    // The error must reach both clients before their attempt aborts or neither retry path runs.
+    expect(defaults.requestWaitMs).toBeLessThan(15_000);
+    expect(defaults.requestWaitMs).toBeLessThan(20_000);
     expect(proxyHeaders({ connection: "keep-alive, remove-me", "remove-me": "secret", authorization: "Bearer auth",
       "x-forwarded-for": "198.51.100.2", cookie: "session=1", "accept-encoding": "gzip" })).toEqual({
       authorization: "Bearer auth", "x-forwarded-for": "198.51.100.2", cookie: "session=1", "accept-encoding": "gzip",
