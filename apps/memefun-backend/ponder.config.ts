@@ -3,6 +3,7 @@ import { getAbiItem } from "viem";
 
 import { coinTransferAbi } from "./lib/abi-extra";
 import { chainSettings } from "./lib/chain";
+import { ponderPoolConfig } from "./lib/db";
 import { loadDeployment } from "./lib/deployment";
 import {
   buybackBurnVaultAbi,
@@ -27,7 +28,7 @@ export default createConfig({
   database: {
     kind: "postgres",
     connectionString: process.env.DATABASE_URL,
-    poolConfig: { max: 20 },
+    poolConfig: ponderPoolConfig(),
   },
   chains: {
     memefun: {

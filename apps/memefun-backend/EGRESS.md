@@ -1,5 +1,46 @@
 # MemeFun API bandwidth controls
 
+## Economy runtime
+
+The optional economy profile replaces the continuously running Ponder launcher with `exec node scripts/economy-api.mjs`. A small native HTTP gateway owns the public port and starts Ponder on a private loopback port. It retains Ponder while an HTTP request, upload, or SSE stream is active. After thirty seconds without application work in the production preset, it gracefully stops Ponder and releases its memory and database connections. The next application request restarts the same physical schema and recovers its checkpoint. Initial deployment with a new schema still requires a historical replay.
+
+The gateway shares the exact anonymous public-delivery policy with the API. Eligible legacy-host catalog/media requests receive their existing 307 redirect before Ponder wakes. Authenticated, ranged and alias requests retain their previous handling. Request bodies and responses stream with backpressure; the gateway never retries writes. Cold-start read retries in the frontend are bounded and apply only to infrastructure errors, preserving immediate business-error responses and single-attempt writes.
+
+`GET /health` reports gateway liveness and worker state without waking Ponder. `/ready` is successful only when Ponder is ready. Readiness probes do not extend the idle timer. Browser preflights are answered without starting Ponder, and actual writes still pass through the API's origin/authentication checks.
+
+The matching keeper profile runs `exec node --import tsx keeper/main.ts --once` on `*/5 * * * *`, with restart policy `NEVER`. Each pass captures the current Base head and wakes the direct origin's `/status`, waiting until the correct chain has indexed that head. It skips all jobs if catch-up fails. Jobs then retain their existing simulations, signer/advisory locks, thresholds and dry-run settings, and the process exits after closing its pools. This profile changes metadata, buyback and epoch checking to five-minute passes; recovery or long-running jobs can add delay. The daemon launcher continues to use its original individual job schedules.
+
+Production preset:
+
+```env
+# API: runtime command above, /ready health check, 600-second startup allowance
+MEMEFUN_API_IDLE_MS=30000
+MEMEFUN_API_WARMUP_MS=600000
+MEMEFUN_API_WAIT_MS=25000
+MALLOC_ARENA_MAX=2
+MEMEFUN_SHARP_CONCURRENCY=1
+MEMEFUN_PONDER_POOL_MAX=8
+MEMEFUN_DB_READ_POOL_MAX=4
+MEMEFUN_DB_APP_POOL_MAX=3
+MEMEFUN_DB_IDLE_TIMEOUT_MS=2000
+
+# Keeper: one-shot command and five-minute cron above; preserve all existing signer settings
+MEMEFUN_INDEXER_WAKE_URL=https://memefun-api-production.up.railway.app/status
+MEMEFUN_INDEXER_WAKE_TIMEOUT_MS=600000
+MALLOC_ARENA_MAX=2
+MEMEFUN_SHARP_CONCURRENCY=1
+MEMEFUN_DB_IDLE_TIMEOUT_MS=2000
+
+# Web: native Railway Serverless enabled on its next deployment
+NEXT_TELEMETRY_DISABLED=1
+```
+
+Native Railway Serverless and the API worker's idle state are different. Railway stops compute only after roughly five to ten minutes without outbound traffic. Five-minute keeper wake-ups can prevent the gateway container itself from reaching native sleep; its heavy child still stops between passes. Database compute, durable storage, object storage and the shared plan minimum can remain billable. Enabling a sleep flag is not proof of a percentage reduction or zero charges.
+
+Acceptance: verify a real same-schema sleep/wake cycle, matching launch/trade/claim outputs, canonical redirects and alias cache handling, cold CORS/GET retry, live SSE, and a successful keeper catch-up/pass/exit. Compare stable windows after the first deployment replay. Record both warm and idle memory, duty cycle, restart counts and remaining service costs before reporting savings.
+
+Rollback the API command to the direct Ponder launcher below and deploy. Restore the keeper daemon command below, clear its cron schedule, and restore restart policy `ALWAYS`. Existing contract addresses, public domains, persistent metadata and financial settings are unchanged by those launcher choices. Cost tests must not issue signing transactions locally or change dry-run settings.
+
 Production delivery uses `https://memefun-api.dustswap.wtf` on the existing Railway API service, proxied by Cloudflare. The frontend build variable `NEXT_PUBLIC_MEMEFUN_API_URL` points at that hostname.
 
 Keep backend `PUBLIC_API_URL=https://memefun-api-production.up.railway.app`. Published bucket metadata and on-chain token URIs already contain that canonical origin, and publication checks compare against it. The frontend rewrites only known canonical `/media/<CID>` image URLs for display. It does not change persisted metadata, token URIs, or third-party image URLs.

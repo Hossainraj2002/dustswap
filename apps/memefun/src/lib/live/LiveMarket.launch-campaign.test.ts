@@ -180,12 +180,7 @@ describe("LiveMarket campaign claim boundaries", () => {
   });
 
   it("does not repeat a ticket request or reach the chain after its bounded HTTP request aborts", async () => {
-    const controllers: AbortController[] = [];
-    const timeout = vi.spyOn(AbortSignal, "timeout").mockImplementation(() => {
-      const controller = new AbortController();
-      controllers.push(controller);
-      return controller.signal;
-    });
+    vi.useFakeTimers();
     try {
       const fetch = vi.fn<typeof globalThis.fetch>(async (input, init) => {
         if (String(input).endsWith("/v1/launch-campaign")) return Response.json(SUMMARY);
@@ -197,15 +192,16 @@ describe("LiveMarket campaign claim boundaries", () => {
       const m = new LiveMarket({ api: createApi("https://campaign.test", fetch), client: {} as PublicClient, txContext });
       const claim = m.claimLaunchCampaign(USER);
       const failure = expect(claim).rejects.toMatchObject({ name: "TimeoutError" });
-      await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
-      expect(timeout.mock.calls).toEqual([[15_000], [15_000]]);
-      controllers[1]!.abort(new DOMException("The request timed out.", "TimeoutError"));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(fetch).toHaveBeenCalledTimes(2);
+      await vi.advanceTimersByTimeAsync(15_000);
       await failure;
       expect(fetch).toHaveBeenCalledTimes(2);
       expect(signIn).not.toHaveBeenCalled();
       expect(txContext).not.toHaveBeenCalled();
       expect(sendLaunchCampaignClaim).not.toHaveBeenCalled();
-    } finally { timeout.mockRestore(); }
+      expect(vi.getTimerCount()).toBe(0);
+    } finally { vi.clearAllTimers(); vi.useRealTimers(); }
   });
 
   it("propagates an ambiguous chain result with its hash and never reissues the ticket or transaction", async () => {

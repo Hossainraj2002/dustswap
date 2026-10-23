@@ -1,4 +1,7 @@
 import { createHash } from "node:crypto";
+import { isCid } from "./public-delivery-policy.mjs";
+
+export { isCid };
 
 /**
  * IPFS content identifiers for the local media store: CIDv1, raw codec, sha2-256, base32. The
@@ -33,13 +36,6 @@ export function cidV1Raw(bytes: Uint8Array): string {
   cid.set([CID_V1, RAW_CODEC, SHA2_256, digest.length]);
   cid.set(digest, 4);
   return `b${base32(cid)}`;
-}
-
-/** CIDv1 in base32 (`b...`) or CIDv0 (`Qm...`, base58btc). Shape only, not a full decoder. */
-const CID_PATTERN = /^(?:b[a-z2-7]{50,120}|Qm[1-9A-HJ-NP-Za-km-z]{44})$/;
-
-export function isCid(value: string): boolean {
-  return CID_PATTERN.test(value);
 }
 
 /** `ipfs://<cid>` or `ipfs://<cid>/<path>`; returns null for anything else. */

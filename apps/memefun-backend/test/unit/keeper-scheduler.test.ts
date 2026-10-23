@@ -50,4 +50,29 @@ describe("keeper scheduling", () => {
     expect(run).toHaveBeenCalledTimes(2);
     expect(vi.getTimerCount()).toBe(0);
   });
+
+  it("drains in-flight jobs on stop without scheduling another pass", async () => {
+    vi.useFakeTimers();
+    let release!: () => void;
+    const run = vi.fn(() => new Promise<void>(resolve => { release = resolve; }));
+    const stop = startJobs([job("buyback")], run);
+    let stopped = false;
+    const shutdown = stop().then(() => { stopped = true; });
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(stopped).toBe(false);
+    release(); await shutdown;
+    expect(stopped).toBe(true);
+    expect(vi.getTimerCount()).toBe(0);
+    expect(run).toHaveBeenCalledOnce();
+  });
+
+  it("retries a rejected runner without leaking an unhandled rejection", async () => {
+    vi.useFakeTimers(); vi.spyOn(Math, "random").mockReturnValue(0);
+    const run = vi.fn().mockRejectedValueOnce(new Error("database unavailable")).mockResolvedValue(undefined);
+    const stop = startJobs([job("epochs")], run);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(run).toHaveBeenCalledTimes(2);
+    await stop();
+    expect(vi.getTimerCount()).toBe(0);
+  });
 });

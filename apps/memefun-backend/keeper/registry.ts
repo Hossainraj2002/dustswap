@@ -22,18 +22,18 @@ export const JOBS: Job[] = [
   { name: "epochs", everyMs: 60_000, run: runEpochs },
 ];
 
-export async function runJobOnce(ctx: KeeperContext, job: Job): Promise<unknown> {
-  if (job.name === "metadata") return executeJob(ctx, job, []);
+export async function runJobOnce(ctx: KeeperContext, job: Job, options: { throwOnError?: boolean } = {}): Promise<unknown> {
+  if (job.name === "metadata") return executeJob(ctx, job, [], options.throwOnError === true);
   let serial = mutationQueues.get(ctx);
   if (!serial) { serial = createSerialExecutor(); mutationQueues.set(ctx, serial); }
   // Price, publisher and module roles may share one testnet signer. Across replicas,
   // acquire signer locks on the existing job-lock connection, not a second pool client.
   const signerLocks = [...new Set(Object.values(ctx.wallets).flatMap(wallet => wallet?.account?.address
     ? [`memefun_keeper_signer:${ctx.chain.id}:${wallet.account.address.toLowerCase()}`] : []))];
-  return serial(() => executeJob(ctx, job, signerLocks));
+  return serial(() => executeJob(ctx, job, signerLocks, options.throwOnError === true));
 }
 
-async function executeJob(ctx: KeeperContext, job: Job, signerLocks: string[]): Promise<unknown> {
+async function executeJob(ctx: KeeperContext, job: Job, signerLocks: string[], throwOnError: boolean): Promise<unknown> {
   const started = Date.now();
   try {
     const outcome = await withJobLock(ctx.appPool, job.name, () => job.run(ctx), signerLocks);
@@ -45,6 +45,9 @@ async function executeJob(ctx: KeeperContext, job: Job, signerLocks: string[]): 
     return outcome.value;
   } catch (error) {
     ctx.log("job.error", { job: job.name, ms: Date.now() - started, error: error instanceof Error ? error.message : String(error) });
+    // A scheduled daemon retries later; a one-shot cron pass must report a failed
+    // run to its supervisor rather than silently exiting successfully.
+    if (throwOnError) throw error;
     return undefined;
   }
 }

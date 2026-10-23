@@ -23,8 +23,15 @@ export interface ApiClient {
 }
 
 const TIMEOUT_MS = 15_000;
+const READ_TIMEOUT_MS = 45_000;
+const READ_RETRIES = 3;
+const MAX_RETRY_DELAY_MS = 5_000;
+const WAKING_MESSAGE = "MemeFun is waking up. Please try again in a moment.";
+const WAKING_CODES = new Set(["api_warming", "api_busy", "api_unavailable", "api_stopping"]);
 
-async function parse<T>(response: Response): Promise<T> {
+const gatewayStatus = (status: number) => status === 502 || status === 503 || status === 504;
+
+async function readResponse(response: Response, waking = false): Promise<{ body: unknown; error?: ApiError; retryable: boolean }> {
   const text = await response.text();
   let body: unknown = null;
   try {
@@ -34,19 +41,61 @@ async function parse<T>(response: Response): Promise<T> {
   }
   if (!response.ok) {
     const error = (body as { error?: { code?: string; message?: string; details?: Record<string, string> } } | null)?.error;
-    throw new ApiError(
+    const unstructuredGateway = waking && gatewayStatus(response.status) && !error?.code && !error?.message;
+    return { body, retryable: waking && gatewayStatus(response.status) && (unstructuredGateway || WAKING_CODES.has(error?.code ?? "")), error: new ApiError(
       response.status,
-      error?.code ?? `http_${response.status}`,
-      error?.message ?? (response.status >= 500 ? "The memefun server had a problem. Try again." : "The request did not go through."),
+      error?.code ?? (unstructuredGateway ? "server_warming" : `http_${response.status}`),
+      error?.message ?? (unstructuredGateway ? WAKING_MESSAGE : response.status >= 500 ? "The memefun server had a problem. Try again." : "The request did not go through."),
       error?.details,
-    );
+    ) };
   }
-  return body as T;
+  return { body, retryable: false };
 }
 
-function withTimeout(signal?: AbortSignal): AbortSignal {
-  const timeout = AbortSignal.timeout(TIMEOUT_MS);
-  return signal && "any" in AbortSignal ? AbortSignal.any([signal, timeout]) : timeout;
+async function parse<T>(response: Response): Promise<T> {
+  const result = await readResponse(response);
+  if (result.error) throw result.error;
+  return result.body as T;
+}
+
+function abortReason(signal: AbortSignal) {
+  return signal.reason ?? new DOMException("The request was aborted.", "AbortError");
+}
+
+/** Explicit disposal also removes the caller's listener after a successful request. */
+function deadline(timeoutMs: number, signal?: AbortSignal) {
+  const controller = new AbortController();
+  const abort = () => controller.abort(signal ? abortReason(signal) : undefined);
+  if (signal?.aborted) abort();
+  else signal?.addEventListener("abort", abort, { once: true });
+  const timer = controller.signal.aborted ? undefined : setTimeout(() => {
+    controller.abort(new DOMException("The request timed out.", "TimeoutError"));
+  }, timeoutMs);
+  return {
+    signal: controller.signal,
+    dispose() {
+      if (timer !== undefined) clearTimeout(timer);
+      signal?.removeEventListener("abort", abort);
+    },
+  };
+}
+
+function retryDelay(response: Response, retry: number) {
+  const backoff = (retry + 1) * 1_000;
+  const raw = response.headers.get("retry-after")?.trim();
+  if (!raw) return backoff;
+  const requested = /^\d+(?:\.\d+)?$/.test(raw) ? Number(raw) * 1_000 : Date.parse(raw) - Date.now();
+  return Number.isFinite(requested) && requested > 0
+    ? Math.max(backoff, Math.min(requested, MAX_RETRY_DELAY_MS)) : backoff;
+}
+
+function pause(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) { reject(abortReason(signal)); return; }
+    const abort = () => { clearTimeout(timer); signal.removeEventListener("abort", abort); reject(abortReason(signal)); };
+    const timer = setTimeout(() => { signal.removeEventListener("abort", abort); resolve(); }, ms);
+    signal.addEventListener("abort", abort, { once: true });
+  });
 }
 
 export function createApi(baseUrl: string, fetchFn: typeof fetch = (...args) => fetch(...args)): ApiClient {
@@ -58,25 +107,47 @@ export function createApi(baseUrl: string, fetchFn: typeof fetch = (...args) => 
   return {
     baseUrl,
     async get<T>(path: string, init: { signal?: AbortSignal; adminToken?: string; token?: string } = {}) {
-      // Only admin reads carry a header (and so a CORS preflight); everything else stays simple.
-      return parse<T>(
-        await fetchFn(url(path), { signal: withTimeout(init.signal), ...(init.adminToken || init.token ? { headers: headers(init) } : {}) }),
-      );
+      // Only explicit authenticated reads add headers; anonymous reads keep simple CORS.
+      // Retry gateway responses while a sleeping origin wakes, never writes or network failures.
+      const total = deadline(READ_TIMEOUT_MS, init.signal);
+      try {
+        for (let retry = 0; ; retry++) {
+          const attempt = deadline(TIMEOUT_MS, total.signal);
+          let delay = 0;
+          try {
+            if (attempt.signal.aborted) throw abortReason(attempt.signal);
+            const response = await fetchFn(url(path), { signal: attempt.signal, ...(init.adminToken || init.token ? { headers: headers(init) } : {}) });
+            if (attempt.signal.aborted) throw abortReason(attempt.signal);
+            const result = await readResponse(response, true);
+            if (attempt.signal.aborted) throw abortReason(attempt.signal);
+            if (!result.error) return result.body as T;
+            // Business errors remain immediate and fail closed; only infrastructure wake/busy
+            // codes or unstructured gateway responses can trigger another read.
+            if (!result.retryable || retry >= READ_RETRIES) throw result.error;
+            delay = retryDelay(response, retry);
+          } finally { attempt.dispose(); }
+          await pause(delay, total.signal);
+        }
+      } finally { total.dispose(); }
     },
     async post<T>(path: string, body: unknown, auth?: { token?: string; adminToken?: string }) {
-      return parse<T>(
-        await fetchFn(url(path), {
+      const request = deadline(TIMEOUT_MS);
+      try {
+        return await parse<T>(await fetchFn(url(path), {
           method: "POST",
           headers: { "content-type": "application/json", ...headers(auth) },
           body: JSON.stringify(body),
-          signal: withTimeout(),
-        }),
-      );
+          signal: request.signal,
+        }));
+      } finally { request.dispose(); }
     },
     async upload<T>(path: string, file: Blob, filename: string, auth?: { token?: string }) {
       const form = new FormData();
       form.append("file", file, filename);
-      return parse<T>(await fetchFn(url(path), { method: "POST", headers: headers(auth), body: form, signal: withTimeout() }));
+      const request = deadline(TIMEOUT_MS);
+      try {
+        return await parse<T>(await fetchFn(url(path), { method: "POST", headers: headers(auth), body: form, signal: request.signal }));
+      } finally { request.dispose(); }
     },
   };
 }

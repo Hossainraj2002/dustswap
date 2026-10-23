@@ -69,6 +69,16 @@ describe("keeper signer serialization", () => {
     await expect(next).resolves.toBe("next");
   });
 
+  it("reports one-shot failures after releasing locks while daemon retries remain non-throwing", async () => {
+    const f = pool(); const ctx = context(f.pool);
+    const failed: Job = { name: "buyback", everyMs: 1, run: async () => { throw new Error("reverted"); } };
+    await expect(runJobOnce(ctx, failed, { throwOnError: true })).rejects.toThrow("reverted");
+    expect(f.held.size).toBe(0);
+    await expect(runJobOnce(ctx, failed)).resolves.toBeUndefined();
+    expect(f.held.size).toBe(0);
+    await expect(runJobOnce(ctx, { ...failed, run: async () => "next" }, { throwOnError: true })).resolves.toBe("next");
+  });
+
   it("discards a DB connection if releasing session locks fails", async () => {
     const release = vi.fn();
     const query = vi.fn(async (sql: string) => { if (sql.includes("unlock")) throw new Error("connection lost"); return { rows: [{ locked: true }] }; });
