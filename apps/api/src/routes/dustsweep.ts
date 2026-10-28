@@ -1,5 +1,6 @@
 import { randomBytes } from "crypto";
 import { Hono, type Context } from "hono";
+import { setTimeout as abortableDelay } from "node:timers/promises";
 import {
   concatHex,
   decodeAbiParameters,
@@ -25,7 +26,7 @@ import { pointsEngine } from "../services/pointsEngine";
 import { questEngine } from "../services/questEngine";
 import { sweepCampaignService } from "../services/sweepCampaign";
 import { runtimeCache } from "../utils/runtimeCache";
-import { baseRpcRequest, alchemyRpcRequest, RpcDeterministicError, RpcTransportError } from "../utils/baseRpc";
+import { baseRpcRequest, RpcDeterministicError, RpcTransportError } from "../utils/baseRpc";
 import { isMaintenanceBlocking, maintenanceUnavailable } from "../utils/maintenance";
 import {
   getBaseDustSweepV3Allowlist,
@@ -422,7 +423,7 @@ const DISCOVERY_ALCHEMY_BREAKER_MS = boundedEnvNumber(
   10_000,
   1_800_000,
 );
-let alchemyDiscoveryBreakerUntil = 0;
+const alchemyDiscoveryBreakerUntilByChain = new Map<number, number>();
 const DISCOVERY_BLOCKSCOUT_BALANCE_FALLBACK_ENABLED =
   process.env.DUST_SWEEP_BLOCKSCOUT_BALANCE_FALLBACK !== "false";
 const DISCOVERY_BLOCKSCOUT_BALANCE_TIMEOUT_MS = boundedEnvNumber(
@@ -1561,6 +1562,7 @@ async function fetchAlchemyTokenBalances(
 ): Promise<AlchemyTokenBalanceDiscovery> {
   const tokenBalances: AlchemyBalance[] = [];
   const seen = new Set<string>();
+  const seenPageKeys = new Set<string>();
   let pageKey: string | undefined;
   let pageCount = 0;
   let scannedBalanceCount = 0;
@@ -1594,7 +1596,11 @@ async function fetchAlchemyTokenBalances(
     );
     pageCount += 1;
 
-    for (const balance of response.tokenBalances || []) {
+    if (!Array.isArray(response?.tokenBalances)) {
+      throw new Error("Alchemy token discovery returned an invalid payload");
+    }
+
+    for (const balance of response.tokenBalances) {
       scannedBalanceCount += 1;
       if (!isAddress(balance.contractAddress)) continue;
       const key = balance.contractAddress.toLowerCase();
@@ -1613,9 +1619,13 @@ async function fetchAlchemyTokenBalances(
       typeof response.pageKey === "string" && response.pageKey.trim().length > 0
         ? response.pageKey.trim()
         : undefined;
-    if (!nextPageKey || nextPageKey === pageKey) {
+    if (!nextPageKey) {
       return { tokenBalances, pageCount, scannedBalanceCount, truncated: false, source: "alchemy" };
     }
+    if (seenPageKeys.has(nextPageKey)) {
+      return { tokenBalances, pageCount, scannedBalanceCount, truncated: true, source: "alchemy" };
+    }
+    seenPageKeys.add(nextPageKey);
 
     if (
       reachedDiscoveryLimit(tokenBalances.length, targetNonZeroBalances) ||
@@ -1674,19 +1684,20 @@ function shouldRetryBlockscoutBalanceStatus(status: number) {
   return status === 429 || status >= 500;
 }
 
-async function sleepForBlockscoutBalanceRetry(response: Response | null, attempt: number) {
+async function sleepForBlockscoutBalanceRetry(response: Response | null, attempt: number, signal?: AbortSignal) {
   const retryAfterSeconds = Number(response?.headers.get("retry-after") || 0);
   const waitMs =
     retryAfterSeconds > 0
       ? retryAfterSeconds * 1000
       : DISCOVERY_BLOCKSCOUT_BALANCE_RETRY_MS * Math.max(1, attempt + 1);
-  await sleep(Math.min(waitMs, 30_000));
+  await abortableDelay(Math.min(waitMs, 30_000), undefined, { signal });
 }
 
 async function fetchBlockscoutWalletTokenPage(
   holder: Address,
   nextPageParams?: Record<string, unknown>,
   blockscoutBaseUrl?: string,
+  signal?: AbortSignal,
 ) {
   const url = new URL(
     `${(blockscoutBaseUrl || getBlockscoutApiV2BaseUrl()).replace(/\/$/, "")}/addresses/${holder}/tokens`,
@@ -1705,6 +1716,7 @@ async function fetchBlockscoutWalletTokenPage(
   let lastError: Error | null = null;
 
   for (let attempt = 0; attempt <= DISCOVERY_BLOCKSCOUT_BALANCE_MAX_RETRIES; attempt += 1) {
+    signal?.throwIfAborted();
     let response: Response;
     try {
       response = await fetch(url, {
@@ -1712,29 +1724,33 @@ async function fetchBlockscoutWalletTokenPage(
           Accept: "application/json",
           "User-Agent": "DustSwap/1.0 (+https://app.dustswap.wtf)",
         },
-        signal: AbortSignal.timeout(DISCOVERY_BLOCKSCOUT_BALANCE_TIMEOUT_MS),
+        signal: signal || AbortSignal.timeout(DISCOVERY_BLOCKSCOUT_BALANCE_TIMEOUT_MS),
       });
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error));
       if (attempt < DISCOVERY_BLOCKSCOUT_BALANCE_MAX_RETRIES) {
-        await sleepForBlockscoutBalanceRetry(null, attempt);
+        await sleepForBlockscoutBalanceRetry(null, attempt, signal);
         continue;
       }
       throw new Error(`Blockscout wallet token discovery failed: ${lastError.message}`);
     }
 
     if (response.ok) {
-      return (await response.json()) as {
+      const payload = (await response.json()) as {
         items?: BlockscoutWalletTokenItem[];
         next_page_params?: Record<string, unknown> | null;
       };
+      if (!Array.isArray(payload?.items)) {
+        throw new Error("Blockscout wallet token discovery returned an invalid payload");
+      }
+      return payload;
     }
 
     if (
       shouldRetryBlockscoutBalanceStatus(response.status) &&
       attempt < DISCOVERY_BLOCKSCOUT_BALANCE_MAX_RETRIES
     ) {
-      await sleepForBlockscoutBalanceRetry(response, attempt);
+      await sleepForBlockscoutBalanceRetry(response, attempt, signal);
       continue;
     }
 
@@ -1744,7 +1760,7 @@ async function fetchBlockscoutWalletTokenPage(
   throw lastError ?? new Error("Blockscout wallet token discovery failed");
 }
 
-async function fetchBlockscoutWalletTokenSnapshot(holder: Address, blockscoutBaseUrl?: string) {
+async function fetchBlockscoutWalletTokenSnapshot(holder: Address, blockscoutBaseUrl?: string, signal?: AbortSignal) {
   const url = new URL(
     `${(blockscoutBaseUrl || getBlockscoutApiV2BaseUrl()).replace(/\/$/, "")}/addresses/${holder}/token-balances`,
   );
@@ -1754,6 +1770,7 @@ async function fetchBlockscoutWalletTokenSnapshot(holder: Address, blockscoutBas
   let lastError: Error | null = null;
 
   for (let attempt = 0; attempt <= DISCOVERY_BLOCKSCOUT_BALANCE_MAX_RETRIES; attempt += 1) {
+    signal?.throwIfAborted();
     let response: Response;
     try {
       response = await fetch(url, {
@@ -1761,12 +1778,12 @@ async function fetchBlockscoutWalletTokenSnapshot(holder: Address, blockscoutBas
           Accept: "application/json",
           "User-Agent": "DustSwap/1.0 (+https://app.dustswap.wtf)",
         },
-        signal: AbortSignal.timeout(DISCOVERY_BLOCKSCOUT_BALANCE_TIMEOUT_MS),
+        signal: signal || AbortSignal.timeout(DISCOVERY_BLOCKSCOUT_BALANCE_TIMEOUT_MS),
       });
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error));
       if (attempt < DISCOVERY_BLOCKSCOUT_BALANCE_MAX_RETRIES) {
-        await sleepForBlockscoutBalanceRetry(null, attempt);
+        await sleepForBlockscoutBalanceRetry(null, attempt, signal);
         continue;
       }
       throw new Error(`Blockscout wallet token snapshot failed: ${lastError.message}`);
@@ -1775,15 +1792,18 @@ async function fetchBlockscoutWalletTokenSnapshot(holder: Address, blockscoutBas
     if (response.ok) {
       const payload = (await response.json()) as BlockscoutWalletTokenItem[] | {
         items?: BlockscoutWalletTokenItem[];
+        next_page_params?: Record<string, unknown> | null;
       };
-      return Array.isArray(payload) ? payload : payload.items || [];
+      if (Array.isArray(payload)) return payload;
+      if (Array.isArray(payload?.items) && !payload.next_page_params) return payload.items;
+      throw new Error("Blockscout wallet token snapshot returned an invalid payload");
     }
 
     if (
       shouldRetryBlockscoutBalanceStatus(response.status) &&
       attempt < DISCOVERY_BLOCKSCOUT_BALANCE_MAX_RETRIES
     ) {
-      await sleepForBlockscoutBalanceRetry(response, attempt);
+      await sleepForBlockscoutBalanceRetry(response, attempt, signal);
       continue;
     }
 
@@ -1793,7 +1813,7 @@ async function fetchBlockscoutWalletTokenSnapshot(holder: Address, blockscoutBas
   throw lastError ?? new Error("Blockscout wallet token snapshot failed");
 }
 
-async function fetchBlockscoutTokenListSnapshot(holder: Address, blockscoutBaseUrl?: string) {
+async function fetchBlockscoutTokenListSnapshot(holder: Address, blockscoutBaseUrl?: string, signal?: AbortSignal) {
   const url = new URL(
     (blockscoutBaseUrl || getBlockscoutApiV2BaseUrl()).replace(/\/api\/v2\/?$/, "/api"),
   );
@@ -1806,6 +1826,7 @@ async function fetchBlockscoutTokenListSnapshot(holder: Address, blockscoutBaseU
   let lastError: Error | null = null;
 
   for (let attempt = 0; attempt <= DISCOVERY_BLOCKSCOUT_BALANCE_MAX_RETRIES; attempt += 1) {
+    signal?.throwIfAborted();
     let response: Response;
     try {
       response = await fetch(url, {
@@ -1813,12 +1834,12 @@ async function fetchBlockscoutTokenListSnapshot(holder: Address, blockscoutBaseU
           Accept: "application/json",
           "User-Agent": "DustSwap/1.0 (+https://app.dustswap.wtf)",
         },
-        signal: AbortSignal.timeout(DISCOVERY_BLOCKSCOUT_BALANCE_TIMEOUT_MS),
+        signal: signal || AbortSignal.timeout(DISCOVERY_BLOCKSCOUT_BALANCE_TIMEOUT_MS),
       });
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error));
       if (attempt < DISCOVERY_BLOCKSCOUT_BALANCE_MAX_RETRIES) {
-        await sleepForBlockscoutBalanceRetry(null, attempt);
+        await sleepForBlockscoutBalanceRetry(null, attempt, signal);
         continue;
       }
       throw new Error(`Blockscout token list snapshot failed: ${lastError.message}`);
@@ -1834,14 +1855,14 @@ async function fetchBlockscoutTokenListSnapshot(holder: Address, blockscoutBaseU
       if (payload.status === "0" && typeof payload.result === "string") {
         throw new Error(payload.result);
       }
-      return [];
+      throw new Error("Blockscout token list snapshot returned an invalid payload");
     }
 
     if (
       shouldRetryBlockscoutBalanceStatus(response.status) &&
       attempt < DISCOVERY_BLOCKSCOUT_BALANCE_MAX_RETRIES
     ) {
-      await sleepForBlockscoutBalanceRetry(response, attempt);
+      await sleepForBlockscoutBalanceRetry(response, attempt, signal);
       continue;
     }
 
@@ -1931,6 +1952,9 @@ async function fetchBlockscoutWalletTokenBalances(
   holder: Address,
   blockscoutBaseUrl?: string,
 ): Promise<AlchemyTokenBalanceDiscovery> {
+  // Bound the whole public provider attempt, including retries and pagination, so an
+  // unavailable explorer cannot delay the Alchemy fallback by several timeout windows.
+  const signal = AbortSignal.timeout(DISCOVERY_BLOCKSCOUT_BALANCE_TIMEOUT_MS);
   const tokenBalances: AlchemyBalance[] = [];
   const seen = new Set<string>();
   const seenCursors = new Set<string>();
@@ -1938,14 +1962,16 @@ async function fetchBlockscoutWalletTokenBalances(
   let pageCount = 0;
   let scannedBalanceCount = 0;
   let truncated = false;
+  const snapshotController = new AbortController();
+  const snapshotSignal = AbortSignal.any([signal, snapshotController.signal]);
 
   try {
     const snapshot = await Promise.any([
-      fetchBlockscoutWalletTokenSnapshot(holder, blockscoutBaseUrl).then((items) => ({
+      fetchBlockscoutWalletTokenSnapshot(holder, blockscoutBaseUrl, snapshotSignal).then((items) => ({
         kind: "token-balances" as const,
         items,
       })),
-      fetchBlockscoutTokenListSnapshot(holder, blockscoutBaseUrl).then((items) => ({
+      fetchBlockscoutTokenListSnapshot(holder, blockscoutBaseUrl, snapshotSignal).then((items) => ({
         kind: "tokenlist" as const,
         items,
       })),
@@ -1971,6 +1997,10 @@ async function fetchBlockscoutWalletTokenBalances(
     console.warn("[dustsweep/tokens] Blockscout token snapshot failed; falling back to paginated tokens", {
       message: discoveryErrorMessage(snapshotError),
     });
+  } finally {
+    // Once one complete snapshot wins, stop the other request and its retries. Only
+    // the overall deadline applies to pagination if both snapshot endpoints fail.
+    snapshotController.abort();
   }
 
   while (!reachedDiscoveryLimit(pageCount, DISCOVERY_BLOCKSCOUT_BALANCE_MAX_PAGES)) {
@@ -1978,6 +2008,7 @@ async function fetchBlockscoutWalletTokenBalances(
       holder,
       nextPageParams || undefined,
       blockscoutBaseUrl,
+      signal,
     );
     pageCount += 1;
 
@@ -2014,68 +2045,55 @@ async function fetchWalletTokenBalances(
   holder: Address,
   chain: SweepChainConfig = BASE_CONFIG,
 ): Promise<AlchemyTokenBalanceDiscovery> {
-  // Blockscout REST balance fallback: Base keeps its env-driven URL exactly as before; a
-  // non-Base chain opts in by setting chain.blockscoutRestBaseUrl (Robinhood: its self-hosted
-  // instance — Alchemy token-API support there is unproven). Keys keep resolving from the
-  // existing BLOCKSCOUT_API_KEYS / BLOCKSCOUT_API_KEY envs; Ethereum/BSC set no URL and stay
-  // Alchemy-only (Alchemy failure → stale cache), unchanged.
+  // A wallet's complete token list needs an indexer, not just standard eth_* RPC.
+  // Use the existing public Blockscout index first wherever this chain supports it.
   const chainBlockscoutBaseUrl =
     chain.chainId === BASE_CHAIN_ID ? undefined : chain.blockscoutRestBaseUrl;
-  const blockscoutFallbackEnabled =
+  const blockscoutEnabled =
     (chain.chainId === BASE_CHAIN_ID || Boolean(chainBlockscoutBaseUrl)) &&
     DISCOVERY_BLOCKSCOUT_BALANCE_FALLBACK_ENABLED;
-  // The Alchemy cool-off breaker stays BASE-SCOPED: other chains use separate key sets, so a
-  // throttled Base pool must not push their scans off healthy dedicated keys.
-  const alchemyBreakerOpen =
-    chain.chainId === BASE_CHAIN_ID && Date.now() < alchemyDiscoveryBreakerUntil;
+  let publicResult: AlchemyTokenBalanceDiscovery | undefined;
+  let publicError: string | undefined;
+  if (blockscoutEnabled) {
+    try {
+      publicResult = await fetchBlockscoutWalletTokenBalances(holder, chainBlockscoutBaseUrl);
+      if (!publicResult.truncated) return publicResult;
+      // Preserve full wallet coverage when an explicitly capped public scan is incomplete.
+      publicError = "blockscout: token discovery was truncated";
+    } catch (error) {
+      publicError = `blockscout: ${discoveryErrorMessage(error)}`;
+      console.warn("[dustsweep/tokens] Public balance discovery failed; trying Alchemy fallback", {
+        chainId: chain.chainId,
+        message: publicError,
+      });
+    }
+  }
 
-  if (!alchemyBreakerOpen || !blockscoutFallbackEnabled) {
+  // An overdue/rate-limited key should not be retried for every wallet scan. Keep the
+  // breaker per chain so one network's failing keys do not disable another's fallback.
+  const alchemyBreakerOpen =
+    Date.now() < (alchemyDiscoveryBreakerUntilByChain.get(chain.chainId) || 0);
+
+  if (!alchemyBreakerOpen) {
     try {
       const result = await fetchAlchemyTokenBalances(holder, chain.chainId);
-      if (chain.chainId === BASE_CHAIN_ID) alchemyDiscoveryBreakerUntil = 0;
-      return result;
+      alchemyDiscoveryBreakerUntilByChain.delete(chain.chainId);
+      return { ...result, ...(publicError ? { providerError: publicError } : {}) };
     } catch (alchemyError) {
       const alchemyMessage = discoveryErrorMessage(alchemyError);
-      // Full Alchemy failure (typically ALL keys 429 on the Token API) — cool off so the next
-      // scans go straight to Blockscout instead of re-burning the keys on every request.
-      if (chain.chainId === BASE_CHAIN_ID) {
-        alchemyDiscoveryBreakerUntil = Date.now() + DISCOVERY_ALCHEMY_BREAKER_MS;
-      }
+      alchemyDiscoveryBreakerUntilByChain.set(chain.chainId, Date.now() + DISCOVERY_ALCHEMY_BREAKER_MS);
       console.warn("[dustsweep/tokens] Alchemy balance discovery failed — cooling off", {
         chainId: chain.chainId,
         message: alchemyMessage,
         coolOffMs: DISCOVERY_ALCHEMY_BREAKER_MS,
       });
 
-      if (blockscoutFallbackEnabled) {
-        try {
-          const fallback = await fetchBlockscoutWalletTokenBalances(holder, chainBlockscoutBaseUrl);
-          return {
-            ...fallback,
-            providerError: `alchemy: ${alchemyMessage}`,
-          };
-        } catch (blockscoutError) {
-          console.warn("[dustsweep/tokens] Blockscout balance discovery failed", {
-            message: discoveryErrorMessage(blockscoutError),
-          });
-        }
-      }
-
-      throw new BalanceDiscoveryUnavailableError();
+      if (publicResult) return { ...publicResult, providerError: `alchemy: ${alchemyMessage}` };
     }
   }
 
-  // Alchemy is cooling off — Blockscout is the primary for this window (Base only; the breaker
-  // above is base-scoped, so non-Base chains never take this path).
-  try {
-    const fallback = await fetchBlockscoutWalletTokenBalances(holder, chainBlockscoutBaseUrl);
-    return { ...fallback, providerError: "alchemy: cooling off after rate limit" };
-  } catch (blockscoutError) {
-    console.warn("[dustsweep/tokens] Blockscout balance discovery failed", {
-      message: discoveryErrorMessage(blockscoutError),
-    });
-    throw new BalanceDiscoveryUnavailableError();
-  }
+  if (publicResult) return { ...publicResult, providerError: "alchemy: cooling off after failure" };
+  throw new BalanceDiscoveryUnavailableError();
 }
 
 async function loadWhitelist(chain: SweepChainConfig = BASE_CONFIG) {

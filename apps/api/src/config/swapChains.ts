@@ -1,4 +1,4 @@
-import { createPublicClient, http, type PublicClient } from "viem";
+import { createPublicClient, fallback, http, type PublicClient } from "viem";
 import {
   arbitrum,
   avalanche,
@@ -12,7 +12,8 @@ import {
   zksync,
   type Chain,
 } from "viem/chains";
-import { createBasePublicClient } from "../utils/baseRpc";
+import { createChainPublicClient, isChainRpcSupported } from "../utils/chainRpc";
+import { isAlchemyRpcUrl } from "../utils/baseRpc";
 
 type SwapChainConfig = {
   id: number;
@@ -153,14 +154,21 @@ export function isSupportedSwapChainId(chainId: number) {
   return chainConfigById.has(chainId);
 }
 
-function getRpcUrl(config: SwapChainConfig) {
-  return (
-    process.env[config.rpcEnv] ||
-    process.env[`NEXT_PUBLIC_${config.rpcEnv}`] ||
-    process.env[`RPC_URL_${config.id}`] ||
-    process.env[`CHAIN_${config.id}_RPC_URL`] ||
-    config.chain.rpcUrls.default.http[0]
-  );
+function getRpcUrls(config: SwapChainConfig) {
+  const configured = [
+    process.env[`${config.rpcEnv}S`],
+    process.env[config.rpcEnv],
+    process.env[`NEXT_PUBLIC_${config.rpcEnv}`],
+    process.env[`RPC_URL_${config.id}`],
+    process.env[`CHAIN_${config.id}_RPC_URL`],
+  ].flatMap((value) => String(value || "").split(",").map((url) => url.trim()).filter(Boolean));
+  // Defaults are public. Keep all configured URLs (including Alchemy) as failover only;
+  // disable viem ranking so a faster paid response can never become the primary.
+  return [...new Set([
+    ...config.chain.rpcUrls.default.http,
+    ...configured.filter((url) => !isAlchemyRpcUrl(url)),
+    ...configured.filter(isAlchemyRpcUrl),
+  ])];
 }
 
 export function getPublicClientForSwapChain(chainId: number) {
@@ -175,11 +183,14 @@ export function getPublicClientForSwapChain(chainId: number) {
   }
 
   const client =
-    chainId === base.id
-      ? createBasePublicClient()
+    isChainRpcSupported(chainId)
+      ? createChainPublicClient(chainId)
       : createPublicClient({
           chain: config.chain,
-          transport: http(getRpcUrl(config)),
+          transport: fallback(
+            getRpcUrls(config).map((url) => http(url, { timeout: 5_000, retryCount: 0 })),
+            { rank: false, retryCount: 0 },
+          ),
         });
 
   clientByChainId.set(chainId, client as PublicClient);

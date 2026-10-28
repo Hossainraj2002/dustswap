@@ -116,7 +116,7 @@ See `.env.example`. The essentials:
 
 | Variable | Used by | Notes |
 |---|---|---|
-| `MEMEFUN_CHAIN`, `MEMEFUN_RPC_URLS` | all | Base mainnet refuses the public RPC; use the paid endpoints |
+| `MEMEFUN_CHAIN`, `MEMEFUN_RPC_URLS` | all | Public Base RPC defaults serve normal requests; optional configured Alchemy URLs are fallback only. Ponder uses ordered failover so it does not load balance onto paid keys. |
 | `DATABASE_URL`, `DATABASE_SCHEMA` | all | `DATABASE_SCHEMA` is required for `ponder start` and `ponder serve`, and is the schema the API and keeper read |
 | `PUBLIC_API_URL`, `ALLOWED_ORIGINS` | api | `ALLOWED_ORIGINS` also defines the accepted SIWE domains; required off the local chain |
 | `SIWE_SESSION_SECRET`, `ADMIN_TOKEN` | api | 32+ random characters each |
@@ -166,7 +166,7 @@ Railway project `memefun-testnet` (not DustSwap's `mellow-wisdom`): Postgres, a 
 | `memefun-keeper` | `/apps/memefun-backend` | `pnpm keeper` | no domain |
 | `memefun-web` | `/apps/memefun` | `pnpm exec next start --hostname 0.0.0.0 --port $PORT` | the public preview at `https://memefun.dustswap.wtf`, built for chain 84532 with preview forced |
 
-Variables already set: `MEMEFUN_CHAIN=base-sepolia`, `MEMEFUN_RPC_URLS` (public Base Sepolia endpoints for now; a paid URL can replace them), `DATABASE_URL=${{Postgres.DATABASE_URL}}`, `DATABASE_SCHEMA=memefun`, `PUBLIC_API_URL`, `ALLOWED_ORIGINS` (the app), `MEDIA_STORE=bucket` with `BUCKET_*` referencing the `memefun-media` bucket, `STOCK_PRICE_SOURCE=dev` on the keeper (the test stock has no real price).
+Variables already set: `MEMEFUN_CHAIN=base-sepolia`, `MEMEFUN_RPC_URLS` (public Base Sepolia endpoints; an Alchemy URL can be added as a fallback), `DATABASE_URL=${{Postgres.DATABASE_URL}}`, `DATABASE_SCHEMA=memefun`, `PUBLIC_API_URL`, `ALLOWED_ORIGINS` (the app), `MEDIA_STORE=bucket` with `BUCKET_*` referencing the `memefun-media` bucket, `STOCK_PRICE_SOURCE=dev` on the keeper (the test stock has no real price).
 
 `SIWE_SESSION_SECRET` and `ADMIN_TOKEN` are configured on `memefun-api`, and its allowed origins include the custom domain. The keeper remains in dry-run mode. Live operation still needs matching public deployment records, funded keeper/price-keeper/rewards-publisher signing keys, and the web wallet integration (`NEXT_PUBLIC_PRIVY_APP_ID`, with the site allowed in Privy). Keep signing keys in the provider's secret settings.
 

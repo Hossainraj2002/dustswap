@@ -15,6 +15,7 @@ import {
   isSupportedSwapChainId,
 } from "../config/swapChains";
 import { createBaseVerificationClient } from "../utils/baseRpc";
+import { chainAlchemyRpcRequest, getChainAlchemyRpcEndpoints, isChainRpcSupported } from "../utils/chainRpc";
 import { getSwapOwnRouterAddress } from "../config/swapownSources";
 import { pointsEngine } from "./pointsEngine";
 import { postgresDb } from "./postgres";
@@ -690,9 +691,8 @@ async function getUserByAddress(address: string) {
 
 // Confirming an already-broadcast swap is bookkeeping: it awards points and volume after the
 // fact, and no user is waiting on the response. So on Base these reads run on the free
-// verification pool with Alchemy as the backstop. This does NOT touch swap EXECUTION or the
-// DustSweep quote path — both keep their existing Alchemy-first client.
-// Other chains have no verified free pool yet, so they keep the client they always used.
+// verification pool with Alchemy as the backstop. Execution, quotes, and other chains use
+// their shared public-first clients; this lane retains its receipt-specific exclusions.
 const baseVerificationClient = createBaseVerificationClient();
 
 function getSwapReadClient(client: SwapPublicClient, chainId: number): SwapPublicClient {
@@ -716,10 +716,18 @@ async function resolveUserOperationTransactionHash(
   userOperationHash: Hex
 ) {
   try {
-    const response = (await client.request({
-      method: "eth_getUserOperationReceipt" as never,
-      params: [userOperationHash] as never,
-    })) as
+    const chainId = client.chain?.id;
+    const hasBundlerEndpoint = chainId !== undefined && isChainRpcSupported(chainId) &&
+      getChainAlchemyRpcEndpoints(chainId).length > 0;
+    const response = (await (hasBundlerEndpoint
+      ? chainAlchemyRpcRequest(chainId!, "eth_getUserOperationReceipt", [userOperationHash], {
+          timeoutMs: 10_000,
+          hedgeCount: 1,
+        })
+      : client.request({
+          method: "eth_getUserOperationReceipt" as never,
+          params: [userOperationHash] as never,
+        }))) as
       | {
           receipt?: {
             transactionHash?: string | null;
@@ -736,8 +744,8 @@ async function resolveUserOperationTransactionHash(
 }
 
 // `readClient` serves the plain chain reads (tx / receipt) and is the free lane on Base.
-// `bundlerClient` stays on the original Alchemy-backed client because eth_getUserOperationReceipt
-// is a bundler API — every public Base node answers it with -32601 method not found.
+// Bundler receipt lookups use dedicated endpoints when configured, including when Alchemy
+// is excluded from generic RPC. Chains without a dedicated lane retain their client fallback.
 async function waitForResolvedTransaction(
   readClient: SwapPublicClient,
   bundlerClient: SwapPublicClient,

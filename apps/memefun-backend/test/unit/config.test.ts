@@ -1,12 +1,13 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { chainSettings } from "../../lib/chain";
+import { chainRpcTransport, chainSettings } from "../../lib/chain";
 import { parseDeployment } from "../../lib/deployment";
 import { envBool, envInt, envList } from "../../lib/env";
 
 const saved = { ...process.env };
 afterEach(() => {
   process.env = { ...saved };
+  vi.unstubAllGlobals();
 });
 
 describe("chainSettings", () => {
@@ -16,14 +17,83 @@ describe("chainSettings", () => {
     expect(chainSettings()).toMatchObject({ key: "local", id: 31337, rpcUrls: ["http://127.0.0.1:8545"] });
   });
 
-  it("requires RPC URLs off the local chain and refuses the public Base RPC for mainnet", () => {
+  it("uses public defaults with configured Alchemy URLs reserved for fallback", () => {
     process.env.MEMEFUN_CHAIN = "base";
     delete process.env.MEMEFUN_RPC_URLS;
-    expect(() => chainSettings()).toThrow("MEMEFUN_RPC_URLS is required");
+    expect(chainSettings().rpcUrls).toEqual(["https://mainnet.base.org", "https://base-mainnet.public.blastapi.io", "https://base-pokt.nodies.app", "https://base.gateway.tenderly.co"]);
     process.env.MEMEFUN_RPC_URLS = "https://mainnet.base.org";
-    expect(() => chainSettings()).toThrow("paid endpoints");
+    expect(chainSettings().rpcUrls).toEqual(["https://mainnet.base.org", "https://base-mainnet.public.blastapi.io", "https://base-pokt.nodies.app", "https://base.gateway.tenderly.co"]);
     process.env.MEMEFUN_RPC_URLS = "https://base-mainnet.g.alchemy.com/v2/key-a, https://base-mainnet.g.alchemy.com/v2/key-b";
-    expect(chainSettings()).toMatchObject({ id: 8453, rpcUrls: ["https://base-mainnet.g.alchemy.com/v2/key-a", "https://base-mainnet.g.alchemy.com/v2/key-b"] });
+    expect(chainSettings()).toMatchObject({ id: 8453, rpcUrls: ["https://mainnet.base.org", "https://base-mainnet.public.blastapi.io", "https://base-pokt.nodies.app", "https://base.gateway.tenderly.co", "https://base-mainnet.g.alchemy.com/v2/key-a", "https://base-mainnet.g.alchemy.com/v2/key-b"] });
+    process.env.MEMEFUN_CHAIN = "base-sepolia";
+    delete process.env.MEMEFUN_RPC_URLS;
+    expect(chainSettings().rpcUrls).toEqual(["https://sepolia.base.org"]);
+  });
+
+  it("keeps custom non-Alchemy endpoints ahead of defaults and preserves local overrides", () => {
+    process.env.MEMEFUN_CHAIN = "base";
+    process.env.MEMEFUN_RPC_URLS = "https://base-mainnet.alchemyapi.io/v2/key-a, https://rpc.example.com, https://rpc.example.com";
+    expect(chainSettings().rpcUrls).toEqual(["https://rpc.example.com", "https://mainnet.base.org", "https://base-mainnet.public.blastapi.io", "https://base-pokt.nodies.app", "https://base.gateway.tenderly.co", "https://base-mainnet.alchemyapi.io/v2/key-a"]);
+    process.env.MEMEFUN_CHAIN = "local";
+    process.env.MEMEFUN_RPC_URLS = "http://localhost:9545";
+    expect(chainSettings().rpcUrls).toEqual(["http://localhost:9545"]);
+  });
+
+  it("does not load balance Ponder reads onto Alchemy while public RPC succeeds", async () => {
+    process.env.MEMEFUN_CHAIN = "base";
+    process.env.MEMEFUN_RPC_URLS = "https://base-mainnet.g.alchemy.com/v2/key-a";
+    const fetch = vi.fn(async (_input: string | URL | Request) => Response.json({ jsonrpc: "2.0", id: 1, result: "0x2105" }));
+    vi.stubGlobal("fetch", fetch);
+    const chain = chainSettings();
+    const transport = chainRpcTransport(chain)({ chain: chain.viemChain });
+    await transport.request({ method: "eth_chainId" });
+    await transport.request({ method: "eth_chainId" });
+    expect(fetch.mock.calls.map((args) => String(args[0]))).toEqual(["https://mainnet.base.org/", "https://mainnet.base.org/"]);
+  });
+
+  it("reaches Alchemy when public RPCs cannot serve an indexing method", async () => {
+    process.env.MEMEFUN_CHAIN = "base";
+    process.env.MEMEFUN_RPC_URLS = "https://base-mainnet.g.alchemy.com/v2/key-a";
+    const fetch = vi.fn(async (input: string | URL | Request) => String(input).includes("alchemy")
+      ? Response.json({ jsonrpc: "2.0", id: 1, result: [] })
+      : Response.json({ jsonrpc: "2.0", id: 1, error: { code: -32601, message: "method not supported" } }));
+    vi.stubGlobal("fetch", fetch);
+    const chain = chainSettings();
+    const transport = chainRpcTransport(chain)({ chain: chain.viemChain });
+    expect(await transport.request({ method: "eth_getLogs", params: [{}] })).toEqual([]);
+    expect(fetch.mock.calls.map((args) => String(args[0]))).toEqual(chain.rpcUrls.map((url) => new URL(url).toString()));
+  });
+
+  it("preserves public log range limits so Ponder can split requests without Alchemy", async () => {
+    process.env.MEMEFUN_CHAIN = "base";
+    process.env.MEMEFUN_RPC_URLS = "https://base-mainnet.g.alchemy.com/v2/overdue-key";
+    const message = "eth_getLogs is limited to a 10,000 blocks range";
+    const fetch = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as { params: [{ fromBlock: string; toBlock: string }] };
+      return BigInt(body.params[0].toBlock) - BigInt(body.params[0].fromBlock) >= 10_000n
+        ? Response.json({ jsonrpc: "2.0", id: 1, error: { code: -32602, message } })
+        : Response.json({ jsonrpc: "2.0", id: 1, result: [] });
+    });
+    vi.stubGlobal("fetch", fetch);
+    const chain = chainSettings();
+    const transport = chainRpcTransport(chain)({ chain: chain.viemChain });
+    await expect(transport.request({ method: "eth_getLogs", params: [{ fromBlock: "0x0", toBlock: "0x4e20" }] })).rejects.toMatchObject({ details: message });
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(await transport.request({ method: "eth_getLogs", params: [{ fromBlock: "0x0", toBlock: "0x1388" }] })).toEqual([]);
+    expect(fetch.mock.calls.map(([url]) => String(url))).toEqual(["https://mainnet.base.org/", "https://mainnet.base.org/"]);
+  });
+
+  it("fails over when a public node cannot serve archive state", async () => {
+    process.env.MEMEFUN_CHAIN = "base";
+    process.env.MEMEFUN_RPC_URLS = "https://base-mainnet.g.alchemy.com/v2/key";
+    const fetch = vi.fn()
+      .mockResolvedValueOnce(Response.json({ error: { code: -32000, message: "requested block range is unavailable: missing trie node" } }))
+      .mockResolvedValueOnce(Response.json({ result: [] }));
+    vi.stubGlobal("fetch", fetch);
+    const chain = chainSettings();
+    const transport = chainRpcTransport(chain)({ chain: chain.viemChain });
+    expect(await transport.request({ method: "eth_getLogs", params: [{ fromBlock: "0x0", toBlock: "0x1" }] })).toEqual([]);
+    expect(fetch.mock.calls.map(([url]) => String(url))).toEqual(["https://mainnet.base.org/", "https://base-mainnet.public.blastapi.io/"]);
   });
 
   it("rejects unknown chains", () => {

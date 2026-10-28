@@ -1,9 +1,9 @@
 import type pg from "pg";
-import { type Account, type Address, type Hex, type PublicClient, type WalletClient, createPublicClient, createWalletClient, fallback, http, isHex } from "viem";
+import { type Account, type Address, type Hex, type PublicClient, type WalletClient, createPublicClient, createWalletClient, isHex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 
 import { type AppStore, createAppStore } from "../lib/app-store";
-import { type ChainSettings, chainSettings } from "../lib/chain";
+import { type ChainSettings, chainSettings, keeperRpcTransport } from "../lib/chain";
 import { createAppPool, createReadPool } from "../lib/db";
 import { type Deployment, loadDeployment } from "../lib/deployment";
 import { devAccount } from "../lib/dev";
@@ -54,7 +54,7 @@ export function createKeeperContext(): KeeperContext {
   const dataSuffix = keeperAttribution();
   const chain = chainSettings();
   const deployment = loadDeployment(chain.id);
-  const transport = fallback(chain.rpcUrls.map((url) => http(url, { timeout: 15_000 })));
+  const transport = keeperRpcTransport(chain);
   const client = createPublicClient({ chain: chain.viemChain, transport });
   const wallet = (account: Account | undefined) => (account ? createWalletClient({ chain: chain.viemChain, transport, account, dataSuffix }) : undefined);
   const appPool = createAppPool({ max: 4 });

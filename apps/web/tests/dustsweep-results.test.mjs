@@ -159,6 +159,8 @@ test("the actual success modal shows receipt output, independent partial-result 
   const realRequire = createRequire(import.meta.url);
   vm.runInNewContext(js, { exports, require: (name) => {
     if (name === "@/components/sweep/TokenLogo") return { TokenLogo: () => null };
+    // Receipt-content assertions run without a browser; the modal portal mounts after hydration.
+    if (name === "@/components/sweep/SweepModal") return { SweepModal: ({ children }) => React.createElement(React.Fragment, null, children) };
     if (name === "@/lib/explorer") return { getExplorerTxUrl: () => `https://optimistic.etherscan.io/tx/${HASH}` };
     return realRequire(name);
   } });

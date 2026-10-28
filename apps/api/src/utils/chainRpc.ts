@@ -6,23 +6,22 @@ import {
   createBasePublicClient,
   getAlchemyRpcEndpoints,
   getBaseRpcEndpoints,
+  isAlchemyRpcUrl,
+  isDeterministicRpcError,
   RpcDeterministicError,
   RpcRateLimitError,
   RpcTransportError,
   type BaseRpcEndpoint,
   type RpcRequestOptions,
+  type RpcErrorPayload,
 } from "./baseRpc";
 
 /**
  * Multichain RPC dispatch for DustSweep.
  *
- * ADDITIVE + STANDALONE: chainId 8453 delegates 1:1 to the battle-tested `baseRpc.ts`
- * (same module state, same rotation counters — zero behavioral drift for Base). Other
- * chains get the SAME pool model (keyed Alchemy rotation → custom URLs → Blockscout
- * JSON-RPC → public fallback → optional Alchemy backstop) driven by per-chain env vars.
- *
- * Prod-incident caveat (2026-07-04): the generic eth_call pool must NEVER be led by
- * public RPCs. Keyed endpoints lead by default on every chain ("first" mode).
+ * Base delegates to `baseRpc.ts`. Public nodes lead standard requests on every chain;
+ * custom/Blockscout endpoints follow and Alchemy is the final reliability backstop.
+ * Rotation stays within the public pool even when legacy deployment settings say "first".
  */
 
 export const ETHEREUM_CHAIN_ID = 1;
@@ -44,19 +43,20 @@ const robinhoodChain: Chain = defineChain({
   },
 });
 
-const DEFAULT_ROTATION_CALLS = 100;
+const DEFAULT_ROTATION_CALLS = 1;
 const DEFAULT_ALCHEMY_ROTATION_CALLS = 1;
 const DEFAULT_ALCHEMY_HEDGE_COUNT = 2;
 
 type RpcParams = ReadonlyArray<unknown> | Record<string, unknown>;
 
-type AlchemyGenericPoolMode = "first" | "last" | "off";
+type AlchemyGenericPoolMode = "last" | "off";
 
 type ChainRpcSettings = {
   chainId: number;
   /** viem chain object for createPublicClient. */
   chain: Chain;
   publicRpcUrl: string;
+  additionalPublicRpcUrls?: string[];
   alchemyHost: string; // e.g. eth-mainnet.g.alchemy.com
   /** Preferred keyed-Alchemy env names (comma lists), in priority order. */
   alchemyKeyEnvs: string[];
@@ -80,6 +80,7 @@ const CHAIN_RPC_SETTINGS: Record<number, ChainRpcSettings> = {
     chainId: OPTIMISM_CHAIN_ID,
     chain: optimism,
     publicRpcUrl: "https://mainnet.optimism.io",
+    additionalPublicRpcUrls: ["https://optimism.drpc.org"],
     alchemyHost: "opt-mainnet.g.alchemy.com",
     alchemyKeyEnvs: ["ALCHEMY_OPTIMISM_RPC_KEYS", "ALCHEMY_OPTIMISM_RPC_KEY"],
     alchemyUrlEnvs: ["ALCHEMY_OPTIMISM_RPC_URLS", "ALCHEMY_OPTIMISM_RPC"],
@@ -94,6 +95,7 @@ const CHAIN_RPC_SETTINGS: Record<number, ChainRpcSettings> = {
     chainId: ETHEREUM_CHAIN_ID,
     chain: mainnet,
     publicRpcUrl: "https://ethereum-rpc.publicnode.com",
+    additionalPublicRpcUrls: ["https://eth.drpc.org"],
     alchemyHost: "eth-mainnet.g.alchemy.com",
     // Deliberately NO fallback to the Base key pool: Ethereum discovery burns CU at a very
     // different rate, and a separate key set keeps the burn attributable per chain.
@@ -109,6 +111,7 @@ const CHAIN_RPC_SETTINGS: Record<number, ChainRpcSettings> = {
     chainId: BSC_CHAIN_ID,
     chain: bsc,
     publicRpcUrl: "https://bsc-dataseed.bnbchain.org",
+    additionalPublicRpcUrls: ["https://bsc-rpc.publicnode.com"],
     // Verified live 2026-07-10: bnb-mainnet serves eth_* AND alchemy_getTokenBalances. NOTE the
     // Alchemy app must have the BNB network enabled (dashboard → app → Networks) or every call
     // returns "BNB_MAINNET is not enabled for this app".
@@ -125,7 +128,7 @@ const CHAIN_RPC_SETTINGS: Record<number, ChainRpcSettings> = {
   [ROBINHOOD_CHAIN_ID]: {
     chainId: ROBINHOOD_CHAIN_ID,
     chain: robinhoodChain,
-    // Public RPC is rate-limited — discovery/quoting must lead with keyed Alchemy endpoints.
+    // This chain currently has one known public operator; retain the Alchemy backstop.
     publicRpcUrl: "https://rpc.mainnet.chain.robinhood.com",
     // Verified live 2026-07-26: the host exists (Alchemy edge answered the shared demo key with
     // 429). NOTE the Alchemy app must have the Robinhood network enabled (dashboard → app →
@@ -150,6 +153,7 @@ const CHAIN_RPC_SETTINGS: Record<number, ChainRpcSettings> = {
     // viem ships Arbitrum One natively (unlike Robinhood) — use it directly, no defineChain().
     chain: arbitrum,
     publicRpcUrl: "https://arb1.arbitrum.io/rpc",
+    additionalPublicRpcUrls: ["https://arbitrum.drpc.org"],
     // Long-established Alchemy network. NOTE the Alchemy app must have Arbitrum enabled
     // (dashboard → app → Networks) or every call fails; confirm alchemy_getTokenBalances answers
     // before flipping the chain on. Unlike Ethereum/BSC, a failure here degrades to the public
@@ -229,23 +233,6 @@ function normalizeRpcParams(params?: RpcParams) {
   return params ?? [];
 }
 
-function isDeterministicRpcError(error?: { code?: number; message?: string }): boolean {
-  const msg = String(error?.message || "").toLowerCase();
-  return (
-    msg.includes("execution reverted") ||
-    msg.includes("revert") ||
-    msg.includes("no pool") ||
-    msg.includes("insufficient liquidity") ||
-    msg.includes("method not found") ||
-    msg.includes("invalid opcode") ||
-    msg.includes("out of gas") ||
-    msg.includes("stack underflow") ||
-    msg.includes("invalid jump") ||
-    msg.includes("invalid method") ||
-    (error?.code !== undefined && (error.code === -32601 || error.code === -32000 || error.code === 3))
-  );
-}
-
 function getRotationCalls(envValue: string | undefined, fallback: number) {
   const parsed = Number(envValue || fallback);
   return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback;
@@ -264,8 +251,7 @@ function getAlchemyHedgeCount(endpointCount: number) {
 function getAlchemyGenericPoolMode(settings: ChainRpcSettings): AlchemyGenericPoolMode {
   const raw = String(process.env[settings.dedicatedOnlyEnv] || "").toLowerCase();
   if (["1", "true", "yes"].includes(raw)) return "off";
-  if (raw === "last") return "last";
-  return "first";
+  return "last";
 }
 
 const ALCHEMY_BACKSTOP_LABEL = "alchemy-backstop";
@@ -278,10 +264,23 @@ function getPreferredAlchemyKeyUrls(settings: ChainRpcSettings) {
 
 function getAlchemyGenericPoolUrls(settings: ChainRpcSettings) {
   return unique(
-    [...splitEnvs(settings.alchemyUrlEnvs), ...getPreferredAlchemyKeyUrls(settings)].filter(
+    [
+      ...splitEnvs(settings.alchemyUrlEnvs),
+      ...getConfiguredRpcUrls(settings).filter(isAlchemyRpcUrl),
+      ...getPreferredAlchemyKeyUrls(settings),
+    ].filter(
       isHttpsUrl,
     ),
   );
+}
+
+function getConfiguredRpcUrls(settings: ChainRpcSettings) {
+  return splitEnvs([
+    ...settings.rpcUrlEnvs,
+    ...settings.rpcUrlEnvs.map((name) => `NEXT_PUBLIC_${name}`),
+    `RPC_URL_${settings.chainId}`,
+    `CHAIN_${settings.chainId}_RPC_URL`,
+  ]);
 }
 
 const BLOCKSCOUT_RPC_MAX_PER_REQUEST = (() => {
@@ -321,10 +320,14 @@ export function getChainAlchemyRpcEndpoints(chainId: number): BaseRpcEndpoint[] 
   if (!settings) return [];
 
   const explicitAlchemyUrls = splitEnvs(settings.alchemyUrlEnvs).filter(
-    (url) => isHttpsUrl(url) && url.includes("alchemy"),
+    (url) => isHttpsUrl(url) && isAlchemyRpcUrl(url),
   );
 
-  return unique([...explicitAlchemyUrls, ...getPreferredAlchemyKeyUrls(settings)]).map((url) => ({
+  return unique([
+    ...explicitAlchemyUrls,
+    ...getPreferredAlchemyKeyUrls(settings),
+    ...getAlchemyGenericPoolUrls(settings).filter(isAlchemyRpcUrl),
+  ]).map((url) => ({
     url,
     label: "alchemy-dedicated",
   }));
@@ -336,30 +339,31 @@ export function getChainRpcEndpoints(chainId: number): BaseRpcEndpoint[] {
   if (!settings) return [];
 
   const mode = getAlchemyGenericPoolMode(settings);
-  const alchemyPoolUrls = mode === "first" ? getAlchemyGenericPoolUrls(settings) : [];
-
-  const preferred = unique(
-    [...alchemyPoolUrls, ...splitEnvs(settings.rpcUrlEnvs)].filter(isHttpsUrl),
+  const publicUrls = unique([settings.publicRpcUrl, ...(settings.additionalPublicRpcUrls || [])]);
+  const configuredUrls = unique(
+    getConfiguredRpcUrls(settings).filter(
+      (url) => isHttpsUrl(url) && !isAlchemyRpcUrl(url) && !publicUrls.includes(url),
+    ),
   ).map((url) => ({
     url,
-    label: url.includes("alchemy") ? "alchemy" : url.includes("blockscout") ? "blockscout" : "custom",
+    label: url.includes("blockscout") ? "blockscout" : "custom",
   }));
 
+  const preferred = [
+    ...publicUrls.map((url) => ({ url, label: "public" })),
+    ...configuredUrls,
+  ];
   const withBlockscout = [...preferred, ...getBlockscoutRpcEndpoints(settings)];
-  const withPublicFallback =
-    process.env[settings.publicFallbackEnv] !== "0"
-      ? [...withBlockscout, { url: settings.publicRpcUrl, label: "public" }]
-      : withBlockscout;
 
   const withAlchemyBackstop =
     mode === "last"
       ? [
-          ...withPublicFallback,
+          ...withBlockscout,
           ...getAlchemyGenericPoolUrls(settings)
-            .filter((url) => !withPublicFallback.some((endpoint) => endpoint.url === url))
+            .filter((url) => !withBlockscout.some((endpoint) => endpoint.url === url))
             .map((url) => ({ url, label: ALCHEMY_BACKSTOP_LABEL })),
         ]
-      : withPublicFallback;
+      : withBlockscout;
 
   return withAlchemyBackstop.length > 0
     ? withAlchemyBackstop
@@ -372,12 +376,11 @@ function isSameEndpoint(a: BaseRpcEndpoint, b: BaseRpcEndpoint) {
   );
 }
 
-function getRotatingChainRpcEndpoint(chainId: number): BaseRpcEndpoint {
+function getRotatingChainRpcEndpoint(chainId: number, endpoints = getChainRpcEndpoints(chainId)): BaseRpcEndpoint {
   const settings = getChainRpcSettings(chainId);
-  const endpoints = getChainRpcEndpoints(chainId);
   if (endpoints.length === 1) return endpoints[0];
 
-  const rotationPool = endpoints.filter((endpoint) => endpoint.label !== ALCHEMY_BACKSTOP_LABEL);
+  const rotationPool = endpoints.filter((endpoint) => endpoint.label === "public");
   const pool = rotationPool.length > 0 ? rotationPool : endpoints;
   if (pool.length === 1) return pool[0];
 
@@ -400,7 +403,7 @@ function getRotatingChainRpcEndpoint(chainId: number): BaseRpcEndpoint {
 function getOrderedChainRpcEndpoints(chainId: number): BaseRpcEndpoint[] {
   const endpoints = getChainRpcEndpoints(chainId);
   if (endpoints.length === 0) return [];
-  const first = getRotatingChainRpcEndpoint(chainId);
+  const first = getRotatingChainRpcEndpoint(chainId, endpoints);
   return [first, ...endpoints.filter((endpoint) => !isSameEndpoint(endpoint, first))];
 }
 
@@ -456,14 +459,18 @@ async function requestEndpoint<T>(
 
     const payload = (await response.json()) as {
       result?: T;
-      error?: { code?: number; message?: string };
+      error?: RpcErrorPayload;
     };
 
     if (payload.error) {
-      if (isDeterministicRpcError(payload.error)) {
-        throw new RpcDeterministicError(payload.error.message || "deterministic rpc error");
+      if (isDeterministicRpcError(payload.error, method)) {
+        throw new RpcDeterministicError(payload.error.message || "deterministic rpc error", payload.error);
       }
       throw new RpcTransportError(payload.error.message || "rpc error");
+    }
+
+    if (!Object.prototype.hasOwnProperty.call(payload, "result")) {
+      throw new RpcTransportError("Malformed RPC response: missing result");
     }
 
     return payload.result as T;
@@ -583,7 +590,7 @@ export async function chainAlchemyRpcRequest<T>(
 
 // Typed as any to avoid cross-package viem client incompatibilities in this workspace.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function createChainPublicClient(chainId: number, timeoutMs = 20_000): any {
+export function createChainPublicClient(chainId: number, timeoutMs = 5_000): any {
   if (chainId === BASE_CHAIN_ID) {
     return createBasePublicClient(timeoutMs);
   }

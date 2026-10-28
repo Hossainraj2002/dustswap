@@ -10,6 +10,7 @@
     "dev:booster-og-backfill": "nodemon --exec ts-node src/bots/boosterOgBackfill.ts",
     "build": "tsc",
     "test:optimism": "node --test tests/optimism-integration.test.cjs",
+    "test:public-rpc": "node --test tests/public-rpc-fallback.test.cjs tests/public-rpc-parity.test.cjs tests/swap-recorder-rpc.test.cjs",
     "test:optimism:sql": "node --test tests/optimism-migration.test.cjs",
     "start": "node dist/index.js",
     "start:early-bot": "node dist/bots/earlyContributorBot.js",

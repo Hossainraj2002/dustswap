@@ -216,9 +216,9 @@ function isSameBaseRpcEndpoint(a: BaseRpcEndpoint, b: BaseRpcEndpoint) {
 // (1-3 rps even at 20-40k spins/day) and latency-tolerant, so free endpoints serve them and
 // the paid Alchemy key drops to the END of the chain as a pure reliability backstop. At ~70k
 // reads/day this keeps ~6M CU/month off the paid key.
-// SCOPED HERE ONLY — the DustSweep quote firehose keeps its Alchemy-first shared pool. Moving
-// HIGH-volume traffic off the paid key is what caused the 2026-07-04 outage; never widen this.
-// Kill switch: POINTS_TX_READS_PREFER_FREE=false restores the shared-pool order.
+// The shared quote pool also uses public RPCs first. This lane keeps its own rotation and
+// excludes endpoints known to reject historical receipts.
+// POINTS_TX_READS_PREFER_FREE=false restores the shared public-first pool order.
 function preferFreeEndpointsForTxReads() {
   return process.env.POINTS_TX_READS_PREFER_FREE !== "false";
 }
@@ -234,8 +234,6 @@ function isAlchemyEndpoint(endpoint: BaseRpcEndpoint) {
 // an observed verification load well under 1 req/s, so this pool carries spin / check-in /
 // streak-save on its own and Alchemy is reached only if ALL of them fail.
 //
-// SCOPED TO THIS LANE ONLY. /dustsweep and /swap keep their existing Alchemy-first pools
-// untouched — those are latency-critical and fee-earning; this one is neither.
 // The list itself lives in baseRpc.ts so the points lane and the shared verification lane can
 // never drift apart.
 const DEFAULT_POINTS_TX_RPC_URLS = DEFAULT_VERIFICATION_RPC_URLS;
@@ -490,7 +488,7 @@ async function getRecentEntryPointLogsByTopics(
   topics: ReturnType<typeof encodeEventTopics>,
   lookbackBlocks: number = USER_OPERATION_LOG_LOOKBACK_BLOCKS
 ) {
-  const latestBlockHex = await alchemyRpcRequest<string>("eth_blockNumber", [], {
+  const latestBlockHex = await baseRpcRequest<string>("eth_blockNumber", [], {
     timeoutMs: 10_000,
   });
   const latestBlock = BigInt(latestBlockHex);
@@ -508,7 +506,7 @@ async function getRecentEntryPointLogsByTopics(
         ? toBlock - USER_OPERATION_LOG_CHUNK_BLOCKS + 1n
         : 0n;
     const boundedFromBlock = fromBlock > minBlock ? fromBlock : minBlock;
-    const page = await alchemyRpcRequest<typeof logs>(
+    const page = await baseRpcRequest<typeof logs>(
       "eth_getLogs",
       [
         {

@@ -69,6 +69,8 @@ The supplied F–M cube artwork is kept in `assets/branding/memefun-logo-source.
 
 ## Scripts
 
+Wallet and live market RPC reads use public Base/Base Sepolia endpoints by default. `NEXT_PUBLIC_BASE_RPC_URLS` and `NEXT_PUBLIC_BASE_SEPOLIA_RPC_URLS` can add endpoints; configured Alchemy URLs and `NEXT_PUBLIC_ALCHEMY_API_KEY` are tried only after public endpoints fail. Normal rotation stays within the public pool.
+
 ```bash
 pnpm dev                 # http://localhost:3100 (preview unless the live variables are set)
 pnpm typecheck && pnpm lint && pnpm test

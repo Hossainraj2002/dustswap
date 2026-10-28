@@ -49,7 +49,7 @@ export async function createDeps(): Promise<Running> {
   const store = createReadStore(readPool);
   const app = createAppStore(appPool);
   const media = createMediaStore();
-  const client = createPublicClient({ chain: chain.viemChain, transport: fallback(chain.rpcUrls.map((url) => http(url, { timeout: 10_000 }))) });
+  const client = createPublicClient({ chain: chain.viemChain, transport: fallback(chain.rpcUrls.map((url) => http(url, { timeout: 10_000 })), { rank: false }) });
   // The audience callback runs only after both services are constructed and started below.
   const snapshot = new MarketSnapshot({ store, app, media, hasAudience: () => hub.size > 0 });
   const hub: LiveHub = new LiveHub({ store, snapshot, onActivity: () => snapshot.noteActivity() });

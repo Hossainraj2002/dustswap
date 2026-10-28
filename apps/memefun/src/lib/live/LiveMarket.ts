@@ -1,4 +1,4 @@
-import { type Address, type Hash, type PublicClient, createPublicClient, erc20Abi, getAddress, http, parseAbi, toHex, zeroAddress } from "viem";
+import { type Address, type Hash, type PublicClient, createPublicClient, erc20Abi, getAddress, parseAbi, toHex, zeroAddress } from "viem";
 import { launchFeeBps } from "@/core/antiSnipe";
 import type { LaunchCampaignClaimTicket, LaunchCampaignSummary, LaunchCampaignWalletStatus } from "@/core/campaign";
 import { COIN_DECIMALS, COIN_SUPPLY_HUMAN } from "@/core/constants";
@@ -36,7 +36,7 @@ import type {
 } from "@/lib/market/types";
 import { DEFAULT_SLIPPAGE_BPS, MAX_SLIPPAGE_BPS } from "@/lib/trade/cta";
 import { findPair, mergePairCatalog, pairId, pairUnavailableReason, type PairCatalogSort } from "@/lib/market/pairs";
-import { getRpcUrlsForChain, rotatingFetch } from "@/lib/wallet/rpc";
+import { createRpcTransport, getRpcUrlsForChain } from "@/lib/wallet/rpc";
 import { ApiError, type ApiClient, createApi, dataUrlToBlob } from "./api";
 import { API_URL, DeploymentMismatch, resolveDeployment } from "./config";
 import { clearSession, loadSession, saveSession, signIn } from "./session";
@@ -193,7 +193,7 @@ export class LiveMarket implements Market {
       options.client ??
       (createPublicClient({
         chain: TARGET_CHAIN,
-        transport: http(getRpcUrlsForChain(TARGET_CHAIN_ID)[0], { fetchFn: rotatingFetch(getRpcUrlsForChain(TARGET_CHAIN_ID)) }),
+        transport: createRpcTransport(getRpcUrlsForChain(TARGET_CHAIN_ID)),
       }) as PublicClient);
   }
 

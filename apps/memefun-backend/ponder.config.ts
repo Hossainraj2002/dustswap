@@ -2,7 +2,7 @@ import { createConfig, factory } from "ponder";
 import { getAbiItem } from "viem";
 
 import { coinTransferAbi } from "./lib/abi-extra";
-import { chainSettings } from "./lib/chain";
+import { chainRpcTransport, chainSettings } from "./lib/chain";
 import { ponderPoolConfig } from "./lib/db";
 import { loadDeployment } from "./lib/deployment";
 import {
@@ -33,7 +33,7 @@ export default createConfig({
   chains: {
     memefun: {
       id: chain.id,
-      rpc: chain.rpcUrls,
+      rpc: chainRpcTransport(chain),
       pollingInterval: chain.pollingIntervalMs,
       // A local chain is rebuilt from scratch on every `pnpm dev:chain`: never reuse cached RPC data.
       disableCache: chain.key === "local",

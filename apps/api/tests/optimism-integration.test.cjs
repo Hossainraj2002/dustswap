@@ -36,6 +36,9 @@ let campaignIntakes = 0;
 let nativeQuoteOverride = null;
 let fetchQuoteOverride = null;
 let discoveryBalances = [];
+let discoveryAlchemyCalls = 0;
+let discoveryAlchemyError = null;
+let discoveryAlchemyOverride = null;
 const routeabilityRows = [];
 const routeabilityWrites = [];
 let whitelistRows = [];
@@ -55,6 +58,9 @@ process.env.DUST_SWEEP_ENABLE_LIFI_10 = "false";
 process.env.DUST_SWEEP_NATIVE_QUOTE_BUDGET_MS_10 = "500";
 process.env.DUST_SWEEP_AGG_MIN_INTERVAL_MS_KYBER = "0";
 process.env.DUST_SWEEP_AGG_MIN_INTERVAL_MS_LIFI = "0";
+process.env.DUST_SWEEP_BLOCKSCOUT_BALANCE_MAX_RETRIES = "0";
+process.env.DUST_SWEEP_BLOCKSCOUT_BALANCE_MAX_PAGES = "1";
+process.env.DUST_SWEEP_BLOCKSCOUT_BALANCE_TIMEOUT_MS = "2000";
 // The API's advisory market lookup is isolated too; no real HTTP traffic occurs.
 global.fetch = async (url, options) => {
   if (fetchQuoteOverride) {
@@ -150,6 +156,9 @@ Module._load = function (request, parent, ...rest) {
   if (parent?.filename.endsWith(`${path.sep}routes${path.sep}dustsweep.ts`)) {
     if (request === "../utils/chainRpc") return { ...rpc, chainRpcRequest: fixtureRpc, chainAlchemyRpcRequest: async (chainId, method, params) => {
       assert.equal(chainId, 10); assert.equal(method, "alchemy_getTokenBalances");
+      discoveryAlchemyCalls += 1;
+      if (discoveryAlchemyError) throw discoveryAlchemyError;
+      if (discoveryAlchemyOverride) return discoveryAlchemyOverride(params);
       const options = params[2];
       const start = Number(options.pageKey ?? 0);
       const end = start + options.maxCount;
@@ -895,6 +904,195 @@ test("positive subcent OP execution gas remains visible and warns for a smaller 
     assert.ok(Math.abs(quoted.body.gasToBasketRatio - (0.0009 / 0.00049)) < 0.00001);
     assert.ok(quoted.body.gasToBasketRatio > 1, "execution gas exceeds the actual net basket value");
   } finally { nativeQuoteOverride = null; }
+});
+
+test("public wallet discovery succeeds without touching an overdue Alchemy key", async () => {
+  const before = discoveryAlchemyCalls;
+  discoveryAlchemyError = new Error("Alchemy account overdue");
+  fetchQuoteOverride = (url) => {
+    if (String(url).includes("optimism.blockscout.com") && String(url).includes("token-balances")) {
+      return Response.json([{ token: { address_hash: WETH, type: "ERC-20", symbol: "WETH", name: "Wrapped Ether", decimals: "18" }, value: AMOUNT }]);
+    }
+  };
+  try {
+    const response = await dustsweepRoutes.request("/tokens?address=0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa&chainId=10&refresh=1");
+    const result = await response.json();
+    assert.equal(response.status, 200, JSON.stringify(result));
+    assert.equal(result.discovery.source, "blockscout");
+    assert.equal(result.discovery.erc20BalanceCount, 1);
+    assert.equal(discoveryAlchemyCalls, before);
+  } finally { fetchQuoteOverride = null; discoveryAlchemyError = null; }
+});
+
+test("an empty public wallet is a complete result and does not invoke Alchemy", async () => {
+  const before = discoveryAlchemyCalls;
+  fetchQuoteOverride = (url) => String(url).includes("token-balances") ? Response.json([]) : undefined;
+  try {
+    const response = await dustsweepRoutes.request("/tokens?address=0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb&chainId=10&refresh=1");
+    const result = await response.json();
+    assert.equal(response.status, 200, JSON.stringify(result));
+    assert.equal(result.discovery.source, "blockscout");
+    assert.equal(result.discovery.erc20BalanceCount, 0);
+    assert.equal(discoveryAlchemyCalls, before);
+  } finally { fetchQuoteOverride = null; }
+});
+
+test("malformed public discovery responses fall back to Alchemy instead of hiding balances", async () => {
+  const before = discoveryAlchemyCalls;
+  fetchQuoteOverride = (url) => String(url).includes("optimism.blockscout.com") ? Response.json({}) : undefined;
+  try {
+    const response = await dustsweepRoutes.request("/tokens?address=0xcccccccccccccccccccccccccccccccccccccccc&chainId=10&refresh=1");
+    const result = await response.json();
+    assert.equal(response.status, 200, JSON.stringify(result));
+    assert.equal(result.discovery.source, "alchemy");
+    assert.match(result.discovery.providerError, /blockscout/);
+    assert.equal(discoveryAlchemyCalls, before + 1);
+  } finally { fetchQuoteOverride = null; }
+});
+
+test("a capped public token scan uses Alchemy to preserve complete wallet discovery", async () => {
+  const before = discoveryAlchemyCalls;
+  fetchQuoteOverride = (url) => {
+    const value = String(url);
+    if (!value.includes("optimism.blockscout.com")) return undefined;
+    if (value.includes("/tokens?")) return Response.json({ items: [], next_page_params: { token_contract_address_hash: WETH } });
+    return new Response("unavailable", { status: 503 });
+  };
+  try {
+    const response = await dustsweepRoutes.request("/tokens?address=0xabababababababababababababababababababab&chainId=10&refresh=1");
+    const result = await response.json();
+    assert.equal(response.status, 200, JSON.stringify(result));
+    assert.equal(result.discovery.source, "alchemy");
+    assert.equal(result.discovery.truncated, false);
+    assert.match(result.discovery.providerError, /truncated/);
+    assert.equal(discoveryAlchemyCalls, before + 1);
+  } finally { fetchQuoteOverride = null; }
+});
+
+test("a hanging public indexer times out before invoking the Alchemy fallback", async () => {
+  const before = discoveryAlchemyCalls;
+  let startedPublicRequests = 0;
+  fetchQuoteOverride = (url, options) => {
+    if (!String(url).includes("optimism.blockscout.com")) return undefined;
+    startedPublicRequests += 1;
+    return new Promise((_resolve, reject) => {
+      if (options.signal.aborted) reject(options.signal.reason);
+      else options.signal.addEventListener("abort", () => reject(options.signal.reason), { once: true });
+    });
+  };
+  const started = performance.now();
+  // Real fetch sockets keep Node alive; this abort-only fixture needs an equivalent handle
+  // because AbortSignal.timeout intentionally uses an unreferenced timer.
+  const keepAlive = setInterval(() => {}, 1000);
+  try {
+    const response = await dustsweepRoutes.request("/tokens?address=0xcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd&chainId=10&refresh=1");
+    const result = await response.json();
+    assert.equal(response.status, 200, JSON.stringify(result));
+    assert.equal(result.discovery.source, "alchemy");
+    assert.equal(discoveryAlchemyCalls, before + 1);
+    assert.equal(startedPublicRequests, 2, "deadline must stop pagination from starting after both snapshots time out");
+    assert.ok(performance.now() - started < 4000, "one shared timeout bounds the whole public discovery attempt");
+  } finally { clearInterval(keepAlive); fetchQuoteOverride = null; }
+});
+
+test("a completed public snapshot cancels the losing provider request", async () => {
+  let cancelled = false;
+  fetchQuoteOverride = (url, options) => {
+    const value = String(url);
+    if (!value.includes("optimism.blockscout.com")) return undefined;
+    if (value.includes("token-balances")) return Response.json([]);
+    return new Promise((_resolve, reject) => {
+      options.signal.addEventListener("abort", () => {
+        cancelled = true;
+        reject(options.signal.reason);
+      }, { once: true });
+    });
+  };
+  try {
+    const response = await dustsweepRoutes.request("/tokens?address=0x1212121212121212121212121212121212121212&chainId=10&refresh=1");
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).discovery.source, "blockscout");
+    assert.equal(cancelled, true, "the losing request must not keep using public capacity after discovery succeeds");
+  } finally { fetchQuoteOverride = null; }
+});
+
+test("a snapshot carrying a pagination cursor cannot hide the remaining tokens", async () => {
+  const before = discoveryAlchemyCalls;
+  fetchQuoteOverride = (url) => {
+    const value = String(url);
+    if (!value.includes("optimism.blockscout.com")) return undefined;
+    if (value.includes("token-balances")) return Response.json({ items: [], next_page_params: { cursor: "more" } });
+    if (value.includes("/tokens?")) return Response.json({ items: [{ token: { address_hash: WETH, type: "ERC-20", symbol: "WETH", name: "Wrapped Ether", decimals: "18" }, value: AMOUNT }], next_page_params: null });
+    return new Response("unavailable", { status: 503 });
+  };
+  try {
+    const response = await dustsweepRoutes.request("/tokens?address=0x1313131313131313131313131313131313131313&chainId=10&refresh=1");
+    const result = await response.json();
+    assert.equal(response.status, 200, JSON.stringify(result));
+    assert.equal(result.discovery.source, "blockscout");
+    assert.equal(result.discovery.erc20BalanceCount, 1);
+    assert.equal(result.discovery.truncated, false);
+    assert.equal(discoveryAlchemyCalls, before);
+  } finally { fetchQuoteOverride = null; }
+});
+
+test("a repeated Alchemy pagination cursor reports an incomplete scan", async () => {
+  discoveryAlchemyOverride = () => ({ tokenBalances: [], pageKey: "stuck-cursor" });
+  try {
+    const response = await dustsweepRoutes.request("/tokens?address=0x1414141414141414141414141414141414141414&chainId=10&refresh=1");
+    const result = await response.json();
+    assert.equal(response.status, 200, JSON.stringify(result));
+    assert.equal(result.discovery.source, "alchemy");
+    assert.equal(result.discovery.truncated, true);
+  } finally { discoveryAlchemyOverride = null; }
+});
+
+test("cycling Alchemy cursors stop without an unbounded discovery loop", async () => {
+  let pages = 0;
+  discoveryAlchemyOverride = (params) => {
+    pages += 1;
+    if (pages > 3) throw new Error("Discovery did not stop at a repeated cursor");
+    return { tokenBalances: [], pageKey: params[2].pageKey === "one" ? "two" : "one" };
+  };
+  try {
+    const response = await dustsweepRoutes.request("/tokens?address=0x1616161616161616161616161616161616161616&chainId=10&refresh=1");
+    const result = await response.json();
+    assert.equal(response.status, 200, JSON.stringify(result));
+    assert.equal(result.discovery.truncated, true);
+    assert.equal(pages, 3);
+  } finally { discoveryAlchemyOverride = null; }
+});
+
+test("a malformed Alchemy result cannot become a successful empty wallet", async () => {
+  const actualNow = Date.now;
+  // Let this failure's cooldown expire before later cases without waiting in the suite.
+  Date.now = () => actualNow() - 180_000;
+  discoveryAlchemyOverride = () => ({});
+  try {
+    const response = await dustsweepRoutes.request("/tokens?address=0x1515151515151515151515151515151515151515&chainId=10&refresh=1");
+    assert.equal(response.status, 503);
+    assert.equal((await response.json()).code, "BALANCE_DISCOVERY_UNAVAILABLE");
+  } finally { Date.now = actualNow; discoveryAlchemyOverride = null; }
+});
+
+test("unavailable discovery reports failure and cools off the overdue Alchemy fallback", async () => {
+  const before = discoveryAlchemyCalls;
+  discoveryAlchemyError = new Error("Alchemy account overdue");
+  try {
+    for (const address of ["0xdddddddddddddddddddddddddddddddddddddddd", "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"]) {
+      const response = await dustsweepRoutes.request(`/tokens?address=${address}&chainId=10&refresh=1`);
+      const result = await response.json();
+      assert.equal(response.status, 503, JSON.stringify(result));
+      assert.ok(result.code, JSON.stringify(result));
+    }
+    assert.equal(discoveryAlchemyCalls, before + 1);
+    // Public recovery still works immediately while the Alchemy breaker is open.
+    fetchQuoteOverride = (url) => String(url).includes("token-balances") ? Response.json([]) : undefined;
+    const response = await dustsweepRoutes.request("/tokens?address=0xffffffffffffffffffffffffffffffffffffffff&chainId=10&refresh=1");
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).discovery.source, "blockscout");
+    assert.equal(discoveryAlchemyCalls, before + 1);
+  } finally { discoveryAlchemyError = null; fetchQuoteOverride = null; }
 });
 
 test("Optimism flag removal immediately rejects builds", async () => {

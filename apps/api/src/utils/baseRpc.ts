@@ -2,8 +2,16 @@ import { createPublicClient, custom } from "viem";
 import { base } from "viem/chains";
 
 const BASE_PUBLIC_RPC_URL = "https://mainnet.base.org";
+// Independent public operators keep a single throttled node from sending normal reads to
+// Alchemy. All public endpoints are tried before the paid backstop.
+export const DEFAULT_BASE_RPC_URLS = [
+  BASE_PUBLIC_RPC_URL,
+  "https://base-mainnet.public.blastapi.io",
+  "https://base-pokt.nodies.app",
+  "https://base.gateway.tenderly.co",
+];
 const BASE_CHAIN_ID = 8453;
-const DEFAULT_ROTATION_CALLS = 100;
+const DEFAULT_ROTATION_CALLS = 1;
 const DEFAULT_ALCHEMY_ROTATION_CALLS = 1;
 const DEFAULT_ALCHEMY_HEDGE_COUNT = 2;
 
@@ -15,6 +23,16 @@ let requestId = 1;
 
 export class RpcDeterministicError extends Error {
   override name = "RpcDeterministicError" as const;
+  readonly code?: number;
+  readonly data?: unknown;
+  readonly details: string;
+
+  constructor(message: string, error?: RpcErrorPayload) {
+    super(message);
+    this.code = error?.code;
+    this.data = error?.data;
+    this.details = message;
+  }
 }
 
 export class RpcTransportError extends Error {
@@ -25,20 +43,37 @@ export class RpcRateLimitError extends Error {
   override name = "RpcRateLimitError" as const;
 }
 
-function isDeterministicRpcError(error?: { code?: number; message?: string }): boolean {
+export type RpcErrorPayload = { code?: number; message?: string; data?: unknown };
+
+export function isDeterministicRpcError(error?: RpcErrorPayload, method?: string): boolean {
+  // Unsupported methods and generic -32000 errors may be node capability/rate limits;
+  // fall through to another public operator instead of treating those as contract results.
   const msg = String(error?.message || "").toLowerCase();
+  // A rejected signed transaction cannot be repaired by changing providers. Preserve its
+  // original rejection instead of walking every public node and ending on an overdue key.
+  if (method === "eth_sendRawTransaction" || method === "eth_sendTransaction") {
+    if (error?.code === -32003 || [
+      "nonce too low",
+      "nonce too high",
+      "insufficient funds",
+      "replacement transaction underpriced",
+      "transaction underpriced",
+      "already known",
+      "invalid sender",
+      "invalid signature",
+      "intrinsic gas too low",
+    ].some((fragment) => msg.includes(fragment))) return true;
+  }
   return (
     msg.includes("execution reverted") ||
     msg.includes("revert") ||
     msg.includes("no pool") ||
     msg.includes("insufficient liquidity") ||
-    msg.includes("method not found") ||
     msg.includes("invalid opcode") ||
     msg.includes("out of gas") ||
     msg.includes("stack underflow") ||
     msg.includes("invalid jump") ||
-    msg.includes("invalid method") ||
-    (error?.code !== undefined && (error.code === -32601 || error.code === -32000 || error.code === 3))
+    error?.code === 3
   );
 }
 
@@ -103,10 +138,6 @@ function getAlchemyHedgeCount(endpointCount: number) {
   return Math.max(1, Math.min(endpointCount, Math.floor(parsed)));
 }
 
-function shouldUsePublicFallback() {
-  return process.env.BASE_RPC_PUBLIC_FALLBACK !== "0";
-}
-
 function isSameEndpoint(a: BaseRpcEndpoint, b: BaseRpcEndpoint) {
   return (
     a.url === b.url &&
@@ -131,22 +162,16 @@ function getPreferredAlchemyKeyUrls() {
   );
 }
 
-// How Alchemy keyed endpoints participate in the GENERIC pool (cheap eth_call/receipt reads:
-// DEX quote probes, spin/check-in/wallet-link tx verification). The dedicated alchemyRpcRequest
-// lane (alchemy_getTokenBalances, alchemy_getAssetTransfers, 4337 userOp APIs) always keeps them.
-//   ALCHEMY_BASE_RPC_DEDICATED_ONLY unset/false → "first": legacy — Alchemy leads the pool and
-//     the failure-fallback order (burns paid CU on quoter probes).
-//   =last  → "last": RECOMMENDED with a paid key — Alchemy sits at the very END of the pool and
-//     never leads rotation, so it only pays CU when EVERY free endpoint has failed. Zero
-//     reliability compromise, near-zero burn.
-//   =true  → "off": Alchemy fully excluded from the generic pool.
-type AlchemyGenericPoolMode = "first" | "last" | "off";
+// Standard RPC always uses public nodes first, including deployments with legacy "first",
+// false, or PUBLIC_FALLBACK=0 settings. =true still excludes Alchemy from the generic pool;
+// all other values retain it as the final backstop. The dedicated Token/Transfers/4337 lane
+// remains available independently of this setting.
+type AlchemyGenericPoolMode = "last" | "off";
 
 function getAlchemyGenericPoolMode(): AlchemyGenericPoolMode {
   const raw = String(process.env.ALCHEMY_BASE_RPC_DEDICATED_ONLY || "").toLowerCase();
   if (["1", "true", "yes"].includes(raw)) return "off";
-  if (raw === "last") return "last";
-  return "first";
+  return "last";
 }
 
 const ALCHEMY_BACKSTOP_LABEL = "alchemy-backstop";
@@ -156,22 +181,30 @@ function getAlchemyGenericPoolUrls() {
     [
       ...splitEnv(process.env.ALCHEMY_BASE_RPC_URLS),
       ...splitEnv(process.env.ALCHEMY_BASE_RPC),
+      ...splitEnv(process.env.BASE_RPC_URLS).filter(isAlchemyRpcUrl),
+      ...splitEnv(process.env.BASE_RPC_URL).filter(isAlchemyRpcUrl),
+      ...getAdditionalConfiguredRpcUrls().filter(isAlchemyRpcUrl),
       ...getPreferredAlchemyKeyUrls(),
     ].filter(isHttpsUrl),
   );
 }
 
-function getPreferredBaseRpcUrls() {
-  const alchemyPoolUrls =
-    getAlchemyGenericPoolMode() === "first" ? getAlchemyGenericPoolUrls() : [];
+function getAdditionalConfiguredRpcUrls() {
+  return [
+    process.env.NEXT_PUBLIC_BASE_RPC_URL,
+    process.env.RPC_URL_8453,
+    process.env.CHAIN_8453_RPC_URL,
+  ].flatMap(splitEnv);
+}
 
-  return unique(
-    [
-      ...alchemyPoolUrls,
-      ...splitEnv(process.env.BASE_RPC_URLS),
-      ...splitEnv(process.env.BASE_RPC_URL),
-    ].filter(isHttpsUrl),
-  );
+export function isAlchemyRpcUrl(url: string) {
+  try {
+    const hostname = new URL(url).hostname.toLowerCase();
+    return hostname === "alchemy.com" || hostname.endsWith(".alchemy.com") ||
+      hostname === "alchemyapi.io" || hostname.endsWith(".alchemyapi.io");
+  } catch {
+    return false;
+  }
 }
 
 // How many Blockscout keyed entries join a SINGLE request's endpoint chain. Previously ALL
@@ -213,11 +246,12 @@ export function getAlchemyRpcEndpoints(): BaseRpcEndpoint[] {
   const explicitAlchemyUrls = [
     ...splitEnv(process.env.ALCHEMY_BASE_RPC_URLS),
     ...splitEnv(process.env.ALCHEMY_BASE_RPC),
-  ].filter((url) => isHttpsUrl(url) && url.includes("alchemy"));
+  ].filter((url) => isHttpsUrl(url) && isAlchemyRpcUrl(url));
 
   return unique([
     ...explicitAlchemyUrls,
     ...getPreferredAlchemyKeyUrls(),
+    ...getAlchemyGenericPoolUrls().filter(isAlchemyRpcUrl),
   ]).map((url) => ({
     url,
     label: "alchemy-dedicated",
@@ -225,14 +259,20 @@ export function getAlchemyRpcEndpoints(): BaseRpcEndpoint[] {
 }
 
 export function getBaseRpcEndpoints(): BaseRpcEndpoint[] {
-  const endpoints: BaseRpcEndpoint[] = getPreferredBaseRpcUrls().map((url) => ({
-    url,
-    label: url.includes("alchemy") ? "alchemy" : url.includes("blockscout") ? "blockscout" : "custom",
-  }));
+  const publicUrls = unique(DEFAULT_BASE_RPC_URLS);
+  const configuredUrls = unique([
+    ...splitEnv(process.env.BASE_RPC_URLS),
+    ...splitEnv(process.env.BASE_RPC_URL),
+    ...getAdditionalConfiguredRpcUrls(),
+  ].filter((url) => isHttpsUrl(url) && !isAlchemyRpcUrl(url) && !publicUrls.includes(url)));
+  const endpoints: BaseRpcEndpoint[] = [
+    ...publicUrls.map((url) => ({ url, label: "public" })),
+    ...configuredUrls.map((url) => ({
+      url,
+      label: url.includes("blockscout") ? "blockscout" : "custom",
+    })),
+  ];
   const withBlockscout = [...endpoints, ...getBlockscoutRpcEndpoints()];
-  const withPublicFallback = shouldUsePublicFallback()
-    ? [...withBlockscout, { url: BASE_PUBLIC_RPC_URL, label: "public" }]
-    : withBlockscout;
 
   // "last" mode: the paid Alchemy endpoints go AFTER even the public fallback — pure backstop.
   // They are excluded from rotation leadership below, so they only serve a request when every
@@ -240,12 +280,12 @@ export function getBaseRpcEndpoints(): BaseRpcEndpoint[] {
   const withAlchemyBackstop =
     getAlchemyGenericPoolMode() === "last"
       ? [
-          ...withPublicFallback,
+          ...withBlockscout,
           ...getAlchemyGenericPoolUrls()
-            .filter((url) => !withPublicFallback.some((endpoint) => endpoint.url === url))
+            .filter((url) => !withBlockscout.some((endpoint) => endpoint.url === url))
             .map((url) => ({ url, label: ALCHEMY_BACKSTOP_LABEL })),
         ]
-      : withPublicFallback;
+      : withBlockscout;
 
   return withAlchemyBackstop.length > 0
     ? withAlchemyBackstop
@@ -256,14 +296,13 @@ export function getBaseRpcUrls() {
   return getBaseRpcEndpoints().map((endpoint) => endpoint.url);
 }
 
-export function getRotatingBaseRpcEndpoint() {
-  const endpoints = getBaseRpcEndpoints();
+export function getRotatingBaseRpcEndpoint(endpoints = getBaseRpcEndpoints()) {
   if (endpoints.length === 1) return endpoints[0];
 
   // Backstop endpoints never LEAD a request — they only serve as the final failure fallback
   // via getOrderedBaseRpcEndpoints. Rotation cycles over the free pool only.
   const rotationPool = endpoints.filter(
-    (endpoint) => endpoint.label !== ALCHEMY_BACKSTOP_LABEL,
+    (endpoint) => endpoint.label === "public",
   );
   const pool = rotationPool.length > 0 ? rotationPool : endpoints;
   if (pool.length === 1) return pool[0];
@@ -285,7 +324,7 @@ export function getRotatingBaseRpcUrl() {
 
 export function getOrderedBaseRpcEndpoints() {
   const endpoints = getBaseRpcEndpoints();
-  const first = getRotatingBaseRpcEndpoint();
+  const first = getRotatingBaseRpcEndpoint(endpoints);
   return [first, ...endpoints.filter((endpoint) => !isSameEndpoint(endpoint, first))];
 }
 
@@ -347,14 +386,18 @@ async function requestAlchemyEndpoint<T>(
 
     const payload = (await response.json()) as {
       result?: T;
-      error?: { code?: number; message?: string };
+      error?: RpcErrorPayload;
     };
 
     if (payload.error) {
-      if (isDeterministicRpcError(payload.error)) {
-        throw new RpcDeterministicError(payload.error.message || "Alchemy deterministic error");
+      if (isDeterministicRpcError(payload.error, method)) {
+        throw new RpcDeterministicError(payload.error.message || "Alchemy deterministic error", payload.error);
       }
       throw new RpcTransportError(payload.error.message || "Alchemy RPC error");
+    }
+
+    if (!Object.prototype.hasOwnProperty.call(payload, "result")) {
+      throw new RpcTransportError("Malformed RPC response: missing result");
     }
 
     return payload.result as T;
@@ -365,7 +408,7 @@ async function requestAlchemyEndpoint<T>(
 
 // Typed as any to avoid cross-package viem client incompatibilities in this workspace.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function createBasePublicClient(timeoutMs = 20_000): any {
+export function createBasePublicClient(timeoutMs = 5_000): any {
   return createPublicClient({
     chain: base,
     transport: custom(
@@ -396,31 +439,24 @@ export function createBasePublicClient(timeoutMs = 20_000): any {
 // checks). They earn no fee, nobody is waiting on them, and they are low volume — so they run on
 // free public nodes and only reach Alchemy if every one of those fails.
 //
-// This is NOT for the DustSweep quote firehose or swap execution. Those stay on their existing
-// Alchemy-first pool: moving HIGH-volume latency-critical traffic onto free nodes is what caused
-// the 2026-07-04 outage.
-//
 // Defaults live in code on purpose — no env var has to be set for this to work. Each URL was
 // verified live on 2026-08-02 against eth_getTransactionByHash / eth_getTransactionReceipt /
 // eth_getBlockByNumber: 30/30 sequential, 10/10 burst, >=24h of history, ~95 req/s combined.
-export const DEFAULT_VERIFICATION_RPC_URLS = [
-  "https://mainnet.base.org",
-  "https://base-mainnet.public.blastapi.io",
-  "https://base-pokt.nodies.app",
-  "https://base.gateway.tenderly.co",
-];
+export const DEFAULT_VERIFICATION_RPC_URLS = DEFAULT_BASE_RPC_URLS;
 
-// base-rpc.publicnode.com answers eth_getTransactionByHash but returns HTTP 403 "Archive requests
-// require a personal token" for eth_getTransactionReceipt (measured 0/30), and Blockscout's keys
-// are 401 or capped at 5 req/s. Both sit in front of Alchemy in the shared pool, so a leader miss
-// fell straight through to the paid key — that fall-through is the bulk of the Alchemy bill.
+// base-rpc.publicnode.com rejected receipt reads with HTTP 403 during verification, and
+// Blockscout's keyed RPC has a smaller rate limit. Skip both in this lane so a failed public
+// receipt read moves directly to another verified public operator before the Alchemy backstop.
 const VERIFICATION_EXCLUDED_URL_FRAGMENTS = ["base-rpc.publicnode.com", "blockscout"];
 
 let verificationRotationIndex = 0;
 
 function getVerificationRpcUrls() {
   const configured = splitEnv(process.env.BASE_VERIFICATION_RPC_URLS);
-  return configured.length > 0 ? configured : DEFAULT_VERIFICATION_RPC_URLS;
+  return unique([
+    ...DEFAULT_VERIFICATION_RPC_URLS,
+    ...configured.filter((url) => !isAlchemyRpcUrl(url)),
+  ]);
 }
 
 export function getVerificationRpcEndpoints(): BaseRpcEndpoint[] {
@@ -447,14 +483,15 @@ export function getVerificationRpcEndpoints(): BaseRpcEndpoint[] {
     ...free,
     ...shared.filter((endpoint) => !endpoint.url.includes("alchemy")),
     ...shared.filter((endpoint) => endpoint.url.includes("alchemy")),
+    ...splitEnv(process.env.BASE_VERIFICATION_RPC_URLS)
+      .filter((url) => isHttpsUrl(url) && isAlchemyRpcUrl(url) && !shared.some((endpoint) => endpoint.url === url))
+      .map((url) => ({ url, label: ALCHEMY_BACKSTOP_LABEL })),
   ];
 }
 
-// In THIS lane an "unsupported method" must NOT short-circuit. Public nodes do not implement
-// every RPC (eth_getUserOperationReceipt is the obvious one), and the entire point of the lane is
-// to fall through to the Alchemy backstop when a free node cannot answer. Only a real execution
-// result counts as deterministic here — unlike isDeterministicRpcError, which also treats
-// "method not found" as final and would strand us on a node that simply lacks the method.
+// Public nodes do not implement every RPC (eth_getUserOperationReceipt is the obvious one).
+// Unsupported methods fail over to the next node and eventually the Alchemy backstop; only
+// an actual execution revert stops retries. Generic reads follow the same capability policy.
 function isDeterministicVerificationError(error?: { code?: number; message?: string }) {
   const msg = String(error?.message || "").toLowerCase();
   return msg.includes("execution reverted") || msg.includes("revert") || error?.code === 3;
@@ -496,14 +533,18 @@ export async function baseVerificationRequest<T>(
 
       const payload = (await response.json()) as {
         result?: T;
-        error?: { code?: number; message?: string };
+        error?: RpcErrorPayload;
       };
 
       if (payload.error) {
         if (isDeterministicVerificationError(payload.error)) {
-          throw new RpcDeterministicError(payload.error.message || "deterministic rpc error");
+          throw new RpcDeterministicError(payload.error.message || "deterministic rpc error", payload.error);
         }
         throw new RpcTransportError(payload.error.message || "rpc error");
+      }
+
+      if (!Object.prototype.hasOwnProperty.call(payload, "result")) {
+        throw new RpcTransportError("Malformed RPC response: missing result");
       }
 
       return payload.result as T;
@@ -648,14 +689,18 @@ export async function baseRpcRequest<T>(
 
       const payload = (await response.json()) as {
         result?: T;
-        error?: { code?: number; message?: string };
+        error?: RpcErrorPayload;
       };
 
       if (payload.error) {
-        if (isDeterministicRpcError(payload.error)) {
-          throw new RpcDeterministicError(payload.error.message || "deterministic rpc error");
+        if (isDeterministicRpcError(payload.error, method)) {
+          throw new RpcDeterministicError(payload.error.message || "deterministic rpc error", payload.error);
         }
         throw new RpcTransportError(payload.error.message || "rpc error");
+      }
+
+      if (!Object.prototype.hasOwnProperty.call(payload, "result")) {
+        throw new RpcTransportError("Malformed RPC response: missing result");
       }
 
       return payload.result as T;
