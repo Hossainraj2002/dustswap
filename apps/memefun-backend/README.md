@@ -158,6 +158,22 @@ pnpm verify-index                           # the running dev index against the 
 
 ## Base Sepolia (testnet) on Railway
 
+For the economy gateway (`node scripts/economy-api.mjs`), Railway's deployment probe must use
+`/health`. That endpoint reports the gateway process and worker phase; it does not claim that
+indexing has finished. Keep `/ready` as the strict indexing-readiness check and keep the keeper's
+captured-chain-head check enabled. The first backfill can outlast a normal cold wake, so the
+worker gets a bounded one-hour warmup by default (`MEMEFUN_API_WARMUP_MS`, up to one day), while
+each user request still receives a retryable response within its short wait budget.
+
+`MEMEFUN_INDEX_SCHEMA` explicitly overrides Railway's deployment ID when resuming the **same
+Ponder version and indexing build**. Otherwise each deployment keeps its own physical schema.
+Ponder still verifies build compatibility and obtains its exclusive schema writer lock; do not
+drop schemas, force-unlock them, or point a different indexing build at an old schema. Historical
+RPC requests use a shared `MEMEFUN_INDEXER_RPC_RPS` budget (default 5 requests/second) around the
+entire public-first fallback transport. This prevents Ponder's adaptive client from flooding a
+public node whose throttling was hidden by a later successful provider. Normal API and keeper
+reads keep their existing transports; local development indexing is not throttled.
+
 Railway project `memefun-testnet` (not DustSwap's `mellow-wisdom`): Postgres, a storage bucket and three services built from `main`, each watching only its own folder:
 
 | Service | Root | Start command | Notes |

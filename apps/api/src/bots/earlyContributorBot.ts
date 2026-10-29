@@ -5,6 +5,8 @@ import {
   Client,
   Events,
   GatewayIntentBits,
+  REST,
+  Routes,
   type Message,
 } from "discord.js";
 import {
@@ -28,6 +30,15 @@ import {
 } from "./antiScamLinkFilter";
 import { loadBoosterOgConfig, startBoosterOgRoleWatcher } from "./boosterOgRole";
 import { startApiWatchdog } from "./apiWatchdog";
+import {
+  getBotHealthResponse,
+  waitForRequiredDiscordIntents,
+  type BotHealthState,
+  type DiscordApplicationInfo,
+} from "./discordIntentPreflight";
+
+let healthState: BotHealthState = { status: "starting", missingIntents: [] };
+let activeClient: Client | null = null;
 
 const DEBUG_LOGGING_ENABLED = /^(1|true|yes|on)$/i.test(
   process.env.EARLY_CONTRIBUTOR_BOT_DEBUG?.trim() || ""
@@ -231,10 +242,11 @@ function startHealthServer() {
     return;
   }
 
-  const server = createServer((_req, res) => {
-    res.statusCode = 200;
+  const server = createServer((req, res) => {
+    const health = getBotHealthResponse(healthState, activeClient?.isReady() ?? false, req.url);
+    res.statusCode = health.statusCode;
     res.setHeader("content-type", "application/json");
-    res.end(JSON.stringify({ ok: true, service: "early-contributor-bot" }));
+    res.end(JSON.stringify(health.body));
   });
 
   server.listen(port, () => {
@@ -251,6 +263,23 @@ async function main() {
 
   startHealthServer();
 
+  const rest = new REST({ version: "10", timeout: 10_000, retries: 0 }).setToken(config.botToken);
+  await waitForRequiredDiscordIntents({
+    readApplication: async () => await rest.get(Routes.currentApplication()) as DiscordApplicationInfo,
+    onState: (state) => {
+      healthState = state;
+      if (state.status === "waiting-for-discord-intents") {
+        logWarn(
+          `Discord application ${state.applicationId || "unknown"} is missing ${state.missingIntents.join(", ")}. ` +
+          "Enable Server Members Intent and Message Content Intent in its Developer Portal Bot settings. " +
+          "Claims, anti-scam filtering, and booster roles are waiting; rechecking every 60 seconds without restarting."
+        );
+      } else if (state.status === "discord-unavailable") {
+        logWarn("Discord application permissions could not be checked. Retrying in 60 seconds without restarting.");
+      }
+    },
+  });
+
   const client = new Client({
     intents: [
       GatewayIntentBits.Guilds,
@@ -259,6 +288,7 @@ async function main() {
       GatewayIntentBits.GuildMembers,
     ],
   });
+  activeClient = client;
 
   let antiScamConfig: AntiScamFilterConfig | null = null;
   try {
@@ -303,6 +333,7 @@ async function main() {
       logInfo(
         `Existing successful claims loaded: ${runtimeState.successfulClaimCount}/${config.maxClaims}`
       );
+      healthState = { ...healthState, status: "ready", missingIntents: [] };
 
       if (!roleStatus.canManageRoles) {
         logWarn("Bot is missing the Manage Roles permission.");
@@ -321,6 +352,7 @@ async function main() {
         console.error("[Early Contributor Bot] API watchdog failed to start:", error);
       }
     } catch (error) {
+      healthState = { ...healthState, status: "failed" };
       console.error("[Early Contributor Bot] Startup failed:", error);
       await readyClient.destroy();
       process.exit(1);

@@ -122,7 +122,7 @@ describe("economy API gateway", () => {
     const defaults = economyConfig({ PORT: "4000", RAILWAY_DEPLOYMENT_ID: "deployment" });
     expect(defaults).toMatchObject({
       port: 4000, upstreamPort: 4001, schema: "deployment", viewsSchema: "memefun_mainnet", idleMs: 60_000,
-      requestWaitMs: 10_000, warmupMs: 600_000,
+      requestWaitMs: 10_000, warmupMs: 3_600_000,
     });
     // The error must reach both clients before their attempt aborts or neither retry path runs.
     expect(defaults.requestWaitMs).toBeLessThan(15_000);
@@ -131,6 +131,31 @@ describe("economy API gateway", () => {
       "x-forwarded-for": "198.51.100.2", cookie: "session=1", "accept-encoding": "gzip" })).toEqual({
       authorization: "Bearer auth", "x-forwarded-for": "198.51.100.2", cookie: "session=1", "accept-encoding": "gzip",
     });
+  });
+
+  it("pins an explicit compatible schema across deployments without changing the views schema", () => {
+    const first = economyConfig({ RAILWAY_DEPLOYMENT_ID: "old-deployment", MEMEFUN_INDEX_SCHEMA: " resumed-index ", DATABASE_VIEWS_SCHEMA: "memefun_mainnet" });
+    const next = economyConfig({ RAILWAY_DEPLOYMENT_ID: "new-deployment", MEMEFUN_INDEX_SCHEMA: "resumed-index", DATABASE_VIEWS_SCHEMA: "memefun_mainnet" });
+    expect(first.schema).toBe("resumed-index");
+    expect(next.schema).toBe(first.schema);
+    expect(next.viewsSchema).toBe("memefun_mainnet");
+    expect(() => economyConfig({ RAILWAY_DEPLOYMENT_ID: "deployment", MEMEFUN_INDEX_SCHEMA: "memefun_mainnet" })).toThrow("distinct");
+    expect(() => economyConfig({ RAILWAY_DEPLOYMENT_ID: "deployment", MEMEFUN_INDEX_SCHEMA: "invalid;schema" })).toThrow("distinct");
+    expect(economyConfig({ RAILWAY_DEPLOYMENT_ID: "deployment", MEMEFUN_API_WARMUP_MS: "7200000" }).warmupMs).toBe(7_200_000);
+    expect(() => economyConfig({ RAILWAY_DEPLOYMENT_ID: "deployment", MEMEFUN_API_WARMUP_MS: "86400001" })).toThrow("WARMUP");
+  });
+
+  it("keeps backfill running beyond a caller's wait while liveness and readiness stay distinct", async () => {
+    const { gateway, port, starts } = await setup({ readyDelay: 500, requestWaitMs: 60, warmupMs: 2_000, idleMs: 1_000 });
+    expect((await request(port, "/echo")).status).toBe(503);
+    const health = await request(port, "/health");
+    expect(health.status).toBe(200);
+    expect(JSON.parse(health.bytes.toString()).worker).toBe("starting");
+    expect((await request(port, "/ready")).status).toBe(503);
+    expect(gateway.state.phase).toBe("starting");
+    await eventually(() => gateway.state.phase === "warm");
+    expect((await request(port, "/ready")).status).toBe(200);
+    expect(starts()).toBe(1);
   });
 
   it("gates readiness, streams authenticated POST bodies after warmup, and preserves gzip/cookies", async () => {

@@ -1,8 +1,9 @@
 /* global process, setTimeout, clearTimeout, URL, AbortController, console */
 /**
  * A small streaming gateway keeps the public port available while the expensive Ponder
- * process is idle. Each wake uses the SAME physical schema within a Railway deployment,
- * so Ponder recovers its persisted checkpoint instead of starting a fresh index.
+ * process is idle. Each wake uses the SAME physical schema, so Ponder recovers its
+ * persisted checkpoint instead of starting a fresh index. An explicit schema can resume
+ * the same indexing build across deployments; Ponder still owns its exclusive writer lock.
  *
  * The keeper must wake this gateway and wait for /ready before using an idle index.
  * This file deliberately imports neither application dependencies nor signing keys.
@@ -36,7 +37,7 @@ export function economyConfig(env = process.env) {
   const port = integer(env.PORT, 42069, 1, 65534, "PORT");
   const upstreamPort = integer(env.MEMEFUN_API_UPSTREAM_PORT, port + 1, 1, 65535, "MEMEFUN_API_UPSTREAM_PORT");
   if (port === upstreamPort) throw new Error("Public and private API ports must differ.");
-  const schema = env.RAILWAY_DEPLOYMENT_ID || env.MEMEFUN_INDEX_SCHEMA;
+  const schema = env.MEMEFUN_INDEX_SCHEMA?.trim() || env.RAILWAY_DEPLOYMENT_ID;
   const viewsSchema = env.DATABASE_VIEWS_SCHEMA || "memefun_mainnet";
   if (!schema || !/^[a-zA-Z0-9_-]{1,45}$/.test(schema) || schema === viewsSchema) {
     throw new Error("A distinct RAILWAY_DEPLOYMENT_ID or MEMEFUN_INDEX_SCHEMA is required.");
@@ -44,7 +45,9 @@ export function economyConfig(env = process.env) {
   return {
     env, port, upstreamPort, schema, viewsSchema,
     idleMs: integer(env.MEMEFUN_API_IDLE_MS, 60_000, 10_000, 86_400_000, "MEMEFUN_API_IDLE_MS"),
-    warmupMs: integer(env.MEMEFUN_API_WARMUP_MS, 600_000, 1_000, 1_800_000, "MEMEFUN_API_WARMUP_MS"),
+    // First historical indexing can outlast a normal cold wake. Requests keep their short
+    // independent wait below; /ready remains 503 until Ponder has actually caught up.
+    warmupMs: integer(env.MEMEFUN_API_WARMUP_MS, 3_600_000, 1_000, 86_400_000, "MEMEFUN_API_WARMUP_MS"),
     // Return an explicit retryable 503 before the browser's 15 s / keeper's 20 s attempt ends.
     requestWaitMs: integer(env.MEMEFUN_API_WAIT_MS, 10_000, 100, 600_000, "MEMEFUN_API_WAIT_MS"),
     maxQueue: 100,

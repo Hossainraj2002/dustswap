@@ -8,6 +8,7 @@ const saved = { ...process.env };
 afterEach(() => {
   process.env = { ...saved };
   vi.unstubAllGlobals();
+  vi.useRealTimers();
 });
 
 describe("chainSettings", () => {
@@ -49,6 +50,42 @@ describe("chainSettings", () => {
     await transport.request({ method: "eth_chainId" });
     await transport.request({ method: "eth_chainId" });
     expect(fetch.mock.calls.map((args) => String(args[0]))).toEqual(["https://mainnet.base.org/", "https://mainnet.base.org/"]);
+  });
+
+  it("shares a persistent rate budget across parallel Ponder requests", async () => {
+    process.env.MEMEFUN_CHAIN = "base";
+    process.env.MEMEFUN_RPC_URLS = "https://base-mainnet.g.alchemy.com/v2/overdue-key";
+    process.env.MEMEFUN_INDEXER_RPC_RPS = "5";
+    const starts: number[] = [];
+    let active = 0;
+    let maximumActive = 0;
+    const fetch = vi.fn(async (_url: string | URL | Request) => {
+      starts.push(Math.floor(Date.now() / 1_000));
+      active += 1;
+      maximumActive = Math.max(maximumActive, active);
+      await new Promise(resolve => setTimeout(resolve, 10));
+      active -= 1;
+      return Response.json({ result: "0x2105" });
+    });
+    vi.stubGlobal("fetch", fetch);
+    const chain = chainSettings();
+    const transport = chainRpcTransport(chain)({ chain: chain.viemChain });
+    const results = await Promise.all(Array.from({ length: 12 }, () => transport.request({ method: "eth_chainId" })));
+    expect(results).toEqual(Array(12).fill("0x2105"));
+    const buckets = new Map<number, number>();
+    for (const second of starts) buckets.set(second, (buckets.get(second) ?? 0) + 1);
+    expect(Math.max(...buckets.values())).toBeLessThanOrEqual(5);
+    expect(buckets.size).toBeGreaterThanOrEqual(3);
+    expect(maximumActive).toBeLessThanOrEqual(2);
+    expect(fetch.mock.calls.every(([url]) => !String(url).includes("alchemy"))).toBe(true);
+  });
+
+  it("validates the historical indexing budget without throttling a local dev chain", () => {
+    process.env.MEMEFUN_CHAIN = "base";
+    process.env.MEMEFUN_INDEXER_RPC_RPS = "0";
+    expect(() => chainRpcTransport(chainSettings())).toThrow("MEMEFUN_INDEXER_RPC_RPS");
+    process.env.MEMEFUN_CHAIN = "local";
+    expect(() => chainRpcTransport(chainSettings())).not.toThrow();
   });
 
   it("reaches Alchemy when public RPCs cannot serve an indexing method", async () => {

@@ -1,7 +1,8 @@
 import { type Chain, defineChain, fallback, http, shouldThrow } from "viem";
 import { base, baseSepolia } from "viem/chains";
+import { rateLimit } from "ponder";
 
-import { envList, optionalEnv } from "./env";
+import { envInt, envList, optionalEnv } from "./env";
 
 export type ChainKey = "local" | "base-sepolia" | "base";
 
@@ -82,7 +83,7 @@ export function keeperRpcTransport(chain: ChainSettings, timeout = 15_000) {
 
 /** Ponder balances URL arrays across providers; a transport enforces ordered failover instead. */
 export function chainRpcTransport(chain: ChainSettings, timeout = 10_000) {
-  return fallback(chain.rpcUrls.map((url) => http(url, { timeout, retryCount: 0 })), {
+  const transport = fallback(chain.rpcUrls.map((url) => http(url, { timeout, retryCount: 0 })), {
     rank: false,
     retryCount: 0,
     shouldThrow(error) {
@@ -93,5 +94,13 @@ export function chainRpcTransport(chain: ChainSettings, timeout = 10_000) {
       const rangeLimit = /limited to (?:a )?[\d,.]+.{0,20}block|(?:max(?:imum)?|exceeds max) block range|block range (?:is )?too (?:large|wide)|block range limit exceeded|please limit the query to at most [\d,.]+ blocks|requested too many blocks|maximum allowed number of requested blocks|query returned more than \d+ results|query exceeds max results|logs matched by query exceeds limit|backend response too large|response size should not greater than|ranges over \d+ blocks are not supported|(?:try with this|this) block range.{0,20}\[0x/i;
       return shouldThrow(error) || rangeLimit.test(details);
     },
+  });
+  // Ponder treats this fallback as one adaptive provider and cannot see a public node's
+  // throttling when a later node answers. Bound historical indexing throughput explicitly.
+  // The limiter must wrap the whole fallback: viem recreates its inner transports on each
+  // request, which would also recreate any limiter placed around an individual HTTP node.
+  return chain.key === "local" ? transport : rateLimit(transport, {
+    requestsPerSecond: envInt("MEMEFUN_INDEXER_RPC_RPS", 5, { min: 1, max: 100 }),
+    browser: false,
   });
 }
