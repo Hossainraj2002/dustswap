@@ -169,10 +169,22 @@ each user request still receives a retryable response within its short wait budg
 Ponder version and indexing build**. Otherwise each deployment keeps its own physical schema.
 Ponder still verifies build compatibility and obtains its exclusive schema writer lock; do not
 drop schemas, force-unlock them, or point a different indexing build at an old schema. Historical
-RPC requests use a shared `MEMEFUN_INDEXER_RPC_RPS` budget (default 5 requests/second) around the
-entire public-first fallback transport. This prevents Ponder's adaptive client from flooding a
-public node whose throttling was hidden by a later successful provider. Normal API and keeper
+RPC requests use a shared `MEMEFUN_INDEXER_RPC_RPS` budget (default 30 requests/second) around the
+entire public-first fallback transport. Requests rotate their starting public provider, then
+try the remaining public nodes before Alchemy. Public rate limits and transport outages trigger
+a 30-second cooldown with one recovery probe, so a failed node is not retried on every request.
+This prevents Ponder's adaptive client from flooding a public node whose throttling was hidden
+by a later successful provider. Normal API and keeper
 reads keep their existing transports; local development indexing is not throttled.
+
+Base Denim produces five canonical blocks per second. Indexing needs additional RPC capacity
+for header reads and historical contract calls; the former 5-request budget could not keep up.
+The existing 150-block price sample now runs every 30 seconds. Recovery changes only the RPC
+budget, preserving the indexing build and its saved checkpoint. Monitor the indexed block gap
+against the live chain head: it must shrink during backfill before `/ready` can succeed.
+The pinned Ponder 0.17.12 patch retains 60 seconds of Base mainnet reorg history (300 Denim
+blocks); other chains, including Sepolia, keep their existing settings. No schema, indexing
+handler, or sampling migration is required.
 
 Railway project `memefun-testnet` (not DustSwap's `mellow-wisdom`): Postgres, a storage bucket and three services built from `main`, each watching only its own folder:
 

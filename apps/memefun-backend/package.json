@@ -49,5 +49,10 @@
     "typescript": "5.9.3",
     "typescript-eslint": "8.71.0",
     "vitest": "^3.2.4"
+  },
+  "pnpm": {
+    "patchedDependencies": {
+      "ponder@0.17.12": "patches/ponder@0.17.12.patch"
+    }
   }
 }

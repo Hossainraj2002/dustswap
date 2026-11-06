@@ -1,4 +1,4 @@
-import { type Chain, defineChain, fallback, http, shouldThrow } from "viem";
+import { type Chain, type EIP1193RequestFn, type Transport, HttpRequestError, TimeoutError, createTransport, defineChain, fallback, http, shouldThrow } from "viem";
 import { base, baseSepolia } from "viem/chains";
 import { rateLimit } from "ponder";
 
@@ -11,9 +11,9 @@ export interface ChainSettings {
   id: number;
   viemChain: Chain;
   rpcUrls: string[];
-  /** How often Ponder polls for new blocks, in ms. Base makes a block every 2 s. */
+  /** How often Ponder polls for new blocks, in ms. Base produces 0.2 s blocks after Denim. */
   pollingIntervalMs: number;
-  /** Blocks between ETH/USD price samples (about 5 minutes on Base). */
+  /** Blocks between ETH/USD price samples (30 seconds on Base after Denim). */
   priceIntervalBlocks: number;
 }
 
@@ -81,12 +81,12 @@ export function keeperRpcTransport(chain: ChainSettings, timeout = 15_000) {
   });
 }
 
-/** Ponder balances URL arrays across providers; a transport enforces ordered failover instead. */
+/** Ponder balances URL arrays across providers; keep its paid fallback outside that pool. */
 export function chainRpcTransport(chain: ChainSettings, timeout = 10_000) {
-  const transport = fallback(chain.rpcUrls.map((url) => http(url, { timeout, retryCount: 0 })), {
+  const fallbackOptions = {
     rank: false,
     retryCount: 0,
-    shouldThrow(error) {
+    shouldThrow(error: Error) {
       // Ponder splits eth_getLogs into smaller ranges using the provider's original error.
       // Do not replace that useful limit with an expired fallback key's unrelated error.
       // Match range limits Ponder recognizes; unavailable archive state still fails over.
@@ -94,13 +94,68 @@ export function chainRpcTransport(chain: ChainSettings, timeout = 10_000) {
       const rangeLimit = /limited to (?:a )?[\d,.]+.{0,20}block|(?:max(?:imum)?|exceeds max) block range|block range (?:is )?too (?:large|wide)|block range limit exceeded|please limit the query to at most [\d,.]+ blocks|requested too many blocks|maximum allowed number of requested blocks|query returned more than \d+ results|query exceeds max results|logs matched by query exceeds limit|backend response too large|response size should not greater than|ranges over \d+ blocks are not supported|(?:try with this|this) block range.{0,20}\[0x/i;
       return shouldThrow(error) || rangeLimit.test(details);
     },
-  });
+  };
+  if (chain.key === "local") return fallback(chain.rpcUrls.map((url) => http(url, { timeout, retryCount: 0 })), fallbackOptions);
+
+  const transport: Transport = (options) => {
+    const cooldowns = new Map<string, { until: number; error: Error; probing: boolean }>();
+    let nextPublic = 0;
+    const publicTransports: Transport[] = [];
+    const paidTransports: Transport[] = [];
+    for (const url of chain.rpcUrls) {
+      if (isAlchemyUrl(url)) {
+        paidTransports.push(http(url, { timeout, retryCount: 0 }));
+        continue;
+      }
+      publicTransports.push((parameters) => {
+        const rpc = http(url, { timeout, retryCount: 0 })(parameters);
+        return { ...rpc, request: (async (request, requestOptions) => {
+          const cooldown = cooldowns.get(url);
+          // Rejected probes still fall through viem's normal public-first error policy.
+          // Only one request probes an expired cooldown; other requests use healthy peers.
+          if (cooldown) {
+            if (cooldown.until > Date.now() || cooldown.probing) throw cooldown.error;
+            cooldown.probing = true;
+          }
+          try {
+            const result = await rpc.request(request, requestOptions);
+            if (cooldowns.get(url) === cooldown) cooldowns.delete(url);
+            return result;
+          } catch (error) {
+            const transient = error instanceof TimeoutError || (error instanceof HttpRequestError
+              && (error.status === undefined || error.status === 429 || error.status >= 500));
+            const details = error instanceof Error && "details" in error ? String(error.details) : "";
+            const limited = error instanceof Error && "code" in error && typeof error.code === "number"
+              && /rate limit|too many requests|request limit|compute units per second/i.test(details);
+            if (error instanceof Error && (transient || limited)) {
+              cooldowns.set(url, { until: Date.now() + 30_000, error, probing: false });
+            } else if (cooldowns.get(url) === cooldown) cooldowns.delete(url);
+            throw error;
+          }
+        }) as EIP1193RequestFn };
+      });
+    }
+    return createTransport({
+      key: "memefun-indexer",
+      name: "MemeFun public indexer RPC pool",
+      type: "fallback",
+      retryCount: 0,
+      request: ((request) => {
+        const start = nextPublic;
+        nextPublic = (nextPublic + 1) % Math.max(1, publicTransports.length);
+        const ordered = [...publicTransports.slice(start), ...publicTransports.slice(0, start), ...paidTransports];
+        return fallback(ordered, fallbackOptions)(options).request(request);
+      }) as EIP1193RequestFn,
+    });
+  };
   // Ponder treats this fallback as one adaptive provider and cannot see a public node's
   // throttling when a later node answers. Bound historical indexing throughput explicitly.
   // The limiter must wrap the whole fallback: viem recreates its inner transports on each
   // request, which would also recreate any limiter placed around an individual HTTP node.
-  return chain.key === "local" ? transport : rateLimit(transport, {
-    requestsPerSecond: envInt("MEMEFUN_INDEXER_RPC_RPS", 5, { min: 1, max: 100 }),
+  return rateLimit(transport, {
+    // Base now produces five canonical blocks per second. Header reads plus historical
+    // contract calls need headroom above that rate to recover a backlog, not fall behind it.
+    requestsPerSecond: envInt("MEMEFUN_INDEXER_RPC_RPS", 30, { min: 1, max: 100 }),
     browser: false,
   });
 }

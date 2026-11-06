@@ -1,0 +1,30 @@
+diff --git a/dist/esm/utils/finality.js b/dist/esm/utils/finality.js
+index 86af3301833e90d47b9fe0f8dabf3098fda5bc6a..ce33251a44464c8c67333d85a050f582e3054d34 100644
+--- a/dist/esm/utils/finality.js
++++ b/dist/esm/utils/finality.js
+@@ -33,6 +33,10 @@ export function getFinalityBlockCount({ chain }) {
+         case 421613:
+             finalityBlockCount = 240;
+             break;
++        // Base Denim has 200 ms canonical blocks. Preserve the prior 60-second window.
++        case 8453:
++            finalityBlockCount = 300;
++            break;
+         default:
+             // Assume a 2-second block time, e.g. OP stack chains.
+             finalityBlockCount = 30;
+diff --git a/src/utils/finality.ts b/src/utils/finality.ts
+index 9462275abd1afc790e707a6fe047dbfd7831546f..c5b61c62ea5eedd5f2aab7b2d90577048dba9f0e 100644
+--- a/src/utils/finality.ts
++++ b/src/utils/finality.ts
+@@ -37,6 +37,10 @@ export function getFinalityBlockCount({ chain }: { chain: Chain | undefined }) {
+     case 421613:
+       finalityBlockCount = 240;
+       break;
++    // Base Denim has 200 ms canonical blocks. Preserve the prior 60-second window.
++    case 8453:
++      finalityBlockCount = 300;
++      break;
+     default:
+       // Assume a 2-second block time, e.g. OP stack chains.
+       finalityBlockCount = 30;

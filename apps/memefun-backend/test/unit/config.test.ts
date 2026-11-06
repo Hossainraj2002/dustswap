@@ -47,36 +47,48 @@ describe("chainSettings", () => {
     vi.stubGlobal("fetch", fetch);
     const chain = chainSettings();
     const transport = chainRpcTransport(chain)({ chain: chain.viemChain });
-    await transport.request({ method: "eth_chainId" });
-    await transport.request({ method: "eth_chainId" });
-    expect(fetch.mock.calls.map((args) => String(args[0]))).toEqual(["https://mainnet.base.org/", "https://mainnet.base.org/"]);
+    for (let i = 0; i < 5; i++) await transport.request({ method: "eth_chainId" });
+    expect(fetch.mock.calls.map((args) => String(args[0]))).toEqual([
+      "https://mainnet.base.org/", "https://base-mainnet.public.blastapi.io/", "https://base-pokt.nodies.app/",
+      "https://base.gateway.tenderly.co/", "https://mainnet.base.org/",
+    ]);
   });
 
-  it("shares a persistent rate budget across parallel Ponder requests", async () => {
+  it("shares a persistent rate budget across parallel Ponder requests with public failover", async () => {
     process.env.MEMEFUN_CHAIN = "base";
     process.env.MEMEFUN_RPC_URLS = "https://base-mainnet.g.alchemy.com/v2/overdue-key";
     process.env.MEMEFUN_INDEXER_RPC_RPS = "5";
     const starts: number[] = [];
+    const seen = new Set<string>();
     let active = 0;
     let maximumActive = 0;
-    const fetch = vi.fn(async (_url: string | URL | Request) => {
-      starts.push(Math.floor(Date.now() / 1_000));
+    const fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const { params } = JSON.parse(String(init?.body)) as { params: [string, string] };
+      if (!seen.has(params[1])) {
+        seen.add(params[1]);
+        starts.push(Math.floor(Date.now() / 1_000));
+      }
+      const primary = String(url).startsWith("https://mainnet.base.org/");
       active += 1;
       maximumActive = Math.max(maximumActive, active);
       await new Promise(resolve => setTimeout(resolve, 10));
       active -= 1;
-      return Response.json({ result: "0x2105" });
+      return primary ? new Response("Rate limited", { status: 429 }) : Response.json({ result: "0x2105" });
     });
     vi.stubGlobal("fetch", fetch);
     const chain = chainSettings();
     const transport = chainRpcTransport(chain)({ chain: chain.viemChain });
-    const results = await Promise.all(Array.from({ length: 12 }, () => transport.request({ method: "eth_chainId" })));
+    const results = await Promise.all(Array.from({ length: 12 }, (_, i) => transport.request({
+      method: "eth_getBalance", params: ["0x0000000000000000000000000000000000000001", `0x${i.toString(16)}`],
+    })));
     expect(results).toEqual(Array(12).fill("0x2105"));
     const buckets = new Map<number, number>();
     for (const second of starts) buckets.set(second, (buckets.get(second) ?? 0) + 1);
     expect(Math.max(...buckets.values())).toBeLessThanOrEqual(5);
     expect(buckets.size).toBeGreaterThanOrEqual(3);
     expect(maximumActive).toBeLessThanOrEqual(2);
+    expect(seen.size).toBe(12);
+    expect(fetch.mock.calls.some(([url]) => String(url).startsWith("https://base-mainnet.public.blastapi.io/"))).toBe(true);
     expect(fetch.mock.calls.every(([url]) => !String(url).includes("alchemy"))).toBe(true);
   });
 
@@ -86,6 +98,44 @@ describe("chainSettings", () => {
     expect(() => chainRpcTransport(chainSettings())).toThrow("MEMEFUN_INDEXER_RPC_RPS");
     process.env.MEMEFUN_CHAIN = "local";
     expect(() => chainRpcTransport(chainSettings())).not.toThrow();
+  });
+
+  it("provides persistent default capacity above Base's five-block-per-second cadence", async () => {
+    process.env.MEMEFUN_CHAIN = "base";
+    process.env.MEMEFUN_RPC_URLS = "https://base-mainnet.g.alchemy.com/v2/overdue-key";
+    delete process.env.MEMEFUN_INDEXER_RPC_RPS;
+    const starts: number[] = [];
+    const seen = new Set<string>();
+    let active = 0;
+    let maximumActive = 0;
+    const fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const { params } = JSON.parse(String(init?.body)) as { params: [string, string] };
+      if (!seen.has(params[1])) {
+        seen.add(params[1]);
+        starts.push(Math.floor(Date.now() / 1_000));
+      }
+      const primary = String(url).startsWith("https://mainnet.base.org/");
+      active += 1;
+      maximumActive = Math.max(maximumActive, active);
+      await new Promise(resolve => setTimeout(resolve, 10));
+      active -= 1;
+      return primary ? new Response("Rate limited", { status: 429 }) : Response.json({ result: "0x2105" });
+    });
+    vi.stubGlobal("fetch", fetch);
+    const chain = chainSettings();
+    const transport = chainRpcTransport(chain)({ chain: chain.viemChain });
+    const results = await Promise.all(Array.from({ length: 66 }, (_, i) => transport.request({
+      method: "eth_getBalance", params: ["0x0000000000000000000000000000000000000001", `0x${i.toString(16)}`],
+    })));
+    expect(results).toEqual(Array(66).fill("0x2105"));
+    const buckets = new Map<number, number>();
+    for (const second of starts) buckets.set(second, (buckets.get(second) ?? 0) + 1);
+    expect(Math.max(...buckets.values())).toBe(30);
+    expect(buckets.size).toBeGreaterThanOrEqual(3);
+    expect(maximumActive).toBeLessThanOrEqual(8);
+    expect(seen.size).toBe(66);
+    expect(fetch.mock.calls.some(([url]) => String(url).startsWith("https://base-mainnet.public.blastapi.io/"))).toBe(true);
+    expect(fetch.mock.calls.every(([url]) => !String(url).includes("alchemy"))).toBe(true);
   });
 
   it("reaches Alchemy when public RPCs cannot serve an indexing method", async () => {
@@ -99,6 +149,82 @@ describe("chainSettings", () => {
     const transport = chainRpcTransport(chain)({ chain: chain.viemChain });
     expect(await transport.request({ method: "eth_getLogs", params: [{}] })).toEqual([]);
     expect(fetch.mock.calls.map((args) => String(args[0]))).toEqual(chain.rpcUrls.map((url) => new URL(url).toString()));
+    fetch.mockClear();
+    expect(await transport.request({ method: "eth_getLogs", params: [{}] })).toEqual([]);
+    expect(fetch.mock.calls.map((args) => String(args[0]))).toEqual([
+      ...chain.rpcUrls.slice(1, -1), chain.rpcUrls[0], chain.rpcUrls.at(-1),
+    ].map((url) => new URL(url!).toString()));
+  });
+
+  it.each(["http", "rpc"])("cools a %s rate limit and probes the public provider again after 30 seconds", async (kind) => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-11-06T12:00:00Z"));
+    process.env.MEMEFUN_CHAIN = "base";
+    process.env.MEMEFUN_RPC_URLS = "https://base-mainnet.g.alchemy.com/v2/overdue-key";
+    let limited = true;
+    const fetch = vi.fn(async (url: string | URL | Request) => {
+      if (String(url).startsWith("https://mainnet.base.org/") && limited) {
+        return kind === "http" ? new Response("Rate limited", { status: 429 })
+          : Response.json({ error: { code: -32011, message: "request limit reached" } });
+      }
+      return Response.json({ result: "0x2105" });
+    });
+    vi.stubGlobal("fetch", fetch);
+    const chain = chainSettings();
+    const transport = chainRpcTransport(chain)({ chain: chain.viemChain });
+    for (let i = 0; i < 8; i++) expect(await transport.request({ method: "eth_chainId" })).toBe("0x2105");
+    const primaryCalls = () => fetch.mock.calls.filter(([url]) => String(url).startsWith("https://mainnet.base.org/")).length;
+    expect(primaryCalls()).toBe(1);
+    limited = false;
+    vi.setSystemTime(new Date("2026-11-06T12:00:30Z"));
+    for (let i = 0; i < 5; i++) expect(await transport.request({ method: "eth_chainId" })).toBe("0x2105");
+    expect(primaryCalls()).toBe(3);
+    expect(fetch.mock.calls.every(([url]) => !String(url).includes("alchemy"))).toBe(true);
+  });
+
+  it("keeps Alchemy last when all public providers are cooling down", async () => {
+    process.env.MEMEFUN_CHAIN = "base";
+    process.env.MEMEFUN_RPC_URLS = "https://base-mainnet.g.alchemy.com/v2/fallback-key";
+    const fetch = vi.fn(async (url: string | URL | Request) => String(url).includes("alchemy")
+      ? Response.json({ result: "0x2105" }) : new Response("Rate limited", { status: 429 }));
+    vi.stubGlobal("fetch", fetch);
+    const chain = chainSettings();
+    const transport = chainRpcTransport(chain)({ chain: chain.viemChain });
+    expect(await transport.request({ method: "eth_chainId" })).toBe("0x2105");
+    expect(fetch.mock.calls.map(([url]) => String(url))).toEqual(chain.rpcUrls.map((url) => new URL(url).toString()));
+    fetch.mockClear();
+    expect(await transport.request({ method: "eth_chainId" })).toBe("0x2105");
+    expect(fetch.mock.calls.map(([url]) => String(url))).toEqual([new URL(chain.rpcUrls.at(-1)!).toString()]);
+  });
+
+  it("fails over an unsupported full-block method without disabling other reads on that public node", async () => {
+    process.env.MEMEFUN_CHAIN = "base";
+    const chain = { ...chainSettings(), rpcUrls: ["https://base-pokt.nodies.app", "https://base-mainnet.public.blastapi.io", "https://base-mainnet.g.alchemy.com/v2/key"] };
+    const fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as { params: [string, boolean] };
+      return String(url).includes("nodies") && body.params[1]
+        ? Response.json({ error: { code: -32601, message: "Method not available on this plan; request without full transaction bodies" } })
+        : Response.json({ result: { number: "0x123" } });
+    });
+    vi.stubGlobal("fetch", fetch);
+    const transport = chainRpcTransport(chain)({ chain: chain.viemChain });
+    for (const full of [true, false, false]) {
+      expect(await transport.request({ method: "eth_getBlockByNumber", params: ["0x123", full] })).toEqual({ number: "0x123" });
+    }
+    expect(fetch.mock.calls.map(([url]) => String(url))).toEqual([
+      "https://base-pokt.nodies.app/", "https://base-mainnet.public.blastapi.io/",
+      "https://base-mainnet.public.blastapi.io/", "https://base-pokt.nodies.app/",
+    ]);
+  });
+
+  it("preserves an authoritative execution error instead of trying another provider", async () => {
+    process.env.MEMEFUN_CHAIN = "base";
+    const fetch = vi.fn(async () => Response.json({ error: { code: 3, message: "execution reverted" } }));
+    vi.stubGlobal("fetch", fetch);
+    const chain = chainSettings();
+    const transport = chainRpcTransport(chain)({ chain: chain.viemChain });
+    await expect(transport.request({ method: "eth_call", params: [{ to: "0x0000000000000000000000000000000000000001" }, "latest"] })).rejects.toMatchObject({ details: "execution reverted" });
+    expect(fetch).toHaveBeenCalledTimes(1);
   });
 
   it("preserves public log range limits so Ponder can split requests without Alchemy", async () => {
@@ -117,7 +243,7 @@ describe("chainSettings", () => {
     await expect(transport.request({ method: "eth_getLogs", params: [{ fromBlock: "0x0", toBlock: "0x4e20" }] })).rejects.toMatchObject({ details: message });
     expect(fetch).toHaveBeenCalledTimes(1);
     expect(await transport.request({ method: "eth_getLogs", params: [{ fromBlock: "0x0", toBlock: "0x1388" }] })).toEqual([]);
-    expect(fetch.mock.calls.map(([url]) => String(url))).toEqual(["https://mainnet.base.org/", "https://mainnet.base.org/"]);
+    expect(fetch.mock.calls.map(([url]) => String(url))).toEqual(["https://mainnet.base.org/", "https://base-mainnet.public.blastapi.io/"]);
   });
 
   it("fails over when a public node cannot serve archive state", async () => {
