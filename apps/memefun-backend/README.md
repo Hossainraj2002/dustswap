@@ -171,8 +171,15 @@ Ponder still verifies build compatibility and obtains its exclusive schema write
 drop schemas, force-unlock them, or point a different indexing build at an old schema. Historical
 RPC requests use a shared `MEMEFUN_INDEXER_RPC_RPS` budget (default 30 requests/second) around the
 entire public-first fallback transport. Requests rotate their starting public provider, then
-try the remaining public nodes before Alchemy. Public rate limits and transport outages trigger
-a 30-second cooldown with one recovery probe, so a failed node is not retried on every request.
+try the remaining public nodes before Alchemy. Base includes the original four public endpoints
+plus PublicNode and dRPC; API and keeper transports retain their original provider order.
+Public rate limits and transport outages trigger
+a 30-second cooldown per RPC method with one recovery probe; a log-query limit does not disable
+block-header reads. Explicit inactive-key and billing failures open a 120-second circuit for
+that Alchemy URL, also with one recovery probe. Other configured keys can still succeed. If
+the paid fallback is inactive, the original public capacity or transport error reaches Ponder
+instead of being replaced by a billing error. Provider-specific rate-limit errors retain their
+cause and expose status 429 so Ponder can apply its adaptive backoff.
 This prevents Ponder's adaptive client from flooding a public node whose throttling was hidden
 by a later successful provider. Normal API and keeper
 reads keep their existing transports; local development indexing is not throttled.

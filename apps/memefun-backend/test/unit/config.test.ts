@@ -5,6 +5,10 @@ import { parseDeployment } from "../../lib/deployment";
 import { envBool, envInt, envList } from "../../lib/env";
 
 const saved = { ...process.env };
+const basePublicUrls = [
+  "https://mainnet.base.org", "https://base-mainnet.public.blastapi.io", "https://base-pokt.nodies.app",
+  "https://base.gateway.tenderly.co", "https://base-rpc.publicnode.com", "https://base.drpc.org",
+];
 afterEach(() => {
   process.env = { ...saved };
   vi.unstubAllGlobals();
@@ -21,11 +25,11 @@ describe("chainSettings", () => {
   it("uses public defaults with configured Alchemy URLs reserved for fallback", () => {
     process.env.MEMEFUN_CHAIN = "base";
     delete process.env.MEMEFUN_RPC_URLS;
-    expect(chainSettings().rpcUrls).toEqual(["https://mainnet.base.org", "https://base-mainnet.public.blastapi.io", "https://base-pokt.nodies.app", "https://base.gateway.tenderly.co"]);
+    expect(chainSettings().rpcUrls).toEqual(basePublicUrls);
     process.env.MEMEFUN_RPC_URLS = "https://mainnet.base.org";
-    expect(chainSettings().rpcUrls).toEqual(["https://mainnet.base.org", "https://base-mainnet.public.blastapi.io", "https://base-pokt.nodies.app", "https://base.gateway.tenderly.co"]);
+    expect(chainSettings().rpcUrls).toEqual(basePublicUrls);
     process.env.MEMEFUN_RPC_URLS = "https://base-mainnet.g.alchemy.com/v2/key-a, https://base-mainnet.g.alchemy.com/v2/key-b";
-    expect(chainSettings()).toMatchObject({ id: 8453, rpcUrls: ["https://mainnet.base.org", "https://base-mainnet.public.blastapi.io", "https://base-pokt.nodies.app", "https://base.gateway.tenderly.co", "https://base-mainnet.g.alchemy.com/v2/key-a", "https://base-mainnet.g.alchemy.com/v2/key-b"] });
+    expect(chainSettings()).toMatchObject({ id: 8453, rpcUrls: [...basePublicUrls, "https://base-mainnet.g.alchemy.com/v2/key-a", "https://base-mainnet.g.alchemy.com/v2/key-b"] });
     process.env.MEMEFUN_CHAIN = "base-sepolia";
     delete process.env.MEMEFUN_RPC_URLS;
     expect(chainSettings().rpcUrls).toEqual(["https://sepolia.base.org"]);
@@ -34,7 +38,7 @@ describe("chainSettings", () => {
   it("keeps custom non-Alchemy endpoints ahead of defaults and preserves local overrides", () => {
     process.env.MEMEFUN_CHAIN = "base";
     process.env.MEMEFUN_RPC_URLS = "https://base-mainnet.alchemyapi.io/v2/key-a, https://rpc.example.com, https://rpc.example.com";
-    expect(chainSettings().rpcUrls).toEqual(["https://rpc.example.com", "https://mainnet.base.org", "https://base-mainnet.public.blastapi.io", "https://base-pokt.nodies.app", "https://base.gateway.tenderly.co", "https://base-mainnet.alchemyapi.io/v2/key-a"]);
+    expect(chainSettings().rpcUrls).toEqual(["https://rpc.example.com", ...basePublicUrls, "https://base-mainnet.alchemyapi.io/v2/key-a"]);
     process.env.MEMEFUN_CHAIN = "local";
     process.env.MEMEFUN_RPC_URLS = "http://localhost:9545";
     expect(chainSettings().rpcUrls).toEqual(["http://localhost:9545"]);
@@ -47,11 +51,10 @@ describe("chainSettings", () => {
     vi.stubGlobal("fetch", fetch);
     const chain = chainSettings();
     const transport = chainRpcTransport(chain)({ chain: chain.viemChain });
-    for (let i = 0; i < 5; i++) await transport.request({ method: "eth_chainId" });
-    expect(fetch.mock.calls.map((args) => String(args[0]))).toEqual([
-      "https://mainnet.base.org/", "https://base-mainnet.public.blastapi.io/", "https://base-pokt.nodies.app/",
-      "https://base.gateway.tenderly.co/", "https://mainnet.base.org/",
-    ]);
+    for (let i = 0; i <= basePublicUrls.length; i++) await transport.request({ method: "eth_chainId" });
+    expect(fetch.mock.calls.map((args) => String(args[0]))).toEqual(
+      [...basePublicUrls, basePublicUrls[0]!].map((url) => new URL(url).toString()),
+    );
   });
 
   it("shares a persistent rate budget across parallel Ponder requests with public failover", async () => {
@@ -172,12 +175,12 @@ describe("chainSettings", () => {
     vi.stubGlobal("fetch", fetch);
     const chain = chainSettings();
     const transport = chainRpcTransport(chain)({ chain: chain.viemChain });
-    for (let i = 0; i < 8; i++) expect(await transport.request({ method: "eth_chainId" })).toBe("0x2105");
+    for (let i = 0; i < basePublicUrls.length * 2; i++) expect(await transport.request({ method: "eth_chainId" })).toBe("0x2105");
     const primaryCalls = () => fetch.mock.calls.filter(([url]) => String(url).startsWith("https://mainnet.base.org/")).length;
     expect(primaryCalls()).toBe(1);
     limited = false;
     vi.setSystemTime(new Date("2026-11-06T12:00:30Z"));
-    for (let i = 0; i < 5; i++) expect(await transport.request({ method: "eth_chainId" })).toBe("0x2105");
+    for (let i = 0; i <= basePublicUrls.length; i++) expect(await transport.request({ method: "eth_chainId" })).toBe("0x2105");
     expect(primaryCalls()).toBe(3);
     expect(fetch.mock.calls.every(([url]) => !String(url).includes("alchemy"))).toBe(true);
   });
@@ -195,6 +198,172 @@ describe("chainSettings", () => {
     fetch.mockClear();
     expect(await transport.request({ method: "eth_chainId" })).toBe("0x2105");
     expect(fetch.mock.calls.map(([url]) => String(url))).toEqual([new URL(chain.rpcUrls.at(-1)!).toString()]);
+  });
+
+  it.each(["http", "rpc"])("preserves public %s rate limits and bounds inactive Alchemy retries", async (kind) => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-11-06T17:00:00Z"));
+    process.env.MEMEFUN_CHAIN = "base";
+    const chain = { ...chainSettings(), rpcUrls: [
+      "https://mainnet.base.org", "https://base-mainnet.public.blastapi.io", "https://base-mainnet.g.alchemy.com/v2/inactive-key",
+    ] };
+    let paidActive = false;
+    const fetch = vi.fn(async (url: string | URL | Request) => {
+      if (String(url).includes("alchemy")) return paidActive ? Response.json({ result: [] })
+        : Response.json({ error: { code: -32600, message: "App is inactive. Please create a new app." } });
+      return kind === "http" ? new Response("Public capacity reached", { status: 429 })
+        : Response.json({ error: { code: -32011, message: "Public request limit reached" } });
+    });
+    vi.stubGlobal("fetch", fetch);
+    const transport = chainRpcTransport(chain)({ chain: chain.viemChain, retryCount: 0 });
+    const read = () => transport.request({ method: "eth_getLogs", params: [{}] });
+    for (let i = 0; i < 3; i++) {
+      await expect(read()).rejects.toMatchObject({
+        status: 429,
+        details: expect.stringContaining(kind === "http" ? "Public capacity reached" : "Public request limit reached"),
+        ...(kind === "rpc" ? { cause: { code: -32011 } } : {}),
+      });
+    }
+    const paidCalls = () => fetch.mock.calls.filter(([url]) => String(url).includes("alchemy")).length;
+    expect(paidCalls()).toBe(1);
+    expect(fetch).toHaveBeenCalledTimes(3);
+    vi.setSystemTime(new Date("2026-11-06T17:02:00Z"));
+    await expect(read()).rejects.toMatchObject({ status: 429 });
+    expect(paidCalls()).toBe(2);
+    paidActive = true;
+    vi.setSystemTime(new Date("2026-11-06T17:04:00Z"));
+    expect(await read()).toEqual([]);
+    expect(paidCalls()).toBe(3);
+  });
+
+  it("keeps public block reads available when only log requests are rate limited", async () => {
+    process.env.MEMEFUN_CHAIN = "base";
+    const chain = { ...chainSettings(), rpcUrls: ["https://mainnet.base.org", "https://base-mainnet.g.alchemy.com/v2/inactive-key"] };
+    const fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      if (String(url).includes("alchemy")) return Response.json({ error: { code: -32600, message: "App is inactive" } });
+      const { method } = JSON.parse(String(init?.body)) as { method: string };
+      return method === "eth_getLogs" ? new Response("Rate limited", { status: 429 })
+        : Response.json({ result: { number: "0x123" } });
+    });
+    vi.stubGlobal("fetch", fetch);
+    const transport = chainRpcTransport(chain)({ chain: chain.viemChain, retryCount: 0 });
+    await expect(transport.request({ method: "eth_getLogs", params: [{}] })).rejects.toMatchObject({ status: 429 });
+    expect(await transport.request({ method: "eth_getBlockByNumber", params: ["latest", false] })).toEqual({ number: "0x123" });
+    expect(fetch.mock.calls.map(([url]) => String(url))).toEqual([
+      "https://mainnet.base.org/", "https://base-mainnet.g.alchemy.com/v2/inactive-key", "https://mainnet.base.org/",
+    ]);
+  });
+
+  it("tries a healthy second Alchemy key after an inactive first key and cools only the inactive key", async () => {
+    process.env.MEMEFUN_CHAIN = "base";
+    const chain = { ...chainSettings(), rpcUrls: [
+      "https://mainnet.base.org", "https://base-mainnet.g.alchemy.com/v2/inactive-key", "https://base-mainnet.g.alchemy.com/v2/active-key",
+    ] };
+    const fetch = vi.fn(async (url: string | URL | Request) => {
+      if (String(url).includes("inactive-key")) return Response.json({ error: { code: -32600, message: "App is inactive" } });
+      if (String(url).includes("active-key")) return Response.json({ result: [] });
+      return new Response("Rate limited", { status: 429 });
+    });
+    vi.stubGlobal("fetch", fetch);
+    const transport = chainRpcTransport(chain)({ chain: chain.viemChain, retryCount: 0 });
+    for (let i = 0; i < 2; i++) expect(await transport.request({ method: "eth_getLogs", params: [{}] })).toEqual([]);
+    expect(fetch.mock.calls.map(([url]) => String(url))).toEqual([
+      "https://mainnet.base.org/", "https://base-mainnet.g.alchemy.com/v2/inactive-key",
+      "https://base-mainnet.g.alchemy.com/v2/active-key", "https://base-mainnet.g.alchemy.com/v2/active-key",
+    ]);
+  });
+
+  it.each(["invalid-key", "billing"])("circuits explicit paid %s failures while keeping the public capacity error", async (kind) => {
+    process.env.MEMEFUN_CHAIN = "base";
+    const chain = { ...chainSettings(), rpcUrls: ["https://mainnet.base.org", "https://base-mainnet.g.alchemy.com/v2/key"] };
+    const fetch = vi.fn(async (url: string | URL | Request) => {
+      if (!String(url).includes("alchemy")) return new Response("Rate limited", { status: 429 });
+      return kind === "billing" ? new Response("Payment required", { status: 402 })
+        : Response.json({ error: { code: -32600, message: "Invalid API key" } });
+    });
+    vi.stubGlobal("fetch", fetch);
+    const transport = chainRpcTransport(chain)({ chain: chain.viemChain, retryCount: 0 });
+    for (let i = 0; i < 2; i++) await expect(transport.request({ method: "eth_getLogs", params: [{}] })).rejects.toMatchObject({ status: 429 });
+    expect(fetch.mock.calls.filter(([url]) => String(url).includes("alchemy"))).toHaveLength(1);
+  });
+
+  it("preserves a genuine paid execution error and does not classify it as an inactive key", async () => {
+    process.env.MEMEFUN_CHAIN = "base";
+    const chain = { ...chainSettings(), rpcUrls: ["https://mainnet.base.org", "https://base-mainnet.g.alchemy.com/v2/key"] };
+    const fetch = vi.fn(async (url: string | URL | Request) => String(url).includes("alchemy")
+      ? Response.json({ error: { code: 3, message: "execution reverted: app is inactive" } })
+      : new Response("Rate limited", { status: 429 }));
+    vi.stubGlobal("fetch", fetch);
+    const transport = chainRpcTransport(chain)({ chain: chain.viemChain, retryCount: 0 });
+    for (let i = 0; i < 2; i++) {
+      await expect(transport.request({ method: "eth_call", params: [{ to: "0x0000000000000000000000000000000000000001" }, "latest"] })).rejects.toMatchObject({ code: 3, details: "execution reverted: app is inactive" });
+    }
+    expect(fetch.mock.calls.filter(([url]) => String(url).includes("alchemy"))).toHaveLength(2);
+  });
+
+  it("allows only one expired inactive-key probe while other requests keep their public error", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-11-06T17:00:00Z"));
+    process.env.MEMEFUN_CHAIN = "base";
+    const chain = { ...chainSettings(), rpcUrls: ["https://mainnet.base.org", "https://base-mainnet.g.alchemy.com/v2/inactive-key"] };
+    let probes = 0;
+    let finishProbe: (() => void) | undefined;
+    const inactive = () => Response.json({ error: { code: -32600, message: "App is inactive" } });
+    const fetch = vi.fn(async (url: string | URL | Request) => {
+      if (!String(url).includes("alchemy")) return new Response("Rate limited", { status: 429 });
+      probes += 1;
+      if (probes === 1) return inactive();
+      return new Promise<Response>((resolve) => { finishProbe = () => resolve(inactive()); });
+    });
+    vi.stubGlobal("fetch", fetch);
+    const transport = chainRpcTransport(chain)({ chain: chain.viemChain, retryCount: 0 });
+    const read = () => transport.request({ method: "eth_getLogs", params: [{}] });
+    await expect(read()).rejects.toMatchObject({ status: 429 });
+    vi.setSystemTime(new Date("2026-11-06T17:02:00Z"));
+    const probe = read();
+    await vi.waitFor(() => expect(probes).toBe(2));
+    await expect(read()).rejects.toMatchObject({ status: 429 });
+    expect(probes).toBe(2);
+    finishProbe!();
+    await expect(probe).rejects.toMatchObject({ status: 429 });
+  });
+
+  it("times out a stalled public fetch, uses a healthy public peer, and recovers after cooldown", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-11-06T17:00:00Z"));
+    process.env.MEMEFUN_CHAIN = "base";
+    const chain = { ...chainSettings(), rpcUrls: [
+      "https://mainnet.base.org", "https://base-mainnet.public.blastapi.io", "https://base-mainnet.g.alchemy.com/v2/key",
+    ] };
+    let stalled = true;
+    let aborted = 0;
+    const fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      if (String(url).startsWith("https://mainnet.base.org/") && stalled) {
+        return new Promise<Response>((_resolve, reject) => {
+          expect(init?.signal).toBeInstanceOf(AbortSignal);
+          init!.signal!.addEventListener("abort", () => {
+            aborted += 1;
+            reject(new DOMException("Fetch aborted", "AbortError"));
+          }, { once: true });
+        });
+      }
+      return Response.json({ result: "0x2105" });
+    });
+    vi.stubGlobal("fetch", fetch);
+    const transport = chainRpcTransport(chain, 20)({ chain: chain.viemChain });
+    for (let i = 0; i < 3; i++) expect(await transport.request({ method: "eth_chainId" })).toBe("0x2105");
+    expect(aborted).toBe(1);
+    const primaryCalls = () => fetch.mock.calls.filter(([url]) => String(url).startsWith("https://mainnet.base.org/")).length;
+    expect(primaryCalls()).toBe(1);
+    expect(fetch.mock.calls.map(([url]) => String(url))).toEqual([
+      "https://mainnet.base.org/", "https://base-mainnet.public.blastapi.io/",
+      "https://base-mainnet.public.blastapi.io/", "https://base-mainnet.public.blastapi.io/",
+    ]);
+    stalled = false;
+    vi.setSystemTime(new Date("2026-11-06T17:00:30Z"));
+    for (let i = 0; i < 2; i++) expect(await transport.request({ method: "eth_chainId" })).toBe("0x2105");
+    expect(primaryCalls()).toBe(2);
+    expect(fetch.mock.calls.every(([url]) => !String(url).includes("alchemy"))).toBe(true);
   });
 
   it("fails over an unsupported full-block method without disabling other reads on that public node", async () => {

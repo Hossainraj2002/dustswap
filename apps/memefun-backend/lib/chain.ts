@@ -46,7 +46,7 @@ export function chainSettings(): ChainSettings {
   const settings = CHAINS[key];
   const configured = envList("MEMEFUN_RPC_URLS");
   const defaults = key === "base"
-    ? ["https://mainnet.base.org", "https://base-mainnet.public.blastapi.io", "https://base-pokt.nodies.app", "https://base.gateway.tenderly.co"]
+    ? ["https://mainnet.base.org", "https://base-mainnet.public.blastapi.io", "https://base-pokt.nodies.app", "https://base.gateway.tenderly.co", "https://base-rpc.publicnode.com", "https://base.drpc.org"]
     : key === "base-sepolia" ? ["https://sepolia.base.org"] : ["http://127.0.0.1:8545"];
   const rpcUrls = key === "local" ? (configured.length > 0 ? [...new Set(configured)] : defaults) : [...new Set([
     ...configured.filter((url) => !isAlchemyUrl(url)),
@@ -99,52 +99,94 @@ export function chainRpcTransport(chain: ChainSettings, timeout = 10_000) {
 
   const transport: Transport = (options) => {
     const cooldowns = new Map<string, { until: number; error: Error; probing: boolean }>();
+    const paidCircuits = new Map<string, { until: number; error: Error; probing: boolean }>();
     let nextPublic = 0;
-    const publicTransports: Transport[] = [];
-    const paidTransports: Transport[] = [];
-    for (const url of chain.rpcUrls) {
-      if (isAlchemyUrl(url)) {
-        paidTransports.push(http(url, { timeout, retryCount: 0 }));
-        continue;
-      }
-      publicTransports.push((parameters) => {
+    const publicUrls = chain.rpcUrls.filter((url) => !isAlchemyUrl(url));
+    const paidUrls = chain.rpcUrls.filter(isAlchemyUrl);
+    const inactivePaid = (error: Error) => {
+      if (shouldThrow(error)) return false;
+      const details = "details" in error ? String(error.details) : error.message;
+      return (error instanceof HttpRequestError && error.status === 402)
+        || /app is inactive|invalid api[- ]?key|api[- ]?key (?:is )?(?:invalid|disabled|revoked|expired)|(?:account|app|project) (?:is )?(?:disabled|suspended)|payment required|account overdue|billing.{0,40}(?:inactive|overdue|suspended|exhausted)/i.test(details);
+    };
+    const publicTransport = (url: string, onFailure: (error: Error) => void): Transport =>
+      (parameters) => {
         const rpc = http(url, { timeout, retryCount: 0 })(parameters);
         return { ...rpc, request: (async (request, requestOptions) => {
-          const cooldown = cooldowns.get(url);
+          const key = `${url}\0${request.method}`;
+          const cooldown = cooldowns.get(key);
           // Rejected probes still fall through viem's normal public-first error policy.
-          // Only one request probes an expired cooldown; other requests use healthy peers.
+          // Rate limits can be method-specific: a log-query limit must not disable headers.
           if (cooldown) {
-            if (cooldown.until > Date.now() || cooldown.probing) throw cooldown.error;
+            if (cooldown.until > Date.now() || cooldown.probing) {
+              onFailure(cooldown.error);
+              throw cooldown.error;
+            }
             cooldown.probing = true;
           }
           try {
             const result = await rpc.request(request, requestOptions);
-            if (cooldowns.get(url) === cooldown) cooldowns.delete(url);
+            if (cooldowns.get(key) === cooldown) cooldowns.delete(key);
             return result;
           } catch (error) {
             const transient = error instanceof TimeoutError || (error instanceof HttpRequestError
               && (error.status === undefined || error.status === 429 || error.status >= 500));
             const details = error instanceof Error && "details" in error ? String(error.details) : "";
-            const limited = error instanceof Error && "code" in error && typeof error.code === "number"
-              && /rate limit|too many requests|request limit|compute units per second/i.test(details);
+            const limited = error instanceof Error && !fallbackOptions.shouldThrow(error)
+              && "code" in error && typeof error.code === "number"
+              && (error.code === 429 || /rate limit|too many requests|request limit|compute units per second/i.test(details));
+            // Ponder recognizes status/code 429, not provider-specific -32011/-32005.
+            // Retain the provider error as the cause while exposing its capacity signal.
+            const failure = limited ? new HttpRequestError({ body: request, cause: error, details, status: 429, url }) : error;
             if (error instanceof Error && (transient || limited)) {
-              cooldowns.set(url, { until: Date.now() + 30_000, error, probing: false });
-            } else if (cooldowns.get(url) === cooldown) cooldowns.delete(url);
-            throw error;
+              cooldowns.set(key, { until: Date.now() + 30_000, error: failure as Error, probing: false });
+            } else if (cooldowns.get(key) === cooldown) cooldowns.delete(key);
+            if (failure instanceof Error) onFailure(failure);
+            throw failure;
           }
         }) as EIP1193RequestFn };
-      });
-    }
+      };
+    const paidTransports: Transport[] = paidUrls.map((url) => (parameters) => {
+      const rpc = http(url, { timeout, retryCount: 0 })(parameters);
+      return { ...rpc, request: (async (request, requestOptions) => {
+        const circuit = paidCircuits.get(url);
+        if (circuit) {
+          if (circuit.until > Date.now() || circuit.probing) throw circuit.error;
+          circuit.probing = true;
+        }
+        try {
+          const result = await rpc.request(request, requestOptions);
+          if (paidCircuits.get(url) === circuit) paidCircuits.delete(url);
+          return result;
+        } catch (error) {
+          if (error instanceof Error && inactivePaid(error)) {
+            paidCircuits.set(url, { until: Date.now() + 120_000, error, probing: false });
+          } else if (paidCircuits.get(url) === circuit) paidCircuits.delete(url);
+          throw error;
+        }
+      }) as EIP1193RequestFn };
+    });
     return createTransport({
       key: "memefun-indexer",
       name: "MemeFun public indexer RPC pool",
       type: "fallback",
       retryCount: 0,
-      request: ((request) => {
+      request: (async (request) => {
         const start = nextPublic;
-        nextPublic = (nextPublic + 1) % Math.max(1, publicTransports.length);
+        nextPublic = (nextPublic + 1) % Math.max(1, publicUrls.length);
+        let publicFailure: Error | undefined;
+        const priority = (error: Error) => error instanceof HttpRequestError && error.status === 429 ? 3
+          : error instanceof TimeoutError ? 2 : error instanceof HttpRequestError ? 1 : 0;
+        const publicTransports = publicUrls.map((url) => publicTransport(url, (error) => {
+          if (!publicFailure || priority(error) > priority(publicFailure)) publicFailure = error;
+        }));
         const ordered = [...publicTransports.slice(start), ...publicTransports.slice(0, start), ...paidTransports];
-        return fallback(ordered, fallbackOptions)(options).request(request);
+        try {
+          return await fallback(ordered, fallbackOptions)(options).request(request);
+        } catch (error) {
+          if (publicFailure && error instanceof Error && inactivePaid(error)) throw publicFailure;
+          throw error;
+        }
       }) as EIP1193RequestFn,
     });
   };
