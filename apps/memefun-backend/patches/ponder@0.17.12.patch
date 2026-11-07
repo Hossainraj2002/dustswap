@@ -1,5 +1,39 @@
+diff --git a/dist/esm/rpc/index.js b/dist/esm/rpc/index.js
+index 04f280f54d91cfdce126f560cbbb568e28cfca1a..fac2fe48013596d35a2217b5cb63532add08f5a4 100644
+--- a/dist/esm/rpc/index.js
++++ b/dist/esm/rpc/index.js
+@@ -280,7 +280,8 @@ export const createRpc = ({ common, chain, concurrency = 25, }) => {
+             return;
+         }
+         for (const { count } of bucket.rps) {
+-            if (count < bucket.rpsLimit * RPS_INCREASE_QUALIFIER) {
++            // isAvailable permits only the integer portion of a fractional RPS limit.
++            if (count < Math.max(1, Math.floor(bucket.rpsLimit)) * RPS_INCREASE_QUALIFIER) {
+                 return;
+             }
+         }
+diff --git a/dist/esm/runtime/filter.js b/dist/esm/runtime/filter.js
+index b1a56dd14852c0b590245124ae583e5c682b878a..388e5adfd7a49b987a62a6c7575f57c9ec8b1ffb 100644
+--- a/dist/esm/runtime/filter.js
++++ b/dist/esm/runtime/filter.js
+@@ -65,10 +65,12 @@ export const mergeLogFiltersToRequests = (filters, childAddresses, factoryAddres
+             const addresses = childAddresses.get(filter.address.id);
+             if (addresses.size === 0)
+                 continue;
++            // MemeFun's Base factory has over 1,000 children, but represents a small share of
++            // Base transfers. Keep its queries scoped; eth_getLogs already chunks 50 addresses.
+             address =
+-                addresses.size >= factoryAddressCountThreshold
+-                    ? undefined
+-                    : Array.from(addresses.keys());
++                filter.chainId === 8453 || addresses.size < factoryAddressCountThreshold
++                    ? Array.from(addresses.keys())
++                    : undefined;
+         }
+         else {
+             address = filter.address;
 diff --git a/dist/esm/utils/finality.js b/dist/esm/utils/finality.js
-index 86af3301833e90d47b9fe0f8dabf3098fda5bc6a..ce33251a44464c8c67333d85a050f582e3054d34 100644
+index 86af3301833e90d47b9fe0f8dabf3098fda5bc6a..3acbae689aaa0ea0584383c5e0810601347fbd68 100644
 --- a/dist/esm/utils/finality.js
 +++ b/dist/esm/utils/finality.js
 @@ -33,6 +33,10 @@ export function getFinalityBlockCount({ chain }) {
@@ -13,6 +47,35 @@ index 86af3301833e90d47b9fe0f8dabf3098fda5bc6a..ce33251a44464c8c67333d85a050f582
          default:
              // Assume a 2-second block time, e.g. OP stack chains.
              finalityBlockCount = 30;
+diff --git a/src/rpc/index.ts b/src/rpc/index.ts
+index d420f0fec973ab96186e01bcb36c481f7a915e85..1e43a8929f30cab14eb5d4300ec6192b71d6de46 100644
+--- a/src/rpc/index.ts
++++ b/src/rpc/index.ts
+@@ -432,5 +432,6 @@ export const createRpc = ({
+     for (const { count } of bucket.rps) {
+-      if (count < bucket.rpsLimit * RPS_INCREASE_QUALIFIER) {
++      // isAvailable permits only the integer portion of a fractional RPS limit.
++      if (count < Math.max(1, Math.floor(bucket.rpsLimit)) * RPS_INCREASE_QUALIFIER) {
+         return;
+       }
+     }
+diff --git a/src/runtime/filter.ts b/src/runtime/filter.ts
+index 1736c15b8221eae9003d1913db9b3f9811014e2d..de935d4101a58784331129b939ffddd8ed778a47 100644
+--- a/src/runtime/filter.ts
++++ b/src/runtime/filter.ts
+@@ -142,7 +142,9 @@ export const mergeLogFiltersToRequests = (
++      // MemeFun's Base factory has over 1,000 children, but represents a small share of
++      // Base transfers. Keep its queries scoped; eth_getLogs already chunks 50 addresses.
+       address =
+-        addresses.size >= factoryAddressCountThreshold
+-          ? undefined
+-          : Array.from(addresses.keys());
++        filter.chainId === 8453 || addresses.size < factoryAddressCountThreshold
++          ? Array.from(addresses.keys())
++          : undefined;
+     } else {
+       address = filter.address;
+     }
 diff --git a/src/utils/finality.ts b/src/utils/finality.ts
 index 9462275abd1afc790e707a6fe047dbfd7831546f..c5b61c62ea5eedd5f2aab7b2d90577048dba9f0e 100644
 --- a/src/utils/finality.ts

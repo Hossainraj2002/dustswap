@@ -186,12 +186,18 @@ reads keep their existing transports; local development indexing is not throttle
 
 Base Denim produces five canonical blocks per second. Indexing needs additional RPC capacity
 for header reads and historical contract calls; the former 5-request budget could not keep up.
-The existing 150-block price sample now runs every 30 seconds. Recovery changes only the RPC
-budget, preserving the indexing build and its saved checkpoint. Monitor the indexed block gap
+The existing 150-block price sample now runs every 30 seconds. Recovery adjusts RPC capacity
+and query scheduling, preserving the indexing build and its saved checkpoint. Monitor the indexed block gap
 against the live chain head: it must shrink during backfill before `/ready` can succeed.
-The pinned Ponder 0.17.12 patch retains 60 seconds of Base mainnet reorg history (300 Denim
-blocks); other chains, including Sepolia, keep their existing settings. No schema, indexing
-handler, or sampling migration is required.
+The pinned Ponder 0.17.12 patch keeps Base factory log queries scoped to discovered child
+addresses, using Ponder's existing chunks of at most 50 addresses per RPC request even as the
+factory grows. It also lets the adaptive rate limiter recover from fractional limits using
+the integer request rate it actually permits, and retains 60 seconds of Base mainnet reorg
+history (300 Denim blocks). Other chains keep their existing factory thresholds and reorg
+settings. Ponder database metadata stays at version 6; no schema, indexing-handler, or sampling
+migration is required. Resume the existing schema under Ponder's writer lock; do not rebuild,
+force-unlock, or drop it to apply these fixes. `/ready` and the keeper's captured-head gate
+remain strict until the index catches up.
 
 Railway project `memefun-testnet` (not DustSwap's `mellow-wisdom`): Postgres, a storage bucket and three services built from `main`, each watching only its own folder:
 
