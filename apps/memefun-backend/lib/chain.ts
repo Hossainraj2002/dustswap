@@ -3,6 +3,7 @@ import { base, baseSepolia } from "viem/chains";
 import { rateLimit } from "ponder";
 
 import { envInt, envList, optionalEnv } from "./env";
+import { createRpcPacer } from "./rpc-pacing";
 
 export type ChainKey = "local" | "base-sepolia" | "base";
 
@@ -166,6 +167,7 @@ export function chainRpcTransport(chain: ChainSettings, timeout = 10_000) {
     let nextPublic = 0;
     const publicUrls = chain.rpcUrls.filter((url) => !isAlchemyUrl(url));
     const paidUrls = chain.rpcUrls.filter(isAlchemyUrl);
+    const pacers = new Map(publicUrls.map(url => [url, createRpcPacer()]));
     const inactivePaid = (error: Error) => {
       if (shouldThrow(error)) return false;
       const details = "details" in error ? String(error.details) : error.message;
@@ -176,66 +178,77 @@ export function chainRpcTransport(chain: ChainSettings, timeout = 10_000) {
       (parameters) => {
         const rpc = http(url, { timeout, retryCount: 0 })(parameters);
         return { ...rpc, request: (async (request, requestOptions) => {
-          const addressCap = addressCaps.get(url);
-          const addresses = logAddressCount(request);
-          if (addressCap && addressCap.until > Date.now() && addresses !== undefined && addresses > addressCap.addresses) {
-            onFailure(addressCap.error);
-            throw addressCap.error;
-          }
-          const cap = rangeCaps.get(url);
-          const blocks = logBlockCount(request);
-          if (cap && cap.until > Date.now() && blocks !== undefined && blocks > cap.blocks) {
-            onFailure(cap.error);
-            throw cap.error;
-          }
           const key = `${url}\0${request.method}`;
-          const cooldown = cooldowns.get(key);
-          // Rejected probes still fall through viem's normal public-first error policy.
-          // Rate limits can be method-specific: a log-query limit must not disable headers.
-          if (cooldown) {
-            if (cooldown.until > Date.now() || cooldown.probing) {
-              onFailure(cooldown.error);
-              throw cooldown.error;
+          const addresses = logAddressCount(request);
+          const blocks = logBlockCount(request);
+          const available = () => {
+            const addressCap = addressCaps.get(url);
+            if (addressCap && addressCap.until > Date.now() && addresses !== undefined && addresses > addressCap.addresses) {
+              onFailure(addressCap.error);
+              throw addressCap.error;
             }
-            cooldown.probing = true;
-          }
-          try {
-            const result = await rpc.request(request, requestOptions);
-            if (blocks !== undefined) {
-              const shape = `${url}\0${addresses ?? "any"}`;
-              const observed = successfulRanges.get(shape);
-              if (!observed || observed.until <= Date.now() || blocks >= observed.blocks) {
-                successfulRanges.set(shape, { until: Date.now() + 300_000, blocks });
+            const cap = rangeCaps.get(url);
+            if (cap && cap.until > Date.now() && blocks !== undefined && blocks > cap.blocks) {
+              onFailure(cap.error);
+              throw cap.error;
+            }
+            const cooldown = cooldowns.get(key);
+            // Rejected probes still fall through viem's normal public-first error policy.
+            // Rate limits can be method-specific: a log-query limit must not disable headers.
+            if (cooldown) {
+              if (cooldown.until > Date.now() || cooldown.probing) {
+                onFailure(cooldown.error);
+                throw cooldown.error;
               }
             }
-            if (cooldowns.get(key) === cooldown) cooldowns.delete(key);
-            return result;
-          } catch (caughtError) {
-            const error = caughtError instanceof Error ? contradictoryRangeError(caughtError, request, url) : caughtError;
-            if (request.method === "eth_getLogs" && error instanceof Error) {
-              const addresses = logAddressHint(error);
-              if (addresses !== undefined) addressCaps.set(url, { until: Date.now() + 300_000, addresses, error });
+            return cooldown;
+          };
+          available();
+          let release: () => void;
+          try { release = await pacers.get(url)!.acquire(available); }
+          catch (error) { if (error instanceof Error) onFailure(error); throw error; }
+          try {
+            // Another request may have learned a cap or cooldown while this one queued.
+            const cooldown = available();
+            if (cooldown) cooldown.probing = true;
+            try {
+              const result = await rpc.request(request, requestOptions);
+              if (blocks !== undefined) {
+                const shape = `${url}\0${addresses ?? "any"}`;
+                const observed = successfulRanges.get(shape);
+                if (!observed || observed.until <= Date.now() || blocks >= observed.blocks) {
+                  successfulRanges.set(shape, { until: Date.now() + 300_000, blocks });
+                }
+              }
+              if (cooldowns.get(key) === cooldown) cooldowns.delete(key);
+              return result;
+            } catch (caughtError) {
+              const error = caughtError instanceof Error ? contradictoryRangeError(caughtError, request, url) : caughtError;
+              if (request.method === "eth_getLogs" && error instanceof Error) {
+                const addresses = logAddressHint(error);
+                if (addresses !== undefined) addressCaps.set(url, { until: Date.now() + 300_000, addresses, error });
+              }
+              const transient = error instanceof TimeoutError || (error instanceof HttpRequestError
+                && (error.status === undefined || error.status === 429 || error.status >= 500));
+              const details = error instanceof Error && "details" in error ? String(error.details) : "";
+              const rangeError = request.method === "eth_getLogs" && error instanceof Error && logRangeLimit(error);
+              if (rangeError && error instanceof Error) {
+                const hint = logRangeHint(error);
+                if (hint?.hard && hint.blocks > 0n) rangeCaps.set(url, { until: Date.now() + 300_000, blocks: hint.blocks, error });
+              }
+              const limited = error instanceof Error && !fallbackOptions.shouldThrow(error) && !rangeError
+                && "code" in error && typeof error.code === "number"
+                && (error.code === 429 || /rate limit|too many requests|request limit|compute units per second/i.test(details));
+              // Ponder recognizes status/code 429, not provider-specific -32011/-32005.
+              // Retain the provider error as the cause while exposing its capacity signal.
+              const failure = limited ? new HttpRequestError({ body: request, cause: error instanceof Error ? error : undefined, details, status: 429, url }) : error;
+              if (error instanceof Error && (transient || limited)) {
+                cooldowns.set(key, { until: Date.now() + 30_000, error: failure as Error, probing: false });
+              } else if (cooldowns.get(key) === cooldown) cooldowns.delete(key);
+              if (failure instanceof Error) onFailure(failure);
+              throw failure;
             }
-            const transient = error instanceof TimeoutError || (error instanceof HttpRequestError
-              && (error.status === undefined || error.status === 429 || error.status >= 500));
-            const details = error instanceof Error && "details" in error ? String(error.details) : "";
-            const rangeError = request.method === "eth_getLogs" && error instanceof Error && logRangeLimit(error);
-            if (rangeError && error instanceof Error) {
-              const hint = logRangeHint(error);
-              if (hint?.hard && hint.blocks > 0n) rangeCaps.set(url, { until: Date.now() + 300_000, blocks: hint.blocks, error });
-            }
-            const limited = error instanceof Error && !fallbackOptions.shouldThrow(error) && !rangeError
-              && "code" in error && typeof error.code === "number"
-              && (error.code === 429 || /rate limit|too many requests|request limit|compute units per second/i.test(details));
-            // Ponder recognizes status/code 429, not provider-specific -32011/-32005.
-            // Retain the provider error as the cause while exposing its capacity signal.
-            const failure = limited ? new HttpRequestError({ body: request, cause: error instanceof Error ? error : undefined, details, status: 429, url }) : error;
-            if (error instanceof Error && (transient || limited)) {
-              cooldowns.set(key, { until: Date.now() + 30_000, error: failure as Error, probing: false });
-            } else if (cooldowns.get(key) === cooldown) cooldowns.delete(key);
-            if (failure instanceof Error) onFailure(failure);
-            throw failure;
-          }
+          } finally { release(); }
         }) as EIP1193RequestFn };
       };
     const paidTransport = (url: string, onFailure: (error: Error) => void): Transport => (parameters) => {
@@ -305,7 +318,14 @@ export function chainRpcTransport(chain: ChainSettings, timeout = 10_000) {
           if (!publicFailure || priority(error) > priority(publicFailure)) publicFailure = error;
         }));
         const paidTransports = paidUrls.map((url) => paidTransport(url, recordRange));
-        const ordered = [...publicTransports.slice(start), ...publicTransports.slice(0, start), ...paidTransports];
+        const rotation = publicUrls.map((_url, index) => (start + index) % publicUrls.length);
+        const ready: number[] = [];
+        const busy: number[] = [];
+        for (const index of rotation) {
+          (pacers.get(publicUrls[index]!)!.isReady() ? ready : busy).push(index);
+        }
+        const ordered = [...ready, ...busy].map(index => publicTransports[index]!);
+        ordered.push(...paidTransports);
         try {
           return await fallback(ordered, fallbackOptions)(options).request(request);
         } catch (error) {

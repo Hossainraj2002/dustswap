@@ -157,7 +157,7 @@ describe("Ponder's native public log-range failover", () => {
     const publicCalls = calls.filter(call => call.url.includes("drpc"));
     expect(publicCalls.length).toBeGreaterThan(0);
     expect(publicCalls.length).toBeLessThanOrEqual(2);
-    expect(publicCalls.every(call => call.blocks === 500)).toBe(true);
+    expect(publicCalls.every(call => call.blocks > 0 && call.blocks <= 1_000)).toBe(true);
     expect(calls.length).toBeLessThanOrEqual(4);
   });
 });

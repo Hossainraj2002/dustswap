@@ -53,7 +53,7 @@ async function run(chainId: number, start: number, end: number, count = 1, resum
       },
     },
     chain: { id: chainId, name: "memefun", disableCache: true, finalityBlockCount: 300 },
-    rpc: { async request({ method, params }: { method: string; params: [Query] }) {
+    rpc: { chainId, async request({ method, params }: { method: string; params: [Query] }) {
       expect(method).toBe("eth_getLogs");
       queries.push(params[0]);
       return [];
@@ -76,10 +76,11 @@ describe("Ponder's native Base historical interval floor", () => {
   it("amortizes 1,995-address work across a 1,000-block floor even when intervals take over ten seconds", async () => {
     const result = await run(8453, 5, 2_505, 1_995);
     expect(result.yielded).toEqual([1_005, 2_006, 2_505]);
+    expect(result.queries.filter(query => Number(query.fromBlock) === 5 && Number(query.toBlock) === 1_005)).toHaveLength(200);
     const estimates = result.trace.filter(entry => entry.msg === "Updated block range estimate for fetching backfill JSON-RPC data");
     expect(estimates).toHaveLength(3);
     expect(estimates.every(entry => entry.range === 1_000)).toBe(true);
-    expect(result.queries.every(query => Array.isArray(query.address) && query.address.length <= 50)).toBe(true);
+    expect(result.queries.every(query => Array.isArray(query.address) && query.address.length <= 10)).toBe(true);
     expect(new Set(result.queries.flatMap(query => query.address ?? [])).size).toBe(1_995);
     // Native inner splitting still covers every block exactly once for a representative
     // address, including the final interval below the outer floor.

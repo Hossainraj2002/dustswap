@@ -173,6 +173,10 @@ RPC requests use a shared `MEMEFUN_INDEXER_RPC_RPS` budget (default 30 requests/
 entire public-first fallback transport. Requests rotate their starting public provider, then
 try the remaining public nodes before Alchemy. Base includes the original four public endpoints
 plus PublicNode and dRPC; API and keeper transports retain their original provider order.
+Each public indexer URL shares one pacing queue across methods and recreated viem transports:
+request starts are at least 200 ms apart, with at most two requests in flight. Ready public
+peers are tried before busy ones, and all public peers remain ahead of Alchemy. Queued requests
+recheck learned caps and cooldowns before sending.
 Public rate limits and transport outages trigger
 a 30-second cooldown per RPC method with one recovery probe; a log-query limit does not disable
 block-header reads. Explicit inactive-key and billing failures open a 120-second circuit for
@@ -198,12 +202,18 @@ The existing 150-block price sample now runs every 30 seconds. Recovery adjusts 
 and query scheduling, preserving the indexing build and its saved checkpoint. Monitor the indexed block gap
 against the live chain head: it must shrink during backfill before `/ready` can succeed.
 The pinned Ponder 0.17.12 patch keeps Base factory log queries scoped to discovered child
-addresses, using Ponder's existing chunks of at most 50 addresses per RPC request even as the
-factory grows. It also lets the adaptive rate limiter recover from fractional limits using
+addresses, using at most 10 addresses per Base RPC request even as the factory grows. This
+matches PublicNode's public address limit, which passed the real-token 500/1,000-block backfill
+queries. Other chains and custom RPC objects without chain metadata retain 50-address chunks.
+It also lets the adaptive rate limiter recover from fractional limits using
 the integer request rate it actually permits, and retains 60 seconds of Base mainnet reorg
 history (300 Denim blocks). Base historical sync starts with a range estimate of 1,000 and
 keeps that minimum, amortizing address-chunk overhead across roughly 200 seconds of chain
-history. The remaining tail still clamps to the requested end. Provider-level log splitting,
+history. The remaining tail still clamps to the requested end.
+Base's first inner log range is 1,001 blocks to match its inclusive outer interval: the
+1,995-child first pass needs 200 ten-address queries instead of three passes totaling 600.
+Other chains retain their 500-block initial inner range. Provider errors still reduce the
+log range dynamically, with complete coverage of every requested block. Provider-level log splitting,
 the adaptive range ceiling of 100,000, and the block-processing queue limit of 600 concurrent
 Base blocks remain unchanged. Other chains keep their existing range floor of 25, factory
 thresholds and reorg settings. Ponder database metadata stays at version 6; no schema, indexing-handler, or sampling

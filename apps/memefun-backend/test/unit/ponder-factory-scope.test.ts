@@ -1,7 +1,9 @@
 import { realpathSync } from "node:fs";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { RpcRequestError, custom } from "viem";
+import { base } from "viem/chains";
 
 type Hex = `0x${string}`;
 type Interval = [number, number];
@@ -41,6 +43,7 @@ interface Log {
   removed: boolean;
 }
 interface Rpc {
+  chainId?: number;
   request(request: { method: "eth_getLogs"; params: [LogQuery] }): Promise<Log[]>;
 }
 interface IntervalWithFilter { filter: Filter; interval: Interval }
@@ -68,6 +71,11 @@ const { eth_getLogs } = await loadRuntime("rpc/actions.js") as {
 const { createHistoricalSync } = await loadRuntime("sync-historical/index.js") as {
   createHistoricalSync(options: Record<string, unknown>): HistoricalSync;
 };
+const { createRpc } = await loadRuntime("rpc/index.js") as {
+  createRpc(options: Record<string, unknown>): Rpc;
+};
+
+afterEach(() => vi.restoreAllMocks());
 
 const hex = (number: number): Hex => `0x${number.toString(16)}`;
 const address = (number: number): Hex => `0x${number.toString(16).padStart(40, "0")}`;
@@ -89,9 +97,9 @@ function log(token: Hex, block: number, index: number, topics: Hex[] = [TRANSFER
   return { address: token, blockNumber: hex(block), blockHash: word(block), transactionHash: word(block + 10_000), transactionIndex: "0x0", logIndex: hex(index), data: word(10), topics, removed: false };
 }
 
-function rpcFixture(logs: Log[]) {
+function rpcFixture(logs: Log[], chainId = 8453) {
   const calls: LogQuery[] = [];
-  const rpc: Rpc = { request: vi.fn(async ({ method, params: [query] }) => {
+  const rpc: Rpc = { chainId, request: vi.fn(async ({ method, params: [query] }) => {
     expect(method).toBe("eth_getLogs");
     calls.push(query);
     const addresses = query.address === undefined ? undefined : new Set(Array.isArray(query.address) ? query.address : [query.address]);
@@ -105,15 +113,15 @@ function rpcFixture(logs: Log[]) {
 const sorted = (logs: Log[]) => [...logs].sort((a, b) => Number(a.blockNumber) - Number(b.blockNumber) || Number(a.logIndex) - Number(b.logIndex));
 
 describe("Ponder Base factory log scope", () => {
-  it("retains all 1,995 Base child addresses and uses the native 50-address RPC chunks", async () => {
+  it("retains all 1,995 Base child addresses and uses native ten-address RPC chunks", async () => {
     const { filter, childAddresses, children } = fixture();
     const requests = mergeLogFiltersToRequests([{ filter, interval: RANGE }], childAddresses, 1_000);
     expect(requests).toHaveLength(1);
     expect(requests[0]!.params[0].address).toEqual([...children.keys()]);
     const { rpc, calls } = rpcFixture([]);
     for (const request of requests) await eth_getLogs(rpc, request.params);
-    expect(calls).toHaveLength(40);
-    expect(calls.every(query => Array.isArray(query.address) && query.address.length > 0 && query.address.length <= 50)).toBe(true);
+    expect(calls).toHaveLength(200);
+    expect(calls.every(query => Array.isArray(query.address) && query.address.length > 0 && query.address.length <= 10)).toBe(true);
     expect(calls.flatMap(query => query.address as Hex[])).toEqual([...children.keys()]);
     expect(calls.every(query => query.fromBlock === hex(RANGE[0]) && query.toBlock === hex(RANGE[1]))).toBe(true);
   });
@@ -134,14 +142,14 @@ describe("Ponder Base factory log scope", () => {
     expect(calls.every(query => query.address !== undefined)).toBe(true);
   });
 
-  it.each([10_000, 10_001])("keeps Base queries scoped after the factory grows to %i children", async (count) => {
+  it.each([1_996, 10_000, 10_001])("keeps Base queries scoped after the factory grows to %i children", async (count) => {
     const { filter, childAddresses, children } = fixture(8453, count);
     const requests = mergeLogFiltersToRequests([{ filter, interval: RANGE }], childAddresses, 1_000);
     expect(requests[0]!.params[0].address).toEqual([...children.keys()]);
     const { rpc, calls } = rpcFixture([]);
     for (const request of requests) await eth_getLogs(rpc, request.params);
-    expect(calls).toHaveLength(Math.ceil(count / 50));
-    expect(calls.every(query => Array.isArray(query.address) && query.address.length > 0 && query.address.length <= 50)).toBe(true);
+    expect(calls).toHaveLength(Math.ceil(count / 10));
+    expect(calls.every(query => Array.isArray(query.address) && query.address.length > 0 && query.address.length <= 10)).toBe(true);
     expect(calls.flatMap(query => query.address as Hex[])).toEqual([...children.keys()]);
   });
 
@@ -161,8 +169,8 @@ describe("Ponder Base factory log scope", () => {
     expect(children.get(newChild)).toBe(1_010);
     expect(insertChildAddresses).toHaveBeenCalledWith(expect.objectContaining({ factory, chainId: 8453, childAddresses: new Map([[newChild, 1_010]]) }), expect.anything());
     const transferCalls = calls.filter(query => query.topics?.[0] === TRANSFER);
-    expect(transferCalls).toHaveLength(40);
-    expect(transferCalls.every(query => Array.isArray(query.address) && query.address.length <= 50)).toBe(true);
+    expect(transferCalls).toHaveLength(200);
+    expect(transferCalls.every(query => Array.isArray(query.address) && query.address.length <= 10)).toBe(true);
     expect(transferCalls.flatMap(query => query.address as Hex[])).toContain(newChild);
     expect(sorted(result)).toEqual([mint, existing]);
     expect(result).not.toContainEqual(outsider);
@@ -203,5 +211,101 @@ describe("Ponder Base factory log scope", () => {
     const requests = mergeLogFiltersToRequests([{ filter, interval: RANGE }], childAddresses, 1_000);
     expect(requests).toHaveLength(1);
     expect(requests[0]!.params[0].address).toBeUndefined();
+  });
+
+  it.each([1_996, 10_001])("keeps events on both sides of a ten-address boundary and the final partial chunk at %i children", async (count) => {
+    const { filter, children, childAddresses } = fixture(8453, count);
+    const expected = [log(address(10), 1_001, 0), log(address(11), 1_002, 1), log(address(count), 1_003, 2)];
+    const outsider = log(address(count + 1), 1_004, 3);
+    const { rpc, calls } = rpcFixture([...expected, outsider]);
+    const result: Log[] = [];
+    for (const request of mergeLogFiltersToRequests([{ filter, interval: RANGE }], childAddresses, 1_000)) {
+      result.push(...await eth_getLogs(rpc, request.params));
+    }
+    expect(sorted(result)).toEqual(expected);
+    expect(new Set(result.map(entry => entry.transactionHash)).size).toBe(expected.length);
+    expect(calls.flatMap(query => query.address as Hex[])).toEqual([...children.keys()]);
+    expect((calls.at(-1)!.address as Hex[]).length).toBe(count % 10 || 10);
+  });
+
+  it.each([10, 84532, 31337])("retains fifty-address RPC chunks on chain %i", async (chainId) => {
+    const { filter, childAddresses, children } = fixture(chainId, 111);
+    const { rpc, calls } = rpcFixture([], chainId);
+    for (const request of mergeLogFiltersToRequests([{ filter, interval: RANGE }], childAddresses, 1_000)) {
+      await eth_getLogs(rpc, request.params);
+    }
+    expect(calls.map(query => (query.address as Hex[]).length)).toEqual([50, 50, 11]);
+    expect(calls.flatMap(query => query.address as Hex[])).toEqual([...children.keys()]);
+  });
+
+  it.each([8453, 84532])("uses chain metadata from the actual native createRpc return for chain %i", async (chainId) => {
+    const calls: LogQuery[] = [];
+    const shutdown: Array<() => void | Promise<void>> = [];
+    const logger = { child() { return this; }, trace() {}, debug() {}, warn() {} };
+    const rpc = createRpc({
+      common: {
+        logger, metrics: { ponder_rpc_request_error_total: { inc() {} }, ponder_rpc_request_duration: { observe() {} } },
+        shutdown: { add(callback: () => void | Promise<void>) { shutdown.push(callback); } },
+      },
+      chain: { id: chainId, name: "memefun", viemChain: { ...base, id: chainId }, pollingInterval: 1_000,
+        rpc: custom({ request: async ({ params }) => { calls.push((params as [LogQuery])[0]); return []; } }, { retryCount: 0 }),
+      },
+    });
+    try {
+      expect(rpc.chainId).toBe(chainId);
+      const addresses = Array.from({ length: 51 }, (_, i) => address(i + 1));
+      expect(await eth_getLogs(rpc, [{ address: addresses, fromBlock: hex(RANGE[0]), toBlock: hex(RANGE[1]) }])).toEqual([]);
+      expect(calls.map(query => (query.address as Hex[]).length)).toEqual(chainId === 8453 ? [10, 10, 10, 10, 10, 1] : [50, 1]);
+      expect(calls.flatMap(query => query.address as Hex[])).toEqual(addresses);
+    } finally {
+      for (const stop of shutdown) await stop();
+    }
+  });
+
+  it.each([
+    { chainId: 8453, ranges: [1_001] },
+    { chainId: 84532, ranges: [500, 500, 1] },
+    { chainId: 1, ranges: [500, 500, 1] },
+  ])("starts native inner log ranges correctly on chain $chainId", async ({ chainId, ranges }) => {
+    const { filter, childAddresses } = fixture(chainId, 10);
+    const { rpc, calls } = rpcFixture([], chainId);
+    const logger = { debug() {}, warn() {}, child() { return this; } };
+    const sync = createHistoricalSync({ common: { logger, options: { factoryAddressCountThreshold: 1_000 } }, chain: { id: chainId, name: "memefun" }, rpc, childAddresses });
+    const interval: Interval = [1_000, 2_000];
+    expect(await sync.syncBlockRangeData({ interval, requiredIntervals: [{ filter, interval }], requiredFactoryIntervals: [], syncStore: { async insertChildAddresses() {} } })).toEqual([]);
+    expect(calls.map(query => Number(query.toBlock) - Number(query.fromBlock) + 1)).toEqual(ranges);
+    expect(calls.every(query => Array.isArray(query.address) && query.address.length === 10)).toBe(true);
+    let next = interval[0];
+    for (const query of calls) {
+      expect(Number(query.fromBlock)).toBe(next);
+      next = Number(query.toBlock) + 1;
+    }
+    expect(next).toBe(interval[1] + 1);
+  });
+
+  it("still splits an oversized Base request at a provider's 500-block limit without dropping boundary events", async () => {
+    const { filter, childAddresses } = fixture(8453, 10);
+    const interval: Interval = [1_000, 2_000];
+    const expected = [log(address(1), 1_499, 0), log(address(10), 1_500, 1), log(address(1), 2_000, 2)];
+    const calls: LogQuery[] = [];
+    const rpc: Rpc = { chainId: 8453, async request({ params: [query] }) {
+      calls.push(query);
+      if (Number(query.toBlock) - Number(query.fromBlock) + 1 > 500) {
+        throw new RpcRequestError({ body: { method: "eth_getLogs", params: [query] }, url: "https://rpc.test", error: { code: -32602, message: "eth_getLogs is limited to 500 blocks range" } });
+      }
+      return expected.filter(entry => Number(entry.blockNumber) >= Number(query.fromBlock) && Number(entry.blockNumber) <= Number(query.toBlock));
+    } };
+    const logger = { debug() {}, warn() {}, child() { return this; } };
+    const sync = createHistoricalSync({ common: { logger, options: { factoryAddressCountThreshold: 1_000 } }, chain: { id: 8453, name: "memefun" }, rpc, childAddresses });
+    const result = await sync.syncBlockRangeData({ interval, requiredIntervals: [{ filter, interval }], requiredFactoryIntervals: [], syncStore: { async insertChildAddresses() {} } });
+    expect(sorted(result)).toEqual(expected);
+    expect(Number(calls[0]!.toBlock) - Number(calls[0]!.fromBlock) + 1).toBe(1_001);
+    let next = interval[0];
+    for (const query of calls.slice(1).sort((a, b) => Number(a.fromBlock) - Number(b.fromBlock))) {
+      expect(Number(query.fromBlock)).toBe(next);
+      expect(Number(query.toBlock) - Number(query.fromBlock) + 1).toBeLessThanOrEqual(500);
+      next = Number(query.toBlock) + 1;
+    }
+    expect(next).toBe(interval[1] + 1);
   });
 });

@@ -1,5 +1,18 @@
+diff --git a/dist/esm/rpc/actions.js b/dist/esm/rpc/actions.js
+index ff65bd1e0c2823b3a5d04259be973ca2540df140..b922854e28dd72bf8403cd7ce4b369ff6ac18c40 100644
+--- a/dist/esm/rpc/actions.js
++++ b/dist/esm/rpc/actions.js
+@@ -50,7 +50,7 @@ export const eth_getLogs = async (rpc, params, context) => {
+         params,
+     };
+     const requests = Array.isArray(params[0].address)
+-        ? chunk(params[0].address, ADDRESS_CHUNK_SIZE).map((address) => ({
++        ? chunk(params[0].address, rpc.chainId === 8453 ? 10 : ADDRESS_CHUNK_SIZE).map((address) => ({
+             method: "eth_getLogs",
+             params: [{ ...params[0], address }],
+         }))
 diff --git a/dist/esm/rpc/index.js b/dist/esm/rpc/index.js
-index 04f280f54d91cfdce126f560cbbb568e28cfca1a..97cf4aca548a4e94dd6564eeb44827ffce838de6 100644
+index 04f280f54d91cfdce126f560cbbb568e28cfca1a..3a1fc379fa56c1a72ddbf1b9ac90dc8bf9cb4ced 100644
 --- a/dist/esm/rpc/index.js
 +++ b/dist/esm/rpc/index.js
 @@ -280,7 +280,8 @@ export const createRpc = ({ common, chain, concurrency = 25, }) => {
@@ -12,8 +25,16 @@ index 04f280f54d91cfdce126f560cbbb568e28cfca1a..97cf4aca548a4e94dd6564eeb44827ff
                  return;
              }
          }
+@@ -504,6 +505,7 @@ export const createRpc = ({ common, chain, concurrency = 25, }) => {
+     let webSocketErrorCount = 0;
+     let interval;
+     const rpc = {
++        chainId: chain.id,
+         hostnames: backends.map((backend) => backend.hostname),
+         // @ts-expect-error
+         request: (parameters, context) => queue.add({ body: parameters, context }),
 diff --git a/dist/esm/runtime/filter.js b/dist/esm/runtime/filter.js
-index b1a56dd14852c0b590245124ae583e5c682b878a..92c9ab4e6b9a4cdd10e62ae33b3c65d7aac899d0 100644
+index b1a56dd14852c0b590245124ae583e5c682b878a..3094cec8edf334fe3cf10a1ec2c023ade81a5adc 100644
 --- a/dist/esm/runtime/filter.js
 +++ b/dist/esm/runtime/filter.js
 @@ -65,10 +65,12 @@ export const mergeLogFiltersToRequests = (filters, childAddresses, factoryAddres
@@ -21,7 +42,7 @@ index b1a56dd14852c0b590245124ae583e5c682b878a..92c9ab4e6b9a4cdd10e62ae33b3c65d7
              if (addresses.size === 0)
                  continue;
 +            // MemeFun's Base factory has over 1,000 children, but represents a small share of
-+            // Base transfers. Keep its queries scoped; eth_getLogs already chunks 50 addresses.
++            // Base transfers. Keep its queries scoped; eth_getLogs applies chain-specific chunks.
              address =
 -                addresses.size >= factoryAddressCountThreshold
 -                    ? undefined
@@ -33,7 +54,7 @@ index b1a56dd14852c0b590245124ae583e5c682b878a..92c9ab4e6b9a4cdd10e62ae33b3c65d7
          else {
              address = filter.address;
 diff --git a/dist/esm/runtime/historical.js b/dist/esm/runtime/historical.js
-index a404ae0db35243b7a0de0ccdef2c1ae577cb705f..1ec1399e61e97699e26c9fec5403cd6a173a0fb9 100644
+index a404ae0db35243b7a0de0ccdef2c1ae577cb705f..56d0c1f1f3664ccac90f913de35277125f418d1b 100644
 --- a/dist/esm/runtime/historical.js
 +++ b/dist/esm/runtime/historical.js
 @@ -676,7 +676,10 @@ export async function* getLocalSyncGenerator(params) {
@@ -57,6 +78,21 @@ index a404ae0db35243b7a0de0ccdef2c1ae577cb705f..1ec1399e61e97699e26c9fec5403cd6a
                  max: 100_000,
                  prev: estimateRange,
                  maxIncrease: 1.5,
+diff --git a/dist/esm/sync-historical/index.js b/dist/esm/sync-historical/index.js
+index 535141daed480c3a45ba1ad85f507f92d7c0edae..c06f096ff6b45e034a05191c4945146327ab8066 100644
+--- a/dist/esm/sync-historical/index.js
++++ b/dist/esm/sync-historical/index.js
+@@ -18,7 +18,9 @@ export const createHistoricalSync = (args) => {
+      * filters and log factories.
+      */
+     let logsRequestMetadata = {
+-        estimatedRange: 500,
++        // Match Base's initial inclusive 1,001-block outer interval to avoid redundant
++        // address-chunk batches; provider-specific range errors still split dynamically.
++        estimatedRange: args.chain.id === 8453 ? 1_001 : 500,
+     };
+     ////////
+     // Helper functions for sync tasks
 diff --git a/dist/esm/utils/finality.js b/dist/esm/utils/finality.js
 index 86af3301833e90d47b9fe0f8dabf3098fda5bc6a..3acbae689aaa0ea0584383c5e0810601347fbd68 100644
 --- a/dist/esm/utils/finality.js
@@ -72,11 +108,48 @@ index 86af3301833e90d47b9fe0f8dabf3098fda5bc6a..3acbae689aaa0ea0584383c5e0810601
          default:
              // Assume a 2-second block time, e.g. OP stack chains.
              finalityBlockCount = 30;
+diff --git a/dist/types/rpc/index.d.ts b/dist/types/rpc/index.d.ts
+index e81b8f659ba1a6c2e6775cc518e96e05622b684a..6fec7aa6b21de38460698bccf677fc4b6efe8ce9 100644
+--- a/dist/types/rpc/index.d.ts
++++ b/dist/types/rpc/index.d.ts
+@@ -25,6 +25,8 @@ export type RequestReturnType<method extends EIP1193Parameters<RpcSchema>["metho
+ }>["ReturnType"];
+ export declare const sanitizeLogTopics: <topics extends LogTopic[] | readonly LogTopic[]>(topics: topics) => topics;
+ export type Rpc = {
++    /** Optional for custom RPC implementations created outside Ponder. */
++    chainId?: number;
+     hostnames: string[];
+     request: <TParameters extends RequestParameters>(parameters: TParameters, context?: {
+         logger?: Logger;
+diff --git a/src/rpc/actions.ts b/src/rpc/actions.ts
+index 7821c2fdd31bb3a5820f61afadac7dd6dd15677d..0e97055ba0ab6be16db719afd77eda8543b3b49d 100644
+--- a/src/rpc/actions.ts
++++ b/src/rpc/actions.ts
+@@ -98,7 +98,7 @@ export const eth_getLogs = async (
+
+   const requests: Extract<RequestParameters, { method: "eth_getLogs" }>[] =
+     Array.isArray(params[0].address)
+-      ? chunk(params[0].address, ADDRESS_CHUNK_SIZE).map(
++      ? chunk(params[0].address, rpc.chainId === 8453 ? 10 : ADDRESS_CHUNK_SIZE).map(
+           (address) =>
+             ({
+               method: "eth_getLogs",
 diff --git a/src/rpc/index.ts b/src/rpc/index.ts
-index d420f0fec973ab96186e01bcb36c481f7a915e85..1e43a8929f30cab14eb5d4300ec6192b71d6de46 100644
+index d420f0fec973ab96186e01bcb36c481f7a915e85..1ebe3b5b2ee41ae7563862a128f24a1a7a101062 100644
 --- a/src/rpc/index.ts
 +++ b/src/rpc/index.ts
-@@ -432,5 +432,6 @@ export const createRpc = ({
+@@ -70,6 +70,8 @@ export const sanitizeLogTopics = <
+ };
+
+ export type Rpc = {
++  /** Optional for custom RPC implementations created outside Ponder. */
++  chainId?: number;
+   hostnames: string[];
+   request: <TParameters extends RequestParameters>(
+     parameters: TParameters,
+@@ -430,7 +432,8 @@ export const createRpc = ({
+     }
+
      for (const { count } of bucket.rps) {
 -      if (count < bucket.rpsLimit * RPS_INCREASE_QUALIFIER) {
 +      // isAvailable permits only the integer portion of a fractional RPS limit.
@@ -84,13 +157,24 @@ index d420f0fec973ab96186e01bcb36c481f7a915e85..1e43a8929f30cab14eb5d4300ec6192b
          return;
        }
      }
+@@ -710,6 +713,7 @@ export const createRpc = ({
+   let interval: NodeJS.Timeout | undefined;
+
+   const rpc: Rpc = {
++    chainId: chain.id,
+     hostnames: backends.map((backend) => backend.hostname),
+     // @ts-expect-error
+     request: (parameters, context) => queue.add({ body: parameters, context }),
 diff --git a/src/runtime/filter.ts b/src/runtime/filter.ts
-index 1736c15b8221eae9003d1913db9b3f9811014e2d..de935d4101a58784331129b939ffddd8ed778a47 100644
+index 1736c15b8221eae9003d1913db9b3f9811014e2d..45e5b6515d5a7a2b33be2fc9a121c0006f49d72c 100644
 --- a/src/runtime/filter.ts
 +++ b/src/runtime/filter.ts
-@@ -142,7 +142,9 @@ export const mergeLogFiltersToRequests = (
+@@ -139,10 +139,12 @@ export const mergeLogFiltersToRequests = (
+       const addresses = childAddresses.get(filter.address.id)!;
+       if (addresses.size === 0) continue;
+
 +      // MemeFun's Base factory has over 1,000 children, but represents a small share of
-+      // Base transfers. Keep its queries scoped; eth_getLogs already chunks 50 addresses.
++      // Base transfers. Keep its queries scoped; eth_getLogs applies chain-specific chunks.
        address =
 -        addresses.size >= factoryAddressCountThreshold
 -          ? undefined
@@ -105,7 +189,8 @@ diff --git a/src/runtime/historical.ts b/src/runtime/historical.ts
 index 0e621a998c09d5968b28e40fbd0e1af6e33428b4..8ce693e66bbaf42131f6066d790d7c2e88fc6b49 100644
 --- a/src/runtime/historical.ts
 +++ b/src/runtime/historical.ts
-@@ -1120,3 +1120,6 @@ export async function* getLocalSyncGenerator(params: {
+@@ -1119,7 +1119,10 @@ export async function* getLocalSyncGenerator(params: {
+
    // Estimate optimal range (blocks) to sync at a time, eventually to be used to
    // determine `interval` passed to `historicalSync.sync()`.
 -  let estimateRange = 25;
@@ -113,6 +198,9 @@ index 0e621a998c09d5968b28e40fbd0e1af6e33428b4..8ce693e66bbaf42131f6066d790d7c2e
 +  // larger intervals; provider range splitting and the block-memory queue remain bounded.
 +  const minimumRange = params.chain.id === 8453 ? 1_000 : 25;
 +  let estimateRange = minimumRange;
+
+   // Handle two special cases:
+   // 1. `syncProgress.start` > `syncProgress.finalized`
 @@ -1348,7 +1351,7 @@ export async function* getLocalSyncGenerator(params: {
          to: interval[1],
          target: params.common.options.command === "dev" ? 2_000 : 10_000,
@@ -122,6 +210,21 @@ index 0e621a998c09d5968b28e40fbd0e1af6e33428b4..8ce693e66bbaf42131f6066d790d7c2e
          max: 100_000,
          prev: estimateRange,
          maxIncrease: 1.5,
+diff --git a/src/sync-historical/index.ts b/src/sync-historical/index.ts
+index 31cf91b8176bd3934b0fdcdb0bfbcd6b48f3f3d4..f2b97c5d9849ecec88e27f778e237bd82b08e11a 100644
+--- a/src/sync-historical/index.ts
++++ b/src/sync-historical/index.ts
+@@ -115,7 +115,9 @@ export const createHistoricalSync = (
+     /** Range suggested by an error message */
+     confirmedRange?: number;
+   } = {
+-    estimatedRange: 500,
++    // Match Base's initial inclusive 1,001-block outer interval to avoid redundant
++    // address-chunk batches; provider-specific range errors still split dynamically.
++    estimatedRange: args.chain.id === 8453 ? 1_001 : 500,
+   };
+
+   ////////
 diff --git a/src/utils/finality.ts b/src/utils/finality.ts
 index 9462275abd1afc790e707a6fe047dbfd7831546f..c5b61c62ea5eedd5f2aab7b2d90577048dba9f0e 100644
 --- a/src/utils/finality.ts
