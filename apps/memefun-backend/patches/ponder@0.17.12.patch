@@ -1,5 +1,5 @@
 diff --git a/dist/esm/rpc/index.js b/dist/esm/rpc/index.js
-index 04f280f54d91cfdce126f560cbbb568e28cfca1a..fac2fe48013596d35a2217b5cb63532add08f5a4 100644
+index 04f280f54d91cfdce126f560cbbb568e28cfca1a..97cf4aca548a4e94dd6564eeb44827ffce838de6 100644
 --- a/dist/esm/rpc/index.js
 +++ b/dist/esm/rpc/index.js
 @@ -280,7 +280,8 @@ export const createRpc = ({ common, chain, concurrency = 25, }) => {
@@ -13,7 +13,7 @@ index 04f280f54d91cfdce126f560cbbb568e28cfca1a..fac2fe48013596d35a2217b5cb63532a
              }
          }
 diff --git a/dist/esm/runtime/filter.js b/dist/esm/runtime/filter.js
-index b1a56dd14852c0b590245124ae583e5c682b878a..388e5adfd7a49b987a62a6c7575f57c9ec8b1ffb 100644
+index b1a56dd14852c0b590245124ae583e5c682b878a..92c9ab4e6b9a4cdd10e62ae33b3c65d7aac899d0 100644
 --- a/dist/esm/runtime/filter.js
 +++ b/dist/esm/runtime/filter.js
 @@ -65,10 +65,12 @@ export const mergeLogFiltersToRequests = (filters, childAddresses, factoryAddres
@@ -32,6 +32,31 @@ index b1a56dd14852c0b590245124ae583e5c682b878a..388e5adfd7a49b987a62a6c7575f57c9
          }
          else {
              address = filter.address;
+diff --git a/dist/esm/runtime/historical.js b/dist/esm/runtime/historical.js
+index a404ae0db35243b7a0de0ccdef2c1ae577cb705f..1ec1399e61e97699e26c9fec5403cd6a173a0fb9 100644
+--- a/dist/esm/runtime/historical.js
++++ b/dist/esm/runtime/historical.js
+@@ -676,7 +676,10 @@ export async function* getLocalSyncGenerator(params) {
+             : params.syncProgress.end;
+     // Estimate optimal range (blocks) to sync at a time, eventually to be used to
+     // determine `interval` passed to `historicalSync.sync()`.
+-    let estimateRange = 25;
++    // Base's scoped factory queries have fixed address-chunk overhead. Amortize it over
++    // larger intervals; provider range splitting and the block-memory queue remain bounded.
++    const minimumRange = params.chain.id === 8453 ? 1_000 : 25;
++    let estimateRange = minimumRange;
+     // Handle two special cases:
+     // 1. `syncProgress.start` > `syncProgress.finalized`
+     // 2. `cached` is defined
+@@ -837,7 +840,7 @@ export async function* getLocalSyncGenerator(params) {
+                 to: interval[1],
+                 target: params.common.options.command === "dev" ? 2_000 : 10_000,
+                 result: duration,
+-                min: 25,
++                min: minimumRange,
+                 max: 100_000,
+                 prev: estimateRange,
+                 maxIncrease: 1.5,
 diff --git a/dist/esm/utils/finality.js b/dist/esm/utils/finality.js
 index 86af3301833e90d47b9fe0f8dabf3098fda5bc6a..3acbae689aaa0ea0584383c5e0810601347fbd68 100644
 --- a/dist/esm/utils/finality.js
@@ -76,6 +101,27 @@ index 1736c15b8221eae9003d1913db9b3f9811014e2d..de935d4101a58784331129b939ffddd8
      } else {
        address = filter.address;
      }
+diff --git a/src/runtime/historical.ts b/src/runtime/historical.ts
+index 0e621a998c09d5968b28e40fbd0e1af6e33428b4..8ce693e66bbaf42131f6066d790d7c2e88fc6b49 100644
+--- a/src/runtime/historical.ts
++++ b/src/runtime/historical.ts
+@@ -1120,3 +1120,6 @@ export async function* getLocalSyncGenerator(params: {
+   // Estimate optimal range (blocks) to sync at a time, eventually to be used to
+   // determine `interval` passed to `historicalSync.sync()`.
+-  let estimateRange = 25;
++  // Base's scoped factory queries have fixed address-chunk overhead. Amortize it over
++  // larger intervals; provider range splitting and the block-memory queue remain bounded.
++  const minimumRange = params.chain.id === 8453 ? 1_000 : 25;
++  let estimateRange = minimumRange;
+@@ -1348,7 +1351,7 @@ export async function* getLocalSyncGenerator(params: {
+         to: interval[1],
+         target: params.common.options.command === "dev" ? 2_000 : 10_000,
+         result: duration,
+-        min: 25,
++        min: minimumRange,
+         max: 100_000,
+         prev: estimateRange,
+         maxIncrease: 1.5,
 diff --git a/src/utils/finality.ts b/src/utils/finality.ts
 index 9462275abd1afc790e707a6fe047dbfd7831546f..c5b61c62ea5eedd5f2aab7b2d90577048dba9f0e 100644
 --- a/src/utils/finality.ts

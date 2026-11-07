@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { TimeoutError } from "viem";
 
 import { chainRpcTransport, chainSettings } from "../../lib/chain";
 import { parseDeployment } from "../../lib/deployment";
@@ -458,6 +459,85 @@ describe("chainSettings", () => {
     const transport = chainRpcTransport(chain)({ chain: chain.viemChain, retryCount: 0 });
     await expect(transport.request({ method: "eth_getLogs", params: [{ fromBlock: "0x0", toBlock: "0x4e20" }] })).rejects.toMatchObject({ details: "eth_getLogs is limited to 10,000 blocks range" });
     expect(fetch).toHaveBeenCalledTimes(3);
+  });
+
+  it("uses actionable Nodies fifty-block hints instead of a contradictory ten-thousand-block hint", async () => {
+    process.env.MEMEFUN_CHAIN = "base";
+    const chain = { ...chainSettings(), rpcUrls: [
+      "https://base-mainnet.public.blastapi.io", "https://base-pokt.nodies.app", "https://base.drpc.org",
+      "https://base.gateway.tenderly.co", "https://base-mainnet.g.alchemy.com/v2/inactive-key",
+    ] };
+    const fetch = vi.fn(async (url: string | URL | Request) => {
+      const endpoint = String(url);
+      if (endpoint.includes("blastapi")) return Response.json({ error: { code: -32600, message: "eth_getLogs is limited to 10 blocks range" } });
+      if (endpoint.includes("nodies")) return Response.json({ error: { code: -32001, message: "Block range too large: maximum allowed is 50 blocks on your current plan" } });
+      if (endpoint.includes("drpc")) return Response.json({ error: { code: 35, message: "ranges over 10000 blocks are not supported on free plan" } });
+      if (endpoint.includes("tenderly")) return new Response("Rate limited", { status: 429 });
+      return Response.json({ error: { code: -32600, message: "App is inactive" } });
+    });
+    vi.stubGlobal("fetch", fetch);
+    const transport = chainRpcTransport(chain)({ chain: chain.viemChain, retryCount: 0 });
+    await expect(transport.request({ method: "eth_getLogs", params: [{ fromBlock: "0x0", toBlock: "0x3e7" }] })).rejects.toMatchObject({
+      code: -32001, details: expect.stringContaining("eth_getLogs is limited to 50 blocks range"),
+    });
+    expect(fetch).toHaveBeenCalledTimes(5);
+  });
+
+  it("keeps contradictory range wording out of the native splitter while retaining its original cause", async () => {
+    process.env.MEMEFUN_CHAIN = "base";
+    const chain = { ...chainSettings(), rpcUrls: ["https://base.drpc.org", "https://base-mainnet.g.alchemy.com/v2/inactive-key"] };
+    const fetch = vi.fn(async (url: string | URL | Request) => String(url).includes("alchemy")
+      ? Response.json({ error: { code: -32600, message: "App is inactive" } })
+      : Response.json({ error: { code: 35, message: "ranges over 10000 blocks are not supported on free plan" } }));
+    vi.stubGlobal("fetch", fetch);
+    const transport = chainRpcTransport(chain)({ chain: chain.viemChain, retryCount: 0 });
+    const error: unknown = await transport.request({ method: "eth_getLogs", params: [{ fromBlock: "0x0", toBlock: "0x3e7" }] }).catch(error => error);
+    expect(error).toMatchObject({ status: 503, cause: { code: 35, details: "ranges over 10000 blocks are not supported on free plan" } });
+    expect(JSON.stringify(error)).not.toContain("ranges over 10000");
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    { name: "a recent wider peer's 429", peer: "rate", expected: "rate" },
+    { name: "a recent wider peer's timeout", peer: "timeout", expected: "timeout" },
+    { name: "expired successful-range evidence", peer: "rate", expected: "range", expired: true },
+    { name: "a different address-count shape", peer: "rate", expected: "range", differentShape: true },
+    { name: "a corroborated limit above the proven range", peer: "rate", expected: "range", limit: 10_000 },
+    { name: "a new hard limit from the formerly wider peer", peer: "range", expected: "range" },
+  ])("handles $name without permanently shrinking a known healthy range", async (scenario) => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-11-07T04:00:00Z"));
+    process.env.MEMEFUN_CHAIN = "base";
+    const chain = { ...chainSettings(), rpcUrls: [
+      "https://base.gateway.tenderly.co", "https://base-mainnet.public.blastapi.io", "https://base-pokt.nodies.app",
+      "https://base-mainnet.g.alchemy.com/v2/inactive-key",
+    ] };
+    let warmed = false;
+    const limit = scenario.limit ?? 50;
+    const fetch = vi.fn(async (url: string | URL | Request) => {
+      const endpoint = String(url);
+      if (endpoint.includes("tenderly")) {
+        if (!warmed) return Response.json({ result: [] });
+        if (scenario.peer === "timeout") throw new TimeoutError({ url: endpoint, body: { method: "eth_getLogs" } });
+        if (scenario.peer === "rate") return new Response("Rate limited", { status: 429 });
+        return Response.json({ error: { code: -32600, message: `eth_getLogs is limited to ${limit} blocks range` } });
+      }
+      if (endpoint.includes("alchemy")) return Response.json({ error: { code: -32600, message: "App is inactive" } });
+      return Response.json({ error: { code: -32600, message: `eth_getLogs is limited to ${endpoint.includes("blastapi") ? 10 : limit} blocks range` } });
+    });
+    vi.stubGlobal("fetch", fetch);
+    const transport = chainRpcTransport(chain)({ chain: chain.viemChain, retryCount: 0 });
+    const addresses = Array.from({ length: 50 }, (_, i) => `0x${(i + 1).toString(16).padStart(40, "0")}`);
+    const read = (blocks: number, address = addresses) => transport.request({
+      method: "eth_getLogs", params: [{ address, fromBlock: "0x0", toBlock: `0x${(blocks - 1).toString(16)}` }],
+    });
+    expect(await read(1_000, scenario.differentShape ? addresses.slice(0, 1) : addresses)).toEqual([]);
+    warmed = true;
+    if (scenario.expired) vi.setSystemTime(new Date("2026-11-07T04:05:01Z"));
+    const request = read(scenario.limit === 10_000 ? 15_000 : 1_000);
+    if (scenario.expected === "rate") await expect(request).rejects.toMatchObject({ status: 429 });
+    else if (scenario.expected === "timeout") await expect(request).rejects.toBeInstanceOf(TimeoutError);
+    else await expect(request).rejects.toMatchObject({ details: `eth_getLogs is limited to ${limit} blocks range` });
   });
 
   it.each([false, true])("uses a corroborated public range despite a throttled peer (capacity first: %s)", async (capacityFirst) => {

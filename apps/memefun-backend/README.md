@@ -201,8 +201,12 @@ The pinned Ponder 0.17.12 patch keeps Base factory log queries scoped to discove
 addresses, using Ponder's existing chunks of at most 50 addresses per RPC request even as the
 factory grows. It also lets the adaptive rate limiter recover from fractional limits using
 the integer request rate it actually permits, and retains 60 seconds of Base mainnet reorg
-history (300 Denim blocks). Other chains keep their existing factory thresholds and reorg
-settings. Ponder database metadata stays at version 6; no schema, indexing-handler, or sampling
+history (300 Denim blocks). Base historical sync starts with a range estimate of 1,000 and
+keeps that minimum, amortizing address-chunk overhead across roughly 200 seconds of chain
+history. The remaining tail still clamps to the requested end. Provider-level log splitting,
+the adaptive range ceiling of 100,000, and the block-processing queue limit of 600 concurrent
+Base blocks remain unchanged. Other chains keep their existing range floor of 25, factory
+thresholds and reorg settings. Ponder database metadata stays at version 6; no schema, indexing-handler, or sampling
 migration is required. Resume the existing schema under Ponder's writer lock; do not rebuild,
 force-unlock, or drop it to apply these fixes. `/ready` and the keeper's captured-head gate
 remain strict until the index catches up.

@@ -106,4 +106,58 @@ describe("Ponder's native public log-range failover", () => {
     expect(calls.length).toBeGreaterThan(1);
     expect(calls.every(call => call.url.startsWith(BLAST) && call.blocks <= 10)).toBe(true);
   });
+
+  it("uses Nodies' actual 50-block plan limit for bounded native splitting", async () => {
+    process.env.MEMEFUN_CHAIN = "base";
+    const chain = { ...chainSettings(), rpcUrls: [NODIES, ALCHEMY] };
+    const calls: Array<{ url: string; blocks: number }> = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const { params: [query] } = JSON.parse(String(init?.body)) as GetLogsRequest;
+      const blocks = Number(query.toBlock) - Number(query.fromBlock) + 1;
+      calls.push({ url: String(url), blocks });
+      if (String(url).includes("alchemy")) return Response.json({ error: { code: -32600, message: "App is inactive" } });
+      return blocks > 50
+        ? Response.json({ error: { code: -32001, message: "Block range too large: maximum allowed is 50 blocks on your current plan" } })
+        : Response.json({ result: [] });
+    }));
+    const transport = chainRpcTransport(chain)({ chain: chain.viemChain });
+    const native = nativeSync(transport.request);
+    expect(await native.syncRange([FIRST, FIRST + 125])).toEqual([]);
+    expect(native.debug.filter(entry => entry.msg === "Updated eth_getLogs range")).toEqual([
+      expect.objectContaining({ range: 50 }),
+    ]);
+    expect(calls.filter(call => call.url.startsWith(NODIES)).map(call => call.blocks)).toEqual([126, 50, 50, 26]);
+    calls.length = 0;
+    expect(await native.syncRange([FIRST + 126, FIRST + 251])).toEqual([]);
+    expect(calls).toEqual([
+      { url: `${NODIES}/`, blocks: 50 }, { url: `${NODIES}/`, blocks: 50 }, { url: `${NODIES}/`, blocks: 26 },
+    ]);
+  });
+
+  it("rejects a contradictory dRPC 10,000-block hint without recursive native range retries", async () => {
+    process.env.MEMEFUN_CHAIN = "base";
+    const chain = { ...chainSettings(), rpcUrls: ["https://base.drpc.org", ALCHEMY] };
+    const calls: Array<{ url: string; blocks: number }> = [];
+    const message = "ranges over 10000 blocks are not supported on free plan";
+    vi.stubGlobal("fetch", vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const { params: [query] } = JSON.parse(String(init?.body)) as GetLogsRequest;
+      calls.push({ url: String(url), blocks: Number(query.toBlock) - Number(query.fromBlock) + 1 });
+      return String(url).includes("alchemy")
+        ? Response.json({ error: { code: -32600, message: "App is inactive" } })
+        : Response.json({ error: { code: 35, message } });
+    }));
+    const transport = chainRpcTransport(chain)({ chain: chain.viemChain });
+    const native = nativeSync(transport.request);
+    let failure: unknown;
+    try { await native.syncRange([FIRST, FIRST + 999]); }
+    catch (error) { failure = error; }
+    expect(failure).toMatchObject({ status: 503, cause: { details: message } });
+    expect(JSON.stringify(failure)).not.toContain(message);
+    expect(native.debug.filter(entry => entry.msg === "Updated eth_getLogs range")).toEqual([]);
+    const publicCalls = calls.filter(call => call.url.includes("drpc"));
+    expect(publicCalls.length).toBeGreaterThan(0);
+    expect(publicCalls.length).toBeLessThanOrEqual(2);
+    expect(publicCalls.every(call => call.blocks === 500)).toBe(true);
+    expect(calls.length).toBeLessThanOrEqual(4);
+  });
 });

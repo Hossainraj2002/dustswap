@@ -1,4 +1,4 @@
-import { type Chain, type EIP1193RequestFn, type Transport, HttpRequestError, TimeoutError, createTransport, defineChain, fallback, http, shouldThrow } from "viem";
+import { type Chain, type EIP1193RequestFn, type Transport, BaseError, HttpRequestError, TimeoutError, createTransport, defineChain, fallback, http, shouldThrow } from "viem";
 import { base, baseSepolia } from "viem/chains";
 import { rateLimit } from "ponder";
 
@@ -90,10 +90,24 @@ function logRangeLimit(error: Error) {
 function logRangeHint(error: Error): { blocks: bigint; hard: boolean } | undefined {
   const details = "details" in error ? String(error.details) : error.message;
   const count = details.match(/(?:limited to|up to|at most|ranges over) (?:a )?(\d[\d,]*)\s*blocks?/i)
-    ?? details.match(/maximum block range(?: is|:)?\s*(\d[\d,]*)/i);
+    ?? details.match(/maximum block range(?: is|:)?\s*(\d[\d,]*)/i)
+    ?? details.match(/maximum allowed is (\d[\d,]*) blocks/i);
   if (count) return { blocks: BigInt(count[1]!.replaceAll(",", "")), hard: true };
   const range = details.match(/\[(0x[\da-f]+),\s*(0x[\da-f]+)\]/i);
   if (range && BigInt(range[2]!) >= BigInt(range[1]!)) return { blocks: BigInt(range[2]!) - BigInt(range[1]!) + 1n, hard: false };
+}
+
+function actionableRangeError(error: Error, blocks: bigint): Error {
+  const details = "details" in error ? String(error.details) : error.message;
+  if (!/maximum allowed is \d[\d,]* blocks/i.test(details)) return error;
+  // Keep the original response accessible without letting its unfamiliar wording hide
+  // the canonical block-limit hint from Ponder's JSON-stringified retry helper.
+  const normalized = new BaseError("RPC block range limit.", {
+    details: `${details}\neth_getLogs is limited to ${blocks} blocks range`,
+  });
+  Object.defineProperty(normalized, "cause", { value: error, configurable: true });
+  if ("code" in error && typeof error.code === "number") Object.assign(normalized, { code: error.code });
+  return normalized;
 }
 
 function logBlockCount(request: { method: string; params?: unknown }): bigint | undefined {
@@ -104,6 +118,20 @@ function logBlockCount(request: { method: string; params?: unknown }): bigint | 
     || !/^0x[\da-f]+$/i.test(filter.fromBlock) || !/^0x[\da-f]+$/i.test(filter.toBlock)) return;
   const count = BigInt(filter.toBlock) - BigInt(filter.fromBlock) + 1n;
   return count > 0n ? count : undefined;
+}
+
+function contradictoryRangeError(error: Error, request: { method: string; params?: unknown }, url: string): Error {
+  if (request.method !== "eth_getLogs" || !logRangeLimit(error)) return error;
+  const hint = logRangeHint(error);
+  const requested = logBlockCount(request);
+  if (!hint || requested === undefined || hint.blocks < requested) return error;
+  // A larger/equal advertised limit cannot produce a smaller retry. Do not expose
+  // its original range wording to Ponder, which could retry the same interval forever.
+  const normalized = new HttpRequestError({
+    body: request, url, status: 503, details: "RPC provider rejected a log query within its advertised block limit.",
+  });
+  Object.defineProperty(normalized, "cause", { value: error, configurable: true });
+  return normalized;
 }
 
 function logAddressCount(request: { method: string; params?: unknown }): number | undefined {
@@ -134,6 +162,7 @@ export function chainRpcTransport(chain: ChainSettings, timeout = 10_000) {
     const paidCircuits = new Map<string, { until: number; error: Error; probing: boolean }>();
     const rangeCaps = new Map<string, { until: number; blocks: bigint; error: Error }>();
     const addressCaps = new Map<string, { until: number; addresses: number; error: Error }>();
+    const successfulRanges = new Map<string, { until: number; blocks: bigint }>();
     let nextPublic = 0;
     const publicUrls = chain.rpcUrls.filter((url) => !isAlchemyUrl(url));
     const paidUrls = chain.rpcUrls.filter(isAlchemyUrl);
@@ -172,9 +201,17 @@ export function chainRpcTransport(chain: ChainSettings, timeout = 10_000) {
           }
           try {
             const result = await rpc.request(request, requestOptions);
+            if (blocks !== undefined) {
+              const shape = `${url}\0${addresses ?? "any"}`;
+              const observed = successfulRanges.get(shape);
+              if (!observed || observed.until <= Date.now() || blocks >= observed.blocks) {
+                successfulRanges.set(shape, { until: Date.now() + 300_000, blocks });
+              }
+            }
             if (cooldowns.get(key) === cooldown) cooldowns.delete(key);
             return result;
-          } catch (error) {
+          } catch (caughtError) {
+            const error = caughtError instanceof Error ? contradictoryRangeError(caughtError, request, url) : caughtError;
             if (request.method === "eth_getLogs" && error instanceof Error) {
               const addresses = logAddressHint(error);
               if (addresses !== undefined) addressCaps.set(url, { until: Date.now() + 300_000, addresses, error });
@@ -183,7 +220,7 @@ export function chainRpcTransport(chain: ChainSettings, timeout = 10_000) {
               && (error.status === undefined || error.status === 429 || error.status >= 500));
             const details = error instanceof Error && "details" in error ? String(error.details) : "";
             const rangeError = request.method === "eth_getLogs" && error instanceof Error && logRangeLimit(error);
-            if (rangeError) {
+            if (rangeError && error instanceof Error) {
               const hint = logRangeHint(error);
               if (hint?.hard && hint.blocks > 0n) rangeCaps.set(url, { until: Date.now() + 300_000, blocks: hint.blocks, error });
             }
@@ -192,7 +229,7 @@ export function chainRpcTransport(chain: ChainSettings, timeout = 10_000) {
               && (error.code === 429 || /rate limit|too many requests|request limit|compute units per second/i.test(details));
             // Ponder recognizes status/code 429, not provider-specific -32011/-32005.
             // Retain the provider error as the cause while exposing its capacity signal.
-            const failure = limited ? new HttpRequestError({ body: request, cause: error, details, status: 429, url }) : error;
+            const failure = limited ? new HttpRequestError({ body: request, cause: error instanceof Error ? error : undefined, details, status: 429, url }) : error;
             if (error instanceof Error && (transient || limited)) {
               cooldowns.set(key, { until: Date.now() + 30_000, error: failure as Error, probing: false });
             } else if (cooldowns.get(key) === cooldown) cooldowns.delete(key);
@@ -213,7 +250,8 @@ export function chainRpcTransport(chain: ChainSettings, timeout = 10_000) {
           const result = await rpc.request(request, requestOptions);
           if (paidCircuits.get(url) === circuit) paidCircuits.delete(url);
           return result;
-        } catch (error) {
+        } catch (caughtError) {
+          const error = caughtError instanceof Error ? contradictoryRangeError(caughtError, request, url) : caughtError;
           if (error instanceof Error && inactivePaid(error)) {
             paidCircuits.set(url, { until: Date.now() + 120_000, error, probing: false });
           } else if (paidCircuits.get(url) === circuit) paidCircuits.delete(url);
@@ -233,10 +271,13 @@ export function chainRpcTransport(chain: ChainSettings, timeout = 10_000) {
         let publicFailure: Error | undefined;
         let publicRangeFailure: { error: Error; blocks: bigint } | undefined;
         const publicRangeProviders = new Set<string>();
+        let widerPeerFailure: { error: Error; blocks: bigint } | undefined;
         let rangeFailure: { error: Error; blocks: bigint } | undefined;
         const recordRange = (error: Error) => {
           if (request.method !== "eth_getLogs" || !logRangeLimit(error)) return false;
           const blocks = logRangeHint(error)?.blocks ?? 0n;
+          const requested = logBlockCount(request);
+          if (requested !== undefined && blocks >= requested) return false;
           if (!rangeFailure || blocks > rangeFailure.blocks) rangeFailure = { error, blocks };
           return true;
         };
@@ -255,6 +296,12 @@ export function chainRpcTransport(chain: ChainSettings, timeout = 10_000) {
             }
             return;
           }
+          if (priority(error) >= 2) {
+            const observed = successfulRanges.get(`${url}\0${logAddressCount(request) ?? "any"}`);
+            if (observed && observed.until > Date.now() && (!widerPeerFailure || observed.blocks > widerPeerFailure.blocks)) {
+              widerPeerFailure = { error, blocks: observed.blocks };
+            }
+          }
           if (!publicFailure || priority(error) > priority(publicFailure)) publicFailure = error;
         }));
         const paidTransports = paidUrls.map((url) => paidTransport(url, recordRange));
@@ -268,9 +315,15 @@ export function chainRpcTransport(chain: ChainSettings, timeout = 10_000) {
           if (rangeFailure) {
             // Multiple explicit public limits establish an actionable pool range. A
             // permanently throttled peer must not prevent splitting 15k down to 10k.
-            if (publicRangeProviders.size >= 2 && publicRangeFailure) throw publicRangeFailure.error;
+            if (publicRangeProviders.size >= 2 && publicRangeFailure) {
+              // A temporarily throttled peer recently proved this address-count shape
+              // works at a wider range. Preserve its capacity signal until that evidence
+              // expires instead of permanently pinning the native shared range lower.
+              if (widerPeerFailure && widerPeerFailure.blocks > publicRangeFailure.blocks) throw widerPeerFailure.error;
+              throw actionableRangeError(publicRangeFailure.error, publicRangeFailure.blocks);
+            }
             if (publicFailure && priority(publicFailure) > 0) throw publicFailure;
-            throw rangeFailure.error;
+            throw actionableRangeError(rangeFailure.error, rangeFailure.blocks);
           }
           if (publicFailure && error instanceof Error && inactivePaid(error)) throw publicFailure;
           throw error;
