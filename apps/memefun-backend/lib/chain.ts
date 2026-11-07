@@ -81,25 +81,59 @@ export function keeperRpcTransport(chain: ChainSettings, timeout = 15_000) {
   });
 }
 
+function logRangeLimit(error: Error) {
+  if (shouldThrow(error)) return false;
+  const details = "details" in error ? String(error.details) : error.message;
+  return /limited to (?:a )?[\d,.]+.{0,20}block|up to (?:a )?[\d,.]+.{0,20}block range|(?:max(?:imum)?|exceeds max) block range|block range (?:is )?too (?:large|wide)|block range limit exceeded|please limit the query to at most [\d,.]+ blocks|requested too many blocks|maximum allowed number of requested blocks|query returned more than \d+ results|query exceeds max results|logs matched by query exceeds limit|backend response too large|response size should not greater than|ranges over \d+ blocks are not supported|(?:try with this|this) block range.{0,20}\[0x/i.test(details);
+}
+
+function logRangeHint(error: Error): { blocks: bigint; hard: boolean } | undefined {
+  const details = "details" in error ? String(error.details) : error.message;
+  const count = details.match(/(?:limited to|up to|at most|ranges over) (?:a )?(\d[\d,]*)\s*blocks?/i)
+    ?? details.match(/maximum block range(?: is|:)?\s*(\d[\d,]*)/i);
+  if (count) return { blocks: BigInt(count[1]!.replaceAll(",", "")), hard: true };
+  const range = details.match(/\[(0x[\da-f]+),\s*(0x[\da-f]+)\]/i);
+  if (range && BigInt(range[2]!) >= BigInt(range[1]!)) return { blocks: BigInt(range[2]!) - BigInt(range[1]!) + 1n, hard: false };
+}
+
+function logBlockCount(request: { method: string; params?: unknown }): bigint | undefined {
+  if (request.method !== "eth_getLogs" || !Array.isArray(request.params)) return;
+  const filter: unknown = request.params[0];
+  if (typeof filter !== "object" || filter === null || !("fromBlock" in filter) || !("toBlock" in filter)) return;
+  if (typeof filter.fromBlock !== "string" || typeof filter.toBlock !== "string"
+    || !/^0x[\da-f]+$/i.test(filter.fromBlock) || !/^0x[\da-f]+$/i.test(filter.toBlock)) return;
+  const count = BigInt(filter.toBlock) - BigInt(filter.fromBlock) + 1n;
+  return count > 0n ? count : undefined;
+}
+
+function logAddressCount(request: { method: string; params?: unknown }): number | undefined {
+  if (request.method !== "eth_getLogs" || !Array.isArray(request.params)) return;
+  const filter: unknown = request.params[0];
+  if (typeof filter !== "object" || filter === null || !("address" in filter)) return;
+  return Array.isArray(filter.address) ? filter.address.length : typeof filter.address === "string" ? 1 : undefined;
+}
+
+function logAddressHint(error: Error): number | undefined {
+  if (shouldThrow(error)) return;
+  const details = "details" in error ? String(error.details) : error.message;
+  const count = details.match(/(?:maximum(?: of)?|limited to|up to|at most) (?:a )?(\d[\d,]*) addresses/i);
+  if (!count) return;
+  const limit = Number(count[1]!.replaceAll(",", ""));
+  return Number.isSafeInteger(limit) && limit > 0 ? limit : undefined;
+}
+
 /** Ponder balances URL arrays across providers; keep its paid fallback outside that pool. */
 export function chainRpcTransport(chain: ChainSettings, timeout = 10_000) {
-  const fallbackOptions = {
-    rank: false,
-    retryCount: 0,
-    shouldThrow(error: Error) {
-      // Ponder splits eth_getLogs into smaller ranges using the provider's original error.
-      // Do not replace that useful limit with an expired fallback key's unrelated error.
-      // Match range limits Ponder recognizes; unavailable archive state still fails over.
-      const details = "details" in error ? String(error.details) : error.message;
-      const rangeLimit = /limited to (?:a )?[\d,.]+.{0,20}block|(?:max(?:imum)?|exceeds max) block range|block range (?:is )?too (?:large|wide)|block range limit exceeded|please limit the query to at most [\d,.]+ blocks|requested too many blocks|maximum allowed number of requested blocks|query returned more than \d+ results|query exceeds max results|logs matched by query exceeds limit|backend response too large|response size should not greater than|ranges over \d+ blocks are not supported|(?:try with this|this) block range.{0,20}\[0x/i;
-      return shouldThrow(error) || rangeLimit.test(details);
-    },
-  };
-  if (chain.key === "local") return fallback(chain.rpcUrls.map((url) => http(url, { timeout, retryCount: 0 })), fallbackOptions);
+  const fallbackOptions = { rank: false, retryCount: 0, shouldThrow };
+  if (chain.key === "local") return fallback(chain.rpcUrls.map((url) => http(url, { timeout, retryCount: 0 })), {
+    ...fallbackOptions, shouldThrow: (error) => shouldThrow(error) || logRangeLimit(error),
+  });
 
   const transport: Transport = (options) => {
     const cooldowns = new Map<string, { until: number; error: Error; probing: boolean }>();
     const paidCircuits = new Map<string, { until: number; error: Error; probing: boolean }>();
+    const rangeCaps = new Map<string, { until: number; blocks: bigint; error: Error }>();
+    const addressCaps = new Map<string, { until: number; addresses: number; error: Error }>();
     let nextPublic = 0;
     const publicUrls = chain.rpcUrls.filter((url) => !isAlchemyUrl(url));
     const paidUrls = chain.rpcUrls.filter(isAlchemyUrl);
@@ -113,6 +147,18 @@ export function chainRpcTransport(chain: ChainSettings, timeout = 10_000) {
       (parameters) => {
         const rpc = http(url, { timeout, retryCount: 0 })(parameters);
         return { ...rpc, request: (async (request, requestOptions) => {
+          const addressCap = addressCaps.get(url);
+          const addresses = logAddressCount(request);
+          if (addressCap && addressCap.until > Date.now() && addresses !== undefined && addresses > addressCap.addresses) {
+            onFailure(addressCap.error);
+            throw addressCap.error;
+          }
+          const cap = rangeCaps.get(url);
+          const blocks = logBlockCount(request);
+          if (cap && cap.until > Date.now() && blocks !== undefined && blocks > cap.blocks) {
+            onFailure(cap.error);
+            throw cap.error;
+          }
           const key = `${url}\0${request.method}`;
           const cooldown = cooldowns.get(key);
           // Rejected probes still fall through viem's normal public-first error policy.
@@ -129,10 +175,19 @@ export function chainRpcTransport(chain: ChainSettings, timeout = 10_000) {
             if (cooldowns.get(key) === cooldown) cooldowns.delete(key);
             return result;
           } catch (error) {
+            if (request.method === "eth_getLogs" && error instanceof Error) {
+              const addresses = logAddressHint(error);
+              if (addresses !== undefined) addressCaps.set(url, { until: Date.now() + 300_000, addresses, error });
+            }
             const transient = error instanceof TimeoutError || (error instanceof HttpRequestError
               && (error.status === undefined || error.status === 429 || error.status >= 500));
             const details = error instanceof Error && "details" in error ? String(error.details) : "";
-            const limited = error instanceof Error && !fallbackOptions.shouldThrow(error)
+            const rangeError = request.method === "eth_getLogs" && error instanceof Error && logRangeLimit(error);
+            if (rangeError) {
+              const hint = logRangeHint(error);
+              if (hint?.hard && hint.blocks > 0n) rangeCaps.set(url, { until: Date.now() + 300_000, blocks: hint.blocks, error });
+            }
+            const limited = error instanceof Error && !fallbackOptions.shouldThrow(error) && !rangeError
               && "code" in error && typeof error.code === "number"
               && (error.code === 429 || /rate limit|too many requests|request limit|compute units per second/i.test(details));
             // Ponder recognizes status/code 429, not provider-specific -32011/-32005.
@@ -146,7 +201,7 @@ export function chainRpcTransport(chain: ChainSettings, timeout = 10_000) {
           }
         }) as EIP1193RequestFn };
       };
-    const paidTransports: Transport[] = paidUrls.map((url) => (parameters) => {
+    const paidTransport = (url: string, onFailure: (error: Error) => void): Transport => (parameters) => {
       const rpc = http(url, { timeout, retryCount: 0 })(parameters);
       return { ...rpc, request: (async (request, requestOptions) => {
         const circuit = paidCircuits.get(url);
@@ -162,10 +217,11 @@ export function chainRpcTransport(chain: ChainSettings, timeout = 10_000) {
           if (error instanceof Error && inactivePaid(error)) {
             paidCircuits.set(url, { until: Date.now() + 120_000, error, probing: false });
           } else if (paidCircuits.get(url) === circuit) paidCircuits.delete(url);
+          if (error instanceof Error) onFailure(error);
           throw error;
         }
       }) as EIP1193RequestFn };
-    });
+    };
     return createTransport({
       key: "memefun-indexer",
       name: "MemeFun public indexer RPC pool",
@@ -175,15 +231,47 @@ export function chainRpcTransport(chain: ChainSettings, timeout = 10_000) {
         const start = nextPublic;
         nextPublic = (nextPublic + 1) % Math.max(1, publicUrls.length);
         let publicFailure: Error | undefined;
+        let publicRangeFailure: { error: Error; blocks: bigint } | undefined;
+        const publicRangeProviders = new Set<string>();
+        let rangeFailure: { error: Error; blocks: bigint } | undefined;
+        const recordRange = (error: Error) => {
+          if (request.method !== "eth_getLogs" || !logRangeLimit(error)) return false;
+          const blocks = logRangeHint(error)?.blocks ?? 0n;
+          if (!rangeFailure || blocks > rangeFailure.blocks) rangeFailure = { error, blocks };
+          return true;
+        };
         const priority = (error: Error) => error instanceof HttpRequestError && error.status === 429 ? 3
-          : error instanceof TimeoutError ? 2 : error instanceof HttpRequestError ? 1 : 0;
+          : error instanceof TimeoutError ? 2
+            : error instanceof HttpRequestError && (error.status === undefined || error.status === 408
+              || (error.status >= 500 && error.status !== 501 && error.status !== 505)) ? 1 : 0;
         const publicTransports = publicUrls.map((url) => publicTransport(url, (error) => {
+          if (recordRange(error)) {
+            const hint = logRangeHint(error);
+            if (hint) {
+              publicRangeProviders.add(url);
+              if (!publicRangeFailure || hint.blocks > publicRangeFailure.blocks) {
+                publicRangeFailure = { error, blocks: hint.blocks };
+              }
+            }
+            return;
+          }
           if (!publicFailure || priority(error) > priority(publicFailure)) publicFailure = error;
         }));
+        const paidTransports = paidUrls.map((url) => paidTransport(url, recordRange));
         const ordered = [...publicTransports.slice(start), ...publicTransports.slice(0, start), ...paidTransports];
         try {
           return await fallback(ordered, fallbackOptions)(options).request(request);
         } catch (error) {
+          // A single restrictive node must not reduce the range for the whole public pool.
+          // Capacity failures mean another provider may still serve the original request.
+          if (error instanceof Error && shouldThrow(error)) throw error;
+          if (rangeFailure) {
+            // Multiple explicit public limits establish an actionable pool range. A
+            // permanently throttled peer must not prevent splitting 15k down to 10k.
+            if (publicRangeProviders.size >= 2 && publicRangeFailure) throw publicRangeFailure.error;
+            if (publicFailure && priority(publicFailure) > 0) throw publicFailure;
+            throw rangeFailure.error;
+          }
           if (publicFailure && error instanceof Error && inactivePaid(error)) throw publicFailure;
           throw error;
         }

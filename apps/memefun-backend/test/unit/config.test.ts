@@ -396,11 +396,12 @@ describe("chainSettings", () => {
     expect(fetch).toHaveBeenCalledTimes(1);
   });
 
-  it("preserves public log range limits so Ponder can split requests without Alchemy", async () => {
+  it("preserves a public log range limit only after every alternative fails", async () => {
     process.env.MEMEFUN_CHAIN = "base";
     process.env.MEMEFUN_RPC_URLS = "https://base-mainnet.g.alchemy.com/v2/overdue-key";
     const message = "eth_getLogs is limited to a 10,000 blocks range";
-    const fetch = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+    const fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      if (String(input).includes("alchemy")) return Response.json({ error: { code: -32600, message: "App is inactive" } });
       const body = JSON.parse(String(init?.body)) as { params: [{ fromBlock: string; toBlock: string }] };
       return BigInt(body.params[0].toBlock) - BigInt(body.params[0].fromBlock) >= 10_000n
         ? Response.json({ jsonrpc: "2.0", id: 1, error: { code: -32602, message } })
@@ -410,9 +411,174 @@ describe("chainSettings", () => {
     const chain = chainSettings();
     const transport = chainRpcTransport(chain)({ chain: chain.viemChain });
     await expect(transport.request({ method: "eth_getLogs", params: [{ fromBlock: "0x0", toBlock: "0x4e20" }] })).rejects.toMatchObject({ details: message });
-    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(fetch).toHaveBeenCalledTimes(chain.rpcUrls.length);
     expect(await transport.request({ method: "eth_getLogs", params: [{ fromBlock: "0x0", toBlock: "0x1388" }] })).toEqual([]);
-    expect(fetch.mock.calls.map(([url]) => String(url))).toEqual(["https://mainnet.base.org/", "https://base-mainnet.public.blastapi.io/"]);
+    expect(fetch.mock.calls.map(([url]) => String(url))).toEqual([
+      ...chain.rpcUrls.map((url) => new URL(url).toString()), "https://base-mainnet.public.blastapi.io/",
+    ]);
+  });
+
+  it("tries a capable public node after Blast's exact ten-block rejection and caches only oversized shapes", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-11-07T03:20:00Z"));
+    process.env.MEMEFUN_CHAIN = "base";
+    const chain = { ...chainSettings(), rpcUrls: [
+      "https://base-mainnet.public.blastapi.io", "https://base-pokt.nodies.app", "https://base-mainnet.g.alchemy.com/v2/inactive-key",
+    ] };
+    const message = "You can make eth_getLogs requests with up to a 10 block range. Based on your parameters, this block range should work: [0x33a561e, 0x33a5627]";
+    let expanded = false;
+    const fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const { params } = JSON.parse(String(init?.body)) as { params: [{ fromBlock: string; toBlock: string }] };
+      const blocks = BigInt(params[0].toBlock) - BigInt(params[0].fromBlock) + 1n;
+      return String(url).includes("blastapi") && blocks > 10n && !expanded
+        ? Response.json({ error: { code: -32600, message } }, { status: 400 }) : Response.json({ result: [] });
+    });
+    vi.stubGlobal("fetch", fetch);
+    const transport = chainRpcTransport(chain)({ chain: chain.viemChain, retryCount: 0 });
+    const read = (toBlock = "0x33a5637") => transport.request({ method: "eth_getLogs", params: [{ fromBlock: "0x33a561e", toBlock }] });
+    for (let i = 0; i < 3; i++) expect(await read()).toEqual([]);
+    const blastCalls = () => fetch.mock.calls.filter(([url]) => String(url).includes("blastapi")).length;
+    expect(blastCalls()).toBe(1);
+    for (let i = 0; i < 2; i++) expect(await read("0x33a5627")).toEqual([]);
+    expect(blastCalls()).toBe(2);
+    expanded = true;
+    vi.setSystemTime(new Date("2026-11-07T03:25:00Z"));
+    for (let i = 0; i < 2; i++) expect(await read()).toEqual([]);
+    expect(blastCalls()).toBe(3);
+    expect(fetch.mock.calls.every(([url]) => !String(url).includes("alchemy"))).toBe(true);
+  });
+
+  it("returns the most permissive public range hint after all providers fail", async () => {
+    process.env.MEMEFUN_CHAIN = "base";
+    const chain = { ...chainSettings(), rpcUrls: ["https://base-mainnet.public.blastapi.io", "https://base-pokt.nodies.app", "https://base-mainnet.g.alchemy.com/v2/inactive-key"] };
+    const fetch = vi.fn(async (url: string | URL | Request) => String(url).includes("alchemy")
+      ? Response.json({ error: { code: -32600, message: "App is inactive" } })
+      : Response.json({ error: { code: -32602, message: `eth_getLogs is limited to ${String(url).includes("blastapi") ? "10" : "10,000"} blocks range` } }));
+    vi.stubGlobal("fetch", fetch);
+    const transport = chainRpcTransport(chain)({ chain: chain.viemChain, retryCount: 0 });
+    await expect(transport.request({ method: "eth_getLogs", params: [{ fromBlock: "0x0", toBlock: "0x4e20" }] })).rejects.toMatchObject({ details: "eth_getLogs is limited to 10,000 blocks range" });
+    expect(fetch).toHaveBeenCalledTimes(3);
+  });
+
+  it.each([false, true])("uses a corroborated public range despite a throttled peer (capacity first: %s)", async (capacityFirst) => {
+    process.env.MEMEFUN_CHAIN = "base";
+    const providers = ["https://base-mainnet.public.blastapi.io", "https://base-pokt.nodies.app", "https://base.gateway.tenderly.co", "https://mainnet.base.org"];
+    const chain = { ...chainSettings(), rpcUrls: [...(capacityFirst ? providers.toReversed() : providers), "https://base-mainnet.g.alchemy.com/v2/inactive-key"] };
+    const fetch = vi.fn(async (url: string | URL | Request) => {
+      if (String(url).includes("alchemy")) return Response.json({ error: { code: -32600, message: "App is inactive" } });
+      if (String(url).startsWith("https://mainnet.base.org/")) return new Response("Public capacity reached", { status: 429 });
+      return Response.json({ error: { code: -32602, message: `eth_getLogs is limited to ${String(url).includes("blastapi") ? "10" : "10,000"} blocks range` } });
+    });
+    vi.stubGlobal("fetch", fetch);
+    const transport = chainRpcTransport(chain)({ chain: chain.viemChain, retryCount: 0 });
+    await expect(transport.request({ method: "eth_getLogs", params: [{ fromBlock: "0x0", toBlock: "0x4e20" }] })).rejects.toMatchObject({ details: "eth_getLogs is limited to 10,000 blocks range" });
+    expect(fetch).toHaveBeenCalledTimes(5);
+  });
+
+  it("uses the corroborated public limit instead of a larger failed paid-provider hint", async () => {
+    process.env.MEMEFUN_CHAIN = "base";
+    const chain = { ...chainSettings(), rpcUrls: ["https://base-mainnet.public.blastapi.io", "https://base-pokt.nodies.app", "https://mainnet.base.org", "https://base-mainnet.g.alchemy.com/v2/key"] };
+    vi.stubGlobal("fetch", vi.fn(async (url: string | URL | Request) => {
+      if (String(url).startsWith("https://mainnet.base.org/")) return new Response("Public capacity reached", { status: 429 });
+      const limit = String(url).includes("blastapi") ? "10" : String(url).includes("alchemy") ? "100,000" : "10,000";
+      return Response.json({ error: { code: -32602, message: `eth_getLogs is limited to ${limit} blocks range` } });
+    }));
+    const transport = chainRpcTransport(chain)({ chain: chain.viemChain, retryCount: 0 });
+    await expect(transport.request({ method: "eth_getLogs", params: [{ fromBlock: "0x0", toBlock: "0x30d40" }] })).rejects.toMatchObject({ details: "eth_getLogs is limited to 10,000 blocks range" });
+  });
+
+  it.each([404, 405, 501, 505])("does not let an unavailable HTTP %s peer mask a public range hint", async (status) => {
+    process.env.MEMEFUN_CHAIN = "base";
+    const chain = { ...chainSettings(), rpcUrls: ["https://base-pokt.nodies.app", "https://base.gateway.tenderly.co"] };
+    vi.stubGlobal("fetch", vi.fn(async (url: string | URL | Request) => String(url).includes("nodies")
+      ? Response.json({ error: { code: -32602, message: "eth_getLogs is limited to 10,000 blocks range" } })
+      : new Response("Unsupported endpoint", { status })));
+    const transport = chainRpcTransport(chain)({ chain: chain.viemChain, retryCount: 0 });
+    await expect(transport.request({ method: "eth_getLogs", params: [{ fromBlock: "0x0", toBlock: "0x4e20" }] })).rejects.toMatchObject({ details: "eth_getLogs is limited to 10,000 blocks range" });
+  });
+
+  it("caches an explicit public address limit and serves repeated fifty-address queries through a capable peer", async () => {
+    process.env.MEMEFUN_CHAIN = "base";
+    const chain = { ...chainSettings(), rpcUrls: ["https://base-rpc.publicnode.com", "https://base.drpc.org", "https://base-mainnet.g.alchemy.com/v2/key"] };
+    const addresses = Array.from({ length: 50 }, (_, i) => `0x${(i + 1).toString(16).padStart(40, "0")}`);
+    const fetch = vi.fn(async (url: string | URL | Request) => String(url).includes("publicnode")
+      ? Response.json({ error: { code: -32602, message: "A maximum of 10 addresses is allowed. No limit on a dedicated node" } }, { status: 403 })
+      : Response.json({ result: [] }));
+    vi.stubGlobal("fetch", fetch);
+    const transport = chainRpcTransport(chain)({ chain: chain.viemChain, retryCount: 0 });
+    for (let i = 0; i < 3; i++) {
+      expect(await transport.request({ method: "eth_getLogs", params: [{ address: addresses, fromBlock: "0x0", toBlock: "0x19" }] })).toEqual([]);
+    }
+    expect(fetch.mock.calls.filter(([url]) => String(url).includes("publicnode"))).toHaveLength(1);
+    expect(fetch.mock.calls.filter(([url]) => String(url).includes("drpc"))).toHaveLength(3);
+    expect(fetch.mock.calls.every(([url]) => !String(url).includes("alchemy"))).toBe(true);
+  });
+
+  it("keeps small address lists, single addresses and heads usable and probes an expired address cap", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-11-07T03:20:00Z"));
+    process.env.MEMEFUN_CHAIN = "base";
+    const chain = { ...chainSettings(), rpcUrls: ["https://base-rpc.publicnode.com", "https://base.drpc.org"] };
+    const addresses = Array.from({ length: 50 }, (_, i) => `0x${(i + 1).toString(16).padStart(40, "0")}`);
+    let expanded = false;
+    const fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as { method: string; params?: [{ address: string | string[] }] };
+      if (body.method !== "eth_getLogs") return Response.json({ result: "0x123" });
+      return String(url).includes("publicnode") && Array.isArray(body.params?.[0].address) && body.params[0].address.length > 10 && !expanded
+        ? Response.json({ error: { code: -32602, message: "A maximum of 10 addresses is allowed" } }, { status: 403 })
+        : Response.json({ result: [] });
+    });
+    vi.stubGlobal("fetch", fetch);
+    const transport = chainRpcTransport(chain)({ chain: chain.viemChain, retryCount: 0 });
+    const read = (address: string | string[]) => transport.request({ method: "eth_getLogs", params: [{ address, fromBlock: "0x0", toBlock: "0x19" }] });
+    expect(await read(addresses)).toEqual([]);
+    for (const address of [addresses.slice(0, 10), addresses[0]!]) {
+      for (let i = 0; i < 2; i++) expect(await read(address)).toEqual([]);
+    }
+    for (let i = 0; i < 2; i++) expect(await transport.request({ method: "eth_blockNumber" })).toBe("0x123");
+    expect(fetch.mock.calls.filter(([url]) => String(url).includes("publicnode"))).toHaveLength(4);
+    expanded = true;
+    vi.setSystemTime(new Date("2026-11-07T03:25:00Z"));
+    for (let i = 0; i < 2; i++) expect(await read(addresses)).toEqual([]);
+    expect(fetch.mock.calls.filter(([url]) => String(url).includes("publicnode"))).toHaveLength(5);
+  });
+
+  it.each([false, true])("preserves public capacity instead of shrinking to another node's range hint (capacity first: %s)", async (capacityFirst) => {
+    process.env.MEMEFUN_CHAIN = "base";
+    const publicUrls = ["https://base-mainnet.public.blastapi.io", "https://base-pokt.nodies.app"];
+    const chain = { ...chainSettings(), rpcUrls: [...(capacityFirst ? publicUrls.toReversed() : publicUrls), "https://base-mainnet.g.alchemy.com/v2/inactive-key"] };
+    const fetch = vi.fn(async (url: string | URL | Request) => {
+      if (String(url).includes("alchemy")) return Response.json({ error: { code: -32600, message: "App is inactive" } });
+      return String(url).includes("blastapi") ? Response.json({ error: { code: -32600, message: "eth_getLogs is limited to 10 blocks range" } })
+        : new Response("Public capacity reached", { status: 429 });
+    });
+    vi.stubGlobal("fetch", fetch);
+    const transport = chainRpcTransport(chain)({ chain: chain.viemChain, retryCount: 0 });
+    await expect(transport.request({ method: "eth_getLogs", params: [{ fromBlock: "0x0", toBlock: "0x19" }] })).rejects.toMatchObject({ status: 429 });
+    expect(fetch).toHaveBeenCalledTimes(3);
+  });
+
+  it("allows a healthy paid fallback to serve a range unavailable on every public node", async () => {
+    process.env.MEMEFUN_CHAIN = "base";
+    const chain = { ...chainSettings(), rpcUrls: ["https://base-mainnet.public.blastapi.io", "https://base-mainnet.g.alchemy.com/v2/active-key"] };
+    const fetch = vi.fn(async (url: string | URL | Request) => String(url).includes("alchemy") ? Response.json({ result: [] })
+      : Response.json({ error: { code: -32600, message: "eth_getLogs is limited to 10 blocks range" } }));
+    vi.stubGlobal("fetch", fetch);
+    const transport = chainRpcTransport(chain)({ chain: chain.viemChain, retryCount: 0 });
+    expect(await transport.request({ method: "eth_getLogs", params: [{ fromBlock: "0x0", toBlock: "0x19" }] })).toEqual([]);
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("preserves a genuine execution error after an earlier public range rejection", async () => {
+    process.env.MEMEFUN_CHAIN = "base";
+    const chain = { ...chainSettings(), rpcUrls: ["https://base-mainnet.public.blastapi.io", "https://base-mainnet.g.alchemy.com/v2/active-key"] };
+    const fetch = vi.fn(async (url: string | URL | Request) => String(url).includes("alchemy")
+      ? Response.json({ error: { code: 3, message: "execution reverted" } })
+      : Response.json({ error: { code: -32600, message: "eth_getLogs is limited to 10 blocks range" } }));
+    vi.stubGlobal("fetch", fetch);
+    const transport = chainRpcTransport(chain)({ chain: chain.viemChain, retryCount: 0 });
+    await expect(transport.request({ method: "eth_getLogs", params: [{ fromBlock: "0x0", toBlock: "0x19" }] })).rejects.toMatchObject({ code: 3, details: "execution reverted" });
+    expect(fetch).toHaveBeenCalledTimes(2);
   });
 
   it("fails over when a public node cannot serve archive state", async () => {

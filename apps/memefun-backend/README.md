@@ -180,6 +180,14 @@ that Alchemy URL, also with one recovery probe. Other configured keys can still 
 the paid fallback is inactive, the original public capacity or transport error reaches Ponder
 instead of being replaced by a billing error. Provider-specific rate-limit errors retain their
 cause and expose status 429 so Ponder can apply its adaptive backoff.
+Log queries rejected for one provider's block-range limit try the other public providers before
+Ponder changes its range. Explicit block caps are cached for five minutes for oversized queries;
+smaller queries still use that provider. If no provider succeeds, capacity failures take
+precedence over one isolated restrictive hint. When multiple public providers establish explicit
+limits, Ponder receives their largest range hint even if another peer is throttled, so larger
+queries can still be split. Permanent unsupported/plan errors do not mask those range hints.
+Explicit address-count limits receive the same five-minute, query-specific cache: a node that
+rejects 50 addresses can still serve single-address queries, smaller lists and block reads.
 This prevents Ponder's adaptive client from flooding a public node whose throttling was hidden
 by a later successful provider. Normal API and keeper
 reads keep their existing transports; local development indexing is not throttled.
